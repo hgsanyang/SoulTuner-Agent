@@ -1,0 +1,110 @@
+.starryBg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  z-index: 0;
+  background: radial-gradient(ellipse at bottom, #0d1d31 0%, #0c0d13 100%);
+}
+
+.stars {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+/* Base stars using box-shadow */
+.stars::after {
+  content: " ";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 2px;
+  background: transparent;
+  box-shadow: 
+    10vw 20vh #fff, 20vw 10vh #fff, 30vw 50vh #fff, 40vw 30vh #fff, 50vw 70vh #fff, 
+    60vw 15vh #fff, 70vw 80vh #fff, 80vw 45vh #fff, 90vw 25vh #fff, 95vw 60vh #fff,
+    15vw 75vh #fff, 25vw 85vh #fff, 35vw 15vh #fff, 45vw 90vh #fff, 55vw 35vh #fff, 
+    65vw 65vh #fff, 75vw 20vh #fff, 85vw 85vh #fff, 5vw 40vh #fff, 8vw 90vh #fff;
+  animation: twinkle 4s infinite alternate;
+}
+
+.mediumStars::after {
+  content: " ";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 3px;
+  background: transparent;
+  box-shadow: 
+    12vw 30vh #fff, 22vw 70vh #fff, 32vw 40vh #fff, 42vw 80vh #fff, 52vw 20vh #fff, 
+    62vw 50vh #fff, 72vw 10vh #fff, 82vw 60vh #fff, 92vw 35vh #fff, 18vw 60vh #fff;
+  animation: twinkle 3s infinite alternate;
+  opacity: 0.8;
+}
+
+/* Galaxy/Nebula effect */
+.galaxy {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 200%;
+  height: 100%;
+  transform: translate(-50%, -50%) rotate(-15deg);
+  background: radial-gradient(ellipse at center, rgba(82, 33, 117, 0.4) 0%, rgba(31, 23, 76, 0.2) 30%, transparent 60%);
+  filter: blur(40px);
+  animation: galaxyRotate 40s linear infinite;
+  opacity: 0.6;
+}
+
+.galaxy2 {
+  position: absolute;
+  top: 40%;
+  left: 60%;
+  width: 150%;
+  height: 80%;
+  transform: translate(-50%, -50%) rotate(25deg);
+  background: radial-gradient(ellipse at center, rgba(34, 105, 168, 0.3) 0%, rgba(20, 20, 40, 0.1) 40%, transparent 70%);
+  filter: blur(50px);
+  animation: galaxyRotate 60s linear infinite reverse;
+  opacity: 0.5;
+}
+
+/* Shooting Stars */
+.shootingStar {
+  position: absolute;
+  width: 150px;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 100%);
+  transform: rotate(-45deg);
+  opacity: 0;
+  animation: shooting 5s infinite;
+}
+
+.shootingStar:nth-child(1) { top: 10%; left: 80%; animation-delay: 0s; }
+.shootingStar:nth-child(2) { top: 30%; left: 90%; animation-delay: 2s; }
+.shootingStar:nth-child(3) { top: 5%; left: 60%; animation-delay: 4s; }
+.shootingStar:nth-child(4) { top: 20%; left: 70%; animation-delay: 1.5s; }
+.shootingStar:nth-child(5) { top: 40%; left: 100%; animation-delay: 3.5s; }
+
+@keyframes twinkle {
+  0% { opacity: 0.3; transform: scale(0.8); }
+  100% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes galaxyRotate {
+  0% { transform: translate(-50%, -50%) rotate(-15deg) scale(1); }
+  50% { transform: translate(-50%, -50%) rotate(0deg) scale(1.1); }
+  100% { transform: translate(-50%, -50%) rotate(-15deg) scale(1); }
+}
+
+@keyframes shooting {
+  0% { transform: translate(0, 0) rotate(-45deg); opacity: 1; }
+  10% { transform: translate(-300px, 300px) rotate(-45deg); opacity: 0; }
+  100% { transform: translate(-300px, 300px) rotate(-45deg); opacity: 0; }
+}

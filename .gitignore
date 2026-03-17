@@ -1,0 +1,104 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+develop-eggs/
+downloads/
+parts/
+sdist/
+var/
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env / secrets
+.env
+.env.*
+.env.local
+.env.*.local
+!.env.example
+*.key
+*.pem
+config/setting.local.json
+
+# Logs
+*.log
+logs/
+output/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+chromaDB/
+chroma_db/
+milvus_data/
+neo4j_data/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp/cache/test
+.cache
+.cache/
+*.tmp
+*.temp
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints
+
+# Data/artifacts
+data/**/*.json
+!data/music_database.json
+data/download/
+data/raw_audio/
+data/embeddings/
+data/kaggle/
+data/mtg/
+
+# Media
+*.mp3
+*.wav
+*.flac
+*.m4a
+
+# Web (Next.js)
+web/node_modules/
+web/.next/
+web/out/
+web/build/
+web/*.tsbuildinfo
+web/next-env.d.ts
+
+
+# Pipeline temp scripts
+data_pipeline/_*
+data_pipeline/ingest_progress.json
+data_pipeline/gemini_prompts/gemini_result.json
+
+# GraphZep service
+graphzep_service/**/node_modules/
+
+# Root-level stale files
+package-lock.json
+
+# Web build artifacts
+web/tsconfig.tsbuildinfo

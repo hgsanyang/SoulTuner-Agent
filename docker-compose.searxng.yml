@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: music_searxng
+    ports:
+      - "8888:8080"          # 宿主机 8888 → 容器 8080，避免与其他服务冲突
+    volumes:
+      - ./config:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8888
+    restart: unless-stopped
+    networks:
+      - music_net
+
+networks:
+  music_net:
+    driver: bridge

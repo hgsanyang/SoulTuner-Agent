@@ -1,0 +1,89 @@
+# Music Agent 依赖包
+
+# 核心框架
+langchain>=0.1.0
+langchain-openai>=0.1.0
+langchain-core>=0.1.0
+langgraph>=0.1.0
+
+# LLM和嵌入
+openai>=1.0.0
+
+# 向量存储和检索
+llama-index>=0.10.0
+llama-index-embeddings-openai>=0.1.0
+llama-index-vector-stores-chroma>=0.1.0
+chromadb>=0.4.0
+
+# 网络搜索
+aiohttp>=3.8.0
+beautifulsoup4>=4.12.0
+
+# 配置管理
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# 数据处理
+numpy>=1.24.0
+pandas>=2.0.0
+
+# 其他工具
+requests>=2.31.0
+asyncio-throttle>=1.0.0
+streamlit>=1.35.0
+
+# API服务器
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# --- 补充依赖 ---
+# Aliyun 大模型 API 库
+dashscope
+
+# 文件下载工具 (用于下载音频资源)
+gdown>=5.2.0
+
+# 音频处理与特征提取
+librosa>=0.11.0
+
+# 统一大模型调用接口
+litellm>=1.81.0
+langchain-litellm>=0.6.0
+
+# Model Context Protocol (如果有其他集成需求)
+mcp
+
+# 图数据库客户端
+neo4j>=5.0.0
+
+# 处理 Jupyter/特定环境下的异步嵌套
+nest_asyncio>=1.5.0
+
+# 【V2 升级】Milvus 已废弃，向量检索迁移至 Neo4j Native Vector Search
+# pymilvus>=2.3.0  # 已移除
+
+# 文本及音频嵌入模型
+sentence-transformers>=3.0.0
+
+# Spotify API 客户端 (供旧版代码 Legacy 目录参考)
+spotipy
+
+# Token 计数工具
+tiktoken>=0.7.0
+
+# PyTorch 深度学习运算及音频处理后端
+torch>=2.2.0
+torchaudio>=2.2.0
+
+# 命令行进度条
+tqdm>=4.60.0
+
+# HuggingFace 模型工具
+transformers>=4.40.0
+
+# HTTP 客户端依赖
+urllib3>=2.0.0
+
+# 文件系统变动监控
+watchdog>=4.0.0

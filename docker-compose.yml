@@ -1,0 +1,38 @@
+version: '3.8'
+
+# ============================================================
+# 【V2 升级】Docker Compose 配置
+# Milvus 相关容器 (etcd, minio, standalone, attu) 已全部移除。
+# 向量检索功能已迁移至 Neo4j Native Vector Search。
+# ============================================================
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      TZ: Asia/Shanghai
+    ports:
+      - "54321:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "nange" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: [ "postgres", "-c", "max_connections=200" ]
+
+  # 【V2 升级】以下 Milvus 组件已被移除:
+  #   - etcd (music-milvus-etcd)
+  #   - minio (music-milvus-minio) 
+  #   - standalone (music-milvus-standalone)
+  #   - attu (music-milvus-attu)
+  # 向量检索现在通过 Neo4j 5.x Native Vector Search 实现。
+
+volumes:
+  pgdata:

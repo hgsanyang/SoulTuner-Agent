@@ -1,0 +1,4370 @@
+你是 Neo4j 音乐知识图谱的构建专家。我需要你帮我分析以下 100 首歌曲的歌词，并严格提取出用于 Neo4j 图谱的多维度标签。
+
+对于每一首歌，请你：
+1. 深入理解歌词意境和整体氛围。
+2. 提取 1~3 个核心情绪标签 (mood)。
+   常见参考值："Happy", "Melancholy", "Healing", "Energetic", "Relaxing", "Romantic", "Nostalgic", "Angry", "Hopeful", "Dreamy", "Lonely", "Peaceful"
+3. 提取 1~3 个探讨主题标签 (theme)。
+   常见参考值："Love", "Heartbreak", "Growth", "Nature", "Youth", "Life", "Friendship", "Freedom", "Loss", "Self-discovery", "Night", "Journey"
+4. 提取 1~2 个适合的收听场景标签 (scenario)。
+   常见参考值："Study", "Driving", "Workout", "Sleep", "Commute", "Rainy Day", "Party", "Cooking", "Travel", "Late Night", "Morning", "Work"
+5. 提取 1 个抽象氛围/美学标签 (vibe)。
+   常见参考值："Lo-fi", "Cinematic", "Indie", "Acoustic", "Dreampop", "Urban", "Retro", "Ethereal", "Raw", "Warm", "Dark", "Bright"
+6. 判断歌词的主要语言 (language)，必须从以下固定值中选一个：
+   "Chinese", "English", "Japanese", "Korean", "Cantonese", "Instrumental", "Mixed"
+   - 判断依据是歌词的主体语言，例如普通话/国语统一标注为 "Chinese"
+   - 粤语歌词（如广东话）请标注为 "Cantonese"
+   - 如果是完全没有歌词的纯音乐，请标注为 "Instrumental"
+   - 如果一首歌中英混杂比较均匀，请标注为 "Mixed"
+7. 判断歌曲所属的音乐市场/地区 (region)，必须从以下固定值中选一个：
+   "Mainland China", "Taiwan", "Hong Kong", "Japan", "Korea", "Western", "Other"
+   - 判断依据是歌手来源和歌曲风格，如陈粒/许嵩/梁博等属于 "Mainland China"
+   - 邓紫棋(G.E.M.)、张学友等港乐属于 "Hong Kong"
+   - 周杰伦、陈奕迅(台)、五月天等台湾乐手属于 "Taiwan"
+   - 欧美歌手（如 Taylor Swift, Current Joys, Benson Boone 等）属于 "Western"
+8. 所有标签使用英文单词，保持专业和统一。不要发明已有近义词之外的新标签。
+
+特殊情况处理：
+- 如果歌词为纯音乐/器乐（无实质文字歌词），请将 moods 设为 ["Instrumental"]，themes 设为 []，language 设为 "Instrumental"，scenario 和 vibe 仍然根据歌曲名和专辑信息尽力推断。
+- 如果歌词极短或信息不足，请根据歌名、歌手风格和专辑名辅助推断。
+
+请严格返回一个纯净的 JSON 数组。注意以下约束：
+- 不要在 JSON 外包裹 markdown 代码块标记（如 ```json）
+- 不要在 JSON 前后添加任何前言、解释或后语
+- JSON 数组必须以 [ 开头，以 ] 结尾，] 后面不要有任何字符（包括句号、换行等）
+- 确保外部脚本可以直接 json.loads 解析你的输出
+
+数组里为每一首歌生成一个对象，格式如下：
+[
+    {
+        "filename": "光 - 陈粒.lrc",
+        "moods": ["Melancholy", "Healing"],
+        "themes": ["Love", "Life"],
+        "scenarios": ["Late Night", "Commute"],
+        "vibe": "Indie",
+        "language": "Chinese",
+        "region": "Mainland China"
+    },
+    {
+        "filename": "A Different Age - Current Joys.lrc",
+        "moods": ["Nostalgic", "Melancholy"],
+        "themes": ["Youth", "Life"],
+        "scenarios": ["Late Night", "Driving"],
+        "vibe": "Indie",
+        "language": "English",
+        "region": "Western"
+    },
+    ...
+]
+
+以下是这 100 首歌的歌词文本数据（已附带歌曲元信息供你参考）：
+=============================================================
+
+【歌曲文件】: Columbus - Snowmine.lrc
+【基本信息】:
+  歌名: Columbus
+  歌手: Snowmine
+  专辑: Dialects
+  时长: 4分7秒
+【歌词内容】:
+Late last night, I lost track of time,and I know I was waiting for the sun to rise
+These summer days, they keep stretching on as our friend's in and out of town and tide
+We spent all night hoping for nice things
+We should have known we don't need nice things
+What's that, don't know your way back home?You want to know why?
+All this time when you read my mind, you read my mind
+All those thoughts that I knew you'd find, I hid between the lines
+We could dress for anywhere else
+It's been a long long time since your kingdom fell
+But I can hear something over these engines
+It sounds like ghosts in the back seat of your car
+It sounds like our mysteries in skin
+Just to steal away again
+All this time when you read my mind, you read my mind
+All those thoughts that I knew you'd find, I hid between the lines
+All this time when you read my mind, you read my mind
+Those countries where we could have been, I left them all behind
+Why would you bother the hurt you're among?
+When all that you needed was here all along?
+All this time when you read my mind, you read my mind
+All those thoughts that I knew you'd find, I hid between the lines
+All this time when you read my mind, you read my mind
+Those countries where we could have been, I left them all behind
+
+--------------------------
+【歌曲文件】: Come As You Are - Nirvana.lrc
+【基本信息】:
+  歌名: Come As You Are
+  歌手: Nirvana
+  专辑: Nevermind
+  时长: 3分38秒
+【歌词内容】:
+Come, as you are, as you were
+As I want you to be
+As a friend, as a friend
+As an old enemy
+Take your time, hurry up
+The choice is yours, don't be late
+Take a rest, as a friend
+As an old memoria, memoria, memoria, memoria
+Come doused in mud, soaked in bleach
+As I want you to be
+As a trend, as a friend
+As an old memoria, memoria, memoria, memoria
+And I swear that I don't have a gun
+No I don't have a gun, no I don't have a gun
+Memoria, memoria, memoria, memoria  (No, I don’t have a gun)
+And I swear that I don't have a gun
+No I don't have a gun, no I don't have a gun
+No I don't have a gun, no I don't have a gun
+Memoria
+Memoria
+
+--------------------------
+【歌曲文件】: Come Together (Remastered) - The Beatles.lrc
+【基本信息】:
+  歌名: Come Together (Remastered)
+  歌手: The Beatles
+  专辑: Abbey Road (Remastered)
+  时长: 4分19秒
+【歌词内容】:
+Here come old flattop, he come grooving up slowly
+He got Joo Joo Eyeball, he one Holy Roller
+He got hair down to his knees
+Got to be a joker he just do what he please
+He wear no Shoeshine, he got Toe Jam football
+He got Monkey Finger, he shoot Coca Cola
+He say I know you, you know me
+One thing I can tell you is you got to be free
+Come Together, right now, over me
+He bag production, he got Walrus Gumboot
+He got o no sideboard, he one Spinal Cracker
+He got feet down below his knees
+Hold you in his armchair you can feel his disease
+Come Together, right now, over me
+He Roller coaster, he got Early warning
+He got Muddy Water, he one Mojo Filter
+He say, one and one and one is three
+Got to be good-looking cause he's so hard to see
+Come Together, right now, over me
+Come Together, yeah..
+
+--------------------------
+【歌曲文件】: Come With Me - Surfaces，salem ilese.lrc
+【基本信息】:
+  歌名: Come With Me
+  歌手: Surfaces，salem ilese
+  专辑: Pacifico
+  时长: 3分29秒
+【歌词内容】:
+(Yeah, yeah, yeah, yeah, yeah, yeah)
+(Oh-oh)
+(I, yeah, yeah)
+Another Tuesday and we sleep in till when it's too late
+'Cause summer is whatever you say
+So, I don't mind at all, at all
+It's a new place if we close our eyes and paint a new way
+'Cause somewhere is wherever you say
+So summer turns to fall
+And when the days feel like the same ol' circle
+We'll bend the lines and make a new one
+Just to find the place where time is free
+So, baby, come with me
+As far as eyes can see
+So, baby, come with me
+And what is will be
+What is will be
+What is will be
+You take a Wednesday and you make it seem
+Like it's the first day of the whole-wide week
+You got the PCH type of energy without the traffic, ooh-oh
+There's never bad days when a good time is whatever we say
+And the sun's shining
+So, what's your E.T.A? 'Cause I just can't wait to go
+And when the days feel like the same ol' circle
+We'll bend the lines and make a new one
+Just to find the place where time is free (Time is free)
+So, baby, come with me
+As far as eyes can see
+So, baby, come with me
+And what is will be
+Now what is will be, now what is
+Now what is will be
+And what is will be
+
+--------------------------
+【歌曲文件】: Comes&Goes - MyKey.lrc
+【基本信息】:
+  歌名: Comes&Goes
+  歌手: MyKey
+  专辑: Comes & Goes
+  时长: 3分38秒
+【歌词内容】:
+Written by Michael Ambrosino
+Produced by MyKey
+Mixed by MyKey
+Mastered by Shane Slack
+You ever look around the ride for the camera cue
+Yeah we ride like a dream but we drop like a second shoe
+Cause baby I don’ t wanna fight I just want you
+Burn the marque let the dream fade from our view yeah
+It comes and it goes, comes and it goes
+Comes and it goes, comes and it goes
+Comes and it goes, comes and it goes again
+I could be a sore lover I could treat you like a friend
+If only for the summer we could tie loose ends
+Call me optimistic call me anything you please
+I’ m begging you to let me sweep you off your feet
+If you don’ t bite I don’ t know what to do
+If you don’ t like when there’ s a person to lose
+If you’ re alright then just enjoy the view
+It comes and it goes, comes and it goes
+Comes and it goes, comes and it goes
+Comes and it goes, comes and it goes again
+You ever look around the ride for the camera cue
+Yeah we ride like a dream but we drop like a second shoe
+Cause baby I don’ t wanna fight I just want you
+Burn the marque let the dream fade from our view yeah
+It comes and it goes, comes and it goes
+Comes and it goes, comes and it goes
+Comes and it goes, comes and it goes again
+
+--------------------------
+【歌曲文件】: Coming Back to Life - Pink Floyd.lrc
+【基本信息】:
+  歌名: Coming Back to Life
+  歌手: Pink Floyd
+  专辑: The Division Bell
+  时长: 6分18秒
+【歌词内容】:
+Where
+were you
+when I was burned and broken
+While the days slipped by
+from my window watching
+Where
+were you
+when I was hurt and I was helpless
+Because the things you say and the things you do surround me
+While you were hanging yourself on someone else`s words
+Dying to believe in what you heard
+I was staring straight into the shining sun
+Lost in thought
+and lost in time
+While the seeds of life and the seeds of change were planted
+Outside the rain
+fell dark and slow
+While I pondered on this dangerous but irresistible pastime
+I took a heavenly ride through our silence
+I knew the moment had arrived
+For killing the past and coming back to life
+I took a heavenly ride through our silence
+I knew the waiting had began
+And headed straight ......
+into the shining sun
+
+--------------------------
+【歌曲文件】: Cornfield Chase - Hans Zimmer.lrc
+【基本信息】:
+  歌名: Cornfield Chase
+  歌手: Hans Zimmer
+  专辑: Interstellar (Original Motion Picture Soundtrack) [Expanded Edition]
+  时长: 2分6秒
+【歌词内容】:
+纯音乐，请欣赏
+
+--------------------------
+【歌曲文件】: cough drops - almost monday.lrc
+【基本信息】:
+  歌名: cough drops
+  歌手: almost monday
+  专辑: cough drops
+  时长: 2分43秒
+【歌词内容】:
+Cough drops
+Sticky fingers
+Late starts
+Your perfume lingers from last night
+The feelings
+Burned in my brain
+Come on I know you feel the same
+You taste like
+Lemon and lime
+So sweet baby it’s such a crime sing me like a melody
+Play me like a tambourine
+Tell me were too young to think forever we’ll be 23
+Can we fade out into the night
+Talk about all the things on your mind nothing but a memory
+Falling into jealousy
+I don't think you notice what you did to me
+I miss your cough drops and sticky fingers
+Late starts
+Your Perfume lingers from last night
+The feelings
+Burned in my brain
+Come on I know you feel the same
+Listen
+I know myself and I don't need convincing all I need is you in repetition
+All night and every day
+Come on I know you feel the same
+Come on I know you feel the same way
+You’re a fever
+It’s making me sick
+You’re a vice that I can’t quit
+Smoke me like a cigarette
+Never put you down again
+Fill my lungs with you
+Then stop my heart ‘cause I can’t handle it
+And now I'm on the fault-line
+Just waiting for you to come by
+Baby you left me behind
+And I don't think you notice what you did to me
+I miss your cough drops and sticky fingers
+Late starts
+Your Perfume lingers from last night
+The feelings
+Burned in my brain
+Come on I know you feel the same
+Listen
+I know myself and I don't need convincing all I need is you in repetition
+All night and every day
+Come on I know you feel the same
+Come on I know you feel the same way
+Come on I know you feel the same way
+
+--------------------------
+【歌曲文件】: Counting Stars - Nujabes.lrc
+【基本信息】:
+  歌名: Counting Stars
+  歌手: Nujabes
+  专辑: Kei Nishikori meets Nujabes
+  时长: 4分7秒
+【歌词内容】:
+纯音乐，请欣赏
+
+--------------------------
+【歌曲文件】: Coyotes - Richard Thompson.lrc
+【基本信息】:
+  歌名: Coyotes
+  歌手: Richard Thompson
+  专辑: Music From Grizzly Man
+  时长: 4分28秒
+【歌词内容】:
+Was a cowboy I knew in south Texas,
+His face was burnt deep by the sun,
+Part history, part sage, part mesquit,
+He was there when Poncho Villa was young.
+And he'd tell you a tale of the old days,
+When the country was wild all around,
+Sit out under the stars of the Milky Way,
+And listen while the coyotes howl.
+And they go... hoo yip hoo yip hoo
+hoodi hoo di yip hoo di yip hoo
+hoo yip hoo yip hoo
+hoo di hoo di yip hoo di yip hoo
+Now the long horns are gone,
+And the drovers are gone,
+The Comanches are gone,
+And the outlaws are gone,
+Geronimo is gone,
+And Sam Bass is gone,
+And the lion is gone,
+And the red wolf is gone.
+Well he cursed all the roads and the oil men,
+And he cursed the automobile,
+Said this is no place for an hombre like I am,
+In this new world of asphalt and steel.
+Then he'd look off some place in the distance,
+At something only he could see,
+He'd say all that's left now of the old days,
+Those damned old coyotes and me.
+And they go hoo yip hoo yip hoo
+hoodi hoo di yip hoo di yip hoo
+hoo yip hoo yip hoo
+hoo di hoo di yip hoo di yip hoo
+Now the long horns are gone,
+And the drovers are gone
+The Comanches are gone
+And the outlaws are gone,
+Now Quantro is gone,
+Stan Watie is gone,
+And lion is gone,
+And the red rolf is gone.
+One morning they searched his adobe,
+He disappeared without even a word,
+But that night as the moon crossed the mountain,
+One more coyote was heard.
+And he'd go, hoo yip hoo yip hoo
+hoodi hoo di yip hoo di yip hoo
+hoo yip hoo yip hoo
+hoo di hoo di yip hoo di yip hoo
+hoo yip hoo yip hoo
+hoodi hoo di yip hoo di yip hoo
+hoo yip hoo yip hoo
+hoo di hoo di yip hoo di yip hoo
+
+--------------------------
+【歌曲文件】: Creep - Radiohead.lrc
+【基本信息】:
+  歌名: Creep
+  歌手: Radiohead
+  专辑: Pablo Honey
+  时长: 3分58秒
+【歌词内容】:
+When you were here before
+Couldn't look you in the eye
+You're just like an angel
+Your skin makes me cry
+You float like a feather
+In a beautiful world
+And I wish I was special
+You're so ******' special
+But I'm a creep, I'm a weirdo.
+What the hell am I doing here?
+I don't belong here.
+I don't care if it hurts
+I wanna have control
+I want a perfect body
+I want a perfect soul
+I want you to notice
+When I'm not around
+You're so ******' special
+I wish I was special
+But I'm a creep, I'm a weirdo.
+What the hell am I doing here?
+I don't belong here.
+She's running out again
+She's running out
+She run, run, run, run! Run!
+Whatever makes you happy
+Whatever you want
+You're so ******' special
+I wish I was special
+But I'm a creep, I'm a weirdo,
+What the hell am I doing here?
+I don't belong here.
+I don't belong here.
+
+--------------------------
+【歌曲文件】: Curse the Night - The Raveonettes.lrc
+【基本信息】:
+  歌名: Curse the Night
+  歌手: The Raveonettes
+  专辑: Observator
+  时长: 3分21秒
+【歌词内容】:
+Curse the night 'cause you and I met the end tonight
+Oh dear, oh dear
+Curse the night 'cause you and I met the end tonight
+Oh dear, oh dear
+I took a life 'cause you wanted me to
+I drove all night, just to be with you
+Curse the night 'cause you and I met the end tonight
+Oh dear oh dear
+Curse the night 'cause you and I met the end tonight
+Oh dear, oh dear
+I'm crawling back, wanted things to be the same
+I'm holding on to someone's else's game
+Curse the night 'cause you and I met the end tonight
+Oh dear, oh dear
+Curse the night 'cause you and I met the end tonight
+Oh dear, oh dear
+I cried by day, I drown in your sea
+I wanted you, you didn't want me
+Ooo ooo ooo
+Ooo ooo ooo
+Ooo ooo ooo
+
+--------------------------
+【歌曲文件】: Cut and Dry - Gaoler's Daughter.lrc
+【基本信息】:
+  歌名: Cut and Dry
+  歌手: Gaoler's Daughter
+  专辑: How to Make Time
+  时长: 3分8秒
+【歌词内容】:
+Call me up drunk, anytime,
+call me crying down the telephone.
+If you just need to hear,
+a voice that is near,
+I’ll  be looking out for love.
+And if you ever need to see,
+how deep the bullet lies,
+just take a look to the sea,
+see the waves reach me,
+I’ll  be looking out for love.
+See the river overflow,
+see the water start to rise,
+see your feet get wet,
+it’llrise to your neck,
+I’llbe looking out for love.
+People aren’t just good or bad,
+but things they do are cut and dry.
+I pride myself on this sense,
+on your side of the fence,
+I’ll  be looking out for love.
+Call me up drunk, anytime,
+call me crying down the telephone.
+If you just need to hear,
+a voice that is near,
+I’ll  be looking out for love.
+
+--------------------------
+【歌曲文件】: Daisy - Delorians.lrc
+【基本信息】:
+  歌名: Daisy
+  歌手: Delorians
+  专辑: Daisy
+  时长: 3分6秒
+【歌词内容】:
+The day I saw you in the corner
+With your dirty shoe
+Then you put your apron on
+And theres a long line waiting for you
+What can I do for you?
+She said in front of my face oh I couldn't breath
+That sweet smile in your face
+But I know that you're just tryna be nice to me
+Daisy, Daisy
+You gave me a hazy feeling lately
+Can you stay with me?
+Along with the sweetest latte you came
+Through
+Stay by my side
+No more feeling
+Blue
+You make things right
+Daisy I love you
+Sittin on my table far
+But my eyes got fixed on you
+I've only seen you twice in my life
+But my mind is all over you
+And when you came up to me
+With a coffee in your hands oh I really see it
+That you were meant for me
+But I didn't have the guts to ask your IG
+Daisy, Daisy
+You gave me a hazy feeling lately
+Can you stay with me?
+Along with the sweetest latte you came
+Through
+Stay by my side
+No more feeling
+Blue
+You make things right
+Daisy I love you
+Daisy, Daisy
+You gave me a hazy feeling lately
+Can you stay with me?
+Along with the sweetest latte you came
+Through
+Stay by my side
+No more feeling
+Blue
+You make things right
+Daisy I love you
+
+--------------------------
+【歌曲文件】: Dance With Somebody (Live) - Mando Diao.lrc
+【基本信息】:
+  歌名: Dance With Somebody (Live)
+  歌手: Mando Diao
+  专辑: Above And Beyond
+  时长: 4分59秒
+【歌词内容】:
+break your happy home
+learn to sing alone
+to the music, to the music
+clap your hands and shake
+on a summers day
+to the music, to the music
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+music
+when you're all alone
+we become your home
+where the music, where the music
+when you love's away, and you feel betrayed
+we're the music, sweet music
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+music
+dance,
+dance,
+dance
+dance
+dance
+dance
+dance
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+i'm gonna dance with somebody
+dance with somebody
+dance, dance, dance
+i'm falling in love with your favourite song
+i'm gonna sing it all night long
+end
+
+--------------------------
+【歌曲文件】: Dance Yrself Clean - LCD Soundsystem.lrc
+【基本信息】:
+  歌名: Dance Yrself Clean
+  歌手: LCD Soundsystem
+  专辑: This Is Happening
+  时长: 8分56秒
+【歌词内容】:
+walking up to me expecting
+walking up to me expecting words
+it happens all the time
+present company excepted:
+present company, except the worst...
+it happens every night,
+present company excluded every time.
+present company: the best that you can find,
+talking like a jerk except you are an actual jerk
+and living proof, that sometimes friends are mean,
+present company expect it,
+present company just laugh it off...
+it's better than it seems,
+present company excluded in every way,
+present company makes me want to stay
+go,
+killing it with close inspection.
+killing it can only make it worse,
+it sort of makes it breed,
+present company accepting.
+presently we all expect the worst,
+it works just like a need.
+present company excluded in the night,
+present company included in the fight,
+don't you want me to wake up?
+then give me just a bit of your time.
+arguments are made for make-ups,
+so give it just a little more time.
+we've got to bring the resources,
+i'm gonna play until the time comes,
+forget your string of divorces,
+just go and throw your little hands up.
+it's late,
+honey it's late
+i miss the way the night goes,
+with friends who always make it feel good,
+this basement has a cold glow,
+though it's better than a bunch of others...
+so go and dance yourself clean,
+go and dance yourself clean, yeah,
+you're blowing marxism to pieces,
+their little arguments to pieces,
+show.
+it's your show.
+it's your show.
+it's your show.
+it's your show.
+put your little feet down and hang out.
+every night's a different story,
+it's a 30-car pile-up with you,
+everybody's getting younger...
+It's the end of an era-
+it's true.
+and you go:
+stop
+stop
+stop
+stop
+stop
+stop
+stop
+stop, stop, stop (stop)
+break me into bigger pieces,
+so some of me is home with you,
+wait until the weekend
+and we can make our bad dreams come true
+and it's a go,
+yeah it's a go,
+and if we wait until the weekend,
+we could miss the best things to do,
+go and dance yourself clean,
+gotta dance yourself clean, yeah
+and blow the marxists into pieces
+their little argument to pieces,
+wish you'd try a little harder,
+in the tedious march of the few,
+every day a different warning,
+there's part of me hoping it's true
+
+--------------------------
+【歌曲文件】: Dancehall - Tribes.lrc
+【基本信息】:
+  歌名: Dancehall
+  歌手: Tribes
+  专辑: Wish to Scream
+  时长: 3分9秒
+【歌词内容】:
+She's a gypsy queen real tall and mean
+She's an airplane no one's ever seen
+She's a firecracker real dancehall master
+She's a hurricane when you walk past her
+She's the morning sun in the midnight wind
+She'd sell her soul for all her sins
+She'll come right at you real Cleopatra
+You take all you got and you give it to her
+Did you see that lightning in the sky
+A window to my mind
+It leaves me hypnotized
+Somewhere better
+Did you feel that thunder hit last night
+A poison in my mind
+It leaves me hypnotized
+Somewhere better
+She's a striptease real hard to please
+She'll cheer you up bring you to your knees
+She's a movie star fast sports car
+She's a razor blade she'll take you far
+She's the ocean's cool and your midnight ride
+She's a devil's church and a preacher's wife
+She'll come right at you real Cleopatra
+You take all you got and you give it to her
+Did you see that lightning in the sky
+A window to my mind
+It leaves me hypnotized
+Somewhere better
+Did you feel that thunder hit last night
+A poison in my mind
+It leaves me hypnotized
+Somewhere better
+I don't care for dancing
+but thanks for asking
+Did you see that lightning in the sky
+A window to my mind
+It leaves me hypnotized
+Somewhere better
+Did you feel that thunder hit last night
+A poison in my mind
+It leaves me hypnotized
+Somewhere better
+
+--------------------------
+【歌曲文件】: Darkness Of The Day - Isaac Gracie.lrc
+【基本信息】:
+  歌名: Darkness Of The Day
+  歌手: Isaac Gracie
+  专辑: Songs From My Bedroom
+  时长: 4分8秒
+【歌词内容】:
+Shadows converging in my mind
+All of the love I've left behind
+Drifting into cloudy skies
+Getting lost behind your eyes
+But now my dreams they come alive
+With your kisses I remember
+All those lonely lonely nights
+We got  caught out in a rain
+Was our love a work of art
+Before the painting fell apart
+What was that I heard you say
+It's just the darkness of the day
+And were we better at the start
+Before I offered you my heart
+Before the demons came into play
+Within the darkness of the day
+And how can I be so afraid
+The broken promises I made
+Now I watch your memory fade into the darkness of the day
+Sinking into isolation
+Searching for a motivation
+Cuz love is not an occupation
+Just a shelter from the rain
+Staring out my bedroom window
+Thinking baby are you there
+Staring out your bedroom window
+Baby do you even care
+Was our love a work of art
+Before the painting fell apart
+What was that I long to say
+It's just the darkness of the day
+And were we better at the start
+Before I offered you my heart
+Before the demons came into play
+within the darkness of the day
+And how can I be so afraid
+The broken promises I made
+Now I watch your memory fade into the darkness of the day
+And how can I be so afraid
+Broken promises we made
+Now I watch your memory fade into the darkness of the day
+It's just the darkness of the day
+Only the darkness of the day
+Only the darkness of the day
+
+--------------------------
+【歌曲文件】: Dazed and Confused (Remaster) - Led Zeppelin.lrc
+【基本信息】:
+  歌名: Dazed and Confused (Remaster)
+  歌手: Led Zeppelin
+  专辑: Mothership
+  时长: 6分28秒
+【歌词内容】:
+Been Dazed and Confused for so long it's not true,
+Wanted a woman, never bargained for you.
+Lots of people talk and few of them know,
+Soul of a woman was created below. Yeah!
+You hurt and abused tellin' all of your lies,
+Run around sweet baby, Lord how they hypnotize.
+Sweet little baby, I don't know where you've been,
+Gonna love you baby, here I come again.
+Every day I work so hard
+Bringin' home my hard earned pay
+Try to love you baby, but you push me away.
+Don't know where you're goin'
+Only know just where you've been,
+Sweet little baby, I want you again.
+Been dazed and confused for so long, it's not true,
+Wanted a woman, never bargained for you.
+Take it easy baby, let them say what they will.
+Will your tongue wag so much when I send you the bill?
+
+--------------------------
+【歌曲文件】: Dead! - My Chemical Romance.lrc
+【基本信息】:
+  歌名: Dead!
+  歌手: My Chemical Romance
+  专辑: The Black Parade
+  时长: 3分15秒
+【歌词内容】:
+And if your heart stops beating
+I'll be there wondering
+Did you get what you deserve?
+The ending of your life
+And if you get to Heaven
+I'll be here waiting, baby
+Did you get what you deserve?
+The end and if your life won't wait
+Then your heart can't take this
+Have you heard the news that you're dead
+No one ever had much nice to say
+I think they never liked you anyway
+Oh take
+Me from the hospital bed
+Wouldn't it be grand
+It ain't exactly what you planned
+And wouldn't it be great if
+We were dead
+Oh Dead!
+Tongue-tied and oh so squeamish
+You never fell in love
+Did you get what you deserve?
+The ending of your life
+And if we get to Heaven
+I'll be here waiting, babe
+Did you get what you deserve?
+The end and if  your life won't wait
+Then your heart can't take this
+Have you heard the news that you're dead
+No one ever had much nice to say
+I think I never liked you anyway
+Oh take
+Me from the hospital bed
+Wouldn't it be grand to
+take a pistol by the hand
+And wouldn't it be great if
+We were dead
+And in my honest observation
+During this operation
+Found a complication
+In your heart, so long
+Cause now you've got
+Maybe just two weeks to live
+Is that the most the both of you can give?
+One, Two, One Two Three Four
+La la la la la,
+La la la la la,
+La la la la la,
+La la la la la,
+La la la la la,
+La la la la la,
+If life ain't just a joke
+Then why are we laughing?
+Ain't just a joke
+Then why are we laughing?
+Ain't just a joke
+Then why are we laughing?
+If life ain't just a joke
+Then why am I dead?
+Dead!
+
+--------------------------
+【歌曲文件】: Death II - Pulp.lrc
+【基本信息】:
+  歌名: Death II
+  歌手: Pulp
+  专辑: Separations
+  时长: 5分36秒
+【歌词内容】:
+Hey, oh, now the lonely nights begin
+And there is nowhere left to go
+But watch my spirit melt away
+Down at the D-I-S-C-O
+I must have died a thousand times
+The next day, I was still alive
+And I still believe in you
+Yes, I do
+Let's do it now
+No, I was not crushed, I did not cry
+You know that everything's O.K
+It's just sometimes I wake at night
+All alone and see your face
+Oh, thousands feel the same
+But the nighttime falls away
+Oh no, but still sometimes I feel
+Oh, sometimes I feel like Jesus Christ now
+Hey, I feel this night will never end
+And I will never see the day
+Oh, I was nothing when you came
+I'm no-one now you've gone away
+Oh, all I do is just O.K
+All of my nights and all of my days
+Oh-oh, if you came home right now
+I'd run away, I'd run away now
+O.K. now
+Alright
+You can go out and make love to whoever
+Or whatever you like, babe
+So I go out and fill my eyes with other women
+Oh, they look good to me and I think that I might kiss them
+Oh, now it's two a.m. and I'm still stood here waiting
+So I go home and wonder why I bothered going
+Yeah, every week turns out the same
+The sun, the wind, the snow, the rain
+Oh no, but still sometimes I feel
+Oh, sometimes I feel like Jesus Christ now
+Hey, I feel this night will never end
+And I will never see the day
+Oh, I was nothing when you came
+I'm no-one now you've gone away
+Oh, all I do is just O.K
+All of my nights, and all of my days
+Oh-oh, if you came home right now
+I'd run away
+I can't believe it
+I can't remember your face anymore
+Or the sound of your voice, oh
+Or any touch of your skin is a legend
+By the way, did I tell you that I love you?
+Oh, if I didn't, I'm so sorry
+You know I, I really, I really meant to tell you
+It's O.K., there's no need to hurry
+But the bed is full of memories, full of memories of you
+Oh, I tried to get them out but, but there's nothing I can do
+Oh, if I knew the moon I'd ask him
+Shine his light in through your window
+And send your body home to me today, hey
+Hey, I feel this night will never end
+And I will never see the day
+Oh, I was nothing when you came
+I'm no-one now you've gone away
+Oh, all I do is just O.K
+All of my nights, and all of my days
+Oh-oh, if you came home right now
+I'd run away, run away
+Run away
+
+--------------------------
+【歌曲文件】: Deceptacon - Le Tigre.lrc
+【基本信息】:
+  歌名: Deceptacon
+  歌手: Le Tigre
+  专辑: Le Tigre
+  时长: 3分4秒
+【歌词内容】:
+Who took the bomb?
+Every day and night
+Every day and night
+I can see your disco, disco
+**** is sucking my heart out of my mind
+I'm outta time,
+I'm outta ****ing tim
+I'm a gasoline gut with a vaseline mind but
+Wanna disco?
+Wanna see me disco?
+Let me hear you depoliticize my rhyme
+One! Two!
+Three! Four!
+You got what you been asking for
+You're so policy free and fantasy wheels
+And everything you think and everything you feel is
+Alright, alright, alright, alright, alright
+I take you home now watch me get you hot
+You're just a parrot when you're screaming and you're shouting"More crackers please! More crackers please!"
+You want what you want but you don't wanna be on your knees
+Who does your, who does your hair?
+Who took the bomp from the bompalompalomp?
+Who took the ram from the ramalamadingdong?
+Who took the bomp from the bompalompalomp?
+Who took the ram from the ramalamadingdong?
+How are you?
+Fine, thank you
+How are you?
+Fine, thank you
+You bought a new van the first year of your band
+You're cool and
+I hardly wanna say, "Not", because
+I'm so bored
+That'd I'd be entertained even by a stupid floor
+A linoleum floor, linoleum floor
+Your lyrics are dumb like a linoleum floor
+I'll walk on it,
+I'll walk all over you
+Walk on it, walk on it, walking one, two
+Who?Who?Who?
+Who took the bomp from the bompalompalomp?
+Who took the ram from the ramalamadingdong?
+Who took the bomp from the bompalompalomp?
+Who took the ram from the ramalamadingdong?
+See you later
+See you later
+See you later
+See you later
+
+--------------------------
+【歌曲文件】: Depuis L Automne - Harmonium.lrc
+【基本信息】:
+  歌名: Depuis L Automne
+  歌手: Harmonium
+  专辑: Si On Avait Besoin d'une Cinquième Saison
+  时长: 10分25秒
+【歌词内容】:
+Une chanson pour ici
+Pour nous dire qu'on a refroidi
+Une chanson en souvenir
+Du temps qu'on voulait détruire
+Un accord qui nous donne
+Ce qu'on attend depuis l'automne
+Quand y'a pus rien à personne
+Une chanson juste pour toi
+Juste pour me dire grouille toi
+Une chanson pour m'haïr
+Parce que j'ai pus rien à dire
+Rien dire cet automne
+Quand y serait temps qu'on frissonne
+Parce qu'y a pus rien a personne
+On voulait chanter dans la rue
+Pour être moins perdus
+Pis c'est la rue qu'on a perdue
+Une chanson par ici
+On n'a besoin ces temps-ci
+Une chanson à retenir
+Comme on retient nos désirs
+Va falloir qu'a soit bonne
+Si on veut passer l'automne
+Sans que rien manque à personne
+Une chanson d'un parti
+Qui fait pus partie d'ici
+Une chanson pour repartir
+Loin du grand musée de cire
+Excuse-moi de casser ton fun
+Mais je me cherche une rime pour automne
+Qui rime rien ni personne
+Depuis que je sais ma terre est moi
+L'autre y est en calvaire
+Ben calvaire on va s'enterrer
+Si c'est un rêve réveille-moi donc
+Ça va être notre tour ça sera pas long
+Reste par icitte parce que ça s'en vient
+Si c'est un rêve réveille-moi donc
+Reste par icitte parce que ça s'en vient
+Reste par icitte parce que ça s'en vient
+Si c'est un rêve réveille-moi donc
+Reste par icitte parce que ça s'en vient
+Reste par icitte parce que ça s'en vient
+Si c'est un rêve réveille-moi donc
+Reste par icitte parce que ça s'en vient
+Reste par icitte parce que ça s'en vient
+Si c'est un rêve réveille-moi donc
+Reste par icitte parce que ça s'en vient
+Reste par icitte parce que ça s'en vient
+Si c'est un rêve réveille-moi donc
+Reste par icitte parce que ça s'en vient
+Reste par icitte parce que ça s'en vient
+
+--------------------------
+【歌曲文件】: Devastate Me - Rachael Yamagata.lrc
+【基本信息】:
+  歌名: Devastate Me
+  歌手: Rachael Yamagata
+  专辑: The Noise Trade Loft Sessions Mixtape and More
+  时长: 4分21秒
+【歌词内容】:
+Hey they say you devastate.
+And I'm going to back them up.
+I was warned, wasn't I?
+Warned, wasn't I about you?
+Lay so low.
+Just lay real low，
+When he wanders off no one will know.
+I was warned, wasn't I?
+Warned wasn't I?
+Warned wasn't I about it?
+But I don't listen well to anyone but you.
+And what I should've known is never what I'll do.
+So come on, baby, devastate me.
+Leave me hanging and waiting.
+Come on baby, devastate me.
+Get me just where you never wanted me,
+Then run, run, run away.
+Oh, run, run, run away.
+Run away.
+Blame they say, so paper mache.
+Taking time to settle in.
+Oh when we started, so half-hearted,
+Weren't you?
+Just let him be, they say, just let him be.
+Can't you see he's a broken man?
+Not fit to fight,
+For wrong or right.
+When it comes to you.
+But I don't listen well to anyone but him.
+And when he said I loved you,
+I thought we could begin.
+So come on, baby, devastate me.
+Leave me hanging and waiting.
+Come on baby, devastate me.
+Get me just where you never wanted me,
+Then run, run, run away.
+Oh, run, run, run, run away.
+Oh, run, run, run, run away.
+Oh, run, run,run, run away.
+Run away.
+Run, run, run, run away.
+
+--------------------------
+【歌曲文件】: dinosaurs - Corn Wave.lrc
+【基本信息】:
+  歌名: dinosaurs
+  歌手: Corn Wave
+  专辑: old releases
+  时长: 3分26秒
+【歌词内容】:
+All this dinosaurs
+is gonna get a crucial extinction
+But now they are all with mine
+Self-employing childish ambition
+All along my weekend day
+I'll be watching tv in way
+When I will be ten years old
+None of my dinosaurs are told
+Turn your eye from my render program
+I don't want to be slain by you
+So delete your number
+from my Xbox friendlist
+And do whatever you want to do
+
+--------------------------
+【歌曲文件】: Dissolve (acoustic) - Absofacto，NiteShift.lrc
+【基本信息】:
+  歌名: Dissolve (acoustic)
+  歌手: Absofacto，NiteShift
+  专辑: Dissolve (acoustic)
+  时长: 2分48秒
+【歌词内容】:
+No flask can keep it
+Bubble up and cut right through
+But you're someone I believe in
+You heat me like a filament
+Anytime you're in the room
+But you burned me and i'm smoking
+I just wanted you to watch me dissolve
+Slowly
+In a pool full of your love
+But i don't even know how the chemistry works
+When you're poolside
+Kicking in the dirt
+Kicking in the sand
+And stirring up trouble
+Can't find an exit
+I wander in a maze alone
+If i find you will you shock me?
+Left left and right right
+Pretty sure that i've been here before
+And it isn't what i wanted
+I just wanted you to watch me dissolve
+Slowly
+In a pool full of your love
+But i don't even know how the chemistry works
+When you're poolside
+Kicking in the dirt
+Kicking in the sand
+And stirring up trouble
+Your voice like an angel
+Been chain smoking all month long
+Like you're someone i believe in
+Am i only a lab rat?
+Someone you can test things on?
+This isn't what i signed up for
+I just wanted you to
+I just wanted wanted
+I just wanted you to
+I just wanted wanted
+I just wanted you to watch me dissolve
+Slowly
+In a pool full of your love
+But i don't even know how the chemistry works
+When you're poolside
+Kicking in the dirt
+Kicking in the sand
+And stirring up trouble
+
+--------------------------
+【歌曲文件】: Distance - 伍々慧.lrc
+【基本信息】:
+  歌名: Distance
+  歌手: 伍々慧
+  专辑: Bedtime Story
+  时长: 5分9秒
+【歌词内容】:
+纯音乐，请欣赏
+
+--------------------------
+【歌曲文件】: Don't Call - Desire.lrc
+【基本信息】:
+  歌名: Don't Call
+  歌手: Desire
+  专辑: II
+  时长: 4分34秒
+【歌词内容】:
+[01:13]You're gone
+[01:15]And babe that's a good thing
+[01:22]I'm still here
+[01:24]And looking for something
+[01:31]To come along, to come along
+[01:39]I know, I know
+[01:42]We both say the same things
+[01:48]I don't care, I don't care about winning
+[01:56]So don't call, don't call
+[01:59]To talk about nothing
+[02:05]So many times I waited for you
+[02:13]I figured it out
+[02:15]And now we're through
+[02:22]I wont give up, I wont give in
+[02:30]I know, I know
+[02:33]We both say the same things
+[02:39]I don't care, I don't care about winning
+[02:47]So don't call, don't call
+[02:50]To talk about nothing
+[03:34]You're gone
+[03:36]And babe that's a good thing
+[03:43]I've spent my days working for something
+[03:51]We don't give up, we don't give in
+[04:00]I know, I know
+[04:02]We both say the same things
+[04:09]I don't care, I don't care about winning
+[04:16]So don't call, don't call
+[04:19]To talk about nothing
+
+--------------------------
+【歌曲文件】: Don't Delete The Kisses - Wolf Alice.lrc
+【基本信息】:
+  歌名: Don't Delete The Kisses
+  歌手: Wolf Alice
+  专辑: Visions Of A Life
+  时长: 4分35秒
+【歌词内容】:
+I see the signs of a lifetime, you 'til I die
+And I'm swiftly out, Irish goodbye
+What if it's not meant for me?
+Love
+What if it's not meant for me?
+Love
+I'd like to get to know you
+I'd like to take you out
+We'd go to The Hell Mary
+And afterwards make out
+Instead I'm typing you a message
+That I know I'll never send
+Rewriting old excuses
+Delete the kisses at the end
+When I see you, the whole world reduces
+To just that room
+And then I remember and I'm shy
+That gossip's eye will look too soon
+And then I'm trapped, overthinking
+And yeah, probably self-doubt
+You tell me to get over it
+And to take you out
+But I can't, I'm too scared
+And there's the night-bus, I have to go
+And the doors are closing and you were waving
+And I like you, and I'll never let it show
+And you won't wait and maybe I won't mind
+I work better on my own
+And now I'm home, a little bit drunk
+And I ask myself
+What if it's not meant for me?
+Love
+What if it's not meant for me?
+Love
+A few days pass since I last saw you
+And you have taken over my mind
+I'm re-telling jokes you made that made me laugh
+Pretending that they're mine
+I wanna tell the whole world about you
+I think that that's a sign
+I'm losing self control and it's you
+It really is, one thousand times
+I look at your picture and I smile
+How awful's that? I'm like a teenage girl
+I might as well write all over my notebook
+That you 'rock my world!'
+You do, you really do
+You've turned me upside down
+And that's okay, I'll let it happen
+'Cause I like having you around
+I'm electric! A romantic cliché!
+And they really are all true
+When we catch eyes at that stupid party
+I know exactly what to do
+I'll take your hand, and we will leave
+French exit form me and you
+And now I'm home, a little bit drunk
+Some things don't change
+And I know now
+Me and you were meant to be
+In love
+Me and you were meant to be
+In love
+Me and you
+I see the signs of a lifetime, you 'til I die
+
+--------------------------
+【歌曲文件】: Don't Fade Away - Beach Fossils.lrc
+【基本信息】:
+  歌名: Don't Fade Away
+  歌手: Beach Fossils
+  专辑: Don't Fade Away
+  时长: 3分22秒
+【歌词内容】:
+The city hasn't felt the same
+Since you moved away
+Man, we had some days
+Wonder if you found your way
+I can't wait 'till I'm coming back
+Out on tour just finished this pack of cigarettes
+And I don't even smoke
+She's novocaine
+It's all I need
+To ease the pain
+Don't fade away
+I know you know anyway
+Said something funny
+But you didn't hear me
+Almost said it again more clearly
+But it's over
+Then you pulled me close
+Last night said we'd both be sober
+Riding my bike in the morning
+I'm still hungover
+Is this a meaningful moment
+She's novocaine
+It's all I need
+To ease the pain
+Don't fade away
+I know you know anyway
+I'll go down
+I'll go down
+I'll go down
+I'll go down
+I'll go down
+I'll go down
+I'll go down
+She's novocaine
+It's all I need
+To ease the pain
+Don't fade away
+I know you know anyway
+
+--------------------------
+【歌曲文件】: Don't Look Back In Anger - Oasis.lrc
+【基本信息】:
+  歌名: Don't Look Back In Anger
+  歌手: Oasis
+  专辑: Don't Look Back In Anger
+  时长: 4分47秒
+【歌词内容】:
+Slip inside the eye of your mind
+Don't you know you might find
+A better place to play
+You said that you'd never been
+But all the things that you've seen
+Slowly fade away
+So I'll start a revolution from my bed
+'Cause you said the brains I had went to my head
+Step outside, summertime's in bloom
+Stand up beside the fireplace
+Take that look from off your face
+You ain't ever gonna burn my heart out
+And So Sally can wait, she knows it's too late as we're walking on by
+Her soul slides away, but don't look back in anger I heard you say
+Take me to the place where you go
+Where nobody knows if it's night or day
+Please don't put your life in the hands
+Of a Rock n Roll band
+Who'll throw it all away
+I'll gonna start a revolution from my bed
+'Cause you said the brains I had went to my head
+Step outside the summertime's in bloom
+Stand up beside the fireplace
+Take that look from off your face
+'Cause you ain't ever gonna burn my heart out
+So Sally can wait, she knows it's too late as she's walking on by
+My soul slides away, but don't look back in anger I heard you say
+So Sally can wait, she knows it's too late as we're walking on by
+Her soul slides away, but don't look back in anger I heard you say
+So Sally can wait, she knows it's too late as she's walking on by
+My soul slides away, but don't look back in anger, don't look back in anger, I heard you say
+At least not today
+
+--------------------------
+【歌曲文件】: Don't Look Back In Anger - 羊毛とおはな.lrc
+【基本信息】:
+  歌名: Don't Look Back In Anger
+  歌手: 羊毛とおはな
+  专辑: LIVE IN LIVING for Good Night
+  时长: 4分57秒
+【歌词内容】:
+Slip inside the eye of your mind
+Don't you know you might find
+A better place to play
+You said that you'd never been
+But all the things that you've seen
+They slowly fade away
+So I start a revolution from my bed
+'Cause you said the brains I had went to my head
+Step outside the summertime's in bloom
+[00:53.0]Stand up beside the fireplace
+Take that look from off your face
+You ain't ever gonna burn my heart out
+And so Sally can wait
+She knows it's too late as we're walking on by
+Her soul slides away
+But don't look back in anger I heard you say
+Take me to the place where you go
+Where nobody knows if it's night or day
+Please don't put your life in the hands
+Of a Rock 'n' Roll band
+Who'll throw it all away
+I'm gonna start a revolution from my bed
+'Cause you said the brains
+I had went to my head
+Step outside 'cause summertime's in bloom
+Stand up beside the fireplace
+Take that look from off your face
+'Cause you ain't ever gonna burn my heart out
+And so Sally can wait
+She knows it's too late as she's walking on by
+My soul slides away
+But don't look back in anger I heard you say
+And so Sally can wait
+She knows it's too late as we're walking on by
+Her soul slides away
+But don't look back in anger I heard you say
+And so Sally can wait
+She knows it's too late as she's walking on by
+My soul slides away
+But don't look back in anger
+Don't look back in anger
+I heard you say
+At least not today
+
+--------------------------
+【歌曲文件】: Dream A Little Dream Of Me - Ella Fitzgerald，Louis Armstrong.lrc
+【基本信息】:
+  歌名: Dream A Little Dream Of Me
+  歌手: Ella Fitzgerald，Louis Armstrong
+  专辑: Ella & Friends
+  时长: 3分7秒
+【歌词内容】:
+[Ella (Improvisation)]
+Stars shining bright above you
+Night breezes seem to whisper "I love you"
+Birds singing in the sycamore tree
+Dream a little dream of me
+Say "Nighty-night" and kiss me
+Just hold me tight and tell me you'll miss me
+While I'm alone and blue as can be
+Dream a little dream of me
+[Louis]Stars fading but I linger on dear
+[Ella]Oh how you linger on
+[Louis]Still craving your kiss
+[Ella]How you crave my kiss
+[Louis]Now I'm longin' to linger till dawn dear
+Just saying this
+[Ella]Give me a little kiss
+Sweet dreams till sunbeams find you
+Sweet dreams that leave all worries behind you
+But in your dreams, whatever they be
+Dream a little dream of me
+[Louis (Improvisation)]
+Stars fading but I linger on dear
+Still craving your kiss
+Yeah, I'm longing to linger till dawn dear
+Just saying this, yes
+[Ella & Louis]Sweet dreams
+[Louis]Dreamin'
+[Ella]Till sunbeams find you
+Keep dreaming
+[Louis]Gotta keep dreamin'
+[Ella]Leave your worries far behind you
+[Ella & Louis]But in your dreams, whatever they be
+[Ella]You gotta make me a promise
+Promise to me you'll dream
+Dream a little dream of me
+
+--------------------------
+【歌曲文件】: Dreamer - Ozzy Osbourne.lrc
+【基本信息】:
+  歌名: Dreamer
+  歌手: Ozzy Osbourne
+  专辑: In My Life
+  时长: 4分46秒
+【歌词内容】:
+Dreamer
+Artist（Band）:Ozzy Osbourne
+Gazing through the window at the world outside
+Wondering will mother earth survive
+Hoping that mankind will stop abusing her sometime
+After all there's only just the two of us
+And here we are still fighting for our lives
+Watching all of history repeat itself
+Time after time
+I'm just a dreamer
+I dream my life away
+I'm just a dreamer
+Who dreams of better days
+I watch the sun go down like everyone of us
+I'm hoping that the dawn will bring a sign
+A better place for those Who will come after us ...
+This time
+I'm just a dreamer
+I dream my life away oh yeah
+I'm just a dreamer
+Who dreams of better days
+Your higher power may be God or Jesus Christ
+It doesn't really matter much to me
+Without each others help there ain't no hope for us
+I'm living in a dream of fantasy
+Oh yeah, yeah, yeah
+If only we could all just find serenity
+It would be nice if we could live as one
+When will all this anger, hate and bigotry ...
+Be gone?
+I'm just a dreamer
+I dream my life away
+Today
+I'm just a dreamer
+Who dreams of better days
+Okay
+I'm just a dreamer
+Who's searching for the way
+Today
+I'm just a dreamer
+Dreaming my life away
+Oh yeah, yeah, yeah
+
+--------------------------
+【歌曲文件】: Dreams - The Cranberries.lrc
+【基本信息】:
+  歌名: Dreams
+  歌手: The Cranberries
+  专辑: Stars: The Best of 1992-2002
+  时长: 4分15秒
+【歌词内容】:
+Oh, my life is changing everyday,
+In every possible way.
+And oh, my dreams,
+it's never quite as it seems,
+Never quite as it seems.
+I know I've felt like this before,
+but now I'm feeling it even more,
+Because it came from you.
+And then I open up and see
+the person falling here is me,
+A different way to be.
+Ah, la da ah...
+La...
+I want more impossible to ignore,
+Impossible to ignore.
+And they'll come true,
+impossible not to do,
+Impossible not to do.
+And now I tell you openly,
+you have my heart so don't hurt me.
+You're what I couldn't find.
+A totally amazing mind,
+so understanding and so kind;
+You're everything to me.
+Oh, my life,
+Is changing every day,
+In every possible way.
+And oh, my dreams,
+It's never quiet as it seems,
+'Cause you're a dream to me,
+Dream to me.
+Ah, da, da da da, da, la...
+Ah, da, da da da, da, la...
+Ah, da, da da da, da, la...
+Ah, da, da da da, da, la...
+
+--------------------------
+【歌曲文件】: Drowning - Stereophonics.lrc
+【基本信息】:
+  歌名: Drowning
+  歌手: Stereophonics
+  专辑: Pull The Pin
+  时长: 5分8秒
+【歌词内容】:
+I dont know why
+I dont know what is wrong
+Oh no
+Is karma gonna get me?
+At times that's all I see
+It's not real
+Wanna feel
+Wanna feel, like I did before
+Mornings I cant breathe
+Wave crashes over me
+And drowns me
+Minds running rings around me
+It takes me time to see
+What is real?
+Wanna feel
+Wanna feel
+Like I did before
+Like I did before
+Time changes things
+Like I never thought
+Like I never saw?
+Time changes me
+I'm like I never was
+Oh no
+I'm looking back to what I was
+I've seen my face right on the floor
+And I love you, being around
+I say it again, I'm not ******* around
+I've seen it before
+I'll see it again
+It's knocking my door
+And it never pretends
+I'm down on my knees
+And I dont know where to go
+to find my way back home
+I'm drowning
+I'm drowning
+I'm drowning
+I'm drowning
+END
+
+--------------------------
+【歌曲文件】: Duet - Rachael Yamagata.lrc
+【基本信息】:
+  歌名: Duet
+  歌手: Rachael Yamagata
+  专辑: Elephants...Teeth Sinking Into Heart (Standard Version)
+  时长: 4分1秒
+【歌词内容】:
+Oh, lover, hold on
+'Till I come
+Back again
+For these arms
+Are growing tired
+And my tales
+Are wearing thin
+If you're patient
+I will surprise
+When you wake up
+I'll have come
+All the anger will
+Settle down
+And we'll go do
+All the things we should have done
+'Cause I remember what we said
+As we lay down to bed
+"I'll be here, if you would only come back home"
+Oh, lover, I'm lost
+Because the road I've chosen
+Beckons me away
+Oh, lover, don't you roam
+Now I'm fighting words
+I never thought I'd say
+But I remember what we said
+As we lay down to bed
+"I'll forgive you all, if you'll just come back home"
+Oh, lover, I'm old
+You'll be out there
+And be thinking just of me
+And I will find you
+Down the road
+We'll return back home
+To where we're meant to be
+'Cause I remember what we said
+As we lay down to bed
+"We'll be back as soon as we make history"
+End
+
+--------------------------
+【歌曲文件】: Duvet - Bôa.lrc
+【基本信息】:
+  歌名: Duvet
+  歌手: Bôa
+  专辑: Twilight
+  时长: 3分23秒
+【歌词内容】:
+And you don't seem to understand
+A shame you seemed an honest man
+And all the fears you hold so dear
+Will turn to whisper in your ear
+And you know what they say might hurt you
+And you know that it means so much
+And you don't even feel a thing
+I am falling, I am fading,
+I have lost it all
+And you don't seem the lying kind
+A shame then I can read your mind
+And all the things that I read there
+Candle lit smile that we both share
+And you know I don't mean to hurt you
+But you know that it means so much
+And you don't even feel a thing
+I am falling, I am fading,
+I am drowning,
+Help me to breathe
+I am hurting,I have lost it all
+I am losing
+Help me to breathe
+I am falling, I am fading,
+I am drowning,
+Help me to breathe
+I am hurting,I have lost it all
+I am losing
+Help me to breathe
+I am falling, I am fading,
+I am drowning,
+Help me to breathe
+I am hurting,I have lost it all
+I am losing
+Help me to breathe
+
+--------------------------
+【歌曲文件】: Early to Bed - Morphine.lrc
+【基本信息】:
+  歌名: Early to Bed
+  歌手: Morphine
+  专辑: Like Swimming
+  时长: 2分57秒
+【歌词内容】:
+Early to bed and early to rise
+Makes a man or woman
+Miss out on the nightlife
+Early to bed and early to rise
+Makes a man or woman
+Miss out on the nightlife
+One drink, call it an early night
+Soon you're curled up beneath the reading light
+Or you bathe in the TV's blue tint
+On your pillow an after-dinner mint
+Early to bed and early to rise
+Makes a man or woman
+Miss out on the nightlife
+Early to bed and early to rise
+Makes a man or woman
+Miss out on the nightlife
+Early to bed so you can wait
+For three buses, a trolley and a train
+I think it's worth it for you to stay awake
+Maybe tomorrow you'll be a little late
+But early to bed and early to rise
+Makes a man or woman
+Miss out on the nightlife
+Early to bed and early to rise
+Makes a man or woman
+Miss out on the nightlife
+You'll miss out on the night life
+You'll miss out on the night life
+
+--------------------------
+【歌曲文件】: Easy Money - Karmin.lrc
+【基本信息】:
+  歌名: Easy Money
+  歌手: Karmin
+  专辑: Leo Rising
+  时长: 3分35秒
+【歌词内容】:
+Sold my soul by the minute
+Hardly keeping track of where my time went
+How come all of my paychecks
+Never seem to get me through the weekend?
+Yeah, I think I'm made for the easy life
+I tried to buy into it, but my credit declined
+I want this dream that they advertise
+So start stacking it up
+I just wanna make easy money
+Easy money, my love
+A couple commas, that would sure be fun
+Yeah, start raking it in
+I just wanna make easy money
+Easy money, my friend
+Come fill my bank account with happiness alright
+I'd be down with a short cut
+Somebody has got to win the lottery
+I'd buy all the hot stocks
+Nobody would ever see it coming
+Then I would lay in my bed all day
+And only answer calls about the mulah I made
+Oh, I'd put a bid on the Milky Way
+So start stacking it up
+I just wanna make easy money
+Easy money, my love
+A couple commas, that would sure be fun
+Yeah, start raking it in
+I just wanna make easy money
+Easy money, my friend
+Come fill my bank account with happiness alright
+So how come I got too much month
+At the end of my money? (At the end of my money)
+The best things in my life come tough
+Why shouldn't they come easy? (Why shouldn't they come easy?)
+Shouldn't they come easy? (Shouldn't they come easy?)
+Shouldn't they come easy, easy money
+So start stacking it up
+I just wanna make easy money
+Easy money, my love
+A couple commas, that would sure be fun
+Yeah, start raking it in
+I just wanna make easy money
+Easy money, my friend
+Come fill my bank account with happiness alright
+
+--------------------------
+【歌曲文件】: Easy On Me - Adele.lrc
+【基本信息】:
+  歌名: Easy On Me
+  歌手: Adele
+  专辑: 30
+  时长: 3分44秒
+【歌词内容】:
+There ain't no gold in this river
+That I've been washing my hands in forever
+I know there is hope in these waters
+But I can't bring myself to swim
+When I am drowning in this silence
+Baby, let me in
+Go easy on me, baby
+I was still a child
+Didn't get the chance to
+Feel the world around me
+I had no time to choose what I chose to do
+So go easy on me
+There ain’t no room for things to change
+When we are both so deeply stuck in our ways
+You can't deny how hard I've tried
+I changed who I was to put you both first
+But now I give up
+Go easy on me, baby
+I was still a child
+Didn't get the chance to
+Feel the world around me
+I had no time to choose what I chose to do
+So go easy on me
+I had good intentions
+And the highest hopes
+But I know right now
+It probably doesn’t even show
+Go easy on me, baby
+I was still a child
+I didn't get the chance to
+Feel the world around me
+I had no time to choose what I chose to do
+So go easy on me
+
+--------------------------
+【歌曲文件】: Echoes - Pink Floyd.lrc
+【基本信息】:
+  歌名: Echoes
+  歌手: Pink Floyd
+  专辑: Meddle
+  时长: 23分31秒
+【歌词内容】:
+Overhead the albatross
+Hangs motionless upon the air
+And deep beneath the rolling waves
+In labyrinths of coral caves
+The echo of a distant time
+Comes willowing across the sand
+And everything is green and submarine
+And no one showed us to the land
+And no one knows the where's or why's
+Something stirs and something tries
+And starts to climb toward the light
+Strangers passing in the street
+By chance two separate glances meet
+And I am you and what I see is me
+And do I take you by the hand
+And lead you through the land
+And help me understand the best I can
+And no one calls us to move on
+And no one forces down our eyes
+No one speaks and no one tries
+No one flies around the sun
+Cloudless everyday you fall
+Upon my waking eyes
+Inviting and inciting me
+To rise
+And through the window in the wall
+Come streaming in on sunlight wings
+A million bright ambassadors of morning
+And no one sings me lullabies
+And no one makes me close my eyes
+So I throw the windows wide
+And call to you across the sky
+
+--------------------------
+【歌曲文件】: El pequeño huésped sigue dormido - Federico Durand.lrc
+【基本信息】:
+  歌名: El pequeño huésped sigue dormido
+  歌手: Federico Durand
+  专辑: El éxtasis de las flores pequeñas
+  时长: 7分37秒
+【歌词内容】:
+纯音乐，请欣赏
+
+--------------------------
+【歌曲文件】: Eminence Front - The Who.lrc
+【基本信息】:
+  歌名: Eminence Front
+  歌手: The Who
+  专辑: Grand Theft Auto: San Andreas [Box Set]
+  时长: 5分39秒
+【歌词内容】:
+The sun shines
+And people forget
+The spray flies as the speedboat glides
+And people forget
+Forget they're hiding
+The girls smile
+And people forget
+The snow packs as the skier tracks
+People forget
+Forget they're hiding.
+Behind an eminence front
+Eminence front -  so put on.
+It’s Eminence front -  so put on
+Eminence front - put on.
+Behind an eminence front
+Eminence front - It's a put on.
+Behind an eminence front
+Eminence front - It's a put on.
+Come on join the party
+Dress to kill
+Won't you come and join the party
+Dress to kill.
+The drinks flow
+People forget
+That big wheel spins, the hair thins
+People forget
+Forget they're hiding
+The news slows
+People forget
+The shares crash, hopes are dashed
+People forget
+Forget they're hiding.
+Behind an eminence front
+Eminence front - it's a put on
+Behind an eminence front
+Eminence front - it's a put on
+Behind an eminence front
+Eminence front - it's a put on
+Behind an eminence front
+Eminence front - it's a put on
+Come on join the party
+Dress to
+Come on join the party
+Dress to
+Come on join the party
+Dress to
+Come on join the party
+Dress to kill
+Dress yourself, dressed to kill.
+
+--------------------------
+【歌曲文件】: Emma Blowgun's Last Stand - Beulah.lrc
+【基本信息】:
+  歌名: Emma Blowgun's Last Stand
+  歌手: Beulah
+  专辑: When Your Heartstrings Break
+  时长: 5分21秒
+【歌词内容】:
+And goodness knows, it's been a wonderful run
+The autumn lakes where the children have swum
+Your mother's convictions and your father's predictions don't seem so insane
+They laugh and say your treasures are fake but don't throw it away
+And you've been framed with a beautiful name
+And you've been saved but you lost your head
+With halos and praise, the trinity saves, but three's a crowd
+You flirt and drink, you can't stop your winking at the boys at the bar
+All you need is a gun and a car
+A country song if you don't have the heart
+Of cowboys and injuns and their palsied dominions where the highways are far
+When all you know's your shadow's a ghost, don't let it scare you away
+
+--------------------------
+【歌曲文件】: Episode 33 - She Her Her Hers.lrc
+【基本信息】:
+  歌名: Episode 33
+  歌手: She Her Her Hers
+  专辑: SPIRAL
+  时长: 4分17秒
+【歌词内容】:
+感じて 今夜は見事さ
+見栄も弱みさえもない まさに上出来だ
+まぁ そういったノリは出せず Fin
+赤のトランスフォームスーツはとても着こなせない
+真夜中生まれる 感情をうまく纏えたら
+もうパッと言えるから
+この気持ちをどうぞ
+演じて 今夜も見事さ
+見えなくてもいいものばかり披露する
+転じて 福を期待したい
+何度目のあやかり 受け身が続いてく
+真夜中生まれる 感情をうまく纏えたら
+もうパッと言えるから
+この気持ちを理解して
+
+--------------------------
+【歌曲文件】: Everything's Not Lost - Coldplay.lrc
+【基本信息】:
+  歌名: Everything's Not Lost
+  歌手: Coldplay
+  专辑: Parachutes
+  时长: 7分16秒
+【歌词内容】:
+When I counted up my demons
+Saw there was one for every day
+With the good ones on my shoulders
+I drove the other ones away
+So if you ever feel neglected
+And if you think that all is lost
+I'll be counting up my demons' yeah
+Hoping everything's not lost
+When you thought that it was over
+You could feel it all around
+And everybody's out to get you
+Don't you let it drag you down
+'Cause if you ever feel neglected
+And if you think that all is lost
+I'll be counting up my demons' yeah
+Hoping everything's not lost
+If you ever feel neglected
+If you think that all is lost
+I'll be counting up my demons' yeah
+Hoping everything's not lost
+Singing out
+Oh' oh' oh' yeah
+Oh' oh' yeah
+Oh' oh' yeah
+Everything's not lost
+So come on' yeah
+Oh' oh' yeah
+Come on' yeah
+And everything's not lost
+Oh' oh' yeah
+Oh' oh' yeah
+Oh' oh' yeah
+And everything's not lost
+Come on' yeah
+Oh' oh' yeah
+Come on' yeah
+Come on' yeah
+Oh' oh' yeah
+Come on' yeah
+And everything's not lost
+Sing out' yeah
+Oh' oh' yeah
+Come on' yeah
+And everything's not lost
+Come on' yeah
+Oh' oh yeah
+Sing out' yeah
+And everything's not lost
+Now I never meant
+To do you wrong
+That's what I came here to say
+But if I was wrong
+Then I'm sorry
+I don't let it stand in our way
+'Cause my head just aches
+When I think of
+The things that I shouldn't have done
+But life is for living
+We all know
+And I don't wanna live it alone
+Sing out...
+
+--------------------------
+【歌曲文件】: Exitlude - The Killers.lrc
+【基本信息】:
+  歌名: Exitlude
+  歌手: The Killers
+  专辑: Sam's Town
+  时长: 2分26秒
+【歌词内容】:
+aggressively we all defend the role we play
+regrettably time's come to send you on your way
+we've seen it all bonfires of
+trust flash floods of pain
+it doesn't really matter
+don't you worry it'll all work out
+no it doesn't even matter
+don't you worry, that ain't what it's all about
+we hope you enjoyed your stay
+it's good to have you with us,
+even if it's just for the day
+we hope you enjoyed your stay
+outside the sun is shining,
+seems like heaven ain't far away
+it's good to have you with us
+the killers-exitlude
+even if it's just for the day
+album:sam's town
+the killers-exitlude
+it's good to have you with us
+even if it's just for the day
+outside the sun is shining,
+seems like heaven ain't far away
+it's good to have you with us
+even if it's just for the day
+outside the sun is shining,
+seems like heaven ain't far away
+seems like heaven ain't far away
+even if it's just for the day
+
+--------------------------
+【歌曲文件】: Experience - Ludovico Einaudi.lrc
+【基本信息】:
+  歌名: Experience
+  歌手: Ludovico Einaudi
+  专辑: In A Time Lapse
+  时长: 5分16秒
+【歌词内容】:
+纯音乐，请欣赏
+
+--------------------------
+【歌曲文件】: Extra Curricular - My Sad Captains.lrc
+【基本信息】:
+  歌名: Extra Curricular
+  歌手: My Sad Captains
+  专辑: Best Of Times
+  时长: 5分27秒
+【歌词内容】:
+Open business closed
+We’ve been trading blows
+Up there with the best
+Now I define success
+By the ring in my ears
+That will not disappear
+Your condition shows
+Round and round it goes
+Kleptomania
+Extra curricular
+Habits that are formed
+That gets harder to endorse
+The aching of my heart
+Shit that seems to last
+‘I’ before an ‘e’
+But who’s in front of me?
+Hold on, hold on, hold on
+I don’t know what to do
+To be happy, follow through
+You’re not vituperative
+When you are cut down to the quick
+Nothing never no
+In your hand you show
+Thoughts that do begin
+Do not let them in
+
+--------------------------
+【歌曲文件】: F.E.E.L.I.N.G.C.A.L.L.E.D.L.O.V.E. - Pulp.lrc
+【基本信息】:
+  歌名: F.E.E.L.I.N.G.C.A.L.L.E.D.L.O.V.E.
+  歌手: Pulp
+  专辑: Different Class
+  时长: 6分1秒
+【歌词内容】:
+The room is cold and has been like this for several months
+If I close my eyes, I can visualise everything in it
+Right down, right down to the broken handle
+On the third drawer down of the dressing table
+And the world outside this room
+Has also assumed a familiar shape
+The same events shuffeled
+In a slightly different order each day
+Just like a modern shopping centre
+And it's so cold, yeah, it's so cold
+What is this feeling called love?
+Why me? Why you?
+Why here? Why now?
+It doesn't make no sense, no
+It's not convenient, no
+It doesn't fit my plans, no
+It's something I don't understand, oh
+（FEELING CA double LED LOVE）
+（Oh, what is this thing that is happening to me?）
+And as I'm standing across this room
+I feel as if my whole life has been leading to this one moment
+And as I touch your shoulder tonight
+This room has become the centre of the entire universe
+So what do I do?
+I've got a slightly sick feeling in my stomach
+Like I'm standing on top of a very high building, oh, yeah
+All the stuff they tell you about in the movies
+But this isn't chocolate boxes and roses,
+it's dirtier than that
+Like some small animal that only comes out at night
+And I see flashes of the shape of your breasts
+And the curve of your belly
+And I may have to sit down and catch my breath
+And it's so cold, and it's so cold
+What is this feeling called love?
+Why me? Why you?
+Why here? And why now?
+Oh, it doesn't make no sense no
+It's not convenient, no
+It doesn't fit my plans
+But I got that taste in my mouth again, oh
+FEELING CA double LED LOVE
+（and the whole world begins to spin and spin outside the window
+faster and faster and faster
+and this is the only place of focus
+the hub upon which everything else revo lves）
+What is this thing that is happening to me?
+FEELING CA double LED LOVE
+What is this thing that is happening to me?
+Oh yeah, oh yeah, oh yeah, oh yeah
+End
+
+--------------------------
+【歌曲文件】: Faithless the Wonder Boy - Radiohead.lrc
+【基本信息】:
+  歌名: Faithless the Wonder Boy
+  歌手: Radiohead
+  专辑: Anyone Can Play Guitar
+  时长: 4分13秒
+【歌词内容】:
+I've had these jeans since I was born
+And now they're ripped and now they're torn
+And all my friends have skateboards
+I want the toys of other boys
+I want a knife and a gun and things
+But Mum and Dad will not give in
+And I can't put the needle in
+Can't put the needle in
+Can't put the needle in
+No I can't put the needle in
+Can't put the needle in
+Can't put the needle in
+And now I know just what it is
+It's got disease and it's got my head
+It always runs where I hide
+Too scared to talk, too scared to try
+Too scared to know the reasons why
+And all my friends say bye bye
+And I can't put the needle in
+Can't put the needle in
+Can't put the needle in
+No I can't put the needle in
+Can't put the needle in
+Can't put the needle in...
+
+--------------------------
+【歌曲文件】: Fake Plastic Trees - Radiohead.lrc
+【基本信息】:
+  歌名: Fake Plastic Trees
+  歌手: Radiohead
+  专辑: The Bends
+  时长: 4分50秒
+【歌词内容】:
+Artist（Band）:Radiohead
+Her Green plastic watering can
+For her fake chinese rubber plant
+In the fake plastic earth.
+That she bought from a rubber man
+In a town full of rubber plants
+To get rid of itself.
+And It Wears Her Out' it wears her out
+It wears her out' it wears her out.
+She lives with a broken man
+A cracked polystyrene man
+Who just crumbles and burns.
+He used to do surgery
+For girls in the eighties
+But gravity always wins.
+And It Wears Him Out' it wears him out
+It wears him out' it wears.
+She looks like the real thing
+She tastes like the real thing
+My Fake Plastic Love.
+But I can't help the feeling
+I could blow through the ceiling
+If I just turn and run
+And It Wears Me Out' it wears me out
+It wears me out' it wears me out.
+And if I could BE who you wanted
+If I could BE who you wanted'
+All the time' all the time' ohhh... ohh...
+
+--------------------------
+【歌曲文件】: Fancy Sauce - Green Day.lrc
+【基本信息】:
+  歌名: Fancy Sauce
+  歌手: Green Day
+  专辑: Saviors
+  时长: 4分1秒
+【歌词内容】:
+Take me to the inn
+Called the loony bin
+Somewhere I can rest my head
+And take it on the chin
+Flowers all in bloom
+In my rubber room
+Scratching at the wallpaper
+In my solitude
+Go go
+Falling like a yo-yo
+Paradise for locos
+Medicate my sorrow
+I’m not crazy
+You’re the one that’s crazy
+Everybody’s crazy
+Getting stoned and lazy
+As we all die young someday
+We all die young someday
+We all die young and watch it slip away
+We all die young someday
+Howling at the moon
+In the afternoon
+Watch the evening news
+'Cause it's my favorite cartoon
+Gonna join a cult
+Do a somersault
+Everyone’s a victim
+And it makes me want to puke
+Go go
+Falling like a yo-yo
+Paradise for locos
+Medicate my sorrow
+I'm so famous
+You're the one that's famous
+Everybody's famous
+Stupid and contagious
+As we all die young someday
+We all die young someday
+We all die young and watch it slip away
+We all die young someday
+
+--------------------------
+【歌曲文件】: Faster - Rachael Yamagata.lrc
+【基本信息】:
+  歌名: Faster
+  歌手: Rachael Yamagata
+  专辑: Elephants...Teeth Sinking Into Heart (Standard Version)
+  时长: 3分50秒
+【歌词内容】:
+Rachael Yamagata-Faster
+I can't talk to you
+You think I'm lost inside my mind
+You're like an old tattoo
+And I know you'll fade in time
+I'm not the girl you think you know
+I'm not the girl you waited for
+I'm not the one for you
+There's just one thing left to do
+Why don't you let me be?
+'Cause I'm a million miles away
+Why don't you set me free?
+You don't treat me like you say
+I won't tuck you in, one last time
+I'm taking back what is mine, for me
+I belong to me
+And I'm going faster
+You're going backwards
+You're gonna miss me when I'm gone
+I'm going faster
+I know what I'm after
+I should have been after it all along
+I'm going faster
+I'm going faster
+That's the last black eye
+I hope I ever give to you
+Yeah, I had a good time
+But what's a girl supposed to do?
+Take the pictures off the wall
+They don't look like us at all
+They don't look like friends
+I've got new things to begin
+Why don't you let me be?
+'Cause I'm a million miles away
+Why don't you set me free?
+I belong to me
+And I'm going faster
+You're going backwards
+You're gonna miss me when I'm gone
+I'm going faster
+I know what I'm after
+I should have been after it all along
+I'm going faster
+I'm going faster
+And I'm going faster
+You're going backwards
+You're gonna miss me when I'm gone
+I'm going faster
+I know what I'm after
+I should have been after it all along
+I'm going faster
+I'm going faster
+End
+
+--------------------------
+【歌曲文件】: Fearless - Pink Floyd.lrc
+【基本信息】:
+  歌名: Fearless
+  歌手: Pink Floyd
+  专辑: Meddle
+  时长: 6分7秒
+【歌词内容】:
+You say the hill's too steep to climb
+Climb it
+You say you'd like to see me try
+Climbing
+You pick the place and I'll choose the time
+And I'll climb
+That hill in my own way
+Just wait a while for the right day
+And as I rise above the tree lines and the clouds
+I look down hearing the sound of the things you've said today
+Fearlessly the idiot faced the crowd
+Smiling
+Merciless the magistrate turns around
+Frowning
+And who's the fool who wears the crown
+And go down
+In your own way
+And every day is the right day
+And as you rise above the fear-lines in his brow
+You look down hearing the sound of the faces in the crowd
+
+--------------------------
+【歌曲文件】: Feeling Good - Nina Simone.lrc
+【基本信息】:
+  歌名: Feeling Good
+  歌手: Nina Simone
+  专辑: Feeling Good
+  时长: 2分52秒
+【歌词内容】:
+Birds flying high you know how I feel
+Sun in the sky you know how I feel
+Reeds driftin on by you know how I feel
+Its a new dawn
+Its a new day
+Its a new life
+For me
+And Im feeling good
+Fish in the sea you know how I feel
+River running free you know how I feel
+Blossom on the tree you know how I feel
+Its a new dawn
+Its a new day
+Its a new life
+For me
+And Im feeling good
+Dragonfly out in the sun you know what I mean, dont you know
+Butterflies all havin fun you know what I mean
+Sleep in peace when day is done
+Thats what I mean
+And this old world is a new world
+And a bold world
+For me
+Stars when you shine you know how I feel
+Scent of the pine you know how I feel
+Oh freedom is mine
+And I know how I feel
+Its a new dawn
+Its a new day
+Its a new life
+For me
+And Im feeling good
+
+--------------------------
+【歌曲文件】: Feeling Good - Nina Simone，Anthony Newley，Leslie Bricusse.lrc
+【基本信息】:
+  歌名: Feeling Good
+  歌手: Nina Simone，Anthony Newley，Leslie Bricusse
+  专辑: The Intouchables
+  时长: 2分52秒
+【歌词内容】:
+Birds flying high you know how I feel
+Sun in the sky you know how I feel
+Breeze drifting on by you know how I feel
+It's a new dawn
+It's a new day
+It's a new life
+For me
+Yeah It's a new dawn
+It's a new day
+It's a new life
+For me
+And I'm feeling good
+Fish in the sea you know how I feel
+River running free you know how I feel
+Blossom on the tree you know how I feel
+It's a new dawn
+It's a new day
+It's a new life
+For me
+And I'm feeling good
+Dragonfly out in the sun you know what I mean
+Don't you know
+Butterflies all having fun you know what I mean
+Sleep in peace when day is done
+That's what I mean
+And this old world is a new world
+And a bold world
+For me
+Stars when you shine you know how I feel
+Scent of the pine you know how I feel
+Oh freedom is mine
+And I know how I feel
+It's a new dawn
+It's a new day
+It's a new life
+For me
+And I'm feeling good
+
+--------------------------
+【歌曲文件】: Felicity - Isaac Shepard.lrc
+【基本信息】:
+  歌名: Felicity
+  歌手: Isaac Shepard
+  专辑: Deep Joy
+  时长: 3分50秒
+【歌词内容】:
+纯音乐，请欣赏
+
+--------------------------
+【歌曲文件】: Ferrari - Bebe Rexha.lrc
+【基本信息】:
+  歌名: Ferrari
+  歌手: Bebe Rexha
+  专辑: Expectations
+  时长: 3分32秒
+【歌词内容】:
+Every day is a blur
+Sometimes I can't tell what day it is
+Don't know what day it is
+Can you tell me what day it is?
+Life's passing by
+'Cause I'm out chasing empty highs
+Every hello just means goodbye
+But I'm looking for more this time
+Can we start to slow it down?
+Can we learn to live right now?
+I just want to feel it all
+I'm a Ferrari pulled off on Mulholland Drive
+Over the city, the lights are so pretty from up here
+I'm a Ferrari and after the party is done
+I keep on going, missing the moments
+Living in the fast lane is getting kind of lonely (yeah)
+Whoo, ooh, ooh-ooh
+Whoo, ooh, ooh-ooh-ooh
+Whoo, ooh, ooh-ooh
+Living in the fast lane is getting kind of lonely
+Whoo, ooh, ooh-ooh
+Whoo, ooh, ooh-ooh-ooh
+Whoo, ooh, ooh-ooh
+Living in the fast lane is getting kind of lonely
+Got a heavy heart
+'Cause it's still beating on its own
+Might be going out in the crowd
+But I'm still coming home alone
+Not trying to say I'm not grateful for everything
+I'm just going too fast to see
+All the good things in front of me
+I'm a Ferrari pulled off on Mulholland Drive
+Over the city, the lights are so pretty from up here
+I'm a Ferrari and after the party is done
+I keep on going, missing the moments
+Living in the fast lane is getting kind of lonely
+Whoo, ooh, ooh-ooh
+Whoo, ooh, ooh-ooh-ooh
+Whoo, ooh, ooh-ooh
+Living in the fast lane is getting kind of lonely
+Whoo, ooh, ooh-ooh
+Whoo, ooh, ooh-ooh-ooh
+Whoo, ooh, ooh-ooh
+I'm a Ferrari pulled off on Mulholland Drive
+Over the city, the lights are so pretty from up here
+I'm a Ferrari and after the party is done
+I keep on going, missing the moments
+Living in the fast lane is getting kind of lonely
+
+--------------------------
+【歌曲文件】: Ferrari - Jayvine Ramma.lrc
+【基本信息】:
+  歌名: Ferrari
+  歌手: Jayvine Ramma
+  专辑: Ferrari
+  时长: 2分30秒
+【歌词内容】:
+Every day is a blur
+Sometimes I can't tell what day it is
+Don't know what day it is
+Can you tell me what day it is?
+Life's passing by
+'Cause I'm out chasing empty highs
+Every hello just means goodbye
+But I'm looking for more this time
+Can we start to slow it down?
+Can we learn to live right now?
+I just want to feel it all
+I'm a Ferrari pulled off on Mulholland Drive
+Over the city, the lights are so pretty from up here
+I'm a Ferrari and after the party is done
+I keep on going, missing the moments
+Living in the fast lane is getting kind of lonely (yeah)
+Whoo, ooh, ooh-ooh
+Whoo, ooh, ooh-ooh-ooh
+Whoo, ooh, ooh-ooh
+Living in the fast lane is getting kind of lonely
+Whoo, ooh, ooh-ooh
+Whoo, ooh, ooh-ooh-ooh
+Whoo, ooh, ooh-ooh
+I'm a Ferrari pulled off on Mulholland Drive
+Over the city, the lights are so pretty from up here
+I'm a Ferrari and after the party is done
+I keep on going, missing the moments
+Living in the fast lane is getting kind of lonely
+
+--------------------------
+【歌曲文件】: Fire Flower - Summer Salt.lrc
+【基本信息】:
+  歌名: Fire Flower
+  歌手: Summer Salt
+  专辑: Fire Flower
+  时长: 4分10秒
+【歌词内容】:
+Taking off this evening to fight this winter day
+Brokenhearted I've been,I'll leave it on the land to stay
+I've got an island in my back-pocket,lookin' for a way to find love anyday
+I'll spend the holiday inside these sapphire waves as the sunset's sinkin' away
+Light the night
+Starry-eyed
+Waved goodbye
+So long, this might be the year
+I will fall in love with the one my heart's dreaming of
+Shallow glasses breaking, the longing never ends
+Letting go of ways that we changed, still I pretend
+I've got an island in my back-pocket, lookin' for a way to find love anyday
+I'll spend the holiday inside these sapphire waves as the sunset's surfin' away
+Ba--ba-ya-oh
+Light the night
+Starry-eyed
+Waved goodbye
+So long, this might be the year
+I will fall in love with the one my heart's dreaming of
+Turn to dark
+Fire flower
+Don't pass me by
+I've waited on through years to find the tears falling from everything my heart could dream of
+
+--------------------------
+【歌曲文件】: Five Hundred Miles - Justin Timberlake，Carey Mulligan，Stark Sands.lrc
+【基本信息】:
+  歌名: Five Hundred Miles
+  歌手: Justin Timberlake，Carey Mulligan，Stark Sands
+  专辑: Inside Llewyn Davis: Original Soundtrack Recording
+  时长: 3分27秒
+【歌词内容】:
+If you missed the train I'm on,
+You will know that I am gone,
+You can hear the whistle blow a hundred miles.
+A hundred miles, a hundred miles,
+A hundred miles, A hundred miles,
+You can hear the whistle blow A hundred miles.
+Lord, I'm one, Lord, I'm two, Lord,
+I'm three, Lord, I'm four, Lord,
+I'm five hundred miles away from home.
+Away from home, away from home,
+away from home, away from home,
+Lord, I'm five hundred miles away from home
+Not a shirt on my back,
+Not a penny to my name.
+Lord. I can't go back home this a-way.
+This a-way, this a-way,
+This a-way, this a-way,
+Lord, I can't go back home this a-way.
+If you missed the train I'm on,
+You will know that I am gone,
+You can hear the whistle blow A hundred miles.
+A hundred miles.
+A hundred miles.
+A hundred miles.
+A hundred miles.
+You can hear the whistle blow a hundred miles
+You can hear the whistle blow a hundred miles
+You can hear the whistle blow a hundred miles
+
+--------------------------
+【歌曲文件】: Fix You - Coldplay.lrc
+【基本信息】:
+  歌名: Fix You
+  歌手: Coldplay
+  专辑: X&Y
+  时长: 4分56秒
+【歌词内容】:
+When you try your best but you don't succeed
+When you get what you want but not what you need
+When you feel so tired but you can't sleep
+Stuck in reverse
+And the tears come streaming down your face
+When you lose something you can't replace
+When you love someone but it goes to waste
+Could it be worse?
+Lights will guide you home
+And ignite your bones
+And I will try to fix you
+High up above or down below
+When you're too in love to let it go
+But if you never try you'll never know
+Just what you're worth
+Lights will guide you home
+And ignite your bones
+And I will try to fix you
+Tears stream down your face
+When you lose something you cannot replace
+Tears stream down your face
+And I
+Tears stream down your face
+I promise you I will learn from my mistakes
+Tears stream down your face
+And I
+Lights will guide you home
+And ignite your bones
+And I will try to fix you
+
+--------------------------
+【歌曲文件】: Fk This Job - Wheeler Walker Jr..lrc
+【基本信息】:
+  歌名: F**k This Job
+  歌手: Wheeler Walker Jr.
+  专辑: Born to ****/**** This Job
+  时长: 3分24秒
+【歌词内容】:
+Hey Wheeler, you're late again
+Good, this ****in' job sucked a ****in' d**k anyway
+This nine to five can suck my c**k
+I'd rather eat **** than punch that clock
+Monday through Friday is a hassle
+Everybody here is an asshole
+Today's the day I grow some b***s
+Stop jackin' off in the bathroom stall
+Blowin' my load in the sink
+And tell 'em what I really think
+**** this job
+**** you boss
+**** your profit
+And **** your loss
+**** you Linda at the front desk too
+Guy in the mailroom: **** you
+This whole company can slob my ****
+**** all y'all
+**** this job
+Without me here this place is screwed
+Y'all don't know half the **** I do
+You shoulda understood from the get go
+I oughta be runnin' this shithole
+PS. I pissed in the coffee pot
+Took a big dump in the parking lot
+Hid a d***o in the drawer
+Kiss my a**
+I'm out the door
+**** this job
+**** you boss
+**** your profit
+And **** your loss
+**** you Linda at the front desk too
+Guy in the mailroom: **** you
+This whole company can slob my ****
+**** all y'all
+**** this job
+I'm off to chase my dreams
+Crush more p***y than you've ever seen
+I guess what I really mean is…
+**** this job
+**** you boss
+**** your profit
+And **** your loss
+**** you Linda at the front desk too
+Guy in the mailroom: **** you
+This whole company can slob my ****
+**** all y'all
+**** this job
+**** this job
+**** you boss
+**** your profit
+And **** your loss
+**** you Linda at the front desk too
+Guy in the mailroom: **** you
+This whole company can slob my ****
+**** all y'all
+**** this job
+**** all y'all
+**** this job
+
+--------------------------
+【歌曲文件】: Follow - DIIV.lrc
+【基本信息】:
+  歌名: Follow
+  歌手: DIIV
+  专辑: Oshin
+  时长: 2分45秒
+【歌词内容】:
+Bleached black from the smile on a glimpse of your face
+Yeah I ran to her
+Blame it on me
+That inevitable date
+You remember her
+I'm putting it off
+And I can't control fate
+'Cause we're similar
+I blame it on you
+'Cause that side of me I hate
+But you were never hurt
+I'm putting it off
+And I can't control fate
+Yeah I ran to her
+Blame it on me
+That inevitable game
+But you were never hurt
+
+--------------------------
+【歌曲文件】: Fool's Day - Blur.lrc
+【基本信息】:
+  歌名: Fool's Day
+  歌手: Blur
+  专辑: Fool's Day
+  时长: 3分28秒
+【歌词内容】:
+Wake up straight
+Caught out by the sun
+On the first day of April
+Out of bed
+Lord it was a plane crash
+But I'm sure that I was dreaming
+Tv on
+I blast caffeine
+A science of submission again
+Another day
+On this little island
+Just a bell hangs on
+Porridge done
+I take my kid to school
+Past the pound shop, Woolworth's
+Under bridge
+Where the subway sees the daytime
+And the Westway flies by
+Then on my bike
+Down the Ladbroke Grove
+To the forthcoming dramas
+A studio
+And a love of all sweet music
+We just can't let go
+Let go, let go, let go, let go
+So meditate
+On what we've all become
+On a cold day in springtime
+Civil war
+Is what we all were born into
+Raise your left hand, right, sing
+Don't capitulate to the forces
+Of the market place
+They've long departed
+Consolidate
+The love we bear together
+On a cold day in springtime
+
+--------------------------
+【歌曲文件】: Fools Gold - The Stone Roses.lrc
+【基本信息】:
+  歌名: Fools Gold
+  歌手: The Stone Roses
+  专辑: The Very Best Of The Stone Roses
+  时长: 9分54秒
+【歌词内容】:
+The gold road's sure a long road
+Winds on through the hills for fifteen days
+The pack on my back is aching
+The straps seem to cut me like a knife
+The gold road's sure a long road
+Winds on through the hills for fifteen days
+The pack on my back is aching
+The straps seem to cut me like a knife
+I'm no clown i won't back down
+I don't need you to tell me what's going down
+Down down down down da down down down
+Down down down down da down down down
+I'm standing alone
+I'm watching you all
+I'm seeing you sinking
+I'm standing alone
+You're weighing the gold
+I'm watching you sinking
+Fool's gold
+These boots were made for walking
+The marquis de sade don't wear no boots like these
+Gold's just around the corner
+Breakdown's coming up round the bend
+Sometimes you have to try to get along dear
+I know the truth and i know what you're thinking
+Down down down down da down down down
+I'm standing alone
+I'm watching you all
+I'm seeing you sinking
+I'm standing alone
+You're weighing the gold
+I'm watching you sinking
+Fool's gold
+Fool's gold
+I'm standing alone
+I'm watching you all
+I'm seeing you sinking
+I'm standing alone
+You're weighing the gold
+I'm watching you sinking
+Fool's gold
+Fool's gold
+
+--------------------------
+【歌曲文件】: For No One (Remastered) - The Beatles.lrc
+【基本信息】:
+  歌名: For No One (Remastered)
+  歌手: The Beatles
+  专辑: Revolver (Remastered)
+  时长: 2分0秒
+【歌词内容】:
+Your day breaks
+Your mind aches
+You find that all her words
+Of kindness linger on
+When she no longer needs you
+She wakes up
+She makes up
+She takes her time
+And doesn't feel she has to hurry
+She no longer needs you
+And in her eyes you see nothing
+No sign of love behind the tears
+Cried for no one
+A love that should have lasted years
+You want her
+You need her
+And yet you don't believe her
+When she says her love is dead
+You think she needs you
+And in her eyes you see nothing
+No sign of love behind the tears
+Cried for no one
+A love that should have lasted years
+You stay home
+She goes out
+She says that long ago
+She knew someone
+But now he's gone
+She doesn't need him
+Your day breaks
+Your mind aches
+There will be times
+When all the things she said
+Will fill your head
+You won't forget her
+And in her eyes you see nothing
+No sign of love behind the tears
+Cried for no one
+A love that should have lasted years
+
+--------------------------
+【歌曲文件】: Forever - CHVRCHES.lrc
+【基本信息】:
+  歌名: Forever
+  歌手: CHVRCHES
+  专辑: Love Is Dead
+  时长: 3分44秒
+【歌词内容】:
+Savor the taste
+Savor the pain
+I don't expect you to release me
+Jumping the gun
+Holding my tongue
+I'd never ask you to forgive me
+And you will never see my side
+And I will always think I'm right
+But I always regret the night
+I told you I would hate you 'til forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+I told you I would hate you 'til forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+I told you I would hate you 'til forever
+Playing the part
+Playing the game
+I don't expect you to believe me
+Missing the mark
+We tear it apart
+I'd never ask you why you need me
+And you will never see my side
+And I will always think I'm right
+But I always regret the night
+I told you I would hate you 'til forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+I told you I would hate you 'til forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+I told you I would hate you 'til forever
+What else should I say?
+What else could I do?
+Maybe it's too much for you
+What else should I say?
+What else could I do?
+Maybe I am just too much for you
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+I told you I would hate you 'til forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+Forever, forever, forever, forever
+I told you I would hate you 'til forever
+
+--------------------------
+【歌曲文件】: Forevermore - Cuco.lrc
+【基本信息】:
+  歌名: Forevermore
+  歌手: Cuco
+  专辑: Forevermore
+  时长: 2分54秒
+【歌词内容】:
+Empty days to every day
+I want everyone to know
+What I found roaming around
+To bless me while I'm alive
+That's without a doubt
+And through separate ways
+Desperately facing everyone around
+I had a dream that we would meet
+And go places beyond what we've seen
+Keep my heart with you from now
+Forevermore
+
+--------------------------
+【歌曲文件】: Formentera Lady - King Crimson.lrc
+【基本信息】:
+  歌名: Formentera Lady
+  歌手: King Crimson
+  专辑: Islands
+  时长: 10分17秒
+【歌词内容】:
+Houses iced in whitewash guard a pale shore-line
+Cornered by the cactus and the pine
+Here i wander where sweet sage and strange herbs grow
+Down a crumpled sun-baked stony road
+Dusty wheels leaning rusting in the sun
+Snuff brown walls where spanish lizards run
+Here i'm shadowed by a dragon fig tree's fan
+Ringed by ants and musing over man
+I'll unwind my old strings while the sun shine down
+Won't climb any high thing while the sun shine
+Formentera lady sing your song for me
+Formentera lady sun lover
+Lamplights glows on old guitars the travellers strum
+Insence children dance to an indian drum
+Here odysseus charmed for dark circe fell
+Still her perfume lingers still her spell
+Time's grey hand won't catch me while the stars shine down
+Untie and unlatch me while the stars shine
+Formentera lady dance your dance for me
+Formentera lady dark lover
+
+--------------------------
+【歌曲文件】: Fortunate Son - Creedence Clearwater Revival.lrc
+【基本信息】:
+  歌名: Fortunate Son
+  歌手: Creedence Clearwater Revival
+  专辑: 40th Anniversary Editions Box Set
+  时长: 2分20秒
+【歌词内容】:
+Some folks are born made to wave the flag,
+ooh, they're red, white and blue.
+And when the band plays "Hail To The Chief"
+oh, they point the cannon at you, Lord,
+It ain't me, it ain't me,
+I ain't no senator's son,
+It ain't me, it ain't me,
+I ain't no fortunate one, no,
+Some folks are born silver spoon in hand,
+Lord, don't they help themselves? oh.
+But when the taxman come to the door,
+Lord, the house look a like a rummage sale, yes,
+It ain't me, it ain't me,
+I ain't no millionaire's son, no, no.
+It ain't me, it ain't me,
+I ain't no fortunate one, no.
+Yeh... some folks inherit star spangled eyes,
+ooh, they send you down to war, Lord,
+And when you ask them, how much should we give,
+oh, they only answer, more, more, more, yoh,
+It ain't me, it ain't me,
+I ain't no military son, SON, NO
+It ain't me, it ain't me,
+I ain't no fortunate one, NO NO
+It ain't me, it ain't me,
+I ain't no fortunate one, no no no,
+It ain't me, it ain't me,
+I ain't no fortunate son, son son son
+
+--------------------------
+【歌曲文件】: Found Me - Men I Trust.lrc
+【基本信息】:
+  歌名: Found Me
+  歌手: Men I Trust
+  专辑: Oncle Jazz
+  时长: 3分31秒
+【歌词内容】:
+Motion blurred dream visions and kindred faces
+Thoughts like bursts of youth taking me places
+Living the best outcome of myself
+‘Cause I do remember where I come from
+I’m happy my home found me
+By which force I do not know
+I found my home and it grows by me in beauty
+I feel air from another planet akin
+Like a sense of truth that comes from within
+A budding sapling reaching through
+Giving rise to higher fruit and view
+I’m happy my home found me
+By which force I do not know
+I found my home and it grows by me in beauty
+I’m happy my home found me
+By which force I do not know
+I found my home and it grows by me in beauty
+
+--------------------------
+【歌曲文件】: Free Bird - Lynyrd Skynyrd.lrc
+【基本信息】:
+  歌名: Free Bird
+  歌手: Lynyrd Skynyrd
+  专辑: (pronounced 'lĕh-'nérd 'skin-'nérd)
+  时长: 9分5秒
+【歌词内容】:
+If I leave here tomorrow
+Would you still remember me?
+For I must be travelling on, now,
+'Cause there's too many places I've got to see.
+But, if I stayed here with you, girl,
+Things just couldn't be the same.
+'Cause I'm as free as a bird now,
+And this bird you can not change.
+And this bird you can not change.
+And this bird you can not change.
+Oh Lord Knows I Can't Change.
+Bye, bye, Baby its been a sweet love.
+Though this feeling I can't change.
+But please don't take it so badly,
+'Cause Lord knows I'm to blame.
+But, if I stayed here with you girl,
+Things just couldn't be the same.
+Cause I'm as free as a bird now,
+And this bird you'll never change.
+And this bird you can not change.
+And this bird you can not change.
+Lord knows, I can't change.
+Lord help me, I can't change.
+Lord I Can't Change,
+Won't You Fly High Free Bird Yea.
+
+--------------------------
+【歌曲文件】: Free my soul - Saintess.lrc
+【基本信息】:
+  歌名: Free my soul
+  歌手: Saintess
+  专辑: Free my soul
+  时长: 5分3秒
+【歌词内容】:
+take me to a place
+带我去往某个地方
+where I can follow your sound
+能追随你声响的方向
+take me through the maze
+引我穿越迷惘
+my word‘ s been spinning round and round
+我的思绪无止境地回响
+touching me slowly
+你缓缓将我触抚
+dancing under the light
+在光芒下翩然起舞
+only you know me deep down tonight
+唯有你今夜深谙我心扉
+I’ m letting go now I’ m letting go
+我此刻全然释放
+coming alive
+焕发生命光芒
+I’ ll free my soul now I’ ll free my soul soul soul
+我将解放灵魂释放我的灵魂
+take me to a place
+带我去往某个地方
+where I can follow your sound
+能追随你声响的方向
+take me through the maze
+引我穿越迷惘
+my word‘ s been spinning round and round
+我的思绪无止境地回响
+touching me slowly
+你缓缓将我触抚
+dancing under the light
+在光芒下翩然起舞
+only you know me deep down tonight
+唯有你今夜深谙我心扉
+oh baby
+I’ m letting go now I’ m letting go
+我此刻全然释放
+coming alive
+焕发生命光芒
+I’ ll free my soul now I’ ll free my soul soul soul
+我将解放灵魂释放我的灵魂
+
+--------------------------
+【歌曲文件】: Ghost Ship - Blur.lrc
+【基本信息】:
+  歌名: Ghost Ship
+  歌手: Blur
+  专辑: The Magic Whip
+  时长: 4分59秒
+【歌词内容】:
+I remember flashbacks lighting up magic whip
+Eight o'clock
+Kowloon emptiness
+Handle it
+The white horse image that I had of you eleven seconds ago
+I didn't send you
+So you will never know
+I got away for a little while
+But then it came back
+Much harder
+Swinging on a cable
+Up to Po Lin
+Climbing panda, ghostly wine, in thebattery
+The light in your eyes
+I search for religiously
+When it's not there
+Oh Lord it's hunting me
+I got away for a little while
+But then it came back
+Much harder
+Till I ever hold you out there again
+Will you be mine?
+Coz I'm on a ghost ship drowning my heart
+In Hong Kong
+It's the last ride boarding here tonight
+Out in the bay
+I'll need a lantern in you
+To shine out bright rays
+Feeling out a body what can I do
+It's up to the top every day to join with you
+I had to get a way for a little while
+But then it came back
+Much harder
+Till I ever hold you out there again
+Will you be mine?
+Coz I'm on a ghost ship drowning my heart
+In Hong Kong
+It's the last ride boarding here tonight
+Out in the bay
+I'll need a lantern in you
+To shine out bright rays
+Till I ever hold you out there again
+Will you be mine?
+Coz I'm on a ghost ship drowning my heart
+In Hong Kong
+It's the last ride boarding here tonight
+Out in the bay
+I'll need a lantern in you
+To shine out bright rays
+
+--------------------------
+【歌曲文件】: Give Me One Reason - Tracy Chapman.lrc
+【基本信息】:
+  歌名: Give Me One Reason
+  歌手: Tracy Chapman
+  专辑: Ultimate Grammy Collection - Contemporary Rock
+  时长: 4分28秒
+【歌词内容】:
+Give me one reason to stay here'
+And I'll turn right back around.
+Give me one reason to stay here'
+And I'll turn right back around.
+Said I don't want leave you lonely'
+You got to make me change my mind.
+Baby I got your number and I know that you got mine.
+you know that I called you' I called too many times.
+You can call me baby' you can call me anytime.
+But you got to call me.
+Give me one reason to stay here'
+And I'll turn right back around.
+Give me one reason to stay here'
+And I'll turn right back around.
+Said I don't want leave you lonely'
+You got to make me change my mind.
+I don't want no one to squeeze me'
+They might take away my life.
+I don't want no one to squeeze me'
+They might take away my life.
+I just want someone to hold me and
+rock me through the night.
+This youthful heart can love you and
+give you what you need.
+This youthful heart can love you and
+give you what you need.
+But I'm too old to go chasing you around'
+Wasting my precious energy.
+Give me one reason to stay here'
+And I'll turn right back around.
+Give me one reason to stay here'
+And I'll turn right back around.
+Said I don't want leave you lonely'
+You got to make me change my mind.
+Baby just give me one reason.
+Give me just one reason why.
+Baby just give me one reason.
+Give me just one reason why I should stay.
+Said I told you that I loved you'
+And there ain't no more to say.
+
+--------------------------
+【歌曲文件】: Go! - Public Service Broadcasting.lrc
+【基本信息】:
+  歌名: Go!
+  歌手: Public Service Broadcasting
+  专辑: The Race for Space
+  时长: 4分12秒
+【歌词内容】:
+This is Apollo Control at one hundred two hours into the flight of Apollo Eleven.
+It's grown quite quiet here in Mission Control.
+A few moments ago, Flight Director Gene Kranz requested that everyone sit down,
+get prepared for events that are coming.
+And he closed with the remark, "Good luck to all of you.”
+Twelve minutes now until ignition for Powered Descent.
+Everything's still looking very good at this point.
+RETRO? – “GO!”
+FIDO? – “GO!”
+GUIDANCE? – “GO!”
+CONTROL? – “GO!”
+TELCOM? – “GO!”
+GNC? – “GO!”
+EECOM? – “GO!”
+SURGEON? – “GO!”
+CAPCOM, We’re “GO” for Powered Descent.
+We're off to a good start.
+Play it cool.
+Okay, all flight controllers, I'm going around the horn...
+Okay…
+RETRO? – “GO!”
+FIDO? – “GO!”
+GUIDANCE? – “GO!”
+CONTROL? – “GO!”
+TELCOM? – “GO!”
+GNC? – “GO!”
+EECOM? – “GO!”
+SURGEON? – “GO!”
+RETRO? – “GO!”
+FIDO? – “GO!”
+GUIDANCE? – “GO!”
+CONTROL? – “GO!”
+TELCOM? – “GO!”
+GNC? – “GO!”
+EECOM? – “GO!”
+SURGEON? – “GO!”
+CAPCOM, We're “GO” for Landing.
+Okay everybody let’s just hang tight ‘n’ look for landing radar.
+(Seventy-five feet - down a half… Twelve 0-2 alarm... Sixty seconds....
+We're, we’re going that flag?.... We're “GO” on that alarm?....
+We’re speed down two and a half.... It’s, if it doesn’t reoccur we’ll be “GO”…
+Thirty seconds… Twelve 0-2? … Bravo 1?... Bravo 1…
+Roger, Twelve 0-1 alarm?... Twelve 0-1 alarm…
+Same type, we’re “GO”…Okay we're “GO.”)
+We've had shutdown.
+Houston, ah… Tranquility Base here. The Eagle has landed.
+Okay keep the chatter down in this room!
+T1 stand by for T1
+“STAY NO” / “STAY OFF”
+Flight Controllers?
+RETRO? – “STAY!”
+FIDO? – “STAY!”
+GUIDANCE? – “STAY!”
+CONTROL? – “STAY!”
+TELCOM? – “STAY!”
+GNC? – “STAY!”
+EECOM? – “STAY!”
+SURGEON? – “STAY!”
+RETRO? – “GO!”
+FIDO? – “GO!”
+GUIDANCE? – “GO!”
+CONTROL? – “GO!”
+TELCOM? – “GO!”
+GNC? – “GO!”
+EECOM? – “GO!”
+SURGEON? – “GO!”
+RETRO? – “GO!”
+FIDO? – “GO!”
+GUIDANCE? – “GO!”
+CONTROL? – “GO!”
+RETRO? – “GO!”
+FIDO? – “GO!”
+GUI’? – “GO!”
+‘TROL? – “GO!”
+“GO!” “GO!” “GO!” “GO!”
+
+--------------------------
+【歌曲文件】: God Save The Queen - Sex Pistols.lrc
+【基本信息】:
+  歌名: God Save The Queen
+  歌手: Sex Pistols
+  专辑: Never Mind The Bollocks, Here's The Sex Pistols
+  时长: 3分19秒
+【歌词内容】:
+[00:19]God save the queen
+[00:21]The fascist regime
+[00:26]They made you a moron
+[00:29]Potential H-bomb
+[00:32]God save the queen
+[00:35]She ain't no human being
+[00:38]There is no future
+[00:41]In England's dreaming
+[00:44]Don't be told what you want.Don't be told what you need
+[00:51]There's no future, no future,
+[00:54]No future for you
+[00:57]God save the queen
+[01:00]We mean it man
+[01:03]We love our queen
+[01:07]God saves
+[01:10]God save the queen
+[01:13]'Cause tourists are money
+[01:17]And our figurehead
+[01:20]Is not what she seems
+[01:22]Oh God save history
+[01:25]God save your mad parade
+[01:30]Oh Lord God have mercy
+[01:33]All crimes are paid
+[01:36]When there's no future
+[01:37]How can there be sin
+[01:39]We're the flowers in the dustbin
+[01:42]We're the poison in your human machine
+[01:45]We're the future, your future
+[01:48]God save the queen
+[01:52]We mean it man
+[01:55]We love our queen
+[01:58]God saves
+[02:18]God save the queen
+[02:20]We mean it man
+[02:23]And there is no future
+[02:26]In England's dreaming
+[02:30]No future, no future,
+[02:36]No future for you
+[02:42]No future, no future,
+[02:50]No future for me
+[02:56]No future, no future,
+[03:02]No future for you
+[03:07]No future, no future
+[03:11]For you
+
+--------------------------
+【歌曲文件】: Going Home - Sophie Zelmani.lrc
+【基本信息】:
+  歌名: Going Home
+  歌手: Sophie Zelmani
+  专辑: Live In China
+  时长: 5分14秒
+【歌词内容】:
+Not very often have we met
+But the music's been too bad
+Can only sense happiness
+If the music is sad
+So, I'm going home
+I must hurry home
+Where a life goes on
+We're too old to make a mess
+But dreams will keep me young
+Old enough to stress
+Only mirrors tell the time
+So, I'm going home
+I must hurry home
+Where a life goes on
+Yes, I'm going home
+Going home alone
+So will my life goes on
+So, I'm going home
+I must hurry home
+Where a life goes on
+Yes, I'm going home
+Going home alone
+So will my life goes on
+sophie旁白：
+So do u know this song ，
+so i can ask you sing it， yes， good
+ok let's do it
+very beautiful  great
+really nice but i will like to more louder
+so one more time
+thank u so much for singing for me， its beautiful）
+
+--------------------------
+【歌曲文件】: Gold Steps - Neck Deep.lrc
+【基本信息】:
+  歌名: Gold Steps
+  歌手: Neck Deep
+  专辑: Life's Not Out to Get You
+  时长: 3分12秒
+【歌词内容】:
+I've been stuck in the middle pages
+Hung up on a cross that I created
+Built out of the bones that I've been breaking
+The sign you said you needed
+Is there but you can't see it
+You might be down and out but you're still breathing
+If you write the story
+You'll find out we're all stuck on the same page
+Cause' sometimes things will bend you
+But trust me you'll be fine
+cause I've been moving mountains that I once had to climb
+And life's not out to get you
+Despite the things you've been through
+Because what you give is what you get
+And it doesn't make sense to make do
+The walls are caving in again
+Happens every now and then
+Always got me feeling like I'm ******
+Falling in and out of bed
+Sleep so I feel like I'm dead
+Trying to get a grip is kinda rough
+You say life has lost its meaning
+And that's true if you believe it
+But someday you will stand above your demons
+You're not beneath this
+If you write the story
+You'll find out we're all stuck on the same page
+Cause' sometimes things will bend you
+But trust me you'll be fine
+cause I've been moving mountains that I once try to climb
+And life's not out to get you
+Despite the things you've been through
+Because what you give is what you get
+And it doesn't make sense to make do
+So pick yourself up
+You can't change what's been
+You must go on and learn while you're living
+And when you see the signs saying hope is up ahead
+Then you're right on the track for a better end
+Cause' sometimes things will bend you
+But trust me you'll be fine
+cause I've been moving mountains that I once had to climb
+And life's not out to get you
+Despite the things you've been through
+Because what you give is what you get
+Yeah, life's not out to get you
+Yeah, life's not out to get  you
+
+--------------------------
+【歌曲文件】: Goo Goo Muck - The Cramps.lrc
+【基本信息】:
+  歌名: Goo Goo Muck
+  歌手: The Cramps
+  专辑: Psychedelic Jungle
+  时长: 3分6秒
+【歌词内容】:
+When the sun goes down and the moon comes up
+I turn into a teenage goo goo muck
+Yeah I cruise through the city and I roam the street
+Looking for something that is nice to eat
+You better duck
+When I show up
+The goo goo muck
+I'm the night headhunter looking for some head
+With a way out body underneath that head
+Well I'll get you baby with a little luck
+Cuz I'm teenage tiger and a goo goo muck
+You better duck
+When I show up
+The goo goo muck
+Yeah the city is a jungle and i'm a beast
+I'm a teenage tiger looking for a feast
+I want the most but i'll take the least
+Cuz I'm a goo goo muck tiger and a teenage beast
+You'd better duck
+When I show up
+The goo goo muck
+The goo goo muck
+
+--------------------------
+【歌曲文件】: Goodbye Blue Sky - Pink Floyd.lrc
+【基本信息】:
+  歌名: Goodbye Blue Sky
+  歌手: Pink Floyd
+  专辑: The Wall
+  时长: 2分47秒
+【歌词内容】:
+Look, Mummy. There's an airplane up in the sky.
+Ooooo
+Did you , did you see the frightened ones?
+Did you , did you hear the falling bombs?
+Did you ever wonder why we had to run for shelter,
+When the promise of a brave new world,
+Unfurled beneath a clear blue sky?
+Ooooo
+Did you , did you see the frightened ones?
+Did you , did you hear the falling bombs?
+The flames are all long gone,
+But the pain lingers on.
+Goodbye, Blue sky.
+Goodbye, Blue sky.
+Goodbye.
+Goodbye.
+
+--------------------------
+【歌曲文件】: Goodnight Bad Morning - The Kills.lrc
+【基本信息】:
+  歌名: Goodnight Bad Morning
+  歌手: The Kills
+  专辑: Midnight Boom
+  时长: 3分53秒
+【歌词内容】:
+Speeds working, I see it in everyone
+Like a lost idea under a light bulb sun
+Your eyes, ready for takeoff, melt in your head
+What a beautiful state we're in
+Jealous in my mind are all dead
+I love you so much, never forget
+Our love, our secrets, coming undone
+What a beautiful state we're in
+Goodnight, another bad morning
+Goodnight, another bad morning
+Goodnight, another bad morning
+Goodnight, another bad morning
+Goodnight
+(Another bad)
+Goodnight
+(Another bad)
+Goodnight
+(Another bad)
+Goodnight, another bad morning
+
+--------------------------
+【歌曲文件】: Grantchester Meadows - Pink Floyd.lrc
+【基本信息】:
+  歌名: Grantchester Meadows
+  歌手: Pink Floyd
+  专辑: Ummagumma
+  时长: 7分27秒
+【歌词内容】:
+Icy wind of night, be gone.
+This is not your domain.
+In the sky a bird was heard to cry.
+Misty morning whisperings and gentle stirring sounds
+Belied a deathly silence that lay all around.
+Hear the lark and harken to the barking of the dog fox gone to ground.
+See the splashing of the kingfisher flashing to the water.
+And a river of green is sliding unseen beneath the trees,
+Laughing as it passes through the endless summer making for the sea.
+In the lazy water meadow
+I lay me down.
+All around me,
+Golden sunflakes settle on the ground,
+Basking in the sunshine of a by gone afternoon,
+Bringing sounds of yesterday into this city room.
+Hear the lark and harken to the barking of the dog fox gone to ground.
+See the splashing of the kingfisher flashing to the water.
+And a river of green is sliding unseen beneath the trees,
+Laughing as it passes through the endless summer making for the sea.
+In the lazy water meadow
+I lay me down.
+All around me,
+Golden sunflakes covering the ground,
+Basking in the sunshine of a by gone afternoon,
+Bringing sounds of yesterday into my city room.
+Hear the lark and harken to the barking of the dog fox gone to ground.
+See the splashing of the kingfisher flashing to the water.
+And a river of green is sliding unseen beneath the trees,
+Laughing as it passes through the endless summer making for the sea.
+
+--------------------------
+【歌曲文件】: Gravity - Leo Stannard，Frances.lrc
+【基本信息】:
+  歌名: Gravity
+  歌手: Leo Stannard，Frances
+  专辑: Gravity
+  时长: 3分3秒
+【歌词内容】:
+Life goes flashing by
+Lifts me off my feet
+Broken wings don't fly
+I can't breathe, you know that I need you
+You smile and it pulls me through
+Spinning out of time
+Falling far too deep
+You're my perfect sky, sets me free
+You know that I need you
+You smile and it pulls me through
+Whenever I feel far from home
+Facing the world on my own
+You are the calm in my storm
+You are the light
+You are the light that's guiding me
+The only one I see
+The only one I need
+You're my gravity
+Waves come crashing in
+I can't find my feet
+Then you walk behind holding me
+You know that I need you
+You smile and it pulls me through
+Whenever I feel far from home
+Facing the world on my own
+You are the calm in my storm
+You are the light
+You are the light that's guiding me
+The only one I see
+The only one I need
+You're my gravity
+You're my gravity
+You're my gravity
+You're my gravity
+Whenever I feel far from home
+You are the calm in my storm
+Whenever I feel far from home
+Facing the world on my own
+You are the calm in my storm
+You are the light
+You are the light that's guiding me
+The only one I see
+The only one I need
+You're my gravity
+You're my gravity
+You're my gravity
+
+--------------------------
+【歌曲文件】: Green is the Colour - Pink Floyd.lrc
+【基本信息】:
+  歌名: Green is the Colour
+  歌手: Pink Floyd
+  专辑: More
+  时长: 2分58秒
+【歌词内容】:
+Heavy  hung  the  canopy  of  blue
+Shade  my  eyes  and  I  can  see  you
+White  is  the  light  that  shines  through  the  dress  that  you  wore
+She  lay  in  the  shadow  of  the  wave
+Hazy  were  the  visions  overplayed
+Sunlight  in  her  eyes  but  moonshine  made  her  blind  every  time
+Green  is  the  colour  of  her  kind
+Quickness  of  the  eye  deceives  the  mind
+Envy  is  the  bond  between  the  hopeful  and  the  damned
+
+--------------------------
+【歌曲文件】: Grizzly Bear - Angus & Julia Stone.lrc
+【基本信息】:
+  歌名: Grizzly Bear
+  歌手: Angus & Julia Stone
+  专辑: Angus & Julia Stone
+  时长: 4分8秒
+【歌词内容】:
+Yeah I seen you there
+Looking all pretty when you brushed your hair
+Yeah I like it when you smile
+Won't you stay with me just for a little while?
+Can I take you home?
+Can I take you home?
+We can go anywhere you wanna go
+Can I take you high
+To the mountain sky?
+We can go as far as you wanna go
+Pa pa pa pa pa pa
+Pa pa pa pa pa pa
+Sitting here now beneath them stars
+Makes me wanna take them wings to my arms
+She's got this way, she's got this way
+Of wrapping her little heart around mine
+Can I take you home?
+Can I take you home?
+We can go anywhere you wanna go
+Can I take you high
+To the mountain sky?
+We can go as far as you wanna go
+Pa pa pa pa pa pa
+Pa pa pa pa pa pa
+Can I take you home?
+Can I take you home?
+We can go anywhere you wanna go
+Can I take you high
+To the mountain sky?
+We can go as far as you wanna go
+Pa pa pa pa pa pa
+Pa pa pa pa pa pa
+Pa pa pa pa pa pa
+Pa pa pa pa pa pa
+
+--------------------------
+【歌曲文件】: Gronlandic Edit - Of Montreal.lrc
+【基本信息】:
+  歌名: Gronlandic Edit
+  歌手: Of Montreal
+  专辑: Hissing Fauna, Are You The Destroyer?
+  时长: 3分24秒
+【歌词内容】:
+Nihilists with good imaginations
+I am satisfied hiding in our friend's apartment
+Only leaving once a day to buy some groceries
+Daylight I'm so absent minded nighttime meeting new anxieties
+So am I erasing myself Hope I'm not erasing myself
+I guess it would be nice to give my heart to a God
+But which one which one do I choose
+All the churches filled with losers psycho or confused
+I just want to hold the divine in mine
+And forget all of the beauty's wasted
+Let's fall back to earth and do something pleasant say it
+We fell back to earth like gravity's ******* *******
+Physics makes us all its *******
+I guess it would be nice to help in your escape
+From patterns your parents designed
+All the party people dancing for the indie star
+But he's the worst faker by far in the set
+I forget all of the beauty's wasted
+I guess it would be nice
+Show me that things can be nice
+I guess it would be nice
+Show me that things can be nice
+You've got my back in the city
+You've got my back 'cause I don't want to panic
+You've got my back in the city
+You've got my back 'cause I don't want to panic
+
+--------------------------
+【歌曲文件】: Gypsy - Fleetwood Mac.lrc
+【基本信息】:
+  歌名: Gypsy
+  歌手: Fleetwood Mac
+  专辑: Opus Collection
+  时长: 4分23秒
+【歌词内容】:
+So I'm back, to the velvet underground
+Back to the floor, that I love
+To a room with some lace and paper flowers
+Back to the gypsy that I was
+To the gypsy... that I was
+And it all comes down to you
+Well, you know that it does
+Well, lightning strikes, maybe once, maybe twice
+Ah, and it lights up the night
+And you see your gypsy
+You see your gypsy
+To the gypsy that remains faces freedom with a little fear
+I have no fear, I have only love
+And if I was a child
+And the child was enough
+Enough for me to love
+Enough to love
+She is dancing away from me now
+She was just a wish
+She was just a wish
+And a memory is all that is left for you now
+You see your gypsy
+You see your gypsy
+Lightning strikes, maybe once, maybe twice
+And it all comes down to you
+And it all comes down to you
+Lightning strikes, maybe once, maybe twice
+And it all comes down to you
+I still see your bright eyes, bright eyes
+And it all comes down to you
+
+--------------------------
+【歌曲文件】: Haha, Hi - BoyWithUke.lrc
+【基本信息】:
+  歌名: Haha, Hi
+  歌手: BoyWithUke
+  专辑: Fever Dreams
+  时长: 3分34秒
+【歌词内容】:
+I think we talked about a TV show that you liked
+Something I forget 'cause I was thinking, "Whoa, are her eyes real?"
+Ain't no way she gon' be feeling what I feel
+But I guess I'm not a psycho, 'cause she's sitting in my automobile right now
+Singing as I stir my wheel, oh dear
+Like how? It's been well over a year
+I don't believe it when she says she misses me or when she kisses me
+There must be an alternative motive I miss
+So help me, please, to understand
+How and why you stuck around
+It's like you hopped the fence and said nobody is allowed back here
+I disregarded all of my fears
+And I remember when we first spoke words, I'll say, "I'm here"
+One, two, one, two, three, four
+Haha, hi, you've been on my mind
+I feel quite alright
+When I've got sights from your pretty eyes
+I can't find out if you like the sound of my voice
+It's a little squeaky, I try to make it sound deeper for you, my baby
+Haha, hi, you've been on my mind
+I feel quite alright
+When I can see your face in the light
+I can't find out if you like the sound of my voice
+It's a little squeaky, I try to make it sound deeper for you, my baby
+(Ooh, ooh, ooh, ooh)
+My baby
+(Ooh, ooh) My baby (Ooh, ooh)
+My baby
+I don't appreciate the foliage that blocks being in love with you
+Falling on each other, we catch L's but mostly W's
+Worry 'bout the lack of time, another time forget to rhyme
+Forget about them ends in lines and focus on our aptitude
+The poly rhythmic notes upon a measure, we're the only two
+Lines in a stanza that don't rhyme, but we somehow do
+Winter comes and takes away the sun, but I'll follow through
+Drawing inspiration from Romeo Montague
+I lose my brain cells when I'm with you
+I fell through the ****ing room
+When I saw you walking through the hallway zone
+Can't breathe in this altitude
+I'm left with my screws unloose
+And you make me feel so good, my baby
+Haha, hi, you've been on my mind
+I feel quite alright
+When I've got sights from your pretty eyes
+I can't find out if you like the sound of my voice
+It's a little squeaky, I try to make it sound deeper for you, my baby
+Haha, hi, you've been on my mind
+I feel quite alright
+When I can see your face in the light
+I can't find out if you like the sound of my voice
+It's a little squeaky, I try to make it sound deeper for you, my baby
+
+--------------------------
+【歌曲文件】: Happier - Marshmello，Bastille.lrc
+【基本信息】:
+  歌名: Happier
+  歌手: Marshmello，Bastille
+  专辑: Happier
+  时长: 3分34秒
+【歌词内容】:
+Lately, I've been, I've been thinking
+I want you to be happier, I want you to be happier
+When the morning comes
+When we see what we've become
+In the cold light of day we're a flame in the wind
+Not the fire that we begun
+Every argument, every word we can't take back
+'Cause with the all that has happened
+I think that we both know the way that the story ends
+Then only for a minute
+I want to change my mind
+'Cause this just don't feel right to me
+I want to raise your spirits
+I want to see you smile but
+Know that means I'll have to leave
+Know that means I'll have to leave
+Lately, I've been, I've been thinking
+I want you to be happier, I want you to be happier
+When the evening falls
+And I'm left there with my thoughts
+And the image of you being with someone else
+Well, that's eating me up inside
+But we run our course, we pretend that we're okay
+Now if we jump together at least we can swim
+Far away from the wreck we made
+Then only for a minute
+I want to change my mind
+'Cause this just don't feel right to me
+I want to raise your spirits
+I want to see you smile but
+Know that means I'll have to leave
+Know that means I'll have to leave
+Lately, I've been, I've been thinking
+I want you to be happier, I want you to be happier
+So I'll go, I'll go
+I will go, go, go
+So I'll go, I'll go
+I will go, go, go
+Lately, I've been, I've been thinking
+I want you to be happier, I want you to be happier
+Even though I might not like this
+I think that you'll be happier, I want you to be happier
+Then only for a minute
+I want to change my mind
+'Cause this just don't feel right to me
+I want to raise your spirits
+I want to see you smile but
+Know that means I'll have to leave
+Know that means I'll have to leave
+Lately, I've been, I've been thinking
+I want you to be happier, I want you to be happier
+So I'll go, I'll go
+I will go, go, go
+
+--------------------------
+【歌曲文件】: Harvey - Her's.lrc
+【基本信息】:
+  歌名: Harvey
+  歌手: Her's
+  专辑: Invitation to Her's
+  时长: 3分31秒
+【歌词内容】:
+Some people think I'm acting worse for wear
+Suffice to say this is a quaint affair
+But no one really knows me like Harvey
+And once you've met him I'm sure you'll agree
+(Yeah I get it)
+(You wanna know)
+(Who he is)
+(Where we go)
+(Yeah I get it)
+(You wanna see)
+(What it is)
+(Him and me)
+Harvey
+Nobody knows what I see
+Nobody knows I'm waiting
+Waiting for you to call
+Harvey
+Nobody knows what I see
+Everyone thinks I'm crazy
+Crazy for you, oh boy
+Barked at the moon amid an empty street
+We felt the remnants of the evening heat
+Said "Harvey let me be the one to say"
+"I wouldn't dream this any other way"
+(Yeah I get it)
+(You wanna know)
+(Who he is)
+(Where we go)
+(Yeah I get it)
+(You wanna see)
+(What it is)
+(Him and me)
+Harvey
+Nobody knows what I see
+Nobody knows I'm waiting
+Waiting for you to call
+Harvey
+Nobody knows what I see
+Everyone thinks I'm crazy
+Crazy for you, oh boy
+Harvey
+Nobody knows what I see
+Everyone thinks I'm crazy
+Crazy for you, oh boy
+Harvey
+Nobody knows what I see
+Nobody knows I'm waiting
+Waiting for you to call
+Harvey
+Nobody knows what I see
+Everyone thinks I'm crazy
+Crazy for you, oh boy
+
+--------------------------
+【歌曲文件】: Have a Cigar - Pink Floyd.lrc
+【基本信息】:
+  歌名: Have a Cigar
+  歌手: Pink Floyd
+  专辑: Wish You Were Here
+  时长: 5分7秒
+【歌词内容】:
+Come in here, Dear boy, have a cigar.
+You're gonna go far,
+You're gonna fly high,
+You're never gonna die,
+You're gonna make it, if you try;
+They're gonna love you.
+Well I've always had a deep respect,
+And I mean that most sincere.
+The band is just fantastic,
+that is really what I think.
+Oh by the way, which one's Pink?
+And did we tell you the name of the game, boy?
+We call it Riding the Gravy Train.
+We're just knocked out.
+We heard about the sell-out.
+You gotta get an album out.
+You owe it to the people.
+We're so happy we can hardly count.
+Everybody else is just green,
+Have you seen the chart?
+It's a hell of a start,
+It could be made into a monster
+If we all pull together as a team.
+And did we tell you the name of the game, boy?
+We call it Riding the Gravy Train.
+
+--------------------------
+【歌曲文件】: Head In The Clouds - Hayd.lrc
+【基本信息】:
+  歌名: Head In The Clouds
+  歌手: Hayd
+  专辑: Changes - EP
+  时长: 3分4秒
+【歌词内容】:
+I miss the days when life was so simple
+Felt like the glass was always half full
+Where did that go?
+And every second with you was so special
+Back when we didn't fear the unknowns
+But that was long ago
+Who can say where the path will go?
+Philosophers guess but they just don't know
+Maybe that's why
+We had our heads in the clouds
+Thought we had it all figured out
+Planning to fly away
+To escape everything on the ground
+But like a plane up in space
+We slowly drifted away
+And every plan that we made
+And dream that we chased
+Are just memories now
+They're just memories now
+I'm not sure where everything went wrong
+But I know that we landed where we both belong
+I just wish we weren't scared to say
+That there's expiration dates on the friends you make
+As hard as that may sound
+Who can say where the path will go?
+Philosophers guess but they just don't know
+Maybe that's why
+We had our heads in the clouds
+Thought we had it all figured out
+Planning to fly away
+To escape everything on the ground
+But like a plane up in space
+We slowly drifted away
+And every plan that we made
+And dream that we chased
+Are just memories now
+They're just memories now
+Who can say where the path will go?
+Philosophers guess but they just don't know
+
+--------------------------
+【歌曲文件】: Heart Of Stone - Peter Green.lrc
+【基本信息】:
+  歌名: Heart Of Stone
+  歌手: Peter Green
+  专辑: Supernatural - An Anthology
+  时长: 4分44秒
+【歌词内容】:
+You put the salt in my water
+But you put sugar in my soul
+I can't fight you no more
+You're making me feel alone
+I try to give you silver
+But you only take gold
+You're the cream in my coffee
+and the light in my day
+You give me something to live for
+and then you take it away
+I try to give you some love
+but you turn it away
+You've got a heart of stone
+You've got a heart of stone
+You're going to end up alone
+You've got a heart of stone
+Woman, you can be so mean
+I keep telling myself
+what a fool I've been
+I want to leave you alone
+with your heart of stone
+I give you all my money
+and you throw it around
+But when I call you up
+you're nowhere to be found
+You've got a heart of stone
+You've got a heart of stone
+You're going to end up alone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+You've got a heart of stone
+……
+
+--------------------------
+【歌曲文件】: Heaven's On Fire - KISS.lrc
+【基本信息】:
+  歌名: Heaven's On Fire
+  歌手: KISS
+  专辑: Animalize
+  时长: 3分19秒
+【歌词内容】:
+I look at you and my blood boils hot
+I feel my temperature rise
+I want it all, give me what you got
+There's hunger in your eyes
+I'm getting closer, baby hear me breathe
+You know the way to give me what I need
+Just let me love you and you'll never leave
+Feel my heat takin' you higher
+Burn with me, Heaven's on fire
+Paint the sky with desire
+Angel fly, Heaven's on fire
+I got a fever ragin' in my heart
+You make me shiver and shake
+Baby don't stop, take it to the top
+Eat it like a piece of cake
+You're comin' closer, I can hear you breathe
+You drive me crazy, when you start to tease
+You could bring the devil to his knees
+Feel my heat takin' you higher
+Burn with me, Heaven's on fire
+Paint the sky with desire
+Angel fly, Heaven's on fire
+Oh ho, Heaven's on fire
+Oh ho, Heaven's on fire, oh ho
+I'm getting closer, baby hear me breathe
+You know the way to give me what I need
+Just let me love you and you'll never leave
+Feel my heat takin' you higher
+Burn with me, Heaven's on fire
+Paint the sky with desire
+Angel fly, Heaven's on fire
+Feel my heat takin' you higher
+Burn with me, Heaven's on fire
+Paint the sky with desire
+Angel fly, Heaven's on fire
+Feel my heat takin' you higher
+Burn with me, Heaven's on fire
+Paint the sky with desire
+
+--------------------------
+【歌曲文件】: Heavy Wave - Motorama.lrc
+【基本信息】:
+  歌名: Heavy Wave
+  歌手: Motorama
+  专辑: Poverty
+  时长: 3分29秒
+【歌词内容】:
+Goodbye my past
+here comes a vague taste
+of bitter future
+bitter future
+very strange taste
+heavy wave is coming
+heavy wave on the way
+heavy wave from immense loss
+heavy wave from a weird dream where I am
+forever alone forever alone
+goodbye future I stayed in my memories
+goodbye future I'm done with it
+heavy wave is coming
+heavy wave on the way
+heavy wave from immense loss
+heavy wave from a weird dream where I am
+forever alone forever alone
+forever alone forever alone
+forever alone forever alone
+forever alone forever alone
+forever alone forever alone
+forever alone forever alone
+forever alone forever alone
+forever alone forever alone
+forever alone forever alone
+
+--------------------------
+【歌曲文件】: Hey - Pixies.lrc
+【基本信息】:
+  歌名: Hey
+  歌手: Pixies
+  专辑: Doolittle
+  时长: 3分31秒
+【歌词内容】:
+Hey
+Been trying to meet you
+Must be a devil between us
+Or whores in my head
+Whores at my door
+Whores in my bed
+But hey
+Where
+Have you
+Been if you go i will surely die
+We're chained  Uh...
+Uh...  Uh...  Uh...
+Music
+Uh！
+Said the man to the lady
+Uh...
+said the lady to the man she adored
+And the whores like a choir
+Go uh all night
+And mary ain't you tired of this
+Uh
+Is
+The
+Sound
+That the mother makes when the baby breaks
+We're chained
+
+--------------------------
+

@@ -1,0 +1,65 @@
+# SearxNG 针对音乐推荐项目的优化配置
+# 文档：https://docs.searxng.org/admin/settings/
+
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "MusicSearch"
+  contact_url: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "zh-CN"
+  # 允许任何来源调用（供本地 Python 服务使用）
+  formats:
+    - html
+    - json         # ← 关键：启用 JSON 格式，Python 直接解析
+
+server:
+  secret_key: "music-agent-searxng-secret-2025"
+  limiter: false   # ← 关闭速率限制（本地内部调用无需限制）
+  image_proxy: false
+  http_protocol_version: "1.0"
+  # 允许跨域（供前端调用）
+  cors_allow_origin: "*"
+
+# 优选搜索引擎（国内/音乐领域表现好的）
+engines:
+  # ─── 国际引擎 ───
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+
+  # ─── 中文引擎 ───
+  - name: baidu
+    engine: baidu
+    shortcut: bd
+    disabled: false
+
+  # ─── 音乐/视频专项 ───
+  - name: youtube
+    engine: youtube_noapi
+    shortcut: yt
+    disabled: false
+
+  - name: bilibili
+    engine: bilibili
+    shortcut: bili
+    disabled: false
+
+  # ─── 百科/歌词 ───
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+
+ui:
+  results_on_new_tab: true

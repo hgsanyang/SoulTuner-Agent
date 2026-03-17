@@ -1,0 +1,439 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+GraphZep is a TypeScript implementation of the Zep temporal knowledge graph memory system for AI agents. Based on the Graphzep framework and enhanced with Zep memory capabilities, it provides episodic, semantic, and procedural memory types with advanced search and retrieval functionality.
+
+
+Key features:
+
+- **Zep Memory System**: Episodic, semantic, and procedural memory types with session management
+- **Advanced Search**: Semantic, keyword, hybrid search with MMR reranking and fact extraction
+- **Bi-temporal Data Model**: Explicit tracking of event occurrence times and memory validity
+- **Hybrid Retrieval**: Semantic embeddings, keyword search (BM25), and graph traversal
+- **RDF Support**: Complete RDF triple store with SPARQL 1.1 queries and ontology management
+- **Type Safety**: Full TypeScript implementation with Zod schema validation
+- **Multiple Backends**: Neo4j, FalkorDB, and optimized RDF in-memory store with external endpoint support
+- **Production Ready**: HTTP server, MCP integration, and Docker deployment
+
+## Development Commands
+
+### Main Development Commands (run from project root)
+
+```bash
+# Install dependencies
+npm install
+
+# Build the core library
+npm run build
+
+# Format code (Prettier formatting)
+npm run format
+
+# Lint code (ESLint + TypeScript checking)
+npm run lint
+
+# Run tests (comprehensive tests including RDF functionality using Node.js built-in test runner)  
+npm test
+
+# Run all checks (format, lint, typecheck, test)
+npm run check
+
+# Development mode with watch
+npm run dev
+
+# Type checking only
+npm run typecheck
+
+# Clean build artifacts
+npm run clean
+```
+
+### HTTP Server Development (run from server/ directory)
+
+```bash
+cd server/
+# Install server dependencies
+npm install
+
+# Run server in development mode (Hono with hot reload)
+npm run dev
+
+# Build production server
+npm run build
+
+# Start production server
+npm start
+
+# Format, lint, test server code
+npm run format
+npm run lint
+npm test
+```
+
+### MCP Server Development (run from mcp_server/ directory)
+
+```bash
+cd mcp_server/
+# Install MCP server dependencies
+npm install
+
+# Run in development mode
+npm run dev
+
+# Build MCP server
+npm run build
+
+# Start production MCP server
+npm start
+
+# Run with Docker Compose (TypeScript version)
+docker-compose -f docker-compose.yml up --build
+```
+
+### Examples and Tutorials (run from examples/ directory)
+
+```bash
+cd examples/
+# Install example dependencies
+npm install
+
+# Run quickstart examples
+npm run quickstart:neo4j      # Basic Neo4j operations
+npm run quickstart:falkordb   # FalkorDB backend
+npm run quickstart:rdf        # RDF triple store with SPARQL
+npm run quickstart:neptune    # Amazon Neptune support
+
+# Run advanced examples
+npm run ecommerce            # Product catalog search demo
+npm run podcast              # Conversation analysis
+npm run langgraph-agent      # AI sales agent with memory
+```
+
+## Code Architecture
+
+### Core Library (`src/`)
+
+- **Main Entry Point**: `src/index.ts` - Main exports for the GraphZep library
+- **Zep Memory System**: `src/zep/` - Complete Zep memory implementation
+  - `memory.ts` - Memory management with fact extraction
+  - `session.ts` - Session management and isolation
+  - `retrieval.ts` - Advanced search and retrieval system
+  - `types.ts` - Zep-specific type definitions
+- **Orchestration**: `src/graphzep.ts` - Main `Graphzep` class for underlying graph operations
+- **Graph Storage**: `src/drivers/` - Database drivers for Neo4j, FalkorDB, optimized RDF driver, and future Neptune support
+- **LLM Integration**: `src/llm/` - Clients for OpenAI, Anthropic with TypeScript interfaces
+- **Embeddings**: `src/embedders/` - Embedding clients with type-safe configurations
+- **Graph Elements**: `src/core/nodes.ts`, `src/core/edges.ts` - Core graph data structures with Zod validation
+- **Type Definitions**: `src/types/` - Comprehensive TypeScript type definitions
+- **RDF System**: `src/rdf/` - Complete RDF support with SPARQL queries and ontology management
+  - `namespaces.ts` - RDF namespace management with Zep ontology
+  - `memory-mapper.ts` - Convert Zep memories to/from RDF triples
+  - `sparql-interface.ts` - SPARQL 1.1 query interface with Zep extensions
+  - `ontology-manager.ts` - Load and validate custom domain ontologies
+  - `ontologies/` - Default Zep ontology and custom ontology support
+- **Utilities**: `src/utils/` - Date/time handling, validation utilities
+
+### HTTP Server (`server/`)
+
+- **Hono Service**: `server/src/standalone-main.ts` - High-performance HTTP server using Hono framework
+- **Configuration**: `server/src/config/` - Environment-based configuration with Zod validation
+- **DTOs**: `server/src/dto/` - Data transfer objects with Zod schemas for API contracts
+- **API Endpoints**: All FastAPI endpoints preserved with identical functionality
+
+### MCP Server (`mcp_server/`)
+
+- **MCP Implementation**: `mcp_server/src/graphzep-mcp-server.ts` - TypeScript Model Context Protocol server
+- **Tool Handlers**: Complete MCP tool implementation for AI assistants
+- **Docker Support**: TypeScript-based containerized deployment with health checks
+
+### Examples (`examples/`)
+
+- **Quickstart**: `examples/quickstart/` - Basic usage examples for all database backends
+- **E-commerce**: `examples/ecommerce/` - Product catalog and semantic search demonstration
+- **Podcast**: `examples/podcast/` - Conversation analysis and temporal knowledge extraction
+- **LangGraph Agent**: `examples/langgraph-agent/` - AI sales agent with persistent memory
+
+## Testing
+
+- **Unit Tests**: `src/test/` - Comprehensive tests using Node.js built-in test runner
+- **Zep Memory Tests**: `src/test/zep.test.ts` - Complete Zep memory system testing (30 tests)
+- **RDF Tests**: `src/test/rdf.test.ts` - Complete RDF functionality testing with SPARQL queries
+- **Integration Tests**: Tests marked with `_int` suffix require database connections
+- **100% Pass Rate**: All tests passing with comprehensive coverage
+- **Test Categories**: Unit, integration, RDF/SPARQL, API endpoint, Zep memory system, and end-to-end workflow testing
+
+## Configuration
+
+### Environment Variables
+
+**Required:**
+- `OPENAI_API_KEY` - Required for LLM inference and embeddings
+
+**Optional LLM Providers:**
+- `ANTHROPIC_API_KEY` - For Anthropic Claude models
+- `GOOGLE_API_KEY` - For Google Gemini models  
+- `GROQ_API_KEY` - For Groq inference
+
+**Database Configuration:**
+- `NEO4J_URI` - Neo4j connection URI (default: `bolt://localhost:7687`)
+- `NEO4J_USER` - Neo4j username (default: `neo4j`)
+- `NEO4J_PASSWORD` - Neo4j password
+- `FALKORDB_URI` - FalkorDB connection URI (default: `falkor://localhost:6379`)
+- `USE_PARALLEL_RUNTIME` - Optional boolean for Neo4j parallel runtime (enterprise only)
+
+**Server Configuration:**
+- `PORT` - HTTP server port (default: 3000)
+- `NODE_ENV` - Node.js environment (development/production)
+
+### Database Setup
+
+- **Neo4j**: Version 5.26+ required, available via Neo4j Desktop
+  - Database name defaults to `neo4j` (configurable in driver constructor)
+  - Docker: Uses `neo4j:5.26.2` image with APOC plugins
+- **FalkorDB**: Version 1.1.2+ as alternative backend
+  - Database name defaults to `default_db` (configurable in driver constructor)
+- **RDF Triple Store**: In-memory N3 store or external SPARQL endpoints
+  - Default: In-memory store with hybrid performance optimization
+  - External: Apache Jena Fuseki, Blazegraph, or other SPARQL 1.1 endpoints
+  - Custom ontologies: RDF/XML, Turtle, N-Triples formats supported
+- **Amazon Neptune**: Planned support (currently uses Neo4j fallback in examples)
+
+## RDF Support and Semantic Web Integration
+
+GraphZep provides comprehensive RDF (Resource Description Framework) support with full SPARQL 1.1 compatibility, making it interoperable with the broader Semantic Web ecosystem.
+
+### RDF Architecture
+
+The RDF implementation follows a **hybrid performance approach**:
+
+1. **Write-Optimized Core**: Fast memory ingestion (~1ms) for real-time scenarios
+2. **Read-Optimized Queries**: Pre-computed indexes for common patterns (~10ms)
+3. **Tiered Storage**: Hot data in memory, cold data persistence
+4. **Asynchronous Processing**: Background fact extraction and relationship discovery
+
+### Key RDF Features
+
+- **Zep Ontology**: Default ontology mapping Zep memory types to RDF classes and properties
+- **Custom Ontologies**: Load domain-specific ontologies (OWL, RDF/XML, Turtle)
+- **SPARQL 1.1**: Full query language support with temporal and confidence extensions
+- **Memory Mapping**: Automatic conversion between Zep memories and RDF triples
+- **Validation**: Ontology-guided fact validation and constraint checking
+- **Export**: Multiple RDF serialization formats (Turtle, RDF/XML, JSON-LD, N-Triples)
+
+### RDF Driver Usage
+
+```typescript
+import { Graphzep, OptimizedRDFDriver } from 'graphzep';
+import { OpenAIClient, OpenAIEmbedderClient } from 'graphzep';
+
+// Initialize RDF driver
+const rdfDriver = new OptimizedRDFDriver({
+  inMemory: true,                    // Use in-memory N3 store
+  sparqlEndpoint: undefined,         // Or external SPARQL endpoint
+  cacheSize: 10000,                 // LRU cache size
+  batchSize: 1000,                  // Batch insertion size
+  customOntologyPath: './custom.owl' // Optional custom ontology
+});
+
+// Initialize GraphZep with RDF support
+const graphzep = new Graphzep({
+  driver: rdfDriver,
+  llmClient: new OpenAIClient({ apiKey: process.env.OPENAI_API_KEY }),
+  embedder: new OpenAIEmbedderClient({ apiKey: process.env.OPENAI_API_KEY }),
+  rdfConfig: {
+    includeEmbeddings: true,
+    embeddingSchema: 'vector-ref'    // 'base64', 'vector-ref', 'compressed'
+  }
+});
+
+// Add episodic memory (automatically converted to RDF)
+await graphzep.addEpisode({
+  content: 'Alice works as a software engineer at ACME Corporation',
+  metadata: { source: 'conversation', confidence: 0.9 }
+});
+
+// Add semantic fact
+await graphzep.addFact({
+  subject: 'zepent:alice',
+  predicate: 'zep:worksAt', 
+  object: 'zepent:acme-corp',
+  confidence: 0.95,
+  sourceMemoryIds: [],
+  validFrom: new Date()
+});
+
+// Execute SPARQL queries
+const results = await graphzep.sparqlQuery(`
+  SELECT ?person ?company ?confidence
+  WHERE {
+    ?memory a zep:EpisodicMemory ;
+            zep:mentions ?person ;
+            zep:confidence ?confidence .
+    ?person zep:worksAt ?company .
+  }
+  ORDER BY DESC(?confidence)
+`);
+
+// Export to RDF formats
+const turtle = await graphzep.exportToRDF('turtle');
+const rdfXml = await graphzep.exportToRDF('rdf-xml');
+const jsonLd = await graphzep.exportToRDF('json-ld');
+```
+
+### SPARQL Extensions
+
+GraphZep extends SPARQL with Zep-specific functionality:
+
+- **Temporal Queries**: Query memories valid at specific times
+- **Confidence Filtering**: Filter by confidence thresholds
+- **Session Isolation**: Query within specific sessions
+- **Entity Resolution**: Find related entities with graph traversal
+
+### Ontology Management
+
+```typescript
+// Load custom domain ontology
+const ontologyId = await graphzep.loadOntology('./domain.owl');
+
+// Get extraction guidance based on ontology
+const guidance = await graphzep.generateExtractionGuidance(
+  'Alice is the project manager for the new AI initiative'
+);
+
+// Validate facts against ontology constraints
+const validation = ontologyManager.validateTriples(triples);
+if (!validation.valid) {
+  console.log('Validation errors:', validation.errors);
+}
+
+// Get ontology statistics
+const stats = graphzep.getOntologyStats();
+console.log(`Classes: ${stats.totalClasses}, Properties: ${stats.totalProperties}`);
+```
+
+### RDF Namespace Management
+
+GraphZep uses standard RDF namespaces plus Zep-specific ones:
+
+- `zep:` - Core Zep ontology (`http://graphzep.ai/ontology#`)
+- `zepmem:` - Memory instances (`http://graphzep.ai/memory#`)
+- `zepent:` - Entity instances (`http://graphzep.ai/entity#`)
+- `zeptime:` - Temporal properties (`http://graphzep.ai/temporal#`)
+
+Plus standard RDF, RDFS, OWL, XSD, PROV, and domain-specific namespaces.
+
+### Performance Characteristics
+
+- **Memory Ingestion**: ~1ms per episode (write-optimized)
+- **SPARQL Queries**: ~10ms for cached queries (read-optimized)
+- **Batch Processing**: 1000+ triples/second insertion
+- **Memory Usage**: Configurable LRU caching with TTL expiration
+- **Scalability**: In-memory for development, external endpoints for production
+
+## Development Guidelines
+
+### Code Style
+
+- **TypeScript**: Full type safety with strict mode enabled
+- **ESLint**: Configured for TypeScript best practices with `@typescript-eslint/recommended`
+- **Prettier**: Automatic code formatting with consistent style
+- **Line length**: 100 characters
+- **Quote style**: Single quotes
+- **No `any` types**: Strict type checking enforced throughout codebase
+
+### TypeScript Configuration
+
+- **Target**: ES2022 with modern JavaScript features
+- **Module System**: ES modules with proper import/export
+- **Strict Mode**: All strict TypeScript checks enabled
+- **Path Mapping**: Configured for clean imports and module resolution
+- **Declaration Files**: Generated for library consumers
+
+### Testing Requirements
+
+- **Test Runner**: Node.js built-in test runner (no external dependencies)
+- **Run tests**: `npm test` (runs all 91 tests)
+- **Zep Memory Tests**: Comprehensive Zep memory system testing (30 tests)
+- **Integration tests**: Marked with `_int` suffix, require database connections
+- **Test specific files**: `npm test -- --grep="test_name"`
+- **Coverage**: Use `npm run test:coverage` for coverage reports
+- **Docker testing**: `docker-compose -f docker-compose.test.yml up --build`
+
+### LLM Provider Support
+
+The TypeScript codebase supports multiple LLM providers with type-safe configurations:
+
+- **OpenAI**: Full support with structured output and function calling
+- **Anthropic**: Claude models with message formatting
+- **Google Gemini**: Structured output support
+- **Groq**: High-speed inference support
+
+All providers use consistent TypeScript interfaces for configuration and usage.
+
+### MCP Server Usage Guidelines
+
+The TypeScript MCP server follows the same patterns as the Python version:
+
+- Always search for existing knowledge before adding new information
+- Use specific entity type filters (`Preference`, `Procedure`, `Requirement`)
+- Store new information immediately using `add_memory` tool
+- Follow discovered procedures and respect established preferences
+- TypeScript implementation provides enhanced type safety for tool handlers
+
+## Docker Deployment
+
+### Production Deployment
+
+```bash
+# Full stack deployment (recommended)
+docker-compose -f docker-compose.yml up --build
+
+# Available services:
+# - Graphzep Server: http://localhost:3000
+# - MCP Server: http://localhost:3001  
+# - Neo4j Database: http://localhost:7474
+```
+
+### Development with Docker
+
+```bash
+# Test environment
+docker-compose -f docker-compose.test.yml up --build
+
+# MCP server only
+cd mcp_server && docker-compose -f docker-compose.yml up --build
+```
+
+### Key Improvements in TypeScript Version
+
+- **Type Safety**: Compile-time error detection and prevention
+- **Performance**: 2x faster HTTP responses, 30% lower memory usage
+- **Development Experience**: Hot reload, IntelliSense, advanced debugging
+- **Modern Tooling**: ESLint, Prettier, comprehensive test suite
+- **Production Ready**: Health checks, monitoring, container orchestration
+
+## Production Considerations
+
+### Performance Optimizations
+
+- **Hono Framework**: High-performance HTTP handling
+- **Zod Validation**: Fast runtime schema validation
+- **Connection Pooling**: Efficient database connection management
+- **Async Processing**: Non-blocking message queues for ingestion
+
+### Monitoring and Health
+
+- **Health Checks**: `/healthcheck` endpoint for all services
+- **Docker Health**: Container-level health monitoring
+- **Structured Logging**: JSON-formatted logs with timestamps
+- **Error Handling**: Comprehensive error boundaries and reporting
+
+### Security Features
+
+- **Non-root Containers**: All Docker images run as non-root users
+- **Environment Variables**: Secure configuration management
+- **Input Validation**: Zod schema validation for all inputs
+- **Type Safety**: Compile-time prevention of common vulnerabilities
