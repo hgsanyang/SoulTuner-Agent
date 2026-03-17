@@ -11,11 +11,11 @@
 import { useEffect, useState } from 'react';
 
 // 生成指定数量的随机星空 box-shadow 字符串
-const generateStars = (count: number, size: number) => {
+const generateStars = (count: number, size: number, width: number, height: number) => {
   let value = '';
   for (let i = 0; i < count; i++) {
-    const x = Math.floor(Math.random() * 2000);
-    const y = Math.floor(Math.random() * 2000);
+    const x = Math.floor(Math.random() * width);
+    const y = Math.floor(Math.random() * height);
     value += `${x}px ${y}px #FFF${i === count - 1 ? '' : ','}`;
   }
   return value;
@@ -28,9 +28,10 @@ export default function StarryBackground() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setShadowsSmall(generateStars(700, 1));
-    setShadowsMedium(generateStars(200, 2));
-    setShadowsLarge(generateStars(100, 3));
+    // 扩大范围至宽 4000px，高 3000px，适配超宽带鱼屏/4K全屏
+    setShadowsSmall(generateStars(1200, 1, 4000, 3000));
+    setShadowsMedium(generateStars(400, 2, 4000, 3000));
+    setShadowsLarge(generateStars(150, 3, 4000, 3000));
     setMounted(true);
   }, []);
 
@@ -59,27 +60,37 @@ export default function StarryBackground() {
         overflow: 'hidden',
       }}
     >
-      <div className="stars-small" style={{ width: '1px', height: '1px', background: 'transparent', boxShadow: shadowsSmall }} />
-      <div className="stars-medium" style={{ width: '2px', height: '2px', background: 'transparent', boxShadow: shadowsMedium }} />
-      <div className="stars-large" style={{ width: '3px', height: '3px', background: 'transparent', boxShadow: shadowsLarge }} />
+      <div className="stars-small" />
+      <div className="stars-medium" />
+      <div className="stars-large" />
       <style key="starry-styles">{`
         .stars-small, .stars-medium, .stars-large {
            border-radius: 50%;
            position: absolute;
            top: 0; left: 0;
         }
+        
+        .stars-small { width: 1px; height: 1px; background: transparent; box-shadow: ${shadowsSmall}; }
+        .stars-small::after { content: " "; position: absolute; top: 3000px; width: 1px; height: 1px; background: transparent; box-shadow: ${shadowsSmall}; }
+        
+        .stars-medium { width: 2px; height: 2px; background: transparent; box-shadow: ${shadowsMedium}; }
+        .stars-medium::after { content: " "; position: absolute; top: 3000px; width: 2px; height: 2px; background: transparent; box-shadow: ${shadowsMedium}; }
+        
+        .stars-large { width: 3px; height: 3px; background: transparent; box-shadow: ${shadowsLarge}; }
+        .stars-large::after { content: " "; position: absolute; top: 3000px; width: 3px; height: 3px; background: transparent; box-shadow: ${shadowsLarge}; }
+
         .stars-small {
-          animation: animStar 50s linear infinite;
-        }
-        .stars-medium {
           animation: animStar 100s linear infinite;
         }
+        .stars-medium {
+          animation: animStar 200s linear infinite;
+        }
         .stars-large {
-          animation: animStar 150s linear infinite;
+          animation: animStar 300s linear infinite;
         }
         @keyframes animStar {
-          from { transform: translateY(0px) translateX(0px); }
-          to { transform: translateY(-2000px) translateX(-500px); }
+          from { transform: translateY(0px); }
+          to { transform: translateY(-3000px); }
         }
       `}</style>
     </div>

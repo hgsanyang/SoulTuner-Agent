@@ -9,9 +9,10 @@ interface ProductIntroProps {
 }
 
 const quickExamples = [
-  { title: '给加班夜写代码的人推荐稳态节奏', meta: '心情：专注 / 场景：深夜' },
-  { title: '我想在雨天窗边听些治愈的独立民谣', meta: '联动心情 + 流派' },
-  { title: '根据周杰伦帮我找一些同样浪漫的中文 R&B', meta: '歌手 + 风格' },
+  { title: '落日黄昏下自驾，来点微醺氛围感音乐', meta: '心情：放松 / 场景：傍晚驾车' },
+  { title: '我想在午夜慢跑时听些令人振奋的强节奏电子乐', meta: '联动心情 + 流派' },
+  { title: '找一些像赵雷一样充满故事感、娓娓道来的民谣', meta: '歌手 + 风格' },
+  { title: '根据我过去的偏好，挖掘几首还没听过的小众独立音乐', meta: '长期记忆 + 风格发现' },
 ];
 
 export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQuickExampleSelect }: ProductIntroProps) {
@@ -84,7 +85,7 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
               boxShadow: `0 0 10px ${theme.colors.primary.accent}`,
             }}
           />
-          AI Music Agent 已就绪
+          AI Soul Tuner 已就绪
         </span>
 
         <h1
@@ -112,7 +113,9 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
             zIndex: 1,
           }}
         >
-          基于 LangGraph 与多模态搜索，用自然语言即可生成专属你的沉浸式歌单，联动 Spotify 或本地音频网，发现契合当下的绝佳旋律。
+          更懂你你的私人灵魂调音师
+          <br />
+          用自然语言描述心情或场景，即刻生成专属你的沉浸式歌单。
         </p>
 
         <div
@@ -159,7 +162,7 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
           <p style={{ fontSize: '0.9rem', color: theme.colors.text.muted, marginBottom: '1rem', fontWeight: 600 }}>
             快速灵感注入
           </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.8rem', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', alignItems: 'center' }}>
             {quickExamples.map((example) => (
               <button
                 key={example.title}

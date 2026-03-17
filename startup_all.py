@@ -22,8 +22,22 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 WEB_DIR = PROJECT_ROOT / "web"
 GRAPHZEP_DIR = PROJECT_ROOT / "graphzep_service"
 SEARXNG_COMPOSE = PROJECT_ROOT / "docker-compose.searxng.yml"
-# 网易云音乐 API 安装目录，可通过环境变量 NETEASE_API_DIR 覆盖
-NETEASE_API_DIR = Path(os.environ.get("NETEASE_API_DIR") or Path.home() / "NeteaseCloudMusicApi")
+# 网易云音乐 API 安装目录
+# 优先级：环境变量 NETEASE_API_DIR > 项目根目录/NeteaseCloudMusicApi > ~/NeteaseCloudMusicApi
+def _resolve_netease_dir() -> Path:
+    env_val = os.environ.get("NETEASE_API_DIR")
+    if env_val:
+        return Path(env_val)
+    local = PROJECT_ROOT / "NeteaseCloudMusicApi"
+    if local.exists():
+        return local
+    # 用户自定义工具目录
+    tools_dir = Path(r"C:\Users\sanyang\sanyangworkspace\tools\NeteaseCloudMusicApi")
+    if tools_dir.exists():
+        return tools_dir
+    return Path.home() / "NeteaseCloudMusicApi"
+
+NETEASE_API_DIR = _resolve_netease_dir()
 
 # 子进程列表（用于统一关闭）
 _processes = []

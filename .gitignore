@@ -94,6 +94,9 @@ data_pipeline/_*
 data_pipeline/ingest_progress.json
 data_pipeline/gemini_prompts/gemini_result.json
 
+# NeteaseCloudMusicApi (本地反向代理，不上传)
+NeteaseCloudMusicApi/
+
 # GraphZep service
 graphzep_service/**/node_modules/
 
