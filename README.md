@@ -1,7 +1,7 @@
 # 🎵 AI Music Recommendation Agent
 
 <p align="center">
-  <img src="assets/logo.png" alt="logo" width="200" style="background:#0d1117; border-radius:20px; padding:20px" />
+  <img src="assets/logo.png" alt="logo" width="200" />
 </p>
 
 <p align="center">
