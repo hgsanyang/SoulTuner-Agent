@@ -133,21 +133,25 @@ graph TB
 ```
 
 **GraphRAG 知识图谱检索**
+
 - 五维度标签过滤：`genre` / `scenario` / `mood` / `language` / `region`
 - 200+ 中英文别名映射（如 "摇滚" → `rock`、"伤感" → `悲伤`）
 - 精确实体匹配（歌手名中英文双查）+ 模糊 Cypher 查询
 
 **双模型向量融合（M2D-CLAP + OMAR-RQ）**
+
 - **M2D-CLAP 2025**（768d）：文本→音频**跨模态**语义匹配，将自然语言描述（"安静的雨夜钢琴曲"）直接映射到音频嵌入空间
 - **OMAR-RQ multicodebook**（768d）：纯**声学特征**匹配，捕捉乐器、节奏、调性等底层音频属性
 - 三阶段流水线：`M2D KNN(50首) → OMAR 质心距离重排 → 加权融合(0.7:0.3)`
 
 **HyDE（Hypothetical Document Embedding）**
+
 - 统一查询规划器中，LLM 为每个查询生成 80-120 词的**英文声学描述**
 - 7 种情形自适应：模糊情绪 / 明确乐器 / 场景驱动 / 歌手混合 / 精确查询 / 文化风格 / 否定式
 - 声学描述直接作为 M2D-CLAP 文本输入，无需二次编码
 
 **MMR 多样性重排序**
+
 - `λ=0.7` 的 genre-aware MMR，防止同一流派/艺术家垄断 Top-K
 - 公式：`MMR(d) = λ · Sim(d, q) − (1−λ) · max{Sim(d, d') | d' ∈ Selected}`
 
@@ -180,6 +184,7 @@ stateDiagram-v2
 ```
 
 **统一查询规划器（Unified Query Planner）**
+
 - 用 `llm.with_structured_output(MusicQueryPlan)` **一次 LLM 调用**同时完成：
   - 意图识别（9 种意图类型）
   - 检索路由规划（Graph/Vector/Web 开关）
@@ -188,6 +193,7 @@ stateDiagram-v2
 - 避免传统多轮 LLM 调用的延迟和成本
 
 **确定性后处理兜底**
+
 - LLM 漏填的过滤字段通过首字典扫描用户原文自动补充
 - 如 "来点运动听的" → LLM 忘填 `graph_scenario_filter` → 后处理检测到 "运动" → 自动填入
 
@@ -196,14 +202,17 @@ stateDiagram-v2
 ### 记忆系统
 
 **GraphZep 双阶段记忆**
+
 1. **Stage 1 粗召回**（20 条）：基于用户 ID 检索历史记忆节点
 2. **Stage 2 精排**（5 条）：结合当前查询上下文、相似度和时间衰减选取最相关记忆
 
 **GSSC Token 预算管理**
+
 - 将 `graphzep_facts` + `chat_history` 在固定 token 预算（3000）内动态分配
 - 优先保证近期对话上下文，剩余预算分配给长期记忆
 
 **Neo4j 用户偏好图谱**
+
 - 从每轮对话中通过 LLM 提取用户偏好（场景偏好 + 全局偏好）
 - fire-and-forget 异步写入 Neo4j `User` 节点，不阻塞主流程
 
@@ -228,10 +237,12 @@ stateDiagram-v2
 ### 音乐旅程编排 (Music Journey)
 
 两阶段管线：
+
 1. **LLM Structured Output** → `MusicJourneyPlan`（故事理解 + 情绪拆解为 3-6 段）
 2. **逐段并发检索** → 实时 SSE 推送歌曲（每首歌约 4 分钟）
 
 支持两种输入模式：
+
 - **故事驱动**：自然语言描述（如 "城市夜跑 → 河边散步 → 回家休息"）
 - **情绪曲线**：手动拖拽情绪节点（mood + intensity + time）
 
@@ -283,6 +294,7 @@ erDiagram
 ```
 
 **向量索引**：
+
 - `song_m2d2_index`（768d，cosine）— M2D-CLAP 跨模态嵌入
 - `song_omar_index`（768d，cosine）— OMAR-RQ 声学嵌入
 
@@ -333,6 +345,7 @@ python startup_all.py --no-web
 
 # 终端 B：前端（Next.js 秒级热更新）
 cd web && npm run dev
+cd web ; npm run dev
 ```
 
 可选参数：`--no-docker` · `--no-web` · `--no-graphzep` · `--no-netease`
