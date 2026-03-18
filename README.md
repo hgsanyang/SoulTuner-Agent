@@ -302,17 +302,45 @@ erDiagram
 
 ## 🖼️ 功能截图
 
-| 首页 | 音乐推荐 |
-|:---:|:---:|
-| ![首页](assets/首页.png) | ![音乐推荐](assets/音乐推荐.png) |
+<details open>
+<summary><b>🏠 首页</b></summary>
+<br>
+<p align="center">
+  <img src="assets/首页.png" alt="首页" />
+</p>
+</details>
 
-| 歌曲搜索 | 歌单创作 |
-|:---:|:---:|
-| ![歌曲搜索](assets/歌曲搜索.png) | ![歌单创作](assets/歌单创作.png) |
+<details>
+<summary><b>🎵 音乐推荐</b></summary>
+<br>
+<p align="center">
+  <img src="assets/音乐推荐.png" alt="音乐推荐" />
+</p>
+</details>
 
-| 音乐旅程 |
-|:---:|
-| ![音乐旅程](assets/音乐旅程.png) |
+<details>
+<summary><b>🔍 歌曲搜索</b></summary>
+<br>
+<p align="center">
+  <img src="assets/歌曲搜索.png" alt="歌曲搜索" />
+</p>
+</details>
+
+<details>
+<summary><b>🎼 歌单创作</b></summary>
+<br>
+<p align="center">
+  <img src="assets/歌单创作.png" alt="歌单创作" />
+</p>
+</details>
+
+<details>
+<summary><b>🗺️ 音乐旅程</b></summary>
+<br>
+<p align="center">
+  <img src="assets/音乐旅程.png" alt="音乐旅程" />
+</p>
+</details>
 
 ---
 
