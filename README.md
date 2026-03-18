@@ -302,45 +302,11 @@ erDiagram
 
 ## 🖼️ 功能截图
 
-<details open>
-<summary><b>🏠 首页</b></summary>
-<br>
-<p align="center">
-  <img src="assets/首页.png" alt="首页" />
-</p>
-</details>
+> 👉 **左右滑动** 浏览全部截图
 
-<details>
-<summary><b>🎵 音乐推荐</b></summary>
-<br>
-<p align="center">
-  <img src="assets/音乐推荐.png" alt="音乐推荐" />
-</p>
-</details>
-
-<details>
-<summary><b>🔍 歌曲搜索</b></summary>
-<br>
-<p align="center">
-  <img src="assets/歌曲搜索.png" alt="歌曲搜索" />
-</p>
-</details>
-
-<details>
-<summary><b>🎼 歌单创作</b></summary>
-<br>
-<p align="center">
-  <img src="assets/歌单创作.png" alt="歌单创作" />
-</p>
-</details>
-
-<details>
-<summary><b>🗺️ 音乐旅程</b></summary>
-<br>
-<p align="center">
-  <img src="assets/音乐旅程.png" alt="音乐旅程" />
-</p>
-</details>
+| 🏠 首页 | 🎵 音乐推荐 | 🔍 歌曲搜索 | 🎼 歌单创作 | 🗺️ 音乐旅程 |
+|:---:|:---:|:---:|:---:|:---:|
+| <img src="assets/首页.png" alt="首页" width="800" /> | <img src="assets/音乐推荐.png" alt="音乐推荐" width="800" /> | <img src="assets/歌曲搜索.png" alt="歌曲搜索" width="800" /> | <img src="assets/歌单创作.png" alt="歌单创作" width="800" /> | <img src="assets/音乐旅程.png" alt="音乐旅程" width="800" /> |
 
 ---
 
