@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
 </p>
 
-> 融合知识图谱（Neo4j）、双模型音频向量（M2D-CLAP + OMAR-RQ）、大语言模型（DeepSeek-V3）和 GraphZep 长期记忆，通过 LangGraph 编排的 11 节点 Agent 工作流，实现多路混合检索、SSE 流式推荐、联网搜索回退、音乐旅程编排和用户行为数据飞轮。
+> 融合知识图谱（Neo4j）、双模型音频向量（M2D-CLAP + OMAR-RQ）、大语言模型（DeepSeek-V3.2）和 GraphZep 长期记忆，通过 LangGraph 编排的 11 节点 Agent 工作流，实现多路混合检索、SSE 流式推荐、联网搜索回退、音乐旅程编排和用户行为数据飞轮。
 
 ![首页截图](assets/首页.png)
 
@@ -34,6 +34,30 @@
 | ♻️ **数据飞轮** | 用户一键将搜索发现的歌曲下载入库 Neo4j，形成"搜索→发现→入库→再检索"闭环 |
 | 🏷️ **200+ 标签映射** | genre / scenario / mood / language / region 五维度中英文映射表 |
 | 📡 **SSE 流式推荐** | 前端实时接收 thinking → 歌曲 → 推荐理由，逐条渲染 |
+
+---
+
+## 🖼️ 功能预览
+
+### 🏠 首页
+
+![首页](assets/首页.png)
+
+### 💬 对话页面
+
+![对话页面](assets/对话页面.png)
+
+### 🎵 音乐推荐
+
+![音乐推荐](assets/音乐推荐.png)
+
+### 🎧 播放页
+
+![播放页1](assets/播放页1.png)
+
+### 🗺️ 音乐旅程
+
+![音乐旅程](assets/音乐旅程.png)
 
 ---
 
@@ -299,14 +323,6 @@ erDiagram
 - `song_omar_index`（768d，cosine）— OMAR-RQ 声学嵌入
 
 ---
-
-## 🖼️ 功能截图
-
-> 👉 **左右滑动** 浏览全部截图
-
-| 🏠 首页 | 🎵 音乐推荐 | 🔍 歌曲搜索 | 🎼 歌单创作 | 🗺️ 音乐旅程 |
-|:---:|:---:|:---:|:---:|:---:|
-| <img src="assets/首页.png" alt="首页" width="800" /> | <img src="assets/音乐推荐.png" alt="音乐推荐" width="800" /> | <img src="assets/歌曲搜索.png" alt="歌曲搜索" width="800" /> | <img src="assets/歌单创作.png" alt="歌单创作" width="800" /> | <img src="assets/音乐旅程.png" alt="音乐旅程" width="800" /> |
 
 ---
 
