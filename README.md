@@ -18,8 +18,6 @@
 
 > 融合知识图谱（Neo4j）、双模型音频向量（M2D-CLAP + OMAR-RQ）、大语言模型（DeepSeek-V3.2）和 GraphZep 长期记忆，通过 LangGraph 编排的 11 节点 Agent 工作流，实现多路混合检索、SSE 流式推荐、联网搜索回退、音乐旅程编排和用户行为数据飞轮。
 
-![首页截图](assets/首页.png)
-
 ---
 
 ## ✨ 核心特性
