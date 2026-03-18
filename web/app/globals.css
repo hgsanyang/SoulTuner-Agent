@@ -39,23 +39,24 @@ a {
   text-decoration: none;
 }
 
-/* 滚动条样式 */
+/* 滚动条样式 — 暗色主题 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #e6e7e1;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c0c3ba;
-  border-radius: 4px;
+  background: rgba(29, 185, 84, 0.3);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b2b6ac;
+  background: rgba(29, 185, 84, 0.5);
 }
 
 @keyframes float {

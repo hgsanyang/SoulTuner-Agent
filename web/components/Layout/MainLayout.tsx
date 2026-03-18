@@ -74,10 +74,49 @@ export default function MainLayout({
           gap: '1.75rem',
         }}
       >
-        <Header
-          onMenuToggle={isMobile ? () => setSidebarOpen((prev) => !prev) : undefined}
-          isMobile={isMobile}
-        />
+        {isMobile && (
+          <button
+            type="button"
+            aria-label="打开导航"
+            onClick={() => setSidebarOpen(true)}
+            style={{
+              position: 'absolute',
+              top: '1rem',
+              left: '1rem',
+              width: '40px',
+              height: '40px',
+              borderRadius: theme.borderRadius.md,
+              border: `1px solid ${theme.colors.border.default}`,
+              backgroundColor: 'rgba(36, 36, 36, 0.4)',
+              backdropFilter: 'blur(16px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              zIndex: 10,
+            }}
+          >
+            <span
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '5px',
+              }}
+            >
+              {[0, 1, 2].map((line) => (
+                <span
+                  key={line}
+                  style={{
+                    width: '22px',
+                    height: '2px',
+                    borderRadius: '9999px',
+                    backgroundColor: theme.colors.text.primary,
+                  }}
+                />
+              ))}
+            </span>
+          </button>
+        )}
         <main
           style={{
             flex: 1,
@@ -110,15 +149,35 @@ export default function MainLayout({
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '1.25rem',
+                overflowY: 'auto',
               }}
             >
               {children}
             </motion.div>
           </AnimatePresence>
         </main>
+
+        {/* 工具栏 + 搜索输入（卡片外部，紧随其后，文档流定位） */}
         {onInputSubmit && (
-          <div style={{ maxWidth: `${theme.layout.contentMaxWidth}px`, margin: '0 auto', width: '100%' }}>
-            {toolbar && <div style={{ marginBottom: '0.5rem' }}>{toolbar}</div>}
+          <div style={{
+            maxWidth: `${theme.layout.contentMaxWidth}px`,
+            margin: '-0.5rem auto 5rem',
+            width: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            {toolbar && (
+              <div style={{
+                margin: isMobile ? '0 auto 0.5rem' : '0 auto 0.5rem',
+                padding: isMobile ? '0 0.25rem' : '0 1rem',
+                maxWidth: isMobile ? '520px' : '640px',
+                width: '100%',
+                position: 'relative',
+                zIndex: 100,
+              }}>
+                {toolbar}
+              </div>
+            )}
             <ChatInput
               onSubmit={onInputSubmit!}
               onAbort={onInputAbort}

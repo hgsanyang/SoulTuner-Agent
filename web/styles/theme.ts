@@ -58,8 +58,8 @@ export const theme = {
   },
   layout: {
     sidebarWidth: 260,
-    contentMaxWidth: 1280,
-    maxWidth: 1600,
+    contentMaxWidth: 1600,
+    maxWidth: 1800,
   },
 };
 

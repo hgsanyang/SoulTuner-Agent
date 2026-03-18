@@ -17,8 +17,8 @@ export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) 
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: '1.25rem',
-        padding: isMobile ? '0.9rem 1rem' : '1rem 1.5rem',
-        borderRadius: theme.borderRadius.lg,
+        padding: isMobile ? '0.5rem 0.8rem' : '0.6rem 1.25rem',
+        borderRadius: theme.borderRadius.full, // Changed to full for pill shape
         backgroundColor: 'rgba(36, 36, 36, 0.4)',
         backdropFilter: 'blur(16px)',
         border: `1px solid ${theme.colors.border.default}`,
@@ -65,52 +65,49 @@ export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) 
             </span>
           </button>
         )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+          <h1
+            style={{
+              fontSize: isMobile ? '1.1rem' : '1.25rem',
+              color: theme.colors.text.primary,
+              margin: 0,
+              fontWeight: 600,
+              letterSpacing: '-0.01em',
+            }}
+          >
+            SoulTuner Studio
+          </h1>
+          
           <span
             style={{
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '0.35rem',
-              padding: '0.25rem 0.7rem',
+              gap: '0.3rem',
+              padding: '0.15rem 0.5rem',
               borderRadius: theme.borderRadius.full,
-              backgroundColor: theme.colors.primary[100],
-              color: theme.colors.primary[700],
-              fontSize: '0.78rem',
-              fontWeight: 500,
-              width: 'fit-content',
+              backgroundColor: 'rgba(29, 185, 84, 0.15)',
+              color: theme.colors.primary.accent,
+              fontSize: '0.7rem',
+              fontWeight: 600,
             }}
           >
-            <span
-              style={{
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                backgroundColor: theme.colors.primary[700],
-              }}
-            />
             Beta
           </span>
-          <div>
-            <h1
-              style={{
-                fontSize: isMobile ? '1.2rem' : '1.4rem',
-                color: theme.colors.text.primary,
-                margin: 0,
-                fontWeight: 600,
-              }}
-            >
-              Deep Search Studio
-            </h1>
-            <p
-              style={{
-                margin: '0.2rem 0 0',
-                color: theme.colors.text.muted,
-                fontSize: '0.9rem',
-              }}
-            >
-              音乐体验工作台 · 自然语言编排 · 快速穿梭每个场景
-            </p>
-          </div>
+
+          {!isMobile && (
+            <>
+              <span style={{ color: theme.colors.border.default, marginLeft: '0.5rem', marginRight: '0.5rem' }}>|</span>
+              <p
+                style={{
+                  margin: 0,
+                  color: theme.colors.text.muted,
+                  fontSize: '0.85rem',
+                }}
+              >
+                懂你此刻的情绪 · 沉浸式专属歌单生成器
+              </p>
+            </>
+          )}
         </div>
       </div>
       <div
@@ -127,15 +124,19 @@ export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) 
           style={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: '0.5rem',
-            padding: '0.65rem 1.4rem',
+            gap: '0.4rem',
+            padding: '0.4rem 1rem',
             borderRadius: theme.borderRadius.full,
-            backgroundColor: theme.colors.text.primary,
-            color: theme.colors.background.main,
-            fontWeight: 600,
-            fontSize: '0.9rem',
+            backgroundColor: 'rgba(255, 255, 255, 0.08)',
+            border: `1px solid rgba(255, 255, 255, 0.1)`,
+            color: theme.colors.text.primary,
+            fontWeight: 500,
+            fontSize: '0.85rem',
             textDecoration: 'none',
+            transition: 'background-color 0.2s',
           }}
+          onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.15)')}
+          onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)')}
         >
           立即使用
           <svg

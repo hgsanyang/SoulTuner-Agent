@@ -56,7 +56,7 @@ export default function SearchPage() {
       inputPlaceholder="例如：根据周杰伦在网上为我推荐一些相似风格的歌曲；或 周杰伦 流派：流行"
       inputDisabled={loading}
     >
-      {!hasResults && !loading && !error && <WelcomeScreen />}
+      {!hasResults && !loading && !error && <WelcomeScreen onPromptClick={handleSubmit} />}
       {loading && <ThinkingIndicator message="正在从网上为你查找和推荐歌曲..." />}
       {error && (
         <div

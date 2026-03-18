@@ -5,9 +5,11 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
-import ResultsDisplay from '@/components/Content/ResultsDisplay';
+import SongCard from '@/components/Content/SongCard';
 import { streamRecommendations, type SSEEvent } from '@/lib/api';
 import { theme } from '@/styles/theme';
+import { usePlayer } from '@/context/PlayerContext';
+import { useLibrary } from '@/context/LibraryContext';
 
 export interface ChatMessage {
   id: string;
@@ -32,6 +34,8 @@ export default function RecommendationsPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const cancelRef = useRef<(() => void) | null>(null);
+  const { addAllToQueue, playSong } = usePlayer();
+  const { showToast } = useLibrary();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -222,6 +226,7 @@ export default function RecommendationsPage() {
       gap: '0.6rem',
       padding: '0.4rem 0.6rem',
       justifyContent: 'space-between',
+      marginBottom: '0.75rem', // Added explicit margin-bottom here to separate from input
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
         {/* 模型切换按钮 */}
@@ -343,57 +348,193 @@ export default function RecommendationsPage() {
       inputIsLoading={loading}
       toolbar={toolbar}
     >
-      {!hasMessages && !loading && <WelcomeScreen />}
+      {!hasMessages && !loading && <WelcomeScreen onPromptClick={handleSubmit} />}
 
-      {hasMessages && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', paddingBottom: '2rem' }}>
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              style={{
-                display: 'flex', flexDirection: 'column',
-                alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start'
-              }}
-            >
-              {msg.role === 'user' ? (
-                <div style={{
-                  backgroundColor: '#2a2a2a', padding: '0.85rem 1.2rem',
-                  borderRadius: '1.1rem 1.1rem 0.3rem 1.1rem',
-                  maxWidth: '85%', color: '#fff', lineHeight: '1.6',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}>
-                  {msg.content}
-                </div>
-              ) : (
-                <div style={{ width: '100%' }}>
-                  {msg.thinkingMessage && <ThinkingIndicator message={msg.thinkingMessage} />}
+      {hasMessages && (() => {
+        // 汇总所有 assistant 消息中的歌曲
+        const allSongs = messages
+          .filter(m => m.role === 'assistant' && m.songs && m.songs.length > 0)
+          .flatMap(m => (m.songs || []).map((song, idx) => ({ song, msgId: m.id, idx })));
 
-                  {msg.error && (
+        return (
+          <div style={{
+            display: 'flex',
+            gap: '1.25rem',
+            width: '100%',
+            minHeight: 0,
+            flex: 1,
+          }}>
+            {/* ── 左栏：对话记录（玻璃容器 + 可滚动） ── */}
+            <div style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              backgroundColor: 'rgba(36, 36, 36, 0.5)',
+              backdropFilter: 'blur(16px)',
+              borderRadius: '1rem',
+              border: `1px solid ${theme.colors.border.default}`,
+              overflow: 'hidden',
+              maxHeight: 'calc(100vh - 14rem)',
+              position: 'sticky',
+              top: '1rem',
+            }}>
+              {/* 对话标题栏 */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '0.85rem 1.25rem',
+                borderBottom: `1px solid ${theme.colors.border.default}`,
+                flexShrink: 0,
+              }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 600, color: theme.colors.text.primary, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(29,185,84,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                  对话记录
+                </h2>
+              </div>
+              {/* 对话滚动区 */}
+              <div style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: '1rem 1.25rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '1rem',
+              }}>
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  style={{
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start'
+                  }}
+                >
+                  {msg.role === 'user' ? (
                     <div style={{
-                      padding: '1rem', margin: '1rem 0',
-                      backgroundColor: 'rgba(255,50,50,0.08)',
-                      color: '#ff6b6b', borderRadius: '0.75rem',
-                      border: '1px solid rgba(255,50,50,0.2)',
+                      backgroundColor: '#2a2a2a', padding: '0.85rem 1.2rem',
+                      borderRadius: '1.1rem 1.1rem 0.3rem 1.1rem',
+                      maxWidth: '85%', color: '#fff', lineHeight: '1.6',
+                      border: '1px solid rgba(255,255,255,0.08)',
                     }}>
-                      {msg.error}
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <div style={{ width: '100%' }}>
+                      {msg.thinkingMessage && <ThinkingIndicator message={msg.thinkingMessage} />}
+
+                      {msg.error && (
+                        <div style={{
+                          padding: '1rem', margin: '1rem 0',
+                          backgroundColor: 'rgba(255,50,50,0.08)',
+                          color: '#ff6b6b', borderRadius: '0.75rem',
+                          border: '1px solid rgba(255,50,50,0.2)',
+                        }}>
+                          {msg.error}
+                        </div>
+                      )}
+
+                      {/* 只显示 AI 文字回复，歌曲列表移到右栏 */}
+                      {msg.content && (
+                        <div style={{
+                          padding: '1.25rem',
+                          backgroundColor: theme.colors.background.card,
+                          borderRadius: theme.borderRadius.md,
+                          border: `1px solid ${theme.colors.border.default}`,
+                          boxShadow: theme.shadows.sm,
+                        }}>
+                          <p style={{ color: theme.colors.text.primary, lineHeight: '1.75', whiteSpace: 'pre-wrap', margin: 0 }}>
+                            {msg.content}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
-
-                  {(msg.content || (msg.songs && msg.songs.length > 0)) && (
-                    <ResultsDisplay
-                      response={msg.content}
-                      songs={msg.songs}
-                      onRemoveSong={(songIndex) => handleRemoveSong(msg.id, songIndex)}
-                    />
-                  )}
                 </div>
-              )}
+              ))}
+              <div ref={messagesEndRef} />
+              </div>
             </div>
-          ))}
-          {/* 用于自动滚动到底的锚点 */}
-          <div ref={messagesEndRef} />
-        </div>
-      )}
+
+            {/* ── 右栏：歌曲列表（可滚动） ── */}
+            {allSongs.length > 0 && (
+              <div style={{
+                width: '560px',
+                flexShrink: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                backgroundColor: 'rgba(36, 36, 36, 0.5)',
+                backdropFilter: 'blur(16px)',
+                borderRadius: '1rem',
+                border: `1px solid ${theme.colors.border.default}`,
+                overflow: 'hidden',
+                maxHeight: 'calc(100vh - 14rem)',
+                position: 'sticky',
+                top: '1rem',
+              }}>
+                {/* 歌曲面板标题栏 */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '1rem 1.25rem',
+                  borderBottom: `1px solid ${theme.colors.border.default}`,
+                  flexShrink: 0,
+                }}>
+                  <h2 style={{
+                    fontSize: '1rem', fontWeight: 600,
+                    color: theme.colors.text.primary, margin: 0,
+                  }}>
+                    推荐歌曲 <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({allSongs.length})</span>
+                  </h2>
+                  <button
+                    onClick={() => {
+                      const songsWithUrl = allSongs.filter(s => s.song.preview_url).map(s => s.song);
+                      if (songsWithUrl.length === 0) return;
+                      addAllToQueue(songsWithUrl.map(s => ({ title: s.title, artist: s.artist, genre: s.genre, preview_url: s.preview_url, coverUrl: s.cover_url, lrc_url: s.lrc_url })));
+                      showToast(`✚ 已将 ${songsWithUrl.length} 首歌加入播放列表`);
+                      if (songsWithUrl[0].preview_url) {
+                        playSong(
+                          { title: songsWithUrl[0].title, artist: songsWithUrl[0].artist, genre: songsWithUrl[0].genre, preview_url: songsWithUrl[0].preview_url, coverUrl: songsWithUrl[0].cover_url, lrc_url: songsWithUrl[0].lrc_url },
+                          songsWithUrl.map(s => ({ title: s.title, artist: s.artist, genre: s.genre, preview_url: s.preview_url, coverUrl: s.cover_url, lrc_url: s.lrc_url }))
+                        );
+                      }
+                    }}
+                    title="全部播放"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.3rem 0.7rem', borderRadius: '2rem',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      backgroundColor: 'rgba(255,255,255,0.06)',
+                      color: 'rgba(255,255,255,0.7)', fontSize: '0.78rem', fontWeight: 500,
+                      cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)'; }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    全部播放
+                  </button>
+                </div>
+
+                {/* 歌曲滚动列表 */}
+                <div style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  padding: '0.75rem',
+                }}>
+                  {allSongs.map(({ song, msgId, idx }, i) => (
+                    <SongCard
+                      key={`${song.title}_${song.artist}_${i}`}
+                      {...song}
+                      onRemove={() => handleRemoveSong(msgId, idx)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+      {/* 用于自动滚动到底的锚点 */}
     </MainLayout>
   );
 }

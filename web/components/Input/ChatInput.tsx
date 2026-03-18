@@ -41,59 +41,17 @@ export default function ChatInput({
     <form
       onSubmit={handleSubmit}
       style={{
-        margin: isMobile ? '1.25rem auto 0' : '1.5rem auto 1rem',
+        margin: '0 auto',
         padding: isMobile ? '0 0.25rem' : '0 1rem',
         backgroundColor: 'transparent',
         display: 'flex',
         flexDirection: 'column',
         gap: '0.65rem',
-        position: 'sticky',
-        bottom: isMobile ? '0.5rem' : '1.5rem',
         width: '100%',
         maxWidth: isMobile ? '520px' : '640px',
         zIndex: 50,
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          flexWrap: 'wrap',
-        }}
-      >
-        <span
-          style={{
-            fontSize: '0.8rem',
-            color: theme.colors.text.muted,
-            marginBottom: '0.15rem',
-            marginRight: '0.2rem',
-          }}
-        >
-          快速注入
-        </span>
-        {quickPrompts.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            onClick={() => setValue(prompt)}
-            style={{
-              padding: '0.3rem 0.9rem',
-              borderRadius: theme.borderRadius.full,
-              border: `1px solid ${theme.colors.border.default}`,
-              backgroundColor: 'rgba(255, 255, 255, 0.05)',
-              color: theme.colors.text.secondary,
-              fontSize: '0.82rem',
-              cursor: 'pointer',
-              transition: 'background-color 0.2s',
-            }}
-            onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.1)')}
-            onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)')}
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
       <div
         style={{
           display: 'flex',
