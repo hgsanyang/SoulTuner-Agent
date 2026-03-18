@@ -105,6 +105,129 @@ class MusicRecommendationAgent:
                 "errors": [{"node": "main", "error": str(e)}]
             }
     
+    async def stream_recommendations(
+        self,
+        query: str,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        user_preferences: Optional[Dict[str, Any]] = None
+    ):
+        """
+        流式获取推荐结果（异步生成器）
+        
+        与 get_recommendations 不同，此方法在 LLM 生成推荐解释时
+        逐 chunk 推送文本，而非等全部完成再返回。
+        
+        Yields:
+            dict 事件: {"type": "thinking"|"response"|"songs"|"complete"|"error", ...}
+        """
+        import asyncio
+        
+        try:
+            logger.info(f"开始处理音乐推荐请求(流式): {query}")
+            
+            # 构建对话历史
+            formatted_history: List[BaseMessage] = []
+            if chat_history:
+                for msg in chat_history:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        formatted_history.append(HumanMessage(content=content))
+                    elif role == "assistant":
+                        formatted_history.append(AIMessage(content=content))
+            
+            # 创建共享队列：generate_explanation 节点会往这里推 chunk
+            explanation_queue = asyncio.Queue()
+            
+            initial_state: MusicAgentState = {
+                "input": query,
+                "chat_history": formatted_history,
+                "user_preferences": user_preferences or {},
+                "favorite_songs": [],
+                "intent_type": "",
+                "intent_parameters": {},
+                "intent_context": "",
+                "search_results": [],
+                "recommendations": [],
+                "explanation": "",
+                "final_response": "",
+                "playlist": None,
+                "step_count": 0,
+                "error_log": [],
+                "metadata": {},
+                "_explanation_queue": explanation_queue,
+            }
+            
+            config = {"recursion_limit": 50}
+            
+            # 后台任务运行 LangGraph
+            result_holder = {}
+            
+            async def _run_graph():
+                try:
+                    result = await self.app.ainvoke(initial_state, config=config)
+                    result_holder["result"] = result
+                except Exception as e:
+                    result_holder["error"] = str(e)
+                    # 确保队列收到终止信号
+                    try:
+                        await explanation_queue.put(None)
+                    except Exception:
+                        pass
+            
+            graph_task = asyncio.create_task(_run_graph())
+            
+            # 发送思考状态
+            yield {"type": "thinking", "message": "正在理解你的音乐偏好..."}
+            
+            # 从队列读取流式解释文本
+            accumulated_text = ""
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(explanation_queue.get(), timeout=90)
+                except asyncio.TimeoutError:
+                    yield {"type": "error", "error": "推荐生成超时，请重试"}
+                    graph_task.cancel()
+                    return
+                
+                if chunk is None:
+                    # 流式结束
+                    break
+                
+                accumulated_text += chunk
+                yield {"type": "response", "text": accumulated_text, "is_complete": False}
+            
+            # 发送完整文本
+            if accumulated_text:
+                yield {"type": "response", "text": accumulated_text, "is_complete": True}
+            
+            # 等待图执行完毕
+            await graph_task
+            
+            if "error" in result_holder:
+                yield {"type": "error", "error": result_holder["error"]}
+                return
+            
+            result = result_holder.get("result", {})
+            
+            # 发送推荐歌曲
+            raw_recommendations = result.get("recommendations", [])
+            recommendations = getattr(raw_recommendations, "data", raw_recommendations)
+            if isinstance(recommendations, list) and recommendations:
+                yield {"type": "recommendations_start", "count": len(recommendations)}
+                for i, rec in enumerate(recommendations):
+                    song = rec.get("song", rec) if isinstance(rec, dict) else rec
+                    if isinstance(song, dict) and song.get("title"):
+                        yield {"type": "song", "song": song, "index": i, "total": len(recommendations)}
+                yield {"type": "recommendations_complete"}
+            
+            yield {"type": "complete", "success": True}
+            logger.info("流式音乐推荐完成")
+            
+        except Exception as e:
+            logger.error(f"流式推荐失败: {str(e)}", exc_info=True)
+            yield {"type": "error", "error": str(e)}
+    
     def get_status(self) -> Dict[str, Any]:
         """获取智能体状态信息"""
         return {

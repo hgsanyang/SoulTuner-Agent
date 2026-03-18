@@ -191,7 +191,7 @@ class MultiLLM(BaseLLM):
         }
 
 
-def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = None, temperature: float = 0.7):
+def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = None, temperature: float = 0.7, timeout: Optional[int] = None):
     """
     获取 LangChain 专属的 ChatModel 对象 (工厂暴露函数)
     适用场景: graphs/music_graph.py 等复杂图节点工作流
@@ -215,12 +215,20 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
     if provider in ["siliconflow", "ollama", "vllm"]:
         from langchain_openai import ChatOpenAI
         target_model = model_name or config["default_model"]
+        # 读取超时配置（优先用参数，其次用 settings，默认 80s）
+        _timeout = timeout
+        if _timeout is None:
+            try:
+                _timeout = settings.llm_timeout
+            except Exception:
+                _timeout = 80
         return ChatOpenAI(
-            api_key=api_key or "fake-key", # 兼容有些不需要key的本地转发
+            api_key=api_key or "fake-key",
             base_url=base_url,
             model=target_model,
             temperature=temperature,
-            max_tokens=4000
+            max_tokens=4000,
+            request_timeout=_timeout,
         )
     
     # 策略 2：其他所有厂商，走 LangChain 的 ChatLiteLLM 通用通道
@@ -271,6 +279,20 @@ def qwen_llm(temperature: float = 0.7):
 def siliconflow_llm(temperature: float = 0.7):
     """便捷包装函数：快速获取硅基流动 模型实例"""
     return get_chat_model(provider="siliconflow", temperature=temperature)
+
+def get_intent_chat_model():
+    """获取意图分析专用 LLM 实例（从 settings 读取配置）
+    
+    可通过环境变量 INTENT_LLM_PROVIDER / INTENT_LLM_MODEL 配置。
+    典型用法：配置一个更小更快的模型专门做意图分类，减少延迟。
+    """
+    try:
+        provider = settings.intent_llm_provider or settings.llm_default_provider
+        model_name = settings.intent_llm_model or None  # 空字符串转 None，用 provider 默认模型
+        return get_chat_model(provider=provider, model_name=model_name, temperature=0.3)
+    except Exception:
+        # 回退到默认配置
+        return get_chat_model(provider="siliconflow", temperature=0.3)
 
 def gemini_llm(model_name: Optional[str] = None, temperature: float = 1.0):
     """便捷包装函数：快速获取 Google Gemini 模型实例

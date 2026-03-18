@@ -35,6 +35,21 @@ class GlobalSettings(BaseSettings):
         validation_alias="MODEL_NAME",
         description="默认模型名称",
     )
+    intent_llm_provider: str = Field(
+        default="siliconflow",
+        validation_alias="INTENT_LLM_PROVIDER",
+        description="意图分析专用 LLM 提供商（可独立于主模型配置更快/更小的模型）",
+    )
+    intent_llm_model: str = Field(
+        default="",
+        validation_alias="INTENT_LLM_MODEL",
+        description="意图分析专用模型名（空则用该 provider 默认模型）",
+    )
+    llm_timeout: int = Field(
+        default=80,
+        validation_alias="LLM_TIMEOUT",
+        description="LLM API 调用超时（秒），防止请求无限挂起",
+    )
 
     # ================================================================
     # 3. 本地大模型环境

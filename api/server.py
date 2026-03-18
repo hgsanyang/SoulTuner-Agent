@@ -202,7 +202,7 @@ async def stream_recommendations(
     web_search_enabled: bool = True,
 ) -> AsyncGenerator[str, None]:
     """
-    流式生成推荐结果
+    流式生成推荐结果 (真流式：推荐解释逐 chunk 推送)
     
     Yields:
         SSE格式的数据块
@@ -215,7 +215,7 @@ async def stream_recommendations(
             from llms.multi_llm import get_chat_model
             from agent.music_graph import set_llm
             new_llm = get_chat_model(provider=llm_provider)
-            set_llm(new_llm)  # 更新模块全局 _llm,每次请求时 chain 都会重新引用
+            set_llm(new_llm)
             logger.info(f"切换 LLM provider 到 {llm_provider}")
         except Exception as e:
             logger.warning(f"切换 LLM 失败,使用默认配置: {e}")
@@ -232,62 +232,40 @@ async def stream_recommendations(
         yield f"data: {json.dumps({'type': 'start', 'message': '开始分析你的需求...'}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0.1)
         
-        # 发送思考事件
-        yield f"data: {json.dumps({'type': 'thinking', 'message': '正在理解你的音乐偏好...'}, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0.2)
-        
-        # 执行推荐(这里可以进一步拆分步骤)
-        result = await agent.get_recommendations(
+        # 使用流式推荐方法：推荐解释会逐 chunk 实时推送
+        async for event in agent.stream_recommendations(
             query=query,
             chat_history=chat_history,
             user_preferences=user_preferences
-        )
-        
-        # 发送响应文本(流式输出)
-        if result.get("success") and result.get("response"):
-            response_text = result["response"]
-            # 逐字符或逐词流式输出
-            words = response_text.split()
-            for i, word in enumerate(words):
-                partial_text = " ".join(words[:i+1])
-                yield f"data: {json.dumps({'type': 'response', 'text': partial_text, 'is_complete': False}, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.05)  # 控制输出速度
+        ):
+            event_type = event.get("type")
             
-            # 发送完整响应
-            yield f"data: {json.dumps({'type': 'response', 'text': response_text, 'is_complete': True}, ensure_ascii=False)}\n\n"
-        
-        # 发送推荐歌曲(逐个发送)
-        if result.get("success") and result.get("recommendations"):
-            raw_recommendations = result["recommendations"]
-            # 兼容处理:recommendations 可能是 ToolOutput 对象或列表
-            recommendations = getattr(raw_recommendations, "data", raw_recommendations)
-            if not isinstance(recommendations, list):
-                recommendations = []
-            yield f"data: {json.dumps({'type': 'recommendations_start', 'count': len(recommendations)}, ensure_ascii=False)}\n\n"
-            
-            for i, rec in enumerate(recommendations):
-                song = rec.get("song", rec) if isinstance(rec, dict) else rec
-                if i == 0:
-                    logger.info(f"[DEBUG SSE] rec type={type(rec).__name__}, rec keys={list(rec.keys()) if isinstance(rec, dict) else 'N/A'}")
-                    if isinstance(rec, dict) and "song" in rec:
-                        logger.info(f"[DEBUG SSE] song sub-dict keys={list(rec['song'].keys())}")
-                    logger.info(f"[DEBUG SSE] final song keys={list(song.keys()) if isinstance(song, dict) else 'N/A'}")
+            if event_type == "thinking":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 
-                # 区分:有 audio_url 的本地歌曲 vs 仅有网络资讯的条目
-                is_playable = isinstance(song, dict) and song.get("audio_url")
-                has_raw_markdown = isinstance(rec, dict) and rec.get("_raw_markdown")
+            elif event_type == "response":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                # 流式 chunk 不需要 sleep，尽快推送
                 
-                if has_raw_markdown and not is_playable:
-                    # 跳过直接输出原始搜索文本,因为已由 AI (generate_explanation) 为其生成了漂亮回答
-                    continue
-                elif isinstance(song, dict) and song.get("title"):
-                    yield f"data: {json.dumps({'type': 'song', 'song': song, 'index': i, 'total': len(recommendations)}, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.1)
-            
-            yield f"data: {json.dumps({'type': 'recommendations_complete'}, ensure_ascii=False)}\n\n"
-        
-        # 发送完成事件
-        yield f"data: {json.dumps({'type': 'complete', 'success': True}, ensure_ascii=False)}\n\n"
+            elif event_type == "recommendations_start":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                
+            elif event_type == "song":
+                song = event.get("song", {})
+                # 跳过无法播放的条目
+                is_playable = isinstance(song, dict) and (song.get("audio_url") or song.get("preview_url"))
+                if isinstance(song, dict) and song.get("title"):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.1)
+                    
+            elif event_type == "recommendations_complete":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                
+            elif event_type == "complete":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                
+            elif event_type == "error":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         
     except Exception as e:
         logger.error(f"流式推荐失败: {str(e)}", exc_info=True)

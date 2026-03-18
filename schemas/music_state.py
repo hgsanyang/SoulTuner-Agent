@@ -56,6 +56,9 @@ class MusicAgentState(TypedDict, total=False):
     playlist_candidates: List[Dict[str, Any]]  # 歌单候选歌曲
     playlist_balance_config: Dict[str, Any]  # 平衡配置
     created_playlist: Optional[Dict[str, Any]]  # 创建的播放列表信息
+    
+    # 流式输出队列（内部使用）
+    _explanation_queue: Any  # asyncio.Queue，用于流式推送推荐解释 chunk
 
 
 class UserPreferences(TypedDict, total=False):

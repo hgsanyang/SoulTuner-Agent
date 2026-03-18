@@ -13,7 +13,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger
 from config.settings import settings
-from llms.multi_llm import get_chat_model
+from llms.multi_llm import get_chat_model, get_intent_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
 from tools.music_tools import get_music_search_tool, get_music_recommender, Song
@@ -50,6 +50,23 @@ def set_llm(new_llm):
     _llm = new_llm
     logger.info(f"[music_graph] LLM 已切换为: {getattr(new_llm, 'model_name', str(new_llm))}")
 
+# 意图分析专用 LLM（可配置更快/更小的模型）
+_intent_llm = None
+
+def get_intent_llm():
+    """获取意图分析专用 LLM 实例（延迟初始化，从 settings 读取配置）"""
+    global _intent_llm
+    if _intent_llm is None:
+        _intent_llm = get_intent_chat_model()
+        logger.info(f"[music_graph] 意图分析 LLM 初始化: {getattr(_intent_llm, 'model_name', str(_intent_llm))}")
+    return _intent_llm
+
+def set_intent_llm(new_llm):
+    """覆盖意图分析 LLM 实例"""
+    global _intent_llm
+    _intent_llm = new_llm
+    logger.info(f"[music_graph] 意图分析 LLM 已切换为: {getattr(new_llm, 'model_name', str(new_llm))}")
+
 
 # _clean_json_from_llm 已被 with_structured_output 替代，不再需要手动正则解析
 
@@ -82,7 +99,7 @@ class MusicRecommendationGraph:
             
             # ✅ with_structured_output：让模型直接输出 MusicQueryPlan Pydantic 对象
             # 底层自动处理 json_schema 约束，无需任何正则或 json.loads
-            structured_llm = get_llm().with_structured_output(MusicQueryPlan)
+            structured_llm = get_intent_llm().with_structured_output(MusicQueryPlan)
             chain = (
                 ChatPromptTemplate.from_template(UNIFIED_MUSIC_QUERY_PLANNER_PROMPT)
                 | structured_llm
@@ -454,12 +471,29 @@ class MusicRecommendationGraph:
                 | get_llm()
                 | StrOutputParser()
             )
-            explanation = await chain.ainvoke({
+            
+            # 流式生成推荐解释：通过 astream 逐 chunk 送入队列
+            explanation_queue = state.get("_explanation_queue")
+            explanation = ""
+            async for chunk in chain.astream({
                 "user_query": user_query,
                 "recommended_songs": songs_text
-            })
+            }):
+                explanation += chunk
+                if explanation_queue:
+                    try:
+                        await explanation_queue.put(chunk)
+                    except Exception:
+                        pass
             
-            # 构建完整的最终回复 (只返回解释部分，不再拼接硬编码列表)
+            # 通知队列流式结束
+            if explanation_queue:
+                try:
+                    await explanation_queue.put(None)  # 哨兵值
+                except Exception:
+                    pass
+            
+            # 构建完整的最终回复
             final_response = explanation
             
             logger.info("成功生成推荐解释")
