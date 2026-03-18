@@ -3,13 +3,26 @@
 import { useState } from 'react';
 import { JourneyRequest, MoodTransitionInput } from '@/lib/api';
 import { theme } from '@/styles/theme';
+import MoodCurveChart from './MoodCurveChart';
 
 const DEFAULT_STORY = '早晨起床 → 通勤路上 → 工作中 → 下班放松 → 夜晚休息';
 
-const STORY_PRESETS: string[] = [
-  '机场清晨 → 登机等待 → 起飞穿云 → 落地黄昏 → 入住酒店的小惊喜',
-  '雨天咖啡馆 → 专注写作 → 灵感爆发 → 走出门口的微风',
-  '城市夜跑 → 河边灯光 → 冲刺冲线 → 回家拉伸与放松',
+const STORY_PRESETS = [
+  {
+    icon: '✈️',
+    title: '旅途篇',
+    story: '机场清晨 → 登机等待 → 起飞穿云 → 落地黄昏 → 入住酒店的小惊喜',
+  },
+  {
+    icon: '☕',
+    title: '写作日',
+    story: '雨天咖啡馆 → 专注写作 → 灵感爆发 → 走出门口的微风',
+  },
+  {
+    icon: '🏃',
+    title: '夜跑',
+    story: '城市夜跑 → 河边灯光 → 冲刺冲线 → 回家拉伸与放松',
+  },
 ];
 
 const DEFAULT_MOOD_POINTS = [
@@ -28,7 +41,7 @@ interface JourneyBuilderProps {
 
 interface MoodPointForm {
   id: number;
-  time: number; // 0-1
+  time: number;
   mood: string;
   intensity: number;
 }
@@ -45,12 +58,7 @@ export default function JourneyBuilder({ loading, onGenerate }: JourneyBuilderPr
     const nextId = moodPoints.length ? Math.max(...moodPoints.map((p) => p.id)) + 1 : 1;
     setMoodPoints([
       ...moodPoints,
-      {
-        id: nextId,
-        time: 1,
-        mood: '放松',
-        intensity: 0.5,
-      },
+      { id: nextId, time: 1, mood: '放松', intensity: 0.5 },
     ]);
   };
 
@@ -64,6 +72,10 @@ export default function JourneyBuilder({ loading, onGenerate }: JourneyBuilderPr
     setMoodPoints((prev) => prev.filter((point) => point.id !== id));
   };
 
+  const handleCurveUpdate = (id: number, field: 'time' | 'intensity', value: number) => {
+    handleUpdateMoodPoint(id, field, value);
+  };
+
   const buildRequestPayload = (): JourneyRequest | null => {
     setInlineError(null);
     if (mode === 'story') {
@@ -71,11 +83,7 @@ export default function JourneyBuilder({ loading, onGenerate }: JourneyBuilderPr
         setInlineError('请先写一点故事，再让我们为它配一段音乐。');
         return null;
       }
-      return {
-        story: story.trim(),
-        duration,
-        context,
-      };
+      return { story: story.trim(), duration, context };
     }
 
     const validPoints: MoodTransitionInput[] = moodPoints
@@ -87,102 +95,76 @@ export default function JourneyBuilder({ loading, onGenerate }: JourneyBuilderPr
         intensity: Math.max(0, Math.min(1, point.intensity)),
       }));
 
-    if (!validPoints.length) {
-      return null;
-    }
-
-    return {
-      mood_transitions: validPoints,
-      duration,
-      context,
-    };
+    if (!validPoints.length) return null;
+    return { mood_transitions: validPoints, duration, context };
   };
 
   const handleGenerate = () => {
     const payload = buildRequestPayload();
-    if (!payload) {
-      return;
-    }
+    if (!payload) return;
     onGenerate(payload);
   };
 
   return (
-    <section
-      style={{
-        backgroundColor: theme.colors.background.card,
-        borderRadius: theme.borderRadius.lg,
-        border: `1px solid ${theme.colors.border.default}`,
-        padding: '1.75rem',
-        marginBottom: '2rem',
-        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
-      }}
-    >
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1.5rem',
-        }}
-      >
-        <div>
-          <h2
-            style={{
-              margin: 0,
-              fontSize: '1.5rem',
-              color: theme.colors.text.primary,
-            }}
-          >
-            音乐旅程生成器
-          </h2>
-          <p style={{ marginTop: '0.35rem', color: theme.colors.text.muted }}>
-            通过故事或情绪曲线创建沉浸式音乐旅程
-          </p>
-        </div>
-        <div
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem' }}>
+      {/* Header + Mode toggle */}
+      <div>
+        <h2
           style={{
-            display: 'flex',
-            gap: '0.5rem',
-            backgroundColor: theme.colors.background.main,
-            padding: '0.25rem',
-            borderRadius: theme.borderRadius.md,
+            margin: 0,
+            fontSize: '1.35rem',
+            color: theme.colors.text.primary,
+            letterSpacing: '-0.01em',
           }}
         >
-          {[
-            { label: '故事驱动', value: 'story' },
-            { label: '情绪曲线', value: 'mood' },
-          ].map((item) => (
-            <button
-              key={item.value}
-              onClick={() => setMode(item.value as 'story' | 'mood')}
-              type="button"
-              style={{
-                border: 'none',
-                backgroundColor:
-                  mode === item.value ? theme.colors.primary[700] : 'transparent',
-                color: mode === item.value ? '#fff' : theme.colors.text.secondary,
-                padding: '0.45rem 0.9rem',
-                borderRadius: theme.borderRadius.md,
-                cursor: 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </header>
+          🗺️ 音乐旅程
+        </h2>
+        <p style={{ margin: '0.25rem 0 0', color: theme.colors.text.muted, fontSize: '0.85rem' }}>
+          用故事或情绪曲线，编排一段沉浸式音乐旅程
+        </p>
+      </div>
 
-      {mode === 'story' ? (
-        <div style={{ marginBottom: '1.5rem' }}>
-          <label
+      {/* Mode toggle pills */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '0.35rem',
+          backgroundColor: 'rgba(255,255,255,0.04)',
+          padding: '0.25rem',
+          borderRadius: theme.borderRadius.full,
+          border: `1px solid ${theme.colors.border.default}`,
+        }}
+      >
+        {[
+          { label: '📖 故事驱动', value: 'story' as const },
+          { label: '📈 情绪曲线', value: 'mood' as const },
+        ].map((item) => (
+          <button
+            key={item.value}
+            onClick={() => setMode(item.value)}
+            type="button"
             style={{
-              display: 'block',
-              marginBottom: '0.5rem',
-              color: theme.colors.text.secondary,
+              flex: 1,
+              border: 'none',
+              backgroundColor: mode === item.value ? theme.colors.primary.accent : 'transparent',
+              color: mode === item.value ? '#fff' : theme.colors.text.secondary,
+              padding: '0.5rem 0.75rem',
+              borderRadius: theme.borderRadius.full,
+              cursor: 'pointer',
               fontWeight: 600,
+              fontSize: '0.85rem',
+              transition: 'all 0.2s ease',
             }}
           >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Story mode */}
+      {mode === 'story' ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <label style={{ color: theme.colors.text.secondary, fontWeight: 600, fontSize: '0.85rem' }}>
             故事情节
           </label>
           <textarea
@@ -195,229 +177,171 @@ export default function JourneyBuilder({ loading, onGenerate }: JourneyBuilderPr
               resize: 'vertical',
               borderRadius: theme.borderRadius.md,
               border: `1px solid ${theme.colors.border.default}`,
-              padding: '1rem',
-              fontSize: '1rem',
+              padding: '0.85rem',
+              fontSize: '0.92rem',
               lineHeight: 1.6,
               color: theme.colors.text.primary,
               backgroundColor: theme.colors.background.elevated,
+              transition: 'border-color 0.2s',
+              outline: 'none',
             }}
+            onFocus={(e) => (e.target.style.borderColor = theme.colors.primary.accent)}
+            onBlur={(e) => (e.target.style.borderColor = theme.colors.border.default)}
           />
-          <div
-            style={{
-              marginTop: '0.6rem',
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: '0.5rem',
-              alignItems: 'center',
-            }}
-          >
-            <span
-              style={{
-                fontSize: '0.85rem',
-                color: theme.colors.text.muted,
-              }}
-            >
-              不知道写什么？试试这些旅程草稿：
+
+          {/* Preset cards */}
+          <div>
+            <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
+              💡 灵感模板
             </span>
-            {STORY_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => setStory(preset)}
-                style={{
-                  border: 'none',
-                  borderRadius: theme.borderRadius.full,
-                  padding: '0.3rem 0.75rem',
-                  fontSize: '0.82rem',
-                  cursor: 'pointer',
-                  backgroundColor: theme.colors.background.main,
-                  color: theme.colors.text.secondary,
-                }}
-              >
-                一键注入
-              </button>
-            ))}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginTop: '0.4rem' }}>
+              {STORY_PRESETS.map((preset) => (
+                <button
+                  key={preset.title}
+                  type="button"
+                  onClick={() => setStory(preset.story)}
+                  style={{
+                    border: `1px solid ${theme.colors.border.default}`,
+                    borderRadius: theme.borderRadius.md,
+                    padding: '0.6rem 0.5rem',
+                    cursor: 'pointer',
+                    backgroundColor: theme.colors.background.elevated,
+                    color: theme.colors.text.secondary,
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.2rem',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = theme.colors.primary.accent;
+                    e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.06)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = theme.colors.border.default;
+                    e.currentTarget.style.backgroundColor = theme.colors.background.elevated;
+                  }}
+                >
+                  <span style={{ fontSize: '1.1rem' }}>{preset.icon}</span>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: theme.colors.text.primary }}>
+                    {preset.title}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      color: theme.colors.text.muted,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {preset.story.split('→')[0]}→...
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       ) : (
-        <div style={{ marginBottom: '1.5rem' }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginBottom: '0.75rem',
-              alignItems: 'center',
-            }}
-          >
-            <label
-              style={{
-                color: theme.colors.text.secondary,
-                fontWeight: 600,
-              }}
-            >
-              情绪曲线
+        /* Mood curve mode */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {/* SVG curve chart */}
+          <MoodCurveChart points={moodPoints} onUpdatePoint={handleCurveUpdate} />
+
+          {/* Mood points list */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label style={{ color: theme.colors.text.secondary, fontWeight: 600, fontSize: '0.82rem' }}>
+              情绪节点
             </label>
             <button
               type="button"
               onClick={handleAddMoodPoint}
               style={{
-                border: 'none',
+                border: `1px solid ${theme.colors.border.default}`,
                 backgroundColor: 'transparent',
-                color: theme.colors.text.secondary,
+                color: theme.colors.primary.accent,
                 fontWeight: 600,
                 cursor: 'pointer',
+                fontSize: '0.78rem',
+                padding: '0.25rem 0.7rem',
+                borderRadius: theme.borderRadius.full,
               }}
             >
-              + 添加节点
+              + 添加
             </button>
           </div>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.75rem',
-            }}
-          >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', overflowY: 'auto', maxHeight: '200px' }}>
             {moodPoints.map((point) => (
               <div
                 key={point.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr)) auto',
-                  gap: '0.75rem',
+                  gridTemplateColumns: '1fr 1.2fr 0.8fr auto',
+                  gap: '0.5rem',
                   alignItems: 'center',
-                  padding: '0.85rem',
+                  padding: '0.55rem 0.65rem',
                   borderRadius: theme.borderRadius.md,
                   border: `1px solid ${theme.colors.border.default}`,
-                  backgroundColor: theme.colors.background.main,
+                  backgroundColor: theme.colors.background.elevated,
+                  fontSize: '0.82rem',
                 }}
               >
-                <div>
-                  <label
-                    style={{
-                      display: 'block',
-                      fontSize: '0.85rem',
-                      color: theme.colors.text.secondary,
-                      marginBottom: '0.25rem',
-                    }}
-                  >
-                    时间点（%）
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={Math.round(point.time * 100)}
-                    onChange={(e) =>
-                      handleUpdateMoodPoint(point.id, 'time', Number(e.target.value) / 100)
-                    }
-                    style={{
-                      width: '100%',
-                      padding: '0.5rem',
-                      borderRadius: theme.borderRadius.sm,
-                      border: `1px solid ${theme.colors.border.default}`,
-                      color: theme.colors.text.primary,
-                      backgroundColor: theme.colors.background.elevated,
-                    }}
-                  />
-                </div>
-                <div>
-                  <label
-                    style={{
-                      display: 'block',
-                      fontSize: '0.85rem',
-                      color: theme.colors.text.secondary,
-                      marginBottom: '0.25rem',
-                    }}
-                  >
-                    情绪
-                  </label>
-                  <select
-                    value={point.mood}
-                    onChange={(e) => handleUpdateMoodPoint(point.id, 'mood', e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.5rem',
-                      borderRadius: theme.borderRadius.sm,
-                      border: `1px solid ${theme.colors.border.default}`,
-                      color: theme.colors.text.primary,
-                      backgroundColor: theme.colors.background.elevated,
-                    }}
-                  >
-                    {moodOptions.map((mood) => (
-                      <option key={mood} value={mood}>
-                        {mood}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label
-                    style={{
-                      display: 'block',
-                      fontSize: '0.85rem',
-                      color: theme.colors.text.secondary,
-                      marginBottom: '0.25rem',
-                    }}
-                  >
-                    强度
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.1}
-                    value={point.intensity}
-                    onChange={(e) =>
-                      handleUpdateMoodPoint(point.id, 'intensity', Number(e.target.value))
-                    }
-                    style={{
-                      width: '100%',
-                      padding: '0.5rem',
-                      borderRadius: theme.borderRadius.sm,
-                      border: `1px solid ${theme.colors.border.default}`,
-                      color: theme.colors.text.primary,
-                      backgroundColor: theme.colors.background.elevated,
-                    }}
-                  />
-                </div>
-                <div
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={Math.round(point.time * 100)}
+                  onChange={(e) => handleUpdateMoodPoint(point.id, 'time', Number(e.target.value) / 100)}
+                  placeholder="%"
                   style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.35rem',
+                    width: '100%',
+                    padding: '0.35rem',
+                    borderRadius: theme.borderRadius.sm,
+                    border: `1px solid ${theme.colors.border.default}`,
+                    color: theme.colors.text.primary,
+                    backgroundColor: theme.colors.background.main,
+                    fontSize: '0.82rem',
+                  }}
+                />
+                <select
+                  value={point.mood}
+                  onChange={(e) => handleUpdateMoodPoint(point.id, 'mood', e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '0.35rem',
+                    borderRadius: theme.borderRadius.sm,
+                    border: `1px solid ${theme.colors.border.default}`,
+                    color: theme.colors.text.primary,
+                    backgroundColor: theme.colors.background.main,
+                    fontSize: '0.82rem',
                   }}
                 >
-                  <label
-                    style={{
-                      fontSize: '0.85rem',
-                      color: theme.colors.text.secondary,
-                    }}
-                  >
-                    强度滑块
-                  </label>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={point.intensity}
-                    onChange={(e) =>
-                      handleUpdateMoodPoint(point.id, 'intensity', Number(e.target.value))
-                    }
-                  />
-                </div>
+                  {moodOptions.map((mood) => (
+                    <option key={mood} value={mood}>{mood}</option>
+                  ))}
+                </select>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={point.intensity}
+                  onChange={(e) => handleUpdateMoodPoint(point.id, 'intensity', Number(e.target.value))}
+                  style={{ width: '100%', accentColor: theme.colors.primary.accent }}
+                />
                 <button
                   type="button"
                   onClick={() => handleDeleteMoodPoint(point.id)}
                   style={{
                     border: 'none',
                     backgroundColor: 'transparent',
-                    color: theme.colors.text.secondary,
+                    color: 'rgba(239,68,68,0.7)',
                     cursor: 'pointer',
+                    fontSize: '0.9rem',
+                    padding: '0.15rem 0.3rem',
                   }}
                 >
-                  删除
+                  ✕
                 </button>
               </div>
             ))}
@@ -425,117 +349,77 @@ export default function JourneyBuilder({ loading, onGenerate }: JourneyBuilderPr
         </div>
       )}
 
+      {/* Context row */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: '1rem',
-          marginBottom: '1.5rem',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: '0.5rem',
         }}
       >
-        <div>
-          <label
-            style={{
-              display: 'block',
-              marginBottom: '0.5rem',
-              color: theme.colors.text.secondary,
-              fontWeight: 600,
-            }}
-          >
-            旅程时长（分钟）
-          </label>
-          <input
-            type="number"
-            min={20}
-            max={180}
-            step={5}
-            value={duration}
-            onChange={(e) => setDuration(Number(e.target.value))}
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              borderRadius: theme.borderRadius.md,
-              border: `1px solid ${theme.colors.border.default}`,
-              color: theme.colors.text.primary,
-              backgroundColor: theme.colors.background.elevated,
-            }}
-          />
-        </div>
-        <div>
-          <label
-            style={{
-              display: 'block',
-              marginBottom: '0.5rem',
-              color: theme.colors.text.secondary,
-              fontWeight: 600,
-            }}
-          >
-            场景 / 地点
-          </label>
-          <input
-            type="text"
-            value={context.location}
-            onChange={(e) => setContext((prev) => ({ ...prev, location: e.target.value }))}
-            placeholder="如：上海 / 办公室 / 旅途"
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              borderRadius: theme.borderRadius.md,
-              border: `1px solid ${theme.colors.border.default}`,
-              color: theme.colors.text.primary,
-              backgroundColor: theme.colors.background.elevated,
-            }}
-          />
-        </div>
-        <div>
-          <label
-            style={{
-              display: 'block',
-              marginBottom: '0.5rem',
-              color: theme.colors.text.secondary,
-              fontWeight: 600,
-            }}
-          >
-            天气 / 活动
-          </label>
-          <input
-            type="text"
-            value={context.weather}
-            onChange={(e) => setContext((prev) => ({ ...prev, weather: e.target.value }))}
-            placeholder="如：晴朗 / 雨天 / 夜跑"
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              borderRadius: theme.borderRadius.md,
-              border: `1px solid ${theme.colors.border.default}`,
-              color: theme.colors.text.primary,
-              backgroundColor: theme.colors.background.elevated,
-            }}
-          />
-        </div>
+        {[
+          { label: '⏱ 时长', value: String(duration), onChange: (v: string) => setDuration(Number(v)), type: 'number', placeholder: '分钟' },
+          { label: '📍 场景', value: context.location, onChange: (v: string) => setContext((prev) => ({ ...prev, location: v })), type: 'text', placeholder: '地点' },
+          { label: '🌤 天气', value: context.weather, onChange: (v: string) => setContext((prev) => ({ ...prev, weather: v })), type: 'text', placeholder: '天气/活动' },
+        ].map((field) => (
+          <div key={field.label}>
+            <label style={{ display: 'block', fontSize: '0.72rem', color: theme.colors.text.muted, marginBottom: '0.25rem' }}>
+              {field.label}
+            </label>
+            <input
+              type={field.type}
+              value={field.value}
+              onChange={(e) => field.onChange(e.target.value)}
+              placeholder={field.placeholder}
+              style={{
+                width: '100%',
+                padding: '0.5rem 0.6rem',
+                borderRadius: theme.borderRadius.md,
+                border: `1px solid ${theme.colors.border.default}`,
+                color: theme.colors.text.primary,
+                backgroundColor: theme.colors.background.elevated,
+                fontSize: '0.85rem',
+                outline: 'none',
+                transition: 'border-color 0.2s',
+              }}
+              onFocus={(e) => (e.target.style.borderColor = theme.colors.border.focus)}
+              onBlur={(e) => (e.target.style.borderColor = theme.colors.border.default)}
+            />
+          </div>
+        ))}
       </div>
 
+      {/* Error */}
+      {inlineError && (
+        <div style={{ fontSize: '0.82rem', color: '#f87171', padding: '0.4rem 0' }}>
+          ⚠️ {inlineError}
+        </div>
+      )}
+
+      {/* Generate button */}
       <button
         type="button"
         onClick={handleGenerate}
         disabled={loading}
         style={{
           width: '100%',
-          padding: '0.9rem 1.25rem',
-          backgroundColor: loading ? 'rgba(29,185,84,0.5)' : theme.colors.primary.accent,
+          padding: '0.85rem 1rem',
+          background: loading
+            ? 'rgba(29,185,84,0.3)'
+            : 'linear-gradient(135deg, #1db954 0%, #179342 100%)',
           borderRadius: theme.borderRadius.lg,
           border: 'none',
           color: '#fff',
-          fontSize: '1.0625rem',
-          fontWeight: 600,
+          fontSize: '1rem',
+          fontWeight: 700,
           cursor: loading ? 'not-allowed' : 'pointer',
           transition: 'all 0.25s ease',
           letterSpacing: '0.02em',
+          boxShadow: loading ? 'none' : '0 4px 16px rgba(29,185,84,0.3)',
         }}
       >
         {loading ? '⏳ 生成中...' : '🎵 生成音乐旅程'}
       </button>
-    </section>
+    </div>
   );
 }
-

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import MainLayout from '@/components/Layout/MainLayout';
 import JourneyBuilder from '@/components/Journey/JourneyBuilder';
 import JourneySummary from '@/components/Journey/JourneySummary';
+import JourneyTimeline from '@/components/Journey/JourneyTimeline';
 import JourneySegments, {
   JourneySegmentState,
 } from '@/components/Journey/JourneySegments';
@@ -13,6 +14,7 @@ import {
   streamJourney,
   JourneySegment,
 } from '@/lib/api';
+import { theme } from '@/styles/theme';
 
 function createSegmentState(segment: JourneySegment, status: JourneySegmentState['status']): JourneySegmentState {
   return {
@@ -44,6 +46,11 @@ export default function JourneyPage() {
   };
 
   useEffect(() => cleanup, []);
+
+  const handleSegmentClick = (segmentId: number) => {
+    const el = document.getElementById(`journey-segment-${segmentId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 
   const handleJourneyEvent = (event: SSEEvent) => {
     switch (event.type) {
@@ -152,7 +159,7 @@ export default function JourneyPage() {
     setJourneyTitle(null);
     setSegments([]);
     setActiveSegmentId(null);
-    setLoading(true);  // ← 立即设为 loading，不等 SSE 第一条事件
+    setLoading(true);
     setThinkingMessage('正在排队等待生成...');
 
     if (!payload.story && !payload.mood_transitions?.length) {
@@ -161,7 +168,6 @@ export default function JourneyPage() {
       return;
     }
 
-    // 根据输入生成一个简单的旅程标题，让体验更有“故事感”
     if (payload.story) {
       const raw = payload.story.trim();
       const firstStage =
@@ -177,17 +183,76 @@ export default function JourneyPage() {
     cancelRef.current = cancel;
   };
 
+  const hasResults = segments.length > 0 || loading || meta !== null || error !== null;
+
   return (
     <MainLayout>
-      <JourneyBuilder loading={loading} onGenerate={handleGenerate} />
-      <JourneySummary
-        loading={loading}
-        thinkingMessage={thinkingMessage}
-        journeyTitle={journeyTitle || undefined}
-        meta={meta}
-        error={error}
-      />
-      <JourneySegments segments={segments} activeSegmentId={activeSegmentId} />
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(360px, 35%) 1fr',
+          gap: '1.25rem',
+          height: '100%',
+          minHeight: 0,
+        }}
+      >
+        {/* Left panel — sticky input controls */}
+        <div
+          style={{
+            overflowY: 'auto',
+            padding: '1.25rem',
+            borderRadius: theme.borderRadius.lg,
+            border: `1px solid ${theme.colors.border.default}`,
+            backgroundColor: theme.colors.background.card,
+          }}
+        >
+          <JourneyBuilder loading={loading} onGenerate={handleGenerate} />
+        </div>
+
+        {/* Right panel — results */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', minHeight: 0 }}>
+          {hasResults ? (
+            <>
+              <JourneySummary
+                loading={loading}
+                thinkingMessage={thinkingMessage}
+                journeyTitle={journeyTitle || undefined}
+                meta={meta}
+                error={error}
+              />
+              <JourneyTimeline
+                segments={segments}
+                activeSegmentId={activeSegmentId}
+                onSegmentClick={handleSegmentClick}
+              />
+              <JourneySegments segments={segments} activeSegmentId={activeSegmentId} />
+            </>
+          ) : (
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: theme.borderRadius.lg,
+                border: `1px dashed ${theme.colors.border.default}`,
+                backgroundColor: 'rgba(255,255,255,0.02)',
+                gap: '0.75rem',
+                padding: '3rem',
+              }}
+            >
+              <div style={{ fontSize: '3.5rem', opacity: 0.3 }}>🗺️</div>
+              <h3 style={{ margin: 0, color: theme.colors.text.secondary, fontSize: '1.15rem', fontWeight: 600 }}>
+                你的音乐旅程将在这里展开
+              </h3>
+              <p style={{ margin: 0, color: theme.colors.text.muted, fontSize: '0.88rem', textAlign: 'center', maxWidth: '360px' }}>
+                在左侧输入一段故事情节，或切换到情绪曲线模式设置节点，然后点击生成旅程
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
     </MainLayout>
   );
 }
