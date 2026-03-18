@@ -363,6 +363,7 @@ export default function RecommendationsPage() {
             width: '100%',
             minHeight: 0,
             flex: 1,
+            overflow: 'hidden',
           }}>
             {/* ── 左栏：对话记录（玻璃容器 + 可滚动） ── */}
             <div style={{
@@ -375,9 +376,7 @@ export default function RecommendationsPage() {
               borderRadius: '1rem',
               border: `1px solid ${theme.colors.border.default}`,
               overflow: 'hidden',
-              maxHeight: 'calc(100vh - 14rem)',
-              position: 'sticky',
-              top: '1rem',
+              minHeight: 0,
             }}>
               {/* 对话标题栏 */}
               <div style={{
@@ -466,9 +465,7 @@ export default function RecommendationsPage() {
                 borderRadius: '1rem',
                 border: `1px solid ${theme.colors.border.default}`,
                 overflow: 'hidden',
-                maxHeight: 'calc(100vh - 14rem)',
-                position: 'sticky',
-                top: '1rem',
+                minHeight: 0,
               }}>
                 {/* 歌曲面板标题栏 */}
                 <div style={{

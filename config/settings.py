@@ -74,15 +74,15 @@ class GlobalSettings(BaseSettings):
     # 6. 检索 & 推荐参数（★ 核心调参区）
     # ================================================================
     semantic_search_limit: int = Field(
-        default=8,
+        default=12,
         description="语义向量搜索默认返回条数（Neo4j KNN）",
     )
     graph_search_limit: int = Field(
-        default=10,
+        default=12,
         description="GraphRAG 图谱搜索默认返回条数",
     )
     hybrid_retrieval_limit: int = Field(
-        default=10,
+        default=12,
         description="混合检索合并后最终返回条数（传给 LLM 推荐解释）",
     )
     web_search_max_results: int = Field(

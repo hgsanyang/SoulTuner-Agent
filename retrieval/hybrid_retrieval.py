@@ -18,8 +18,8 @@ logger = get_logger(__name__)
 BASELINE_SIMILARITY_SCORE = 0.85      # 单引擎命中的基础相似度分
 DUAL_ENGINE_BONUS = 0.1               # 双引擎同时命中时的加分
 WEB_RESULT_PRIORITY_SCORE = 9.9       # 网络资讯结果的优先级分数
-MAX_SONGS_PER_ARTIST = 2              # 多样性过滤：每个艺术家最多占的歌曲数
-MIN_DIVERSE_RESULTS = 3               # 多样性过滤后的最少结果数
+MAX_SONGS_PER_ARTIST = 3              # 多样性过滤：每个艺术家最多占的歌曲数
+MIN_DIVERSE_RESULTS = 6               # 多样性过滤后的最少结果数
 
 class MusicHybridRetrieval:
     """
@@ -228,9 +228,10 @@ class MusicHybridRetrieval:
                 graph_term = json.dumps(graph_query_dict, ensure_ascii=False)
                 vector_term = vector_desc if vector_desc else query
                 
-                local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": limit//2 + 1}))
+                logger.info(f"[Hybrid] 混合检索：向子引擎传递 limit={limit}")
+                local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": limit}))
                 local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                    "query": vector_term, "limit": limit//2 + 1,
+                    "query": vector_term, "limit": limit,
                     "language_filter": language_filter or "",
                     "region_filter": region_filter or "",
                 }))

@@ -96,7 +96,7 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
     """
     if limit <= 0:
         limit = settings.semantic_search_limit
-    logger.info(f"[SemanticSearch] 查询: '{query}' | 歌手过滤: '{artist_filter}' | 流派过滤: '{genre_filter}' | 语言过滤: '{language_filter}' | 地区过滤: '{region_filter}'")
+    logger.info(f"[SemanticSearch] 实际使用 limit={limit} | 查询: '{query}' | 歌手过滤: '{artist_filter}' | 流派过滤: '{genre_filter}' | 语言过滤: '{language_filter}' | 地区过滤: '{region_filter}'")
 
     try:
         # 1. 文本预处理
@@ -253,7 +253,7 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                 
                 fused.sort(key=lambda x: x["similarity_score"], reverse=True)
                 results = fused[:limit]
-                logger.info(f"[SemanticSearch] Phase 3 融合排序完成，返回 {len(results)} 首(OMAR加权: {sum(1 for r in fused[:limit] if omar_scores.get(r.get('_eid'), 0) > 0)}")
+                logger.info(f"[SemanticSearch] Phase 3 融合排序完成，返回 {len(results)} 首(limit={limit}, OMAR加权: {sum(1 for r in fused[:limit] if omar_scores.get(r.get('_eid'), 0) > 0)})")
             else:
                 # 单模型 M2D-CLAP KNN（无 OMAR 索引时）
                 cypher = """

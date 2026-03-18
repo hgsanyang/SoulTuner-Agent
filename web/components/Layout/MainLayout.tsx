@@ -34,17 +34,15 @@ export default function MainLayout({
   const containerPadding = isMobile ? '0' : '1.5rem 2rem';
   const pathname = usePathname();
 
-  useEffect(() => {
-    // 每次路径变化时重置滚动条
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, [pathname]);
+  // Removed: window.scrollTo no longer needed as page uses height:100vh + overflow:hidden
 
   return (
     <div
       style={{
-        minHeight: '100vh',
+        height: '100vh',
         backgroundColor: 'transparent',
         position: 'relative',
+        overflow: 'hidden',
       }}
     >
       {isMobile && isSidebarOpen && (
@@ -69,9 +67,11 @@ export default function MainLayout({
           marginLeft: isMobile ? 0 : `${sidebarWidth}px`,
           display: 'flex',
           flexDirection: 'column',
-          minHeight: '100vh',
+          height: '100vh',
           padding: containerPadding,
-          gap: '1.75rem',
+          paddingBottom: '90px',
+          gap: '1.25rem',
+          overflow: 'hidden',
         }}
       >
         {isMobile && (
@@ -128,6 +128,7 @@ export default function MainLayout({
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
+            minHeight: 0,
           }}
         >
           {/* Framer Motion for Page Transitions */}
@@ -150,6 +151,7 @@ export default function MainLayout({
                 flexDirection: 'column',
                 gap: '1.25rem',
                 overflowY: 'auto',
+                minHeight: 0,
               }}
             >
               {children}
@@ -161,10 +163,12 @@ export default function MainLayout({
         {onInputSubmit && (
           <div style={{
             maxWidth: `${theme.layout.contentMaxWidth}px`,
-            margin: '-0.5rem auto 5rem',
+            margin: '0 auto',
             width: '100%',
             display: 'flex',
             flexDirection: 'column',
+            flexShrink: 0,
+            paddingBottom: isMobile ? '0.5rem' : '1rem',
           }}>
             {toolbar && (
               <div style={{

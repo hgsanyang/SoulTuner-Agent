@@ -1,14 +1,27 @@
 'use client';
 
 import { theme } from '@/styles/theme';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+function useCurrentTime() {
+  const [time, setTime] = useState('');
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      setTime(now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }));
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return time;
+}
 
 interface WelcomeScreenProps {
   title?: string;
   description?: string;
   badgeLabel?: string;
   subtitle?: string;
-  onPrimaryAction?: () => void;
   onPromptClick?: (text: string) => void;
 }
 
@@ -20,6 +33,12 @@ const sceneCards = [
   { emoji: '💻', title: '专注编程', desc: '纯净电子乐，进入深度心流', prompt: '进入心流，纯净无人声的专注电子乐', color: 'rgba(34, 211, 238, 0.15)', border: 'rgba(34, 211, 238, 0.25)' },
   { emoji: '🌧️', title: '雨天发呆', desc: '窗外细雨，配一杯热茶', prompt: '雨天在家发呆，配一杯热茶的轻音乐', color: 'rgba(107, 114, 128, 0.2)', border: 'rgba(107, 114, 128, 0.3)' },
   { emoji: '🚗', title: '公路旅行', desc: '风驰电掣，自由的摇滚之路', prompt: '开车兜风，来点经典摇滚公路歌曲', color: 'rgba(239, 68, 68, 0.15)', border: 'rgba(239, 68, 68, 0.25)' },
+  { emoji: '🎉', title: '派对狂欢', desc: '动感Bass，点燃每一个夜晚', prompt: '开派对嗨起来，来点动感十足的Dance Pop', color: 'rgba(236, 72, 153, 0.15)', border: 'rgba(236, 72, 153, 0.25)' },
+  { emoji: '📖', title: '阅读时光', desc: '翻开书页，沉浸在文字的世界', prompt: '安静阅读，来点柔和的古典钢琴和爵士', color: 'rgba(139, 92, 246, 0.15)', border: 'rgba(139, 92, 246, 0.25)' },
+  { emoji: '🌅', title: '清晨觉醒', desc: '第一缕阳光，唤醒美好的一天', prompt: '早晨起床，来点清新温暖的民谣唤醒一天', color: 'rgba(251, 191, 36, 0.15)', border: 'rgba(251, 191, 36, 0.25)' },
+  { emoji: '🍷', title: '烛光晚餐', desc: '爵士与红酒，浪漫的夜晚', prompt: '浪漫烛光晚餐，来点优雅的爵士乐和Bossa Nova', color: 'rgba(220, 38, 38, 0.15)', border: 'rgba(220, 38, 38, 0.25)' },
+  { emoji: '🎮', title: '游戏竞技', desc: '肾上腺素飙升，战斗力拉满', prompt: '打游戏开黑，来点激昂的电子音乐和史诗BGM', color: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.25)' },
+  { emoji: '🧘', title: '冥想放松', desc: '呼吸之间，找到内心的宁静', prompt: '冥想放松，来点空灵的环境音乐和自然白噪音', color: 'rgba(59, 130, 246, 0.15)', border: 'rgba(59, 130, 246, 0.25)' },
 ];
 
 // ── 能力标签 ──
@@ -46,10 +65,10 @@ export default function WelcomeScreen({
   description = '用一段自然语言描述此刻的心境或场景，即刻生成专属的沉浸式歌单。',
   badgeLabel = 'SoulTuner 引擎已就绪',
   subtitle = '探索未知的音乐旅程',
-  onPrimaryAction,
   onPromptClick,
 }: WelcomeScreenProps) {
   const greeting = getGreeting();
+  const currentTime = useCurrentTime();
   const [hoveredCard, setHoveredCard] = useState<number | null>(null);
 
   return (
@@ -68,6 +87,21 @@ export default function WelcomeScreen({
         }}>
           <span style={{ fontSize: '1.2rem' }}>{greeting.emoji}</span>
           {greeting.text}
+          {currentTime && (
+            <span style={{
+              marginLeft: '0.4rem',
+              padding: '0.15rem 0.55rem',
+              borderRadius: theme.borderRadius.full,
+              backgroundColor: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              fontSize: '0.8rem',
+              fontFamily: 'monospace',
+              color: theme.colors.text.secondary,
+              letterSpacing: '0.05em',
+            }}>
+              {currentTime}
+            </span>
+          )}
         </div>
 
         {/* ── Badge ── */}
@@ -127,28 +161,10 @@ export default function WelcomeScreen({
           ))}
         </div>
 
-        {/* ── CTA 按钮 ── */}
-        <div style={{ animation: 'fadeUp 0.6s ease-out 0.35s both' }}>
-          <button
-            type="button"
-            onClick={onPrimaryAction}
-            style={{
-              borderRadius: theme.borderRadius.full, border: 'none',
-              padding: '0.85rem 2.2rem', fontWeight: 700, fontSize: '1rem',
-              cursor: 'pointer', color: '#000',
-              background: theme.colors.primary.accent,
-              boxShadow: '0 6px 20px rgba(29, 185, 84, 0.3)',
-              transition: 'transform 0.2s, box-shadow 0.2s',
-            }}
-            onMouseOver={(e) => { e.currentTarget.style.transform = 'scale(1.05)'; e.currentTarget.style.boxShadow = '0 8px 28px rgba(29, 185, 84, 0.45)'; }}
-            onMouseOut={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(29, 185, 84, 0.3)'; }}
-          >
-            开启智能推荐
-          </button>
-        </div>
+
 
         {/* ── 场景卡片网格 ── */}
-        <div style={{ width: '100%', maxWidth: '680px', animation: 'fadeUp 0.6s ease-out 0.4s both' }}>
+        <div style={{ width: '100%', maxWidth: '780px', animation: 'fadeUp 0.6s ease-out 0.35s both' }}>
           <div style={{
             fontSize: '0.85rem', color: theme.colors.text.muted,
             marginBottom: '1rem', letterSpacing: '0.05em',
@@ -159,7 +175,7 @@ export default function WelcomeScreen({
           </div>
 
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)',
+            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
             gap: '0.75rem',
           }}>
             {sceneCards.map((card, i) => (
