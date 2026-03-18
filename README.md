@@ -128,7 +128,7 @@ graph TB
 | **大语言模型** | DeepSeek-V3 via SiliconFlow（可配置 Gemini / GLM-4） |
 | **长期记忆** | GraphZep（Hono 微服务，自研双阶段召回） |
 | **联网搜索** | SearxNG 自建元搜索 + Tavily API + 智谱 WebSearch |
-| **音乐数据源** | NeteaseCloudMusicApi（本地代理） |
+| **音乐数据源** | 兼容的第三方音乐 API（本地代理） |
 
 ---
 
@@ -561,7 +561,6 @@ python data_pipeline/ingest_to_neo4j.py --update-embeddings # 仅补充向量
 | 项目 | 用途 |
 |------|------|
 | [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | GraphZep 长期记忆微服务 |
-| [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) | 网易云音乐 API 代理 |
 | [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP 跨模态音频模型 |
 | [MTG/omar](https://github.com/MTG/omar) | OMAR-RQ 音频表征模型 |
 | [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) | Agent 编排框架 |
@@ -571,6 +570,7 @@ python data_pipeline/ingest_to_neo4j.py --update-embeddings # 仅补充向量
 
 ## 📄 许可证 & 声明
 
-本项目仅用于学习与研究目的，不包含也不分发任何受版权保护的音频资源。音频数据需用户自行通过合法渠道获取。
+⚠️ **免责声明**：本项目仅供学习、测试与架构研究使用，**严禁用于任何商业用途**。项目本身不提供、不包含也不分发任何受版权保护的音频或歌词资源。
+本项目对任何第三方数据源的可用性、合法性不作保证。音频数据需用户自行通过合法渠道获取。使用本项目产生的任何后果由使用者自行承担。
 
 MIT License
