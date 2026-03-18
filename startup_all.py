@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 WEB_DIR = PROJECT_ROOT / "web"
 GRAPHZEP_DIR = PROJECT_ROOT / "graphzep_service"
 SEARXNG_COMPOSE = PROJECT_ROOT / "docker-compose.searxng.yml"
-# 网易云音乐 API 安装目录
+# 兼容第三方音乐 API 的安装目录
 # 优先级：环境变量 NETEASE_API_DIR > 项目根目录下的兼容API服务 > ~/兼容API服务
 def _resolve_netease_dir() -> Path:
     env_val = os.environ.get("NETEASE_API_DIR")
