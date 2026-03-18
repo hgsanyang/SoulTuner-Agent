@@ -8,7 +8,8 @@ export default function Home() {
   const router = useRouter();
 
   const navigateWithPrompt = (prompt: string) => {
-    router.push(`/recommendations?prompt=${encodeURIComponent(prompt)}`);
+    sessionStorage.setItem('seed_prompt', prompt);
+    router.push('/recommendations');
   };
 
   return (

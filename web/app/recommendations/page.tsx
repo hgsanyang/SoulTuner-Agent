@@ -210,11 +210,21 @@ export default function RecommendationsPage() {
     };
   }, []);
 
+  // 从 sessionStorage 读取预设 prompt（由首页写入）
+  // React 18 StrictMode 会 mount→unmount→remount，不能在 cleanup 中 clearTimeout
+  const seedExecutedRef = useRef(false);
   useEffect(() => {
-    if (!seedPrompt) return;
-    handleSubmit(seedPrompt);
-    router.replace(pathname);
-  }, [seedPrompt, handleSubmit, router, pathname]);
+    if (seedExecutedRef.current) return;
+    try {
+      const prompt = sessionStorage.getItem('seed_prompt');
+      if (!prompt) return;
+      sessionStorage.removeItem('seed_prompt');
+      seedExecutedRef.current = true;
+      setTimeout(() => {
+        handleSubmit(prompt);
+      }, 300);
+    } catch { /* SSR 环境无 sessionStorage */ }
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasMessages = messages.length > 0;
 

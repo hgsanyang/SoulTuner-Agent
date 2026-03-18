@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
@@ -42,11 +42,18 @@ export default function SearchPage() {
     }
   }, []);
 
+  const seedHandledRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!seedPrompt) return;
-    handleSubmit(seedPrompt);
-    router.replace(pathname);
-  }, [seedPrompt, handleSubmit, router, pathname]);
+    const params = new URLSearchParams(window.location.search);
+    const prompt = params.get('prompt');
+    if (!prompt || seedHandledRef.current === prompt) return;
+    seedHandledRef.current = prompt;
+    const timer = setTimeout(() => {
+      handleSubmit(prompt);
+      window.history.replaceState({}, '', pathname);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasResults = results.length > 0;
 
