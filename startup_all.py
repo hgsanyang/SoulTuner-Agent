@@ -23,7 +23,7 @@ WEB_DIR = PROJECT_ROOT / "web"
 GRAPHZEP_DIR = PROJECT_ROOT / "graphzep_service"
 SEARXNG_COMPOSE = PROJECT_ROOT / "docker-compose.searxng.yml"
 # 网易云音乐 API 安装目录
-# 优先级：环境变量 NETEASE_API_DIR > 项目根目录/NeteaseCloudMusicApi > ~/NeteaseCloudMusicApi
+# 优先级：环境变量 NETEASE_API_DIR > 项目根目录下的兼容API服务 > ~/兼容API服务
 def _resolve_netease_dir() -> Path:
     env_val = os.environ.get("NETEASE_API_DIR")
     if env_val:
@@ -160,11 +160,11 @@ def start_graphzep():
 
 
 def start_netease_api():
-    """启动 NeteaseCloudMusicApi 代理服务"""
+    """启动本地第三方音乐 API 代理服务"""
     _banner("启动 NeteaseAPI 代理服务 (port 3000)")
     if not NETEASE_API_DIR.exists():
         print(f"  ⚠️ NeteaseAPI 目录不存在: {NETEASE_API_DIR}")
-        print(f"  💡 请先克隆: git clone --depth 1 https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced.git {NETEASE_API_DIR}")
+        print(f"  💡 请先下载兼容的 API 源码到: {NETEASE_API_DIR}")
         return None
     app_js = NETEASE_API_DIR / "app.js"
     if not app_js.exists():
@@ -237,7 +237,7 @@ def main():
         start_web()
 
     _banner("🎉 所有服务已启动！")
-    print("  🎵  NeteaseAPI: http://localhost:3000  (网易云音乐代理)")
+    print("  🎵  LocalMusicAPI: http://localhost:3000  (兼容第三方音乐库代理)")
     print("  🖥️  前端:        http://localhost:3003  (Next.js)")
     print("  🔧  API:         http://localhost:8501  (后端)")
     print("  🔍  SearxNG:     http://localhost:8888  (联网搜索)")
