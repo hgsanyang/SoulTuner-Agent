@@ -302,6 +302,31 @@ class MusicRecommendationGraph:
         parameters = state.get("intent_parameters", {})
         
         try:
+            # ── 特殊意图：查询用户已标记的歌曲（直接走 Neo4j 关系图）──
+            if intent_type == "recommend_by_favorites":
+                logger.info("检测到 recommend_by_favorites 意图，直接查询 Neo4j 用户关系")
+                memory = UserMemoryManager()
+                memory.ensure_user_exists("local_admin")
+                liked_songs = memory.get_liked_songs(user_id="local_admin", limit=20)
+                
+                if liked_songs:
+                    result = ToolOutput(
+                        success=True,
+                        data=liked_songs,
+                        raw_markdown="\n".join([
+                            f"{i+1}. 《{s['song']['title']}》 - {s['song']['artist']} ({s['reason']})"
+                            for i, s in enumerate(liked_songs)
+                        ]),
+                    )
+                    logger.info(f"从用户收藏中召回 {len(liked_songs)} 首歌")
+                    return {
+                        "recommendations": result,
+                        "step_count": state.get("step_count", 0) + 1
+                    }
+                else:
+                    logger.info("用户暂无点赞/收藏记录，退回常规推荐")
+                    # 没有收藏记录时 fallthrough 到常规检索
+
             retriever = MusicHybridRetrieval(llm_client=get_llm())
             recommendations = []
             
@@ -474,6 +499,20 @@ class MusicRecommendationGraph:
             
             # 流式生成推荐解释：通过 astream 逐 chunk 送入队列
             explanation_queue = state.get("_explanation_queue")
+            
+            # ★ 先把歌曲数据推入队列，让前端立刻渲染歌曲卡片
+            if explanation_queue and recommendations:
+                try:
+                    songs_payload = []
+                    for i, rec in enumerate(recommendations):
+                        song = rec.get("song", rec) if isinstance(rec, dict) else rec
+                        if isinstance(song, dict) and song.get("title"):
+                            songs_payload.append({"song": song, "index": i})
+                    if songs_payload:
+                        await explanation_queue.put({"__songs__": songs_payload})
+                except Exception as e:
+                    logger.warning(f"推送歌曲到队列失败: {e}")
+            
             explanation = ""
             async for chunk in chain.astream({
                 "user_query": user_query,

@@ -544,11 +544,11 @@ GENRE_TAG_MAP: Dict[str, List[str]] = {
 
 SCENARIO_TAG_MAP: Dict[str, List[str]] = {
 
-    "运动": ["workout", "energetic"],
+    "运动": ["workout", "energetic", "sport"],
 
-    "健身": ["workout", "energetic"],
+    "健身": ["workout", "energetic", "sport"],
 
-    "跑步": ["workout", "energetic"],
+    "跑步": ["workout", "energetic", "sport"],
 
     "学习": ["study", "peaceful"],
 
@@ -570,9 +570,15 @@ SCENARIO_TAG_MAP: Dict[str, List[str]] = {
 
     "做饭": ["cooking", "relaxing"],
 
-    "冥想": ["relaxing", "peaceful", "healing"],
+    "冥想": ["relaxing", "peaceful", "healing", "relaxation"],
 
     "下雨天": ["rainy day", "melancholy"],
+
+    # ── MTG 新增场景 ──
+
+    "看电影": ["film", "movie", "soundtrack"],
+
+    "打游戏": ["game", "gaming"],
 
 }
 
@@ -589,13 +595,13 @@ SCENARIO_TAG_MAP: Dict[str, List[str]] = {
 
 MOOD_TAG_MAP: Dict[str, List[str]] = {
 
-    "开车": ["happy", "energetic"],
+    "开心": ["happy", "energetic"],
 
     "快乐": ["happy", "energetic"],
 
-    "悲伤": ["melancholy", "lonely"],
+    "悲伤": ["melancholy", "lonely", "sad"],
 
-    "伤感": ["melancholy", "lonely"],
+    "伤感": ["melancholy", "lonely", "sad"],
 
     "忧郁": ["melancholy", "dark"],
 
@@ -633,7 +639,7 @@ MOOD_TAG_MAP: Dict[str, List[str]] = {
 
     "深沉": ["dark", "melancholy", "emotional"],
 
-    "激动": ["energetic", "raw", "angry"],
+    "激情": ["energetic", "passionate", "raw"],
 
     "壮阔": ["epic", "energetic", "hopeful"],
 
@@ -650,6 +656,8 @@ MOOD_TAG_MAP: Dict[str, List[str]] = {
     "抒情": ["emotional", "romantic", "melancholy"],
 
     "沉醉": ["dreamy", "romantic", "emotional"],
+
+    "恐怖": ["eerie", "dark", "horror"],
 
 }
 
@@ -687,6 +695,18 @@ THEME_TAG_MAP: Dict[str, List[str]] = {
     "城市": ["urban", "night"],
 
     "失恋": ["heartbreak", "melancholy"],
+
+    # ── MTG 新增主题 ──
+
+    "电影": ["film", "movie", "soundtrack"],
+
+    "游戏": ["game", "gaming"],
+
+    "恐怖": ["horror", "eerie", "dark"],
+
+    "史诗": ["epic", "adventure"],
+
+    "流浪": ["travel", "journey"],
 
 }
 

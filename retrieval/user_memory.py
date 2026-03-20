@@ -102,36 +102,148 @@ class UserMemoryManager:
 
 
     def record_listened_song(self, user_id: str, song_title: str, artist: str, duration: int = 0):
-
         """记录用户播放历史"""
-
-        # 防止 null artist 导致 Neo4j MERGE 失败
-
         if not song_title or not artist or artist == "未知":
-
             logger.warning(f"跳过记录收听歌曲（缺少必要信息）: title={song_title}, artist={artist}")
-
             return
-
         query = """
-
         MATCH (u:User {id: $user_id})
-
         MERGE (s:Song {title: $song_title, artist: $artist})
-
         MERGE (u)-[r:LISTENED_TO]->(s)
-
         ON CREATE SET r.play_count = 1, r.total_duration = $duration, r.last_played = timestamp()
-
         ON MATCH SET r.play_count = r.play_count + 1, r.total_duration = r.total_duration + $duration, r.last_played = timestamp()
-
         """
-
         if self.neo4j_client:
-
             self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist, "duration": duration})
-
             logger.info(f"记录用户 {user_id} 收听歌曲: {song_title}")
+
+    def record_saved_song(self, user_id: str, song_title: str, artist: str):
+        """记录用户收藏歌曲 → SAVES 关系（权重 0.8，低于 LIKES 的 1.0）"""
+        if not song_title or not artist or artist == "未知":
+            logger.warning(f"跳过记录收藏（缺少必要信息）: title={song_title}, artist={artist}")
+            return
+        query = """
+        MATCH (u:User {id: $user_id})
+        MERGE (s:Song {title: $song_title, artist: $artist})
+        MERGE (u)-[r:SAVES]->(s)
+        ON CREATE SET r.created_at = timestamp(), r.weight = 0.8
+        ON MATCH SET r.weight = r.weight + 0.1
+        """
+        if self.neo4j_client:
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
+            logger.info(f"记录用户 {user_id} 收藏歌曲: {song_title} - {artist}")
+
+    def record_dislike(self, user_id: str, song_title: str, artist: str):
+        """记录用户明确不喜欢 → DISLIKES 关系（推荐时完全排除）"""
+        if not song_title or not artist or artist == "未知":
+            logger.warning(f"跳过记录不喜欢（缺少必要信息）: title={song_title}, artist={artist}")
+            return
+        query = """
+        MATCH (u:User {id: $user_id})
+        MERGE (s:Song {title: $song_title, artist: $artist})
+        MERGE (u)-[r:DISLIKES]->(s)
+        ON CREATE SET r.created_at = timestamp(), r.weight = 1.0
+        """
+        if self.neo4j_client:
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
+            logger.info(f"记录用户 {user_id} 不喜欢歌曲: {song_title} - {artist}")
+
+    def record_skipped(self, user_id: str, song_title: str, artist: str):
+        """记录用户跳过 → SKIPPED 关系（skip_count 累计，>=3 次才降权）"""
+        if not song_title or not artist or artist == "未知":
+            logger.warning(f"跳过记录skip（缺少必要信息）: title={song_title}, artist={artist}")
+            return
+        query = """
+        MATCH (u:User {id: $user_id})
+        MERGE (s:Song {title: $song_title, artist: $artist})
+        MERGE (u)-[r:SKIPPED]->(s)
+        ON CREATE SET r.skip_count = 1, r.first_skipped = timestamp(), r.last_skipped = timestamp()
+        ON MATCH SET r.skip_count = r.skip_count + 1, r.last_skipped = timestamp()
+        """
+        if self.neo4j_client:
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
+            logger.info(f"记录用户 {user_id} 跳过歌曲: {song_title} - {artist}")
+
+    def remove_like(self, user_id: str, song_title: str, artist: str):
+        """取消点赞 → 删除 LIKES 关系"""
+        if not song_title:
+            return
+        query = """
+        MATCH (u:User {id: $user_id})-[r:LIKES]->(s:Song {title: $song_title})
+        DELETE r
+        """
+        if self.neo4j_client:
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title})
+            logger.info(f"用户 {user_id} 取消点赞: {song_title}")
+
+    def remove_save(self, user_id: str, song_title: str, artist: str):
+        """取消收藏 → 删除 SAVES 关系"""
+        if not song_title:
+            return
+        query = """
+        MATCH (u:User {id: $user_id})-[r:SAVES]->(s:Song {title: $song_title})
+        DELETE r
+        """
+        if self.neo4j_client:
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title})
+            logger.info(f"用户 {user_id} 取消收藏: {song_title}")
+
+    def get_liked_songs(self, user_id: str, limit: int = 20) -> list:
+        """
+        查询用户显式正向标记的歌曲（LIKES + SAVES），按时间衰减权重排序。
+        衰减公式: score = weight / (1 + 0.01 * days_since_action)
+        同时排除 DISLIKES 和多次跳过(>=3)的歌曲。
+        """
+        query = """
+        MATCH (u:User {id: $user_id})-[r:LIKES|SAVES]->(s:Song)
+        OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
+        OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+        // 排除明确不喜欢的歌
+        WHERE NOT EXISTS {
+            MATCH (u)-[:DISLIKES]->(s)
+        }
+        WITH s, a, r, type(r) AS rel_type,
+             collect(DISTINCT m.name) AS moods,
+             collect(DISTINCT t.name) AS themes,
+             CASE WHEN r.created_at IS NOT NULL
+               THEN r.weight / (1.0 + 0.01 *
+                 duration.inDays(datetime({epochMillis: r.created_at}), datetime()).days)
+               ELSE coalesce(r.weight, 1.0)
+             END AS decayed_score
+        ORDER BY decayed_score DESC
+        LIMIT $limit
+        RETURN s.title AS title, coalesce(a.name, s.artist, '未知') AS artist,
+               s.audio_url AS audio_url, s.cover_url AS cover_url,
+               s.lrc_url AS lrc_url, s.album AS album,
+               moods, themes, rel_type, decayed_score
+        """
+        if not self.neo4j_client:
+            return []
+        try:
+            results = self.neo4j_client.execute_query(query, {"user_id": user_id, "limit": limit})
+            songs = []
+            for r in results:
+                songs.append({
+                    "song": {
+                        "title": r.get("title", ""),
+                        "artist": r.get("artist", ""),
+                        "audio_url": r.get("audio_url", ""),
+                        "cover_url": r.get("cover_url", ""),
+                        "lrc_url": r.get("lrc_url", ""),
+                        "album": r.get("album", ""),
+                        "moods": r.get("moods", []),
+                        "themes": r.get("themes", []),
+                    },
+                    "reason": f"你{'点赞' if r.get('rel_type') == 'LIKES' else '收藏'}了这首歌",
+                    "source": "user_favorites",
+                    "score": r.get("decayed_score", 0),
+                })
+            logger.info(f"查询用户 {user_id} 喜欢的歌: {len(songs)} 首")
+            return songs
+        except Exception as e:
+            logger.error(f"查询用户喜欢歌曲失败: {e}")
+            return []
 
 
 
@@ -142,7 +254,7 @@ class UserMemoryManager:
         # 简化查询：寻找用户喜欢或收听过最多的歌曲关联的流派和艺术家
         query = """
 
-        MATCH (u:User {id: $user_id})-[rel:LIKES|LISTENED_TO]->(s:Song)
+        MATCH (u:User {id: $user_id})-[rel:LIKES|SAVES|LISTENED_TO]->(s:Song)
 
         WITH s, rel
 

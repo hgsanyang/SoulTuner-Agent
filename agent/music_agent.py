@@ -180,8 +180,9 @@ class MusicRecommendationAgent:
             # 发送思考状态
             yield {"type": "thinking", "message": "正在理解你的音乐偏好..."}
             
-            # 从队列读取流式解释文本
+            # 从队列读取流式解释文本（歌曲数据也会通过队列提前到达）
             accumulated_text = ""
+            songs_already_sent = False
             while True:
                 try:
                     chunk = await asyncio.wait_for(explanation_queue.get(), timeout=90)
@@ -193,6 +194,16 @@ class MusicRecommendationAgent:
                 if chunk is None:
                     # 流式结束
                     break
+                
+                # ★ 处理歌曲数据（在解释文本之前到达）
+                if isinstance(chunk, dict) and "__songs__" in chunk:
+                    songs_list = chunk["__songs__"]
+                    yield {"type": "recommendations_start", "count": len(songs_list)}
+                    for item in songs_list:
+                        yield {"type": "song", "song": item["song"], "index": item["index"], "total": len(songs_list)}
+                    yield {"type": "recommendations_complete"}
+                    songs_already_sent = True
+                    continue
                 
                 accumulated_text += chunk
                 yield {"type": "response", "text": accumulated_text, "is_complete": False}
@@ -210,16 +221,17 @@ class MusicRecommendationAgent:
             
             result = result_holder.get("result", {})
             
-            # 发送推荐歌曲
-            raw_recommendations = result.get("recommendations", [])
-            recommendations = getattr(raw_recommendations, "data", raw_recommendations)
-            if isinstance(recommendations, list) and recommendations:
-                yield {"type": "recommendations_start", "count": len(recommendations)}
-                for i, rec in enumerate(recommendations):
-                    song = rec.get("song", rec) if isinstance(rec, dict) else rec
-                    if isinstance(song, dict) and song.get("title"):
-                        yield {"type": "song", "song": song, "index": i, "total": len(recommendations)}
-                yield {"type": "recommendations_complete"}
+            # 如果歌曲还没通过队列发送（兜底：非流式路径或队列推送失败）
+            if not songs_already_sent:
+                raw_recommendations = result.get("recommendations", [])
+                recommendations = getattr(raw_recommendations, "data", raw_recommendations)
+                if isinstance(recommendations, list) and recommendations:
+                    yield {"type": "recommendations_start", "count": len(recommendations)}
+                    for i, rec in enumerate(recommendations):
+                        song = rec.get("song", rec) if isinstance(rec, dict) else rec
+                        if isinstance(song, dict) and song.get("title"):
+                            yield {"type": "song", "song": song, "index": i, "total": len(recommendations)}
+                    yield {"type": "recommendations_complete"}
             
             yield {"type": "complete", "success": True}
             logger.info("流式音乐推荐完成")

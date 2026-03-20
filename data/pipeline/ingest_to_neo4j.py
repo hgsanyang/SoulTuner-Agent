@@ -53,18 +53,21 @@ from retrieval.neo4j_client import get_neo4j_client
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ---- 目录配置 ----
-DATA_ROOT = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio"
-AUDIO_DIR = os.path.join(DATA_ROOT, "audio")
-COVER_DIR = os.path.join(DATA_ROOT, "covers")
-LYRICS_DIR = os.path.join(DATA_ROOT, "lyrics")
-METADATA_DIR = os.path.join(DATA_ROOT, "metadata")
-GEMINI_RESULT_PATH = os.path.join(
+# ---- 默认目录配置（可通过 CLI 参数覆盖） ----
+DEFAULT_DATA_ROOT = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio"
+DEFAULT_AUDIO_DIR = os.path.join(DEFAULT_DATA_ROOT, "audio")
+DEFAULT_COVER_DIR = os.path.join(DEFAULT_DATA_ROOT, "covers")
+DEFAULT_LYRICS_DIR = os.path.join(DEFAULT_DATA_ROOT, "lyrics")
+DEFAULT_METADATA_DIR = os.path.join(DEFAULT_DATA_ROOT, "metadata")
+DEFAULT_GEMINI_RESULT_PATH = os.path.join(
     str(PROJECT_ROOT), "data_pipeline", "gemini_prompts", "gemini_result.json"
 )
 
+# 默认数据集标签
+DEFAULT_DATASET = "personal"
+
 # 进度文件：断点续传用
-PROGRESS_FILE = os.path.join(str(PROJECT_ROOT), "data_pipeline", "ingest_progress.json")
+PROGRESS_FILE = os.path.join(str(PROJECT_ROOT), "pipeline", "ingest_progress.json")
 
 # 多线程写入的并发数（--skip-embeddings 模式下使用）
 MAX_WORKERS = 8
@@ -156,8 +159,14 @@ class ProgressTracker:
 class UnifiedIngestion:
     """大统一入库器：元数据 + Gemini标签 + M2D-CLAP/OMAR-RQ向量 → Neo4j"""
 
-    def __init__(self, force: bool = False):
+    def __init__(self, force: bool = False, dataset: str = DEFAULT_DATASET,
+                 audio_dir: str = None, metadata_dir: str = None,
+                 gemini_result_path: str = None):
         self.client = get_neo4j_client()
+        self.dataset = dataset
+        self.audio_dir = audio_dir or DEFAULT_AUDIO_DIR
+        self.metadata_dir = metadata_dir or DEFAULT_METADATA_DIR
+        self.gemini_result_path = gemini_result_path or DEFAULT_GEMINI_RESULT_PATH
         self.gemini_tags = self._load_gemini_tags()
         self._embedder_loaded = False
         self.progress = ProgressTracker(PROGRESS_FILE)
@@ -166,11 +175,11 @@ class UnifiedIngestion:
     def _load_gemini_tags(self) -> Dict[str, Dict]:
         """加载 Gemini 提取的歌词标签，以 filename 为 key 建立索引"""
         tags_index = {}
-        if not os.path.exists(GEMINI_RESULT_PATH):
-            logger.warning(f"Gemini 标签文件不存在: {GEMINI_RESULT_PATH}")
+        if not os.path.exists(self.gemini_result_path):
+            logger.warning(f"Gemini 标签文件不存在: {self.gemini_result_path}")
             return tags_index
         try:
-            with open(GEMINI_RESULT_PATH, 'r', encoding='utf-8') as f:
+            with open(self.gemini_result_path, 'r', encoding='utf-8') as f:
                 raw = f.read().strip()
                 # 自动清洗尾部非法字符（如 Gemini 可能返回的 ]. 或 ]。）
                 while raw and raw[-1] not in ']':
@@ -210,8 +219,7 @@ class UnifiedIngestion:
         load_duration = None
         if file_duration > MAX_AUDIO_SECONDS:
             load_duration = MAX_AUDIO_SECONDS
-            logger.info(f"  ⏱️ 音频时长 {file_duration:.0f}s 超过上限，
-                        f"只截取前 {MAX_AUDIO_SECONDS}s 提取向量")
+            logger.info(f"  ⏱️ 音频时长 {file_duration:.0f}s 超过上限，只截取前 {MAX_AUDIO_SECONDS}s 提取向量")
 
         audio_np, sr = librosa.load(audio_path, sr=None, mono=True, duration=load_duration)
 
@@ -245,7 +253,7 @@ class UnifiedIngestion:
 
     def _load_metadata(self, basename: str) -> Optional[Dict]:
         """读取对应的 _meta.json"""
-        meta_path = os.path.join(METADATA_DIR, f"{basename}_meta.json")
+        meta_path = os.path.join(self.metadata_dir, f"{basename}_meta.json")
         if not os.path.exists(meta_path):
             return None
         try:
@@ -260,7 +268,13 @@ class UnifiedIngestion:
         return self.gemini_tags.get(lrc_key, {})
 
     def _build_static_urls(self, basename: str, ext: str) -> Dict[str, str]:
-        """构建前端可用的静态资源 URL"""
+        """构建前端可用的静态资源 URL（根据数据集选择不同路径）"""
+        if self.dataset == "mtg":
+            return {
+                "audio_url": f"/static/mtg_audio/{basename}.{ext}",
+                "cover_url": "",   # MTG 无封面
+                "lrc_url": "",     # MTG 无歌词
+            }
         return {
             "audio_url": f"{STATIC_URL_PREFIX}/audio/{basename}.{ext}",
             "cover_url": f"{STATIC_URL_PREFIX}/covers/{basename}_cover.jpg",
@@ -282,6 +296,7 @@ class UnifiedIngestion:
             "s.vibe = $vibe",
             "s.language = $language",
             "s.region = $region",
+            "s.dataset = $dataset",
             "s.updated_at = timestamp()",
         ]
         params = {
@@ -300,6 +315,7 @@ class UnifiedIngestion:
             "scenarios": song_data.get("scenarios", []),
             "language": song_data.get("language", ""),
             "region": song_data.get("region", ""),
+            "dataset": song_data.get("dataset", self.dataset),
         }
 
         # 向量字段（可选）
@@ -358,7 +374,7 @@ class UnifiedIngestion:
         basename, ext = os.path.splitext(filename)
         ext = ext.lstrip(".")
 
-        # 1. 读取网易云元数据
+        # 1. 读取元数据（兼容网易云格式和 MTG 格式）
         meta = self._load_metadata(basename) or {}
         music_id = str(meta.get("musicId", f"local_{basename}"))
         title = meta.get("musicName", basename.split(" - ")[0] if " - " in basename else basename)
@@ -369,15 +385,26 @@ class UnifiedIngestion:
         album = meta.get("album", "Unknown")
         duration = meta.get("duration", 0)
         fmt = meta.get("format", ext)
+        dataset = meta.get("dataset", self.dataset)
 
-        # 2. 读取 Gemini 标签
-        tags = self._get_gemini_tags(basename)
-        moods = tags.get("moods", [])
-        themes = tags.get("themes", [])
-        scenarios = tags.get("scenarios", [])
-        vibe = tags.get("vibe", "")
-        language = tags.get("language", "")
-        region = tags.get("region", "")
+        # 2. 读取标签：优先从 meta.json 中读取（MTG 适配器已写入），否则用 Gemini 标签
+        if meta.get("moods") or meta.get("themes") or meta.get("scenarios"):
+            # MTG 适配器已将标签写入 _meta.json
+            moods = meta.get("moods", [])
+            themes = meta.get("themes", [])
+            scenarios = meta.get("scenarios", [])
+            vibe = meta.get("vibe", "")
+            language = meta.get("language", "English")
+            region = meta.get("region", "")
+        else:
+            # 使用 Gemini 标签（个人音乐入库路径）
+            tags = self._get_gemini_tags(basename)
+            moods = tags.get("moods", [])
+            themes = tags.get("themes", [])
+            scenarios = tags.get("scenarios", [])
+            vibe = tags.get("vibe", "")
+            language = tags.get("language", "")
+            region = tags.get("region", "")
 
         # 3. 构建静态 URL
         urls = self._build_static_urls(basename, ext)
@@ -389,6 +416,7 @@ class UnifiedIngestion:
             "album": album,
             "duration": duration,
             "format": fmt,
+            "dataset": dataset,
             "moods": moods,
             "themes": themes,
             "scenarios": scenarios,
@@ -454,10 +482,15 @@ class UnifiedIngestion:
             update_embeddings_only: True = 只更新已入库歌曲的向量        """
         audio_files = []
         for ext in ("*.flac", "*.mp3", "*.wav", "*.ogg"):
-            audio_files.extend(glob.glob(os.path.join(AUDIO_DIR, ext)))
+            # 顶层目录扫描
+            audio_files.extend(glob.glob(os.path.join(self.audio_dir, ext)))
+            # 递归扫描子目录（用于 MTG 的 {folder_id}/{track_id}.mp3 结构）
+            audio_files.extend(glob.glob(os.path.join(self.audio_dir, "**", ext), recursive=True))
+        # 去重
+        audio_files = list(set(audio_files))
 
         if not audio_files:
-            logger.info(f"✅ {AUDIO_DIR} 中没有找到任何音频文件")
+            logger.info(f"✅ {self.audio_dir} 中没有找到任何音频文件")
             return
 
         total = len(audio_files)
@@ -518,29 +551,45 @@ class UnifiedIngestion:
                 else:
                     errors += 1
 
-        logger.info("=" * 60")
+        logger.info("=" * 60)
         logger.info(f"🎉 入库完成! 成功: {success}, 失败: {errors}")
         logger.info(f"📋 进度文件: {PROGRESS_FILE}")
-        logger.info("=" * 60")
+        logger.info("=" * 60)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="大统一 Neo4j 入库脚本 (v2 — 并行 + 断点续传)")
+    parser = argparse.ArgumentParser(description="大统一 Neo4j 入库脚本 (v2 — 并行 + 断点续传 + 多数据集)")
     parser.add_argument(
         "--skip-embeddings", action="store_true",
         help="跳过 M2D2/OMAR 向量提取（只写元数据+标签，8 线程并发，秒级完成）"
     )
     parser.add_argument(
         "--update-embeddings", action="store_true",
-        help="仅更新已入库歌曲的向量（需要 GPU）""
+        help="仅更新已入库歌曲的向量（需要 GPU）"
     )
     parser.add_argument(
         "--force", action="store_true",
-        help="忽略进度文件，强制全量重新处理""
+        help="忽略进度文件，强制全量重新处理"
     )
     parser.add_argument(
         "--reset-progress", action="store_true",
-        help="清空进度文件后退出""
+        help="清空进度文件后退出"
+    )
+    parser.add_argument(
+        "--dataset", type=str, default=DEFAULT_DATASET,
+        help=f"数据集标签，写入 Song 节点的 dataset 属性 (默认: {DEFAULT_DATASET})"
+    )
+    parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="自定义音频数据目录（默认使用 processed_audio/audio）"
+    )
+    parser.add_argument(
+        "--meta-dir", type=str, default=None,
+        help="自定义元数据目录（默认使用 processed_audio/metadata）"
+    )
+    parser.add_argument(
+        "--gemini-result", type=str, default=None,
+        help="自定义 Gemini/标签结果 JSON 文件路径"
     )
     args = parser.parse_args()
 
@@ -551,7 +600,13 @@ if __name__ == "__main__":
         print("✅ 进度文件已清理")
         sys.exit(0)
 
-    ingestion = UnifiedIngestion(force=args.force)
+    ingestion = UnifiedIngestion(
+        force=args.force,
+        dataset=args.dataset,
+        audio_dir=args.data_dir,
+        metadata_dir=args.meta_dir,
+        gemini_result_path=args.gemini_result,
+    )
     ingestion.ingest_all(
         skip_embeddings=args.skip_embeddings,
         update_embeddings_only=args.update_embeddings

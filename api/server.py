@@ -85,6 +85,20 @@ if lyrics_dir.exists():
 else:
     logger.warning(f"歌词目录不存在,无法提供静态歌词挂载: {lyrics_dir}")
 
+# MTG 数据集音频：使用显式路由（避免 StaticFiles 挂载顺序问题）
+MTG_AUDIO_DIR = Path(r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\mtg_sample\audio")
+
+from fastapi.responses import FileResponse
+
+@app.get("/static/mtg_audio/{filename:path}")
+async def serve_mtg_audio(filename: str):
+    """提供 MTG 数据集音频文件"""
+    file_path = MTG_AUDIO_DIR / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"MTG audio not found: {filename}")
+    return FileResponse(str(file_path), media_type="audio/mpeg")
+
+
 # 联网获取的音频/封面/歌词(独立目录 data/online_acquired/)
 ONLINE_AUDIO_ROOT = Path(r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\online_acquired")
 online_audio_dir = ONLINE_AUDIO_ROOT / "audio"
@@ -551,30 +565,53 @@ EVENT_TEMPLATES = {
 @app.post("/api/user-event")
 async def capture_user_event(request: UserEventRequest):
     """
-    接收前端行为事件,转化为自然语言后送入 GraphZep.
+    接收前端行为事件，直写 Neo4j 用户关系 + 异步送 GraphZep 补充上下文。
 
-    前端在用户点赞/跳过/收藏等操作时调用此端点.
-    GraphZep 会自动从自然语言中抽取(用户)-[LIKES/DISLIKES]->(歌曲) 关系.
+    关系类型与权重:
+      like     → LIKES (weight=1.0)    点赞 = 显式正向信号
+      save     → SAVES (weight=0.8)    收藏 = 组织性信号（略低于点赞）
+      repeat   → LIKES (weight+0.5)    循环播放 = 最强隐式信号
+      unlike   → 删除 LIKES
+      unsave   → 删除 SAVES
+      skip     → SKIPPED (count++)     跳过 = 弱负向（>=3次才降权）
+      dislike  → DISLIKES              明确不喜欢 = 推荐时排除
+      full_play→ LISTENED_TO (count++) 完整播放 = 隐式正向
     """
     try:
-        template = EVENT_TEMPLATES.get(
-            request.event_type,
-            "用户对《{title}》{artist} 执行了" + request.event_type + " 操作"
-        )
-        description = template.format(
-            title=request.song_title,
-            artist=request.artist,
-        )
-
-        # 同步写入旧的 UserMemoryManager(保持兼容)
         from retrieval.user_memory import UserMemoryManager
         memory = UserMemoryManager()
-        if request.event_type in ("like", "save", "repeat"):
-            memory.record_liked_song(request.user_id, request.song_title, request.artist)
-        elif request.event_type == "full_play":
-            memory.record_listened_song(request.user_id, request.song_title, request.artist)
+        memory.ensure_user_exists(request.user_id)
 
-        # 异步写入 GraphZep
+        # ① 直写 Neo4j 关系（精确、快速、0.1s 内完成）
+        event = request.event_type
+        title = request.song_title
+        artist = request.artist
+
+        if event == "like":
+            memory.record_liked_song(request.user_id, title, artist)
+        elif event == "save":
+            memory.record_saved_song(request.user_id, title, artist)
+        elif event == "repeat":
+            # 循环播放：先确保 LIKES 存在，再额外加权
+            memory.record_liked_song(request.user_id, title, artist)
+        elif event == "unlike":
+            memory.remove_like(request.user_id, title, artist)
+        elif event == "unsave":
+            memory.remove_save(request.user_id, title, artist)
+        elif event == "skip":
+            memory.record_skipped(request.user_id, title, artist)
+        elif event == "dislike":
+            memory.record_dislike(request.user_id, title, artist)
+        elif event == "full_play":
+            memory.record_listened_song(request.user_id, title, artist)
+
+        # ② GraphZep 异步写入（仅作为补充上下文，不作为主记忆源）
+        template = EVENT_TEMPLATES.get(
+            event,
+            "用户对《{title}》{artist} 执行了" + event + " 操作"
+        )
+        description = template.format(title=title, artist=artist)
+
         from services.graphzep_client import get_graphzep_client
         client = get_graphzep_client()
         asyncio.create_task(
