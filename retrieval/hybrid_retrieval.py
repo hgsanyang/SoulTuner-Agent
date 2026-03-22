@@ -294,7 +294,7 @@ class MusicHybridRetrieval:
         else:
             strategy_name = "hybrid_balanced"
         
-        return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable)
+        return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable, graph_entities)
 
 
     # ================================================================
@@ -527,7 +527,7 @@ class MusicHybridRetrieval:
 
         return candidates
 
-    def _format_results(self, strategy_name: str, graph_res: str, vector_res: str, web_res: str = "", web_playable: List[dict] = None) -> ToolOutput:
+    def _format_results(self, strategy_name: str, graph_res: str, vector_res: str, web_res: str = "", web_playable: List[dict] = None, graph_entities: List[str] = None) -> ToolOutput:
         """
         合并各检索引擎的结果，使用 **加权 RRF** 排序融合 + **Neo4j 图距离加权**。
 
@@ -588,6 +588,10 @@ class MusicHybridRetrieval:
             )
 
         # ---- Step 4: Artist 多样性过滤 ----
+        # 如果用户指定了某个歌手（graph_entities 中包含该歌手名），则该歌手不受限制
+        exempt_artists: set = set()
+        if graph_entities:
+            exempt_artists = {e.lower().strip() for e in graph_entities if e}
         artist_count: Dict[str, int] = {}
         diverse_list = []
         overflow_list = []
@@ -597,6 +601,11 @@ class MusicHybridRetrieval:
                 diverse_list.append(item)
                 continue
             artist_lower = artist.lower().strip()
+            # 指定歌手豁免多样性限制
+            if any(ea in artist_lower or artist_lower in ea for ea in exempt_artists):
+                diverse_list.append(item)
+                artist_count[artist_lower] = artist_count.get(artist_lower, 0) + 1
+                continue
             count = artist_count.get(artist_lower, 0)
             if count < MAX_SONGS_PER_ARTIST:
                 diverse_list.append(item)
@@ -606,6 +615,8 @@ class MusicHybridRetrieval:
         if len(diverse_list) < MIN_DIVERSE_RESULTS:
             diverse_list.extend(overflow_list[:MIN_DIVERSE_RESULTS - len(diverse_list)])
         final_list = diverse_list
+        if exempt_artists:
+            logger.info(f"[多样性过滤] 指定歌手豁免: {exempt_artists}")
         logger.info(f"多样性过滤完成，艺术家分布: {dict(artist_count)}")
 
         # ---- Step 5: MMR genre-aware 多样性重排序 ----
