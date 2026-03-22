@@ -15,11 +15,21 @@ from schemas.music_state import ToolOutput
 logger = get_logger(__name__)
 
 # ---- 检索结果融合常量 ----
-BASELINE_SIMILARITY_SCORE = 0.85      # 单引擎命中的基础相似度分
-DUAL_ENGINE_BONUS = 0.1               # 双引擎同时命中时的加分
+BASELINE_SIMILARITY_SCORE = 0.85      # 单引擎命中的基础相似度分（仅作 fallback）
 WEB_RESULT_PRIORITY_SCORE = 9.9       # 网络资讯结果的优先级分数
 MAX_SONGS_PER_ARTIST = 3              # 多样性过滤：每个艺术家最多占的歌曲数
 MIN_DIVERSE_RESULTS = 6               # 多样性过滤后的最少结果数
+
+# ---- 加权 RRF 融合参数 ----
+RRF_K = 60                            # RRF 平滑常数（标准值 60）
+RRF_WEIGHT_VECTOR = 0.7               # 向量检索路的 RRF 权重（主导）
+RRF_WEIGHT_GRAPH = 0.3                # 图谱检索路的 RRF 权重（辅助）
+
+# ---- Neo4j 图距离加权参数 ----
+GRAPH_AFFINITY_ENABLED = True         # 是否启用图距离加权
+GRAPH_AFFINITY_WEIGHT = 0.15          # 图亲和力分数在最终排序中的权重
+GRAPH_AFFINITY_MAX_HOPS = 4           # 最大跳数（超过视为无关联）
+GRAPH_AFFINITY_USER_ID = "local_admin" # 图距离计算的用户 ID
 
 class MusicHybridRetrieval:
     """
@@ -287,97 +297,304 @@ class MusicHybridRetrieval:
         return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable)
 
 
+    # ================================================================
+    # 【P0 升级】加权 RRF (Reciprocal Rank Fusion) 排序融合
+    # 替代旧版硬编码 v×0.7 + g×0.3 的原始分数加权。
+    # RRF 基于排名（非原始分数）融合，对不同尺度的引擎更公平。
+    # ================================================================
+
+    @staticmethod
+    def _parse_engine_results(res_str: str, engine_name: str) -> List[dict]:
+        """将引擎原始 JSON 字符串解析为标准化的歌曲列表，保留原始排名。"""
+        if not res_str:
+            return []
+        try:
+            items = json.loads(res_str)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to decode JSON from {engine_name}: {res_str[:200]}")
+            return []
+
+        results = []
+        for rank, item in enumerate(items):
+            if "error" in item:
+                logger.warning(f"Engine {engine_name} returned error: {item}")
+                continue
+
+            title = item.get("title", "未知标题")
+            artist = item.get("artist", "未知艺术家")
+            genre = item.get("genre", "")
+            if genre == "Unknown":
+                genre = ""
+
+            # 提取原始相似度（RRF 不直接使用，但保留用于日志和 MMR）
+            raw_distance = item.get("distance", None)
+            raw_similarity = item.get("similarity_score", None)
+            if raw_distance is not None:
+                raw_score = 1.0 / (1.0 + float(raw_distance))
+            elif raw_similarity is not None:
+                raw_score = float(raw_similarity)
+            else:
+                raw_score = BASELINE_SIMILARITY_SCORE
+
+            results.append({
+                "key": f"{title}_{artist}",
+                "rank": rank,          # 该引擎中的排名（0-based）
+                "raw_score": raw_score,
+                "engine": engine_name,
+                "song": {
+                    "title": title,
+                    "artist": artist,
+                    "album": item.get("album", "未知"),
+                    "genre": genre,
+                    "preview_url": item.get("preview_url", None),
+                    "cover_url": item.get("cover_url", None),
+                    "lrc_url": item.get("lrc_url", None),
+                },
+            })
+        return results
+
+    @staticmethod
+    def _weighted_rrf_fusion(
+        graph_items: List[dict],
+        vector_items: List[dict],
+        k: int = RRF_K,
+        w_vector: float = RRF_WEIGHT_VECTOR,
+        w_graph: float = RRF_WEIGHT_GRAPH,
+    ) -> List[dict]:
+        """
+        加权 RRF 融合两路检索结果。
+
+        公式:
+            RRF_Score(d) = w_vector / (k + rank_vector(d))
+                         + w_graph  / (k + rank_graph(d))
+
+        如果某首歌只出现在一路中，另一路的贡献为 0。
+        双路都命中的歌曲天然获得更高分数。
+        """
+        # 以 key 为索引收集各路排名
+        song_data: Dict[str, dict] = {}   # key → 歌曲元数据
+        graph_ranks: Dict[str, int] = {}   # key → 图谱排名
+        vector_ranks: Dict[str, int] = {}  # key → 向量排名
+
+        for item in graph_items:
+            key = item["key"]
+            graph_ranks[key] = item["rank"]
+            if key not in song_data:
+                song_data[key] = item
+
+        for item in vector_items:
+            key = item["key"]
+            vector_ranks[key] = item["rank"]
+            if key not in song_data:
+                song_data[key] = item
+
+        # 计算每首歌的加权 RRF 分数
+        rrf_scores: Dict[str, float] = {}
+        all_keys = set(graph_ranks.keys()) | set(vector_ranks.keys())
+
+        for key in all_keys:
+            score = 0.0
+            if key in vector_ranks:
+                score += w_vector / (k + vector_ranks[key])
+            if key in graph_ranks:
+                score += w_graph / (k + graph_ranks[key])
+            rrf_scores[key] = score
+
+        # 构建融合结果列表
+        fused = []
+        for key in all_keys:
+            item = song_data[key]
+            both_hit = key in graph_ranks and key in vector_ranks
+            engines = []
+            if key in graph_ranks:
+                engines.append("知识图谱(GraphRAG)")
+            if key in vector_ranks:
+                engines.append("语义向量(Neo4j Vector)")
+
+            reason = "引擎检索来源: " + " + ".join(engines)
+            if both_hit:
+                reason += " 🔥双引擎交叉命中"
+
+            fused.append({
+                "song": item["song"],
+                "reason": reason,
+                "similarity_score": rrf_scores[key],
+                "_rrf_score": rrf_scores[key],
+                "_graph_rank": graph_ranks.get(key),
+                "_vector_rank": vector_ranks.get(key),
+                "_both_engines": both_hit,
+            })
+
+        # 按 RRF 分数降序排列
+        fused.sort(key=lambda x: x["similarity_score"], reverse=True)
+        logger.info(
+            f"[RRF] 加权融合完成: {len(fused)} 首 "
+            f"(双引擎命中: {sum(1 for f in fused if f['_both_engines'])} 首) "
+            f"| 权重 vector={w_vector} graph={w_graph} k={k}"
+        )
+        return fused
+
+    # ================================================================
+    # 【P0 升级】Neo4j 图距离亲和力评分
+    # 计算候选歌曲与用户已有 LIKES/SAVES/LISTENED_TO 关系的最短距离，
+    # 距离越近 → 亲和力越高 → 排序加分。
+    # ================================================================
+
+    @staticmethod
+    def _compute_graph_affinity(
+        candidates: List[dict],
+        user_id: str = GRAPH_AFFINITY_USER_ID,
+        max_hops: int = GRAPH_AFFINITY_MAX_HOPS,
+    ) -> List[dict]:
+        """
+        为每首候选歌曲计算与用户的图距离亲和力分数。
+
+        算法:
+          1. 批量查询 Neo4j：对每首候选歌，计算到用户节点的最短路径长度
+          2. 亲和力公式: affinity = 1.0 / (1.0 + distance)
+             距离=1（直接 LIKES）→ 0.5,  距离=2（同艺术家其他歌）→ 0.33, 无路径 → 0.0
+          3. 将亲和力分数写入 candidate["_graph_affinity"]
+
+        注意: 如果 Neo4j 不可用，优雅降级（所有亲和力=0）。
+        """
+        if not candidates:
+            return candidates
+
+        try:
+            from retrieval.neo4j_client import get_neo4j_client
+            neo4j = get_neo4j_client()
+            if not neo4j or not neo4j.driver:
+                logger.warning("[GraphAffinity] Neo4j 不可用，跳过图距离计算")
+                for c in candidates:
+                    c["_graph_affinity"] = 0.0
+                return candidates
+        except Exception:
+            logger.warning("[GraphAffinity] 无法导入 Neo4j 客户端，跳过")
+            for c in candidates:
+                c["_graph_affinity"] = 0.0
+            return candidates
+
+        # 批量查询：一次 Cypher 查所有候选歌曲的最短路径
+        titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
+        if not titles:
+            for c in candidates:
+                c["_graph_affinity"] = 0.0
+            return candidates
+
+        # 使用 shortestPath 计算用户到每首歌的最短路径长度
+        # 路径可以经过: User -[LIKES|SAVES|LISTENED_TO]-> Song -[PERFORMED_BY]-> Artist -[PERFORMED_BY]-> Song
+        #              User -[LIKES]-> Song -[BELONGS_TO_GENRE]-> Genre -[BELONGS_TO_GENRE]-> Song
+        query = """
+        MATCH (u:User {id: $user_id})
+        UNWIND $titles AS candidate_title
+        OPTIONAL MATCH (s:Song)
+          WHERE s.title = candidate_title
+        OPTIONAL MATCH path = shortestPath(
+          (u)-[*1..""" + str(max_hops) + """]->(s)
+        )
+        RETURN candidate_title AS title,
+               CASE WHEN path IS NOT NULL THEN length(path) ELSE -1 END AS distance
+        """
+
+        try:
+            results = neo4j.execute_query(query, {"user_id": user_id, "titles": titles})
+            distance_map = {}
+            for r in results:
+                t = r.get("title", "")
+                d = r.get("distance", -1)
+                distance_map[t] = d
+
+            for c in candidates:
+                title = c.get("song", {}).get("title", "")
+                dist = distance_map.get(title, -1)
+                if dist > 0:
+                    c["_graph_affinity"] = 1.0 / (1.0 + dist)
+                elif dist == 0:
+                    # 距离=0 意味着 Song 节点就是 User 节点（不可能），视为无效
+                    c["_graph_affinity"] = 0.0
+                else:
+                    # -1 表示没找到路径
+                    c["_graph_affinity"] = 0.0
+
+            affinity_hits = sum(1 for c in candidates if c["_graph_affinity"] > 0)
+            logger.info(
+                f"[GraphAffinity] 图距离计算完成: {affinity_hits}/{len(candidates)} 首有亲和关系"
+            )
+        except Exception as e:
+            logger.warning(f"[GraphAffinity] 图距离查询失败（降级为不加权）: {e}")
+            for c in candidates:
+                c["_graph_affinity"] = 0.0
+
+        return candidates
+
     def _format_results(self, strategy_name: str, graph_res: str, vector_res: str, web_res: str = "", web_playable: List[dict] = None) -> ToolOutput:
         """
-        合并各个模块返回的数据，统一构建结构化的 Recommendation 列表。
-        如果包含 Web 搜索结果，会额外注入一条特殊的聚合信息供大模型最后组织答案。
+        合并各检索引擎的结果，使用 **加权 RRF** 排序融合 + **Neo4j 图距离加权**。
+
+        排序管线:
+          1. 解析各引擎原始 JSON → 标准化列表（含排名）
+          2. 加权 RRF 融合两路排名 → 统一分数
+          3. Neo4j 图距离亲和力评分 → 微调排序
+          4. Artist 多样性过滤
+          5. MMR genre-aware 多样性重排序
         """
-        combined_results = {}
-        
-        def _add_results(res_str, engine_name):
-            if not res_str:
-                return
-            try:
-                # 尝试解析底层传上来的 JSON
-                items = json.loads(res_str)
-                for item in items:
-                    if "error" in item:
-                        logger.warning(f"Engine {engine_name} returned error: {item}")
-                        continue
-                        
-                    title = item.get("title", "未知标题")
-                    artist = item.get("artist", "未知艺术家")
-                    
-                    key = f"{title}_{artist}"
-                    if key not in combined_results:
-                        genre = item.get("genre", "")
-                        if genre == "Unknown":
-                            genre = ""
-                            
-                        # ============================================================
-                        # 【升级】提取底层引擎返回的真实相似度分数
-                        # 来源：《第八章 记忆与检索》混合评分公式建议
-                        # 用于后续的科学化加权排序，替代原来的固定基准分。
-                        # ============================================================
-                        raw_distance = item.get("distance", None)
-                        raw_similarity = item.get("similarity_score", None)
-                        # 向量引擎返回 L2 distance → 转换为 0~1 相似度
-                        if raw_distance is not None:
-                            normalized_score = 1.0 / (1.0 + float(raw_distance))
-                        elif raw_similarity is not None:
-                            normalized_score = float(raw_similarity)
-                        else:
-                            normalized_score = BASELINE_SIMILARITY_SCORE
-                            
-                        combined_results[key] = {
-                            "song": {
-                                "title": title,
-                                "artist": artist,
-                                "album": item.get("album", "未知"),
-                                "genre": genre,
-                                "preview_url": item.get("preview_url", None),
-                                "cover_url": item.get("cover_url", None),
-                                "lrc_url": item.get("lrc_url", None)
-                            },
-                            "reason": f"引擎检索来源: {engine_name}",
-                            "similarity_score": normalized_score,
-                            # 【升级】分别记录各引擎的原始得分，用于混合加权
-                            "_vector_score": normalized_score if "Vector" in engine_name else 0.0,
-                            "_graph_score": normalized_score if "Graph" in engine_name else 0.0,
-                        }
-                    else:
-                        combined_results[key]["reason"] += f" 同时被 {engine_name} 引擎捕捉增强！"
-                        # 【升级】双引擎命中时，记录另一个引擎的得分
-                        if "Vector" in engine_name:
-                            combined_results[key]["_vector_score"] = normalized_score
-                        elif "Graph" in engine_name:
-                            combined_results[key]["_graph_score"] = normalized_score
-                        # 【升级】应用混合评分公式: (向量×0.7 + 图谱×0.3)
-                        v_score = combined_results[key].get("_vector_score", 0.0)
-                        g_score = combined_results[key].get("_graph_score", 0.0)
-                        combined_results[key]["similarity_score"] = v_score * 0.7 + g_score * 0.3
-            except json.JSONDecodeError:
-                logger.error(f"Failed to decode JSON from {engine_name}: {res_str}")
-        
-        _add_results(graph_res, "知识图谱(GraphRAG)")
-        _add_results(vector_res, "语义向量(Neo4j Vector)")
-        
-        final_list = list(combined_results.values())
-        
-        # 将从全网转化来的真实可播歌曲库加进去
+        # ---- Step 1: 解析各引擎结果 ----
+        graph_items = self._parse_engine_results(graph_res, "知识图谱(GraphRAG)")
+        vector_items = self._parse_engine_results(vector_res, "语义向量(Neo4j Vector)")
+
+        # ---- Step 2: 加权 RRF 融合 ----
+        if graph_items and vector_items:
+            # 双引擎混合检索 → RRF 融合
+            final_list = self._weighted_rrf_fusion(graph_items, vector_items)
+        elif graph_items:
+            # 仅图谱 → 保留图谱原始排序
+            final_list = [{
+                "song": item["song"],
+                "reason": f"引擎检索来源: {item['engine']}",
+                "similarity_score": item["raw_score"],
+                "_graph_affinity": 0.0,
+            } for item in graph_items]
+        elif vector_items:
+            # 仅向量 → 保留向量原始排序
+            final_list = [{
+                "song": item["song"],
+                "reason": f"引擎检索来源: {item['engine']}",
+                "similarity_score": item["raw_score"],
+                "_graph_affinity": 0.0,
+            } for item in vector_items]
+        else:
+            final_list = []
+
+        # 将从全网转化来的真实可播歌曲加入
         if web_playable:
+            for wp in web_playable:
+                wp["_graph_affinity"] = 0.0
             final_list.extend(web_playable)
-            
-        final_list.sort(key=lambda x: x["similarity_score"], reverse=True)
-        
-        # 【多样性过滤】限制同一艺术家最多占 MAX_SONGS_PER_ARTIST 首，避免被单一艺术家垄断
+
+        # ---- Step 3: Neo4j 图距离亲和力加权 ----
+        if GRAPH_AFFINITY_ENABLED and final_list:
+            final_list = self._compute_graph_affinity(final_list)
+            # 将亲和力分数融入最终排序分:
+            # final_score = (1 - α) × rrf_score + α × graph_affinity
+            for item in final_list:
+                rrf = item.get("similarity_score", 0)
+                affinity = item.get("_graph_affinity", 0)
+                item["similarity_score"] = (1 - GRAPH_AFFINITY_WEIGHT) * rrf + GRAPH_AFFINITY_WEIGHT * affinity
+            # 重新排序
+            final_list.sort(key=lambda x: x["similarity_score"], reverse=True)
+            logger.info(
+                f"[GraphAffinity] 亲和力加权后 Top3: "
+                f"{[(r['song']['title'], round(r['similarity_score'], 4)) for r in final_list[:3]]}"
+            )
+
+        # ---- Step 4: Artist 多样性过滤 ----
         artist_count: Dict[str, int] = {}
         diverse_list = []
-        overflow_list = []  # 超出 max_per_artist 的条目放到末尾备用
+        overflow_list = []
         for item in final_list:
             artist = item.get("song", {}).get("artist", "")
             if not artist or artist in ("互联网最新情报",):
-                diverse_list.append(item)  # 特殊条目直接保留
+                diverse_list.append(item)
                 continue
             artist_lower = artist.lower().strip()
             count = artist_count.get(artist_lower, 0)
@@ -386,20 +603,17 @@ class MusicHybridRetrieval:
                 artist_count[artist_lower] = count + 1
             else:
                 overflow_list.append(item)
-        # 如果过滤后结果太少（<3首），把溢出条目补充进来
         if len(diverse_list) < MIN_DIVERSE_RESULTS:
             diverse_list.extend(overflow_list[:MIN_DIVERSE_RESULTS - len(diverse_list)])
         final_list = diverse_list
         logger.info(f"多样性过滤完成，艺术家分布: {dict(artist_count)}")
-        
-        # ---- P2-2: MMR 多样性重排序（genre-aware） ----
-        # 在保持相关性的同时，减少同流派歌曲过度集中
-        # lambda=0.7 偏向相关性，0.3 偏向多样性
+
+        # ---- Step 5: MMR genre-aware 多样性重排序 ----
         if len(final_list) > 2:
             mmr_lambda = 0.7
-            selected = [final_list[0]]  # 第一首直接选（最相关的）
+            selected = [final_list[0]]
             candidates = final_list[1:]
-            
+
             while candidates and len(selected) < len(final_list):
                 best_score = -1
                 best_idx = 0
@@ -408,20 +622,18 @@ class MusicHybridRetrieval:
                     g = s.get("song", {}).get("genre", "").lower().strip()
                     if g:
                         selected_genres.add(g)
-                
+
                 for i, cand in enumerate(candidates):
                     relevance = cand.get("similarity_score", 0)
                     cand_genre = cand.get("song", {}).get("genre", "").lower().strip()
-                    # 计算冗余度：该流派已有的歌曲越多，冗余越高
                     genre_overlap = 1.0 if cand_genre and cand_genre in selected_genres else 0.0
-                    
                     mmr_score = mmr_lambda * relevance - (1 - mmr_lambda) * genre_overlap
                     if mmr_score > best_score:
                         best_score = mmr_score
                         best_idx = i
-                
+
                 selected.append(candidates.pop(best_idx))
-            
+
             final_list = selected
             logger.info(f"[MMR] 多样性重排序完成，流派分布: {[r.get('song', {}).get('genre', '?') for r in final_list[:5]]}")
         
