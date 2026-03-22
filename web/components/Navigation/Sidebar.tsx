@@ -1,7 +1,8 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import NavItem from './NavItem';
+import SettingsPanel from '@/components/Settings/SettingsPanel';
 import { theme } from '@/styles/theme';
 
 interface NavItemConfig {
@@ -86,17 +87,6 @@ const navGroups: NavGroup[] = [
     subtitle: '深度定制与编排',
     items: [
       {
-        href: '/search',
-        label: '多模态检索',
-        description: '搜音色搜氛围',
-        icon: (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-        ),
-      },
-      {
         href: '/playlist',
         label: '风格编排器',
         description: '定制私人口味',
@@ -124,6 +114,8 @@ const navGroups: NavGroup[] = [
 ];
 
 export default function Sidebar({ isMobile = false, isOpen = true, onClose }: SidebarProps) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   if (isMobile && !isOpen) {
     return null;
   }
@@ -236,8 +228,43 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
         ))}
       </nav>
 
+      {/* ──── ⚙️ 设置按钮 ──── */}
+      <div style={{ marginTop: 'auto', paddingTop: '1.5rem', borderTop: `1px solid ${theme.colors.border.default}` }}>
+        <button
+          onClick={() => setSettingsOpen(true)}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.6rem',
+            padding: '0.7rem 0.8rem',
+            background: 'transparent',
+            border: `1px solid ${theme.colors.border.default}`,
+            borderRadius: theme.borderRadius.sm,
+            color: theme.colors.text.secondary,
+            cursor: 'pointer',
+            fontSize: '0.82rem',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => {
+            (e.target as HTMLElement).style.borderColor = theme.colors.primary.accent;
+            (e.target as HTMLElement).style.color = theme.colors.text.primary;
+          }}
+          onMouseLeave={e => {
+            (e.target as HTMLElement).style.borderColor = theme.colors.border.default;
+            (e.target as HTMLElement).style.color = theme.colors.text.secondary;
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+          系统设置
+        </button>
+      </div>
+
+      {/* 设置面板模态框 */}
+      <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </aside>
   );
 }
-
-

@@ -539,6 +539,172 @@ async def search_music(request: SearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---- 设置管理 API ----
+@app.get("/api/settings")
+async def get_settings_endpoint():
+    """
+    返回当前所有可配置设置（供前端设置面板加载）。
+    """
+    from config.settings import settings
+    import retrieval.hybrid_retrieval as hr
+
+    return {
+        # 模型配置
+        "llm_default_provider": settings.llm_default_provider,
+        "llm_default_model": settings.llm_default_model,
+        "intent_llm_provider": settings.intent_llm_provider,
+        "intent_llm_model": settings.intent_llm_model,
+        "hyde_llm_provider": settings.hyde_llm_provider,
+        "hyde_llm_model": settings.hyde_llm_model,
+        "finetuned_model_path": settings.finetuned_model_path,
+        "llm_timeout": settings.llm_timeout,
+        # 路径配置
+        "audio_data_dir": settings.audio_data_dir,
+        "mtg_audio_dir": settings.mtg_audio_dir,
+        "online_acquired_dir": settings.online_acquired_dir,
+        # 检索参数
+        "graph_search_limit": settings.graph_search_limit,
+        "semantic_search_limit": settings.semantic_search_limit,
+        "hybrid_retrieval_limit": settings.hybrid_retrieval_limit,
+        "web_search_max_results": settings.web_search_max_results,
+        # RRF 融合参数
+        "rrf_weight_vector": hr.RRF_WEIGHT_VECTOR,
+        "rrf_weight_graph": hr.RRF_WEIGHT_GRAPH,
+        # 图距离参数
+        "graph_affinity_enabled": hr.GRAPH_AFFINITY_ENABLED,
+        "graph_affinity_weight": hr.GRAPH_AFFINITY_WEIGHT,
+        "graph_affinity_max_hops": hr.GRAPH_AFFINITY_MAX_HOPS,
+        # 记忆系统
+        "memory_retain_rounds": settings.memory_retain_rounds,
+        "default_user_id": settings.default_user_id,
+    }
+
+
+class SettingsUpdateRequest(BaseModel):
+    """前端设置面板提交的配置更新"""
+    # 所有字段都可选 —— 前端只发送修改了的字段
+    llm_default_provider: str | None = None
+    llm_default_model: str | None = None
+    intent_llm_provider: str | None = None
+    intent_llm_model: str | None = None
+    hyde_llm_provider: str | None = None
+    hyde_llm_model: str | None = None
+    finetuned_model_path: str | None = None
+    llm_timeout: int | None = None
+    audio_data_dir: str | None = None
+    mtg_audio_dir: str | None = None
+    online_acquired_dir: str | None = None
+    graph_search_limit: int | None = None
+    semantic_search_limit: int | None = None
+    hybrid_retrieval_limit: int | None = None
+    web_search_max_results: int | None = None
+    rrf_weight_vector: float | None = None
+    graph_affinity_enabled: bool | None = None
+    graph_affinity_weight: float | None = None
+    graph_affinity_max_hops: int | None = None
+    memory_retain_rounds: int | None = None
+    default_user_id: str | None = None
+
+
+@app.post("/api/settings")
+async def update_settings_endpoint(request: SettingsUpdateRequest):
+    """
+    动态更新运行时设置（不重启服务）。
+    前端只发送修改了的字段，未发送的字段保持不变。
+    """
+    from config.settings import settings
+    import retrieval.hybrid_retrieval as hr
+
+    updated_fields = []
+
+    # 遍历请求中所有非 None 字段
+    update_data = request.model_dump(exclude_none=True)
+    for key, val in update_data.items():
+        # RRF / GraphAffinity 参数 → 更新模块级常量
+        if key == "rrf_weight_vector":
+            hr.RRF_WEIGHT_VECTOR = val
+            hr.RRF_WEIGHT_GRAPH = round(1.0 - val, 2)
+            updated_fields.extend(["rrf_weight_vector", "rrf_weight_graph"])
+        elif key == "graph_affinity_enabled":
+            hr.GRAPH_AFFINITY_ENABLED = val
+            updated_fields.append(key)
+        elif key == "graph_affinity_weight":
+            hr.GRAPH_AFFINITY_WEIGHT = val
+            updated_fields.append(key)
+        elif key == "graph_affinity_max_hops":
+            hr.GRAPH_AFFINITY_MAX_HOPS = val
+            updated_fields.append(key)
+        # 其他字段 → 更新 pydantic settings 对象
+        elif hasattr(settings, key):
+            setattr(settings, key, val)
+            updated_fields.append(key)
+
+    # 如果切换了主 LLM provider，热切换模型
+    if "llm_default_provider" in update_data or "llm_default_model" in update_data:
+        try:
+            from llms.multi_llm import get_chat_model
+            from agent.music_graph import set_llm
+            provider = update_data.get("llm_default_provider", settings.llm_default_provider)
+            new_llm = get_chat_model(provider=provider)
+            set_llm(new_llm)
+            logger.info(f"[Settings] LLM 热切换至 {provider}")
+        except Exception as e:
+            logger.warning(f"[Settings] LLM 切换失败: {e}")
+
+    logger.info(f"[Settings] 已更新配置: {updated_fields}")
+    return {"success": True, "updated": updated_fields}
+
+
+@app.post("/api/settings/reset")
+async def reset_settings_endpoint():
+    """
+    还原所有配置为默认值（从环境变量 + 代码默认值重新加载）。
+    """
+    import config.settings as settings_module
+    import retrieval.hybrid_retrieval as hr
+    from config.settings import GlobalSettings
+
+    # 重新实例化 settings（拾取 .env / 环境变量中的默认值）
+    fresh = GlobalSettings()
+    settings_module.settings = fresh
+
+    # 重置 RRF / GraphAffinity 模块级常量
+    hr.RRF_WEIGHT_VECTOR = fresh.rrf_weight_vector
+    hr.RRF_WEIGHT_GRAPH = fresh.rrf_weight_graph
+    hr.GRAPH_AFFINITY_ENABLED = fresh.graph_affinity_enabled
+    hr.GRAPH_AFFINITY_WEIGHT = fresh.graph_affinity_weight
+    hr.GRAPH_AFFINITY_MAX_HOPS = fresh.graph_affinity_max_hops
+
+    # 返回新的完整设置给前端
+    return {
+        "success": True,
+        "settings": {
+            "llm_default_provider": fresh.llm_default_provider,
+            "llm_default_model": fresh.llm_default_model,
+            "intent_llm_provider": fresh.intent_llm_provider,
+            "intent_llm_model": fresh.intent_llm_model,
+            "hyde_llm_provider": fresh.hyde_llm_provider,
+            "hyde_llm_model": fresh.hyde_llm_model,
+            "finetuned_model_path": fresh.finetuned_model_path,
+            "llm_timeout": fresh.llm_timeout,
+            "audio_data_dir": fresh.audio_data_dir,
+            "mtg_audio_dir": fresh.mtg_audio_dir,
+            "online_acquired_dir": fresh.online_acquired_dir,
+            "graph_search_limit": fresh.graph_search_limit,
+            "semantic_search_limit": fresh.semantic_search_limit,
+            "hybrid_retrieval_limit": fresh.hybrid_retrieval_limit,
+            "web_search_max_results": fresh.web_search_max_results,
+            "rrf_weight_vector": fresh.rrf_weight_vector,
+            "rrf_weight_graph": fresh.rrf_weight_graph,
+            "graph_affinity_enabled": fresh.graph_affinity_enabled,
+            "graph_affinity_weight": fresh.graph_affinity_weight,
+            "graph_affinity_max_hops": fresh.graph_affinity_max_hops,
+            "memory_retain_rounds": fresh.memory_retain_rounds,
+            "default_user_id": fresh.default_user_id,
+        },
+    }
+
+
 # ---- 新增:行为事件请求模型 ----
 class UserEventRequest(BaseModel):
     """用户行为事件"""

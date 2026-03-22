@@ -45,6 +45,21 @@ class GlobalSettings(BaseSettings):
         validation_alias="INTENT_LLM_MODEL",
         description="意图分析专用模型名（空则用该 provider 默认模型）",
     )
+    hyde_llm_provider: str = Field(
+        default="",
+        validation_alias="HYDE_LLM_PROVIDER",
+        description="HyDE 声学描述生成专用 LLM 提供商（空则复用主模型）",
+    )
+    hyde_llm_model: str = Field(
+        default="",
+        validation_alias="HYDE_LLM_MODEL",
+        description="HyDE 声学描述生成专用模型名",
+    )
+    finetuned_model_path: str = Field(
+        default="",
+        validation_alias="FINETUNED_MODEL_PATH",
+        description="本地微调模型路径（vLLM 加载用）",
+    )
     llm_timeout: int = Field(
         default=80,
         validation_alias="LLM_TIMEOUT",
@@ -84,6 +99,11 @@ class GlobalSettings(BaseSettings):
         default="data/online_acquired",
         description="联网获取音乐的存储根目录",
     )
+    mtg_audio_dir: str = Field(
+        default="data/mtg_sample/audio",
+        validation_alias="MTG_AUDIO_DIR",
+        description="MTG 数据集音频目录",
+    )
 
     # ================================================================
     # 6. 检索 & 推荐参数（★ 核心调参区）
@@ -115,6 +135,30 @@ class GlobalSettings(BaseSettings):
     enhanced_recommend_limit: int = Field(
         default=5,
         description="增强推荐节点返回条数",
+    )
+
+    # ================================================================
+    # 6b. RRF 融合 & 图距离加权参数
+    # ================================================================
+    rrf_weight_vector: float = Field(
+        default=0.7,
+        description="加权 RRF 中向量检索路的权重",
+    )
+    rrf_weight_graph: float = Field(
+        default=0.3,
+        description="加权 RRF 中图谱检索路的权重",
+    )
+    graph_affinity_enabled: bool = Field(
+        default=True,
+        description="是否启用 Neo4j 图距离亲和力加权",
+    )
+    graph_affinity_weight: float = Field(
+        default=0.15,
+        description="图亲和力分数在最终排序中的权重",
+    )
+    graph_affinity_max_hops: int = Field(
+        default=4,
+        description="图距离计算最大跳数",
     )
 
     # ================================================================

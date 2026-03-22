@@ -1,0 +1,36 @@
+# ============================================================
+# Docker 构建忽略文件
+# 减少构建上下文体积，加速 docker build
+# ============================================================
+
+# 依赖目录
+node_modules/
+web/node_modules/
+web/.next/
+__pycache__/
+*.pyc
+
+# 数据目录（通过 volume 挂载）
+data/
+
+# 环境和配置
+.env
+.env.local
+*.log
+
+# 版本控制
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docker（避免递归）
+docker-compose*.yml
+
+# 不需要的大文件
+*.dump
+*.tar
+*.zip

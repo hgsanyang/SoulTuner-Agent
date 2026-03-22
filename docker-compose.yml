@@ -1,38 +1,105 @@
-version: '3.8'
-
 # ============================================================
-# 【V2 升级】Docker Compose 配置
-# Milvus 相关容器 (etcd, minio, standalone, attu) 已全部移除。
-# 向量检索功能已迁移至 Neo4j Native Vector Search。
+# SoulTuner-Agent Docker Compose
+# 一键启动所有服务: docker compose up -d
 # ============================================================
 
 services:
-  postgres:
-    image: postgres:15
-    container_name: postgres_db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
-      TZ: Asia/Shanghai
+  # ---- Neo4j 图数据库 ----
+  neo4j:
+    image: neo4j:5-community
+    container_name: soultuner-neo4j
     ports:
-      - "54321:5432"
+      - "7474:7474"       # Neo4j Browser (http://localhost:7474)
+      - "7687:7687"       # Bolt 协议
+    environment:
+      NEO4J_AUTH: neo4j/12345678
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      # 如果有 dump 文件，挂载到 /seed 用于首次恢复
+      # - ./docker/neo4j-seed:/seed
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "nange" ]
-      interval: 10s
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
       timeout: 5s
       retries: 5
-    command: [ "postgres", "-c", "max_connections=200" ]
+      start_period: 30s
 
-  # 【V2 升级】以下 Milvus 组件已被移除:
-  #   - etcd (music-milvus-etcd)
-  #   - minio (music-milvus-minio) 
-  #   - standalone (music-milvus-standalone)
-  #   - attu (music-milvus-attu)
-  # 向量检索现在通过 Neo4j 5.x Native Vector Search 实现。
+  # ---- GraphZep 记忆服务 ----
+  graphzep:
+    build: ./graphzep_service
+    container_name: soultuner-graphzep
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    ports:
+      - "3100:3100"
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: "12345678"
+      OPENAI_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      OPENAI_API_KEY: ${SILICONFLOW_API_KEY}
+      MODEL_NAME: ${GRAPHZEP_MODEL_NAME:-deepseek-ai/DeepSeek-V3}
+      EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-BAAI/bge-m3}
+      PORT: "3100"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3100/healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---- Python 后端 API ----
+  backend:
+    build: .
+    container_name: soultuner-backend
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      graphzep:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: "12345678"
+      GRAPHZEP_BASE_URL: http://graphzep:3100
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      MODEL_NAME: ${MODEL_NAME:-deepseek-ai/DeepSeek-V3}
+      MUSIC_AUDIO_DATA_DIR: /app/data/processed_audio/audio
+      MUSIC_WEB_SEARCH_ENABLED: "1"
+      # 本地模型推理（可选，通过宿主机暴露的 vLLM 端口）
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+    volumes:
+      # 音乐数据：挂载宿主机的音频/封面/歌词目录
+      - ${MUSIC_DATA_PATH:-./data}:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---- Next.js 前端 ----
+  frontend:
+    build: ./web
+    container_name: soultuner-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3003:3003"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8501
+    restart: unless-stopped
 
 volumes:
-  pgdata:
+  neo4j_data:
+  neo4j_logs:
