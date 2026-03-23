@@ -3,6 +3,7 @@
 import { ReactNode, useState } from 'react';
 import NavItem from './NavItem';
 import SettingsPanel from '@/components/Settings/SettingsPanel';
+import UserProfilePanel from '@/components/Profile/UserProfilePanel';
 import { theme } from '@/styles/theme';
 
 interface NavItemConfig {
@@ -115,6 +116,7 @@ const navGroups: NavGroup[] = [
 
 export default function Sidebar({ isMobile = false, isOpen = true, onClose }: SidebarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   if (isMobile && !isOpen) {
     return null;
@@ -228,8 +230,42 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
         ))}
       </nav>
 
-      {/* ──── ⚙️ 设置按钮 ──── */}
-      <div style={{ marginTop: 'auto', paddingTop: '1.5rem', borderTop: `1px solid ${theme.colors.border.default}` }}>
+      {/* ──── 底部按钮区 ──── */}
+      <div style={{ marginTop: 'auto', paddingTop: '1.5rem', borderTop: `1px solid ${theme.colors.border.default}`, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {/* 🎭 用户画像按钮 */}
+        <button
+          onClick={() => setProfileOpen(true)}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.6rem',
+            padding: '0.7rem 0.8rem',
+            background: 'transparent',
+            border: `1px solid ${theme.colors.border.default}`,
+            borderRadius: theme.borderRadius.sm,
+            color: theme.colors.text.secondary,
+            cursor: 'pointer',
+            fontSize: '0.82rem',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => {
+            (e.target as HTMLElement).style.borderColor = theme.colors.primary.accent;
+            (e.target as HTMLElement).style.color = theme.colors.text.primary;
+          }}
+          onMouseLeave={e => {
+            (e.target as HTMLElement).style.borderColor = theme.colors.border.default;
+            (e.target as HTMLElement).style.color = theme.colors.text.secondary;
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          我的画像
+        </button>
+
+        {/* ⚙️ 设置按钮 */}
         <button
           onClick={() => setSettingsOpen(true)}
           style={{
@@ -263,7 +299,8 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
         </button>
       </div>
 
-      {/* 设置面板模态框 */}
+      {/* 模态面板 */}
+      <UserProfilePanel isOpen={profileOpen} onClose={() => setProfileOpen(false)} />
       <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </aside>
   );

@@ -31,6 +31,10 @@ logger = get_logger(__name__)
 
 app = FastAPI(title="Music Recommendation API", version="1.0.0")
 
+# 注册用户画像路由
+from api.user_profile import router as user_profile_router
+app.include_router(user_profile_router)
+
 @app.on_event("startup")
 async def startup_event():
     """在服务器启动时预加载 M2D-CLAP 跨模态模型"""
