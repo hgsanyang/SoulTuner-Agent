@@ -28,7 +28,8 @@
 | 🔀 **Hybrid RAG** | GraphRAG + Semantic Search 并发检索，加权 RRF 融合排序 |
 | 🎵 **双模型音频向量** | M2D-CLAP 跨模态语义 × 0.7 + OMAR-RQ 声学特征 × 0.3 |
 | 🧠 **长期记忆** | GraphZep 双阶段召回，跨会话保留用户偏好 |
-| 📊 **图距离加权** | Neo4j 图亲和力评分，用户历史偏好歌手/流派的歌曲获得排序加成 |
+| 📊 **Graph Affinity** | Neo4j 图距离亲和力 + 用户画像偏好 Jaccard 加分，双重个性化排序 |
+| 👤 **用户画像** | 前端可视化画像面板，流派/情绪/场景/语言偏好 → Neo4j + GraphZep 双写 |
 | 🌐 **联网搜索回退** | 本地库不足时自动触发 SearxNG 联邦搜索 + LLM 摘要提取 |
 | 🎼 **音乐旅程** | LLM 故事→情绪拆解→逐段检索，SSE 实时推送 |
 | ♻️ **数据飞轮** | 用户一键入库：搜索→发现→下载→标签提取→向量编码→Neo4j |
@@ -95,11 +96,11 @@
 │                            ▼                                        │
 │              Weighted RRF Fusion (α·Vector + β·Graph)              │
 │                            ▼                                        │
-│              Neo4j Graph Affinity Scoring                           │
+│              Graph Affinity (图距离 + 画像 Jaccard 加分)             │
 │                            ▼                                        │
 │              Artist Diversity Filter (指定歌手豁免)                  │
 │                            ▼                                        │
-│              MMR Genre-aware Rerank (λ=0.7)                        │
+│              MMR Jaccard Rerank (λ=0.7, 集合相似度驱动)             │
 └─────────────────────────────────────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────────┐
@@ -139,11 +140,13 @@
                    ▼
      加权 RRF 融合 (α·向量 + β·图谱，可前端调节)
                    ▼
-     Neo4j 图距离亲和力加权 (用户偏好歌手/流派加分)
+     Graph Affinity 双重加分:
+       Step A: Neo4j shortestPath 图距离 (1/(1+d))
+       Step B: 用户画像偏好 Jaccard 相似度 (× 0.3)
                    ▼
      Artist 多样性过滤 (每歌手≤3首，指定歌手豁免)
                    ▼
-     MMR 流派多样性重排 (λ=0.7)
+     MMR Jaccard 多样性重排 (λ=0.7, 集合相似度驱动)
                    ▼
               Top-K 结果
 ```
@@ -154,7 +157,8 @@
 - **双模型向量**：M2D-CLAP 跨模态语义 + OMAR-RQ 纯声学，三阶段流水线融合
 - **HyDE**：Planner 一次调用生成 80-120 词英文声学描述，7 种情形自适应模板
 - **RRF 加权**：向量/图谱权重前端可调，避免单一通道主导
-- **图距离加权**：用户历史偏好的歌手、流派在 Neo4j 图谱中的距离影响排序
+- **Graph Affinity 双重加分**：Step A 基于 Neo4j `shortestPath` 计算用户→候选歌图距离 `1/(1+d)`；Step B 读取用户画像偏好与候选歌流派做 Jaccard 集合相似度加分 `|A∩B|/|A∪B| × 0.3`
+- **MMR Jaccard**：利用候选歌的 `{genre, mood, theme}` 标签集合计算 Jaccard 相似度替代余弦距离，无需向量即可实现多样性重排
 - **歌手豁免**：用户指定"推荐周杰伦的歌"时，`graph_entities` 中的歌手自动豁免多样性限制
 
 ### Agent 工作流
@@ -193,6 +197,25 @@ stateDiagram-v2
 | **GraphZep 双阶段** | Stage 1 粗召回 20 条 → Stage 2 精排 5 条（相似度+时间衰减） |
 | **GSSC Token 预算** | facts + chat_history 在 3000 token 内动态分配 |
 | **Neo4j 偏好图谱** | 每轮对话 LLM 提取用户偏好，fire-and-forget 写入 User 节点 |
+| **用户画像双写** | 前端画像面板保存 → 同时写入 Neo4j User 属性 + GraphZep 长期记忆 |
+
+### 用户画像系统
+
+```text
+前端画像面板 (UserProfilePanel)
+       ↓ POST /api/user-profile
+  ┌────┴────┐
+  ▼         ▼
+Neo4j      GraphZep
+User节点    长期记忆
+(JSON属性)  (自然语言事件)
+  │         │
+  └──→ Graph Affinity 读取偏好 ←──┘
+       Jaccard(user_pref, song_tags)
+       → 候选歌排序加分
+```
+
+前端可设置流派 / 情绪 / 场景 / 语言四维偏好 + 自由文本描述。保存后 Neo4j User 节点存储 JSON 格式偏好属性，GraphZep 接收自然语言描述事件进行实体抽取。Graph Affinity 检索时读取偏好，通过 Jaccard 相似度为匹配的候选歌加分。
 
 ### 数据飞轮
 
@@ -210,7 +233,7 @@ erDiagram
     Song }o--o{ Scenario : FITS_SCENARIO
     Song ||--|| Language : IN_LANGUAGE
     Song ||--|| Region : IN_REGION
-    User }o--o{ Song : "LIKED / DISLIKED"
+    User }o--o{ Song : "LIKES / SAVES / LISTENED_TO"
     User }o--o{ Genre : PREFERS_GENRE
 
     Song {
@@ -224,7 +247,14 @@ erDiagram
     Genre { string name }
     Mood { string name }
     Scenario { string name }
-    User { string user_id }
+    User {
+        string user_id
+        string preferred_genres
+        string preferred_moods
+        string preferred_scenarios
+        string preferred_languages
+        string profile_free_text
+    }
 ```
 
 **向量索引**：`song_m2d2_index`（768d, cosine）+ `song_omar_index`（768d, cosine）
@@ -265,8 +295,6 @@ python startup_all.py
 python startup_all.py --no-web    # 终端 A：后端
 cd web && npm run dev             # 终端 B：前端（热更新）
 ```
-
-cd web ; npm run dev
 
 > ⚠️ 启动前需先打开 Neo4j Desktop 并启动数据库。
 
@@ -311,11 +339,14 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 │   ├── music_agent.py          # Agent 主入口
 │   └── music_graph.py          # StateGraph 工作流定义
 │
-├── api/server.py               # FastAPI 主服务 + Settings API
+├── api/                        # FastAPI 接口层
+│   ├── server.py               # 主服务 + Settings API
+│   └── user_profile.py         # 用户画像 API（GET/POST /api/user-profile）
+│
 ├── config/settings.py          # 全局配置（支持运行时修改）
 │
 ├── retrieval/                  # 检索引擎层
-│   ├── hybrid_retrieval.py     # 多路检索融合 + RRF + MMR
+│   ├── hybrid_retrieval.py     # 多路融合 + RRF + Graph Affinity Jaccard + MMR
 │   ├── audio_embedder.py       # M2D-CLAP 跨模态编码
 │   ├── neo4j_client.py         # Neo4j 连接封装
 │   ├── music_journey.py        # 音乐旅程编排器
@@ -333,10 +364,12 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 │
 ├── data/pipeline/              # 数据管线
 │   ├── ingest_to_neo4j.py      # Neo4j 入库
+│   ├── neo4j_schema_v2.py      # 数据集管理 CLI（list/verify/backfill）
 │   └── lyrics_analyzer.py      # LLM 歌词标签分析
 │
 ├── web/                        # Next.js 前端
 │   ├── components/Settings/    # ⚙️ 运行时设置面板
+│   ├── components/Profile/     # 👤 用户画像面板
 │   └── components/Navigation/  # 导航、侧边栏
 │
 ├── graphzep_service/           # GraphZep 微服务
@@ -365,6 +398,19 @@ python data/pipeline/lyrics_analyzer.py
 python data/pipeline/ingest_to_neo4j.py              # 完整入库
 python data/pipeline/ingest_to_neo4j.py --skip-embeddings   # 仅元数据
 python data/pipeline/ingest_to_neo4j.py --update-embeddings # 仅补充向量
+```
+
+### 数据集管理 CLI
+
+```bash
+# 查看各数据集歌曲分布
+python data/pipeline/neo4j_schema_v2.py --list-datasets
+
+# 验证向量索引状态
+python data/pipeline/neo4j_schema_v2.py --verify
+
+# 回填缺失的 dataset 标签
+python data/pipeline/neo4j_schema_v2.py --backfill
 ```
 
 ---
@@ -413,7 +459,9 @@ python data/pipeline/ingest_to_neo4j.py --update-embeddings # 仅补充向量
 |------|------|
 | `POST /api/search` | 歌曲搜索 |
 | `POST /api/acquire-song` | 加入本地曲库 |
-| `POST /api/user-event` | 用户行为上报 |
+| `POST /api/user-event` | 用户行为上报（LIKES/SAVES/LISTENED_TO） |
+| `GET /api/user-profile` | 读取用户画像偏好 |
+| `POST /api/user-profile` | 保存用户画像偏好 → Neo4j + GraphZep |
 | `GET /api/settings` | 获取当前配置 |
 | `POST /api/settings` | 更新配置 |
 | `POST /api/settings/reset` | 还原默认配置 |

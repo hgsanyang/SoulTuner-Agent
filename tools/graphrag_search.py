@@ -1392,41 +1392,19 @@ def graphrag_search(query: str, limit: int = 5) -> str:
 
 
 
-        # ── 个性化排序信号收集 ──
-        # 在 RETURN 之前，收集三个排序信号：
-        #   1. taste_overlap: 用户喜欢的歌中，有几首和候选歌是同一个艺术家
-        #   2. play_score:    用户对候选歌的播放记录（LISTENED_TO.play_count）
-        #   3. pref_match:    候选歌的流派是否命中用户画像偏好
-        user_id = settings.default_user_id if hasattr(settings, 'default_user_id') else 'local_admin'
-
-        cypher_query += f"""
-OPTIONAL MATCH (u:User {{id: '{user_id}'}})-[:LIKES|SAVES]->(liked:Song)-[:PERFORMED_BY]->(a)
-WITH s, a, g, t, m, sc, lang, reg, count(DISTINCT liked) AS taste_overlap
-OPTIONAL MATCH (u2:User {{id: '{user_id}'}})-[listened:LISTENED_TO]->(s)
-WITH s, a, g, t, m, sc, lang, reg, taste_overlap,
-     coalesce(listened.play_count, 0) AS play_count
-OPTIONAL MATCH (u3:User {{id: '{user_id}'}})
-WITH s, a, g, t, m, sc, lang, reg, taste_overlap, play_count,
-     coalesce(u3.preferred_genres, '[]') AS user_pref_genres
-"""
+        # ── 个性化排序由 Graph Affinity (hybrid_retrieval.py) 完成 ──
+        # 不在图谱查询中使用 WITH 链（会破坏 collect(DISTINCT) 聚合）
 
         # ── RETURN + ORDER BY ──
         if tags:
             order_by_exact = " OR ".join([f"toLower(a.name) = toLower($tags[{i}])" for i in range(len(tags))])
             order_by_contains = " OR ".join([f"toLower(a.name) CONTAINS toLower($tags[{i}])" for i in range(len(tags))])
-            # 有指定歌手时: 歌手匹配优先 → 同艺术家偏好 → 播放次数
             order_clause = f"""ORDER BY
             CASE WHEN {order_by_exact} THEN 0
                  WHEN {order_by_contains} THEN 1
-                 ELSE 2 END ASC,
-            taste_overlap DESC,
-            play_count DESC"""
+                 ELSE 2 END ASC"""
         else:
-            # 无指定歌手时: 用户偏好关联度 → 播放次数 → 歌名
-            order_clause = """ORDER BY
-            taste_overlap DESC,
-            play_count DESC,
-            a.name ASC"""
+            order_clause = "ORDER BY s.title ASC"
 
         cypher_query += f"""RETURN s.title AS track_name, s.music_id AS raw_name, s.title AS title,
         a.name AS artist,
@@ -1439,17 +1417,13 @@ WITH s, a, g, t, m, sc, lang, reg, taste_overlap, play_count,
         s.album AS album,
         s.audio_url AS audio_url,
         s.cover_url AS cover_url,
-        s.lrc_url AS lrc_url,
-        taste_overlap,
-        play_count
+        s.lrc_url AS lrc_url
         {order_clause}
         LIMIT $limit
         """
 
-
         logger.info(f"Agent 触发执行图谱精准 Cypher: {cypher_query}")
 
-        
         results = client.execute_query(cypher_query, {"tags": tags, "limit": limit})
 
         
