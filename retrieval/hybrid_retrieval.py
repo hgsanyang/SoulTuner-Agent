@@ -447,15 +447,12 @@ class MusicHybridRetrieval:
         max_hops: int = GRAPH_AFFINITY_MAX_HOPS,
     ) -> List[dict]:
         """
-        为每首候选歌曲计算与用户的图距离亲和力分数。
+        为每首候选歌曲计算与用户的图距离亲和力 + 用户画像偏好加分。
 
         算法:
-          1. 批量查询 Neo4j：对每首候选歌，计算到用户节点的最短路径长度
-          2. 亲和力公式: affinity = 1.0 / (1.0 + distance)
-             距离=1（直接 LIKES）→ 0.5,  距离=2（同艺术家其他歌）→ 0.33, 无路径 → 0.0
-          3. 将亲和力分数写入 candidate["_graph_affinity"]
-
-        注意: 如果 Neo4j 不可用，优雅降级（所有亲和力=0）。
+          1. 图距离亲和力: shortestPath(User → Song) → affinity = 1/(1+dist)
+          2. 画像偏好加分: 用户 preferred_genres 与候选歌 genre 的 Jaccard 相似度 × 0.3
+          3. 最终分数: _graph_affinity = distance_affinity + preference_boost
         """
         if not candidates:
             return candidates
@@ -474,16 +471,13 @@ class MusicHybridRetrieval:
                 c["_graph_affinity"] = 0.0
             return candidates
 
-        # 批量查询：一次 Cypher 查所有候选歌曲的最短路径
         titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
         if not titles:
             for c in candidates:
                 c["_graph_affinity"] = 0.0
             return candidates
 
-        # 使用 shortestPath 计算用户到每首歌的最短路径长度
-        # 路径可以经过: User -[LIKES|SAVES|LISTENED_TO]-> Song -[PERFORMED_BY]-> Artist -[PERFORMED_BY]-> Song
-        #              User -[LIKES]-> Song -[BELONGS_TO_GENRE]-> Genre -[BELONGS_TO_GENRE]-> Song
+        # ── Step A: 图距离亲和力 ──
         query = """
         MATCH (u:User {id: $user_id})
         UNWIND $titles AS candidate_title
@@ -509,21 +503,86 @@ class MusicHybridRetrieval:
                 dist = distance_map.get(title, -1)
                 if dist > 0:
                     c["_graph_affinity"] = 1.0 / (1.0 + dist)
-                elif dist == 0:
-                    # 距离=0 意味着 Song 节点就是 User 节点（不可能），视为无效
-                    c["_graph_affinity"] = 0.0
                 else:
-                    # -1 表示没找到路径
                     c["_graph_affinity"] = 0.0
 
             affinity_hits = sum(1 for c in candidates if c["_graph_affinity"] > 0)
             logger.info(
-                f"[GraphAffinity] 图距离计算完成: {affinity_hits}/{len(candidates)} 首有亲和关系"
+                f"[GraphAffinity] 图距离: {affinity_hits}/{len(candidates)} 首有亲和关系"
             )
         except Exception as e:
             logger.warning(f"[GraphAffinity] 图距离查询失败（降级为不加权）: {e}")
             for c in candidates:
                 c["_graph_affinity"] = 0.0
+
+        # ── Step B: 用户画像偏好 Jaccard 加分 ──
+        try:
+            import json as _json
+
+            pref_result = neo4j.execute_query(
+                "MATCH (u:User {id: $uid}) RETURN u.preferred_genres AS pg",
+                {"uid": user_id},
+            )
+            user_pref_genres: set = set()
+            if pref_result and pref_result[0].get("pg"):
+                raw = pref_result[0]["pg"]
+                try:
+                    parsed = _json.loads(raw)
+                    # 标准化: "摇滚" → "摇滚", 保持原样（中文标签）
+                    user_pref_genres = {g.strip().lower() for g in parsed if g.strip()}
+                except (ValueError, TypeError):
+                    pass
+
+            if user_pref_genres:
+                # 中文流派 → 英文别名映射（复用 graphrag_search 的 GENRE_TAG_MAP）
+                try:
+                    from tools.graphrag_search import GENRE_TAG_MAP
+                except ImportError:
+                    GENRE_TAG_MAP = {}
+
+                # 展开用户偏好: "摇滚" → {"rock"}, "电子" → {"electronic","electro"}
+                expanded_prefs: set = set()
+                for pref in user_pref_genres:
+                    # 先查映射表
+                    for key, aliases in GENRE_TAG_MAP.items():
+                        if key.lower() == pref or pref in key.lower():
+                            expanded_prefs.update(a.lower() for a in aliases)
+                            break
+                    else:
+                        expanded_prefs.add(pref)
+
+                PREF_BOOST_WEIGHT = 0.3  # 偏好加分上限
+
+                pref_hits = 0
+                for c in candidates:
+                    genre_str = c.get("song", {}).get("genre", "")
+                    if not genre_str:
+                        continue
+                    # 拆分候选歌的 genre 标签: "Rock/Hard Rock/Energetic" → {"rock","hard rock","energetic"}
+                    cand_tags = {t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip()}
+                    if not cand_tags:
+                        continue
+
+                    # Jaccard: |A ∩ B| / |A ∪ B|
+                    intersection = len(expanded_prefs & cand_tags)
+                    union = len(expanded_prefs | cand_tags)
+                    jaccard = intersection / union if union > 0 else 0.0
+
+                    boost = PREF_BOOST_WEIGHT * jaccard
+                    c["_graph_affinity"] += boost
+                    c["_pref_boost"] = round(boost, 4)
+                    if boost > 0:
+                        pref_hits += 1
+
+                logger.info(
+                    f"[GraphAffinity] 画像偏好加分(Jaccard): {pref_hits}/{len(candidates)} 首命中 "
+                    f"(用户偏好: {user_pref_genres}, 展开: {expanded_prefs})"
+                )
+            else:
+                logger.info("[GraphAffinity] 用户未设置画像偏好，跳过 Jaccard 加分")
+
+        except Exception as e:
+            logger.warning(f"[GraphAffinity] 画像偏好加分失败（不影响主流程）: {e}")
 
         return candidates
 
