@@ -619,26 +619,51 @@ class MusicHybridRetrieval:
             logger.info(f"[多样性过滤] 指定歌手豁免: {exempt_artists}")
         logger.info(f"多样性过滤完成，艺术家分布: {dict(artist_count)}")
 
-        # ---- Step 5: MMR genre-aware 多样性重排序 ----
+        # ---- Step 5: MMR genre-aware 多样性重排序 (Jaccard 集合相似度) ----
+        def _genre_tags(genre_str: str) -> set:
+            """将 'Rock/Hard Rock/Energetic' 拆分为 {'rock', 'hard rock', 'energetic'}"""
+            if not genre_str:
+                return set()
+            return {t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip()}
+
+        def _jaccard(set_a: set, set_b: set) -> float:
+            """计算 Jaccard 相似度: |A ∩ B| / |A ∪ B|"""
+            if not set_a or not set_b:
+                return 0.0
+            intersection = len(set_a & set_b)
+            union = len(set_a | set_b)
+            return intersection / union if union > 0 else 0.0
+
         if len(final_list) > 2:
             mmr_lambda = 0.7
             selected = [final_list[0]]
             candidates = final_list[1:]
 
+            # 预计算每首歌的 genre 标签集合
+            genre_cache: Dict[int, set] = {}
+            for idx, item in enumerate(final_list):
+                genre_cache[id(item)] = _genre_tags(item.get("song", {}).get("genre", ""))
+
             while candidates and len(selected) < len(final_list):
                 best_score = -1
                 best_idx = 0
-                selected_genres = set()
-                for s in selected:
-                    g = s.get("song", {}).get("genre", "").lower().strip()
-                    if g:
-                        selected_genres.add(g)
+
+                # 收集已选歌曲的所有 genre 标签集合
+                selected_tag_sets = [genre_cache[id(s)] for s in selected]
 
                 for i, cand in enumerate(candidates):
                     relevance = cand.get("similarity_score", 0)
-                    cand_genre = cand.get("song", {}).get("genre", "").lower().strip()
-                    genre_overlap = 1.0 if cand_genre and cand_genre in selected_genres else 0.0
-                    mmr_score = mmr_lambda * relevance - (1 - mmr_lambda) * genre_overlap
+                    cand_tags = genre_cache[id(cand)]
+
+                    # 与已选集合中 Jaccard 最大的作为重叠度
+                    max_overlap = 0.0
+                    if cand_tags:
+                        for sel_tags in selected_tag_sets:
+                            j = _jaccard(cand_tags, sel_tags)
+                            if j > max_overlap:
+                                max_overlap = j
+
+                    mmr_score = mmr_lambda * relevance - (1 - mmr_lambda) * max_overlap
                     if mmr_score > best_score:
                         best_score = mmr_score
                         best_idx = i
@@ -646,7 +671,7 @@ class MusicHybridRetrieval:
                 selected.append(candidates.pop(best_idx))
 
             final_list = selected
-            logger.info(f"[MMR] 多样性重排序完成，流派分布: {[r.get('song', {}).get('genre', '?') for r in final_list[:5]]}")
+            logger.info(f"[MMR-Jaccard] 多样性重排序完成，流派分布: {[r.get('song', {}).get('genre', '?') for r in final_list[:5]]}")
         
         # 如果有全网聚合结果，强行塞一条纯文本作为上下文给大模型，防止丢了
         if web_res and "未能找到相关有效信息" not in web_res:

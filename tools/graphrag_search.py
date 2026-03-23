@@ -1303,25 +1303,27 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         elif not genre_aliases and not scenario_aliases and not mood_aliases and not language_normalized and not region_normalized:
 
             logger.warning("GraphRAG 参数全空（tags/genre/scenario/mood/language/region），避免盲捞。")
-
             return json.dumps([])
 
 
 
-        # ──「流派条件」：genre_aliases → Theme 节点 ──
+        # ──「流派条件」：genre_aliases → Genre 节点 + Theme 节点双路匹配 ──
 
         has_genre_filter = bool(genre_aliases)
 
         if has_genre_filter:
 
+            genre_conds = " OR ".join([f"toLower(g.name) CONTAINS '{a}'" for a in genre_aliases])
             theme_conds = " OR ".join([f"toLower(t.name) CONTAINS '{a}'" for a in genre_aliases])
 
-            cypher_query += "MATCH (s)-[:HAS_THEME]->(t:Theme)\n"
-
-            cypher_query += f"WHERE ({theme_conds})\n"
+            # 双路匹配: Genre 节点或 Theme 节点，任一命中即可
+            cypher_query += "OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)\n"
+            cypher_query += "OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)\n"
+            cypher_query += f"WITH s, a, g, t WHERE ({genre_conds}) OR ({theme_conds})\n"
 
         else:
 
+            cypher_query += "OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)\n"
             cypher_query += "OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)\n"
 
 
@@ -1411,21 +1413,17 @@ def graphrag_search(query: str, limit: int = 5) -> str:
             order_clause = "ORDER BY a.name ASC"
 
 
-
         cypher_query += f"""RETURN s.title AS track_name, s.music_id AS raw_name, s.title AS title,
-
         a.name AS artist,
-
         collect(DISTINCT t.name) AS themes,
+
+        collect(DISTINCT g.name) AS genres,
 
         collect(DISTINCT m.name) AS moods,
 
         collect(DISTINCT sc.name) AS scenarios,
-
         coalesce(lang.name, s.language, 'Unknown') AS language,
-
         coalesce(reg.name, s.region, 'Unknown') AS region,
-
         s.album AS album,
 
         s.audio_url AS audio_url,
@@ -1506,18 +1504,20 @@ def graphrag_search(query: str, limit: int = 5) -> str:
                 # 构建 genre 展示字段
 
                 themes_list = [x for x in (record.get("themes") or []) if x]
+                genres_list = [x for x in (record.get("genres") or []) if x]
 
                 moods_list  = [x for x in (record.get("moods")  or []) if x]
 
                 scenarios_list = [x for x in (record.get("scenarios") or []) if x]
 
-                theme_val = themes_list[0] if themes_list else "Unknown"
+                # 优先使用 Genre 节点名（真实音乐流派），没有则 fallback 到 Theme
+                genre_val = "/".join(genres_list[:2]) if genres_list else (themes_list[0] if themes_list else "Unknown")
 
                 mood_val  = moods_list[0]  if moods_list  else "Unknown"
 
                 scenario_val = scenarios_list[0] if scenarios_list else "Unknown"
 
-                genre_display = "/".join(filter(lambda x: x != "Unknown", [theme_val, mood_val, scenario_val])) or "Unknown"
+                genre_display = "/".join(filter(lambda x: x != "Unknown", [genre_val, mood_val, scenario_val])) or "Unknown"
 
                 
 

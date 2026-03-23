@@ -266,6 +266,8 @@ python startup_all.py --no-web    # 终端 A：后端
 cd web && npm run dev             # 终端 B：前端（热更新）
 ```
 
+cd web ; npm run dev
+
 > ⚠️ 启动前需先打开 Neo4j Desktop 并启动数据库。
 
 <details>
