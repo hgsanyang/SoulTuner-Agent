@@ -162,6 +162,31 @@ class GlobalSettings(BaseSettings):
     )
 
     # ================================================================
+    # 6c. Cross-Encoder 精排（RRF 粗排后、Graph Affinity 前）
+    # ================================================================
+    reranker_enabled: bool = Field(
+        default=True,
+        description="是否启用 Cross-Encoder 精排层（bge-reranker-v2-m3）",
+    )
+    reranker_model_name: str = Field(
+        default="BAAI/bge-reranker-v2-m3",
+        description="Cross-Encoder 精排模型名称",
+    )
+    reranker_top_k: int = Field(
+        default=10,
+        description="精排后保留的 Top K 结果",
+    )
+
+    reranker_device: str = Field(
+        default="cpu",
+        description="Cross-Encoder 推理设备（cpu / cuda）",
+    )
+    reranker_batch_size: int = Field(
+        default=16,
+        description="Cross-Encoder 批推理大小",
+    )
+
+    # ================================================================
     # 7. Agent 内存与上下文
     # ================================================================
     memory_retain_rounds: int = Field(default=5, description="上下文管理器保留的最近聊天轮数")

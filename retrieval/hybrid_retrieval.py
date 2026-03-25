@@ -114,10 +114,18 @@ class MusicHybridRetrieval:
                 f"entities={graph_entities} | query='{query[:50]}'"
             )
             
-            # vector_acoustic_query 已在 Planner LLM 中生成完整的 HyDE 声学描述
-            # 无需二次 LLM 调用（已合并为零延迟优化）
-            if vector_desc:
-                logger.info(f"[Vector] 使用 Planner 生成的声学描述 ({len(vector_desc)} chars): {vector_desc[:80]}...")
+            # ── 架构分离：HyDE 声学描述在此处按需生成 ──
+            # Planner 不再生成 vector_acoustic_query，由此处专用模块生成
+            if use_vector and not vector_desc:
+                graphzep_for_hyde = precomputed_plan.get("_graphzep_facts", "")
+                intent_type = precomputed_plan.get("_intent_type", "")
+                vector_desc = self._generate_hyde_description(
+                    query=query,
+                    graphzep_facts=graphzep_for_hyde,
+                    intent_type=intent_type,
+                )
+            elif use_vector and vector_desc:
+                logger.info(f"[Vector] 使用预设声学描述 ({len(vector_desc)} chars): {vector_desc[:80]}...")
         else:
             # 安全默认：同时启用图谱和向量检索
             logger.info("[Retrieval] 无预计算计划，使用默认双引擎检索")
@@ -130,7 +138,7 @@ class MusicHybridRetrieval:
             mood_filter = None
             language_filter = None
             region_filter = None
-            vector_desc = query
+            vector_desc = self._generate_hyde_description(query=query, graphzep_facts="", intent_type="")
             need_web_search = False
             search_keyword = ""
         
@@ -249,6 +257,36 @@ class MusicHybridRetrieval:
             # 并发执行本地数据库检索
             local_results = await asyncio.gather(*local_tasks, return_exceptions=True)
             
+            # ── 诊断日志：检查各引擎原始返回（同时写文件防丢失） ──
+            diag_lines = [f"=== 诊断时间: {__import__('datetime').datetime.now()} ===\n"]
+            diag_lines.append(f"use_graph={use_graph}, use_vector={use_vector}\n")
+            diag_lines.append(f"vector_desc(HyDE输出)={repr(vector_desc)[:300]}\n")
+            for idx, label in enumerate(["Graph", "Vector"]):
+                r = local_results[idx] if idx < len(local_results) else None
+                if isinstance(r, Exception):
+                    msg = f"[诊断] {label} 引擎抛出异常: {type(r).__name__}: {r}"
+                    logger.error(msg)
+                    diag_lines.append(msg + "\n")
+                    # 打印完整异常栈
+                    import traceback
+                    tb = "".join(traceback.format_exception(type(r), r, r.__traceback__))
+                    diag_lines.append(f"[诊断] {label} 异常栈:\n{tb}\n")
+                elif r is None or r == "" or r == 0:
+                    msg = f"[诊断] {label} 引擎返回空值: repr={repr(r)[:200]}"
+                    logger.warning(msg)
+                    diag_lines.append(msg + "\n")
+                else:
+                    msg = f"[诊断] {label} 引擎返回: 长度={len(str(r))}, 前200字符={str(r)[:200]}"
+                    logger.info(msg)
+                    diag_lines.append(msg + "\n")
+            
+            # 写入诊断文件
+            try:
+                with open("/tmp/hyde_diag.txt", "w", encoding="utf-8") as f:
+                    f.writelines(diag_lines)
+            except Exception:
+                pass
+            
             graph_raw = local_results[0] if not isinstance(local_results[0], Exception) and local_results[0] else ""
             vector_raw = local_results[1] if not isinstance(local_results[1], Exception) and local_results[1] else ""
             
@@ -293,6 +331,10 @@ class MusicHybridRetrieval:
             strategy_name = "vector_only"
         else:
             strategy_name = "hybrid_balanced"
+        
+        
+        # 保存当前 query 供 _format_results 中的 Cross-Encoder 精排使用
+        self._current_query = query
         
         return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable, graph_entities)
 
@@ -515,71 +557,142 @@ class MusicHybridRetrieval:
             for c in candidates:
                 c["_graph_affinity"] = 0.0
 
-        # ── Step B: 用户画像偏好 Jaccard 加分 ──
+        # ── Step B: 用户画像偏好 多维 Jaccard 加分 (Genre + Mood + Theme + Scenario) ──
         try:
             import json as _json
 
-            pref_result = neo4j.execute_query(
-                "MATCH (u:User {id: $uid}) RETURN u.preferred_genres AS pg",
-                {"uid": user_id},
-            )
-            user_pref_genres: set = set()
-            if pref_result and pref_result[0].get("pg"):
-                raw = pref_result[0]["pg"]
-                try:
-                    parsed = _json.loads(raw)
-                    # 标准化: "摇滚" → "摇滚", 保持原样（中文标签）
-                    user_pref_genres = {g.strip().lower() for g in parsed if g.strip()}
-                except (ValueError, TypeError):
-                    pass
+            # ---- B1: 提取用户偏好（Genre 从 User 节点，Mood/Theme/Scenario 从历史行为） ----
+            pref_query = """
+            MATCH (u:User {id: $uid})
+            OPTIONAL MATCH (u)-[:LIKES|LISTENED_TO]->(s:Song)
+            OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
+            OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+            OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
+            RETURN u.preferred_genres AS pg,
+                   collect(DISTINCT m.name) AS moods,
+                   collect(DISTINCT t.name) AS themes,
+                   collect(DISTINCT sc.name) AS scenarios
+            """
+            pref_result = neo4j.execute_query(pref_query, {"uid": user_id})
 
-            if user_pref_genres:
-                # 中文流派 → 英文别名映射（复用 graphrag_search 的 GENRE_TAG_MAP）
+            user_pref_genres: set = set()
+            user_pref_moods: set = set()
+            user_pref_themes: set = set()
+            user_pref_scenarios: set = set()
+
+            if pref_result and pref_result[0]:
+                row = pref_result[0]
+                # Genre: 从 User 节点的 preferred_genres 字段
+                raw_pg = row.get("pg")
+                if raw_pg:
+                    try:
+                        parsed = _json.loads(raw_pg)
+                        user_pref_genres = {g.strip().lower() for g in parsed if g.strip()}
+                    except (ValueError, TypeError):
+                        pass
+                # Mood/Theme/Scenario: 从用户喜欢/听过的歌曲的图关系动态提取
+                user_pref_moods = {x.strip().lower() for x in (row.get("moods") or []) if x and x.strip()}
+                user_pref_themes = {x.strip().lower() for x in (row.get("themes") or []) if x and x.strip()}
+                user_pref_scenarios = {x.strip().lower() for x in (row.get("scenarios") or []) if x and x.strip()}
+
+            has_any_pref = user_pref_genres or user_pref_moods or user_pref_themes or user_pref_scenarios
+
+            if has_any_pref:
+                # 展开 Genre 偏好（中文 → 英文别名映射）
                 try:
                     from tools.graphrag_search import GENRE_TAG_MAP
                 except ImportError:
                     GENRE_TAG_MAP = {}
 
-                # 展开用户偏好: "摇滚" → {"rock"}, "电子" → {"electronic","electro"}
-                expanded_prefs: set = set()
+                expanded_genre_prefs: set = set()
                 for pref in user_pref_genres:
-                    # 先查映射表
                     for key, aliases in GENRE_TAG_MAP.items():
                         if key.lower() == pref or pref in key.lower():
-                            expanded_prefs.update(a.lower() for a in aliases)
+                            expanded_genre_prefs.update(a.lower() for a in aliases)
                             break
                     else:
-                        expanded_prefs.add(pref)
+                        expanded_genre_prefs.add(pref)
 
-                PREF_BOOST_WEIGHT = 0.3  # 偏好加分上限
+                # ---- B2: 批量查询候选歌曲的 Mood/Theme/Scenario 标签 ----
+                cand_titles = [c.get("song", {}).get("title", "") for c in candidates if c.get("song")]
+                cand_tag_map: dict = {}  # title → {moods, themes, scenarios}
+                if cand_titles and (user_pref_moods or user_pref_themes or user_pref_scenarios):
+                    tag_query = """
+                    UNWIND $titles AS t
+                    OPTIONAL MATCH (s:Song) WHERE s.title = t
+                    OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
+                    OPTIONAL MATCH (s)-[:HAS_THEME]->(th:Theme)
+                    OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
+                    RETURN t AS title,
+                           collect(DISTINCT m.name) AS moods,
+                           collect(DISTINCT th.name) AS themes,
+                           collect(DISTINCT sc.name) AS scenarios
+                    """
+                    tag_results = neo4j.execute_query(tag_query, {"titles": cand_titles})
+                    for r in tag_results:
+                        title = r.get("title", "")
+                        if title:
+                            cand_tag_map[title] = {
+                                "moods": {x.strip().lower() for x in (r.get("moods") or []) if x and x.strip()},
+                                "themes": {x.strip().lower() for x in (r.get("themes") or []) if x and x.strip()},
+                                "scenarios": {x.strip().lower() for x in (r.get("scenarios") or []) if x and x.strip()},
+                            }
+
+                # ---- B3: 四维 Jaccard 加权融合 ----
+                def _jaccard(set_a: set, set_b: set) -> float:
+                    if not set_a or not set_b:
+                        return 0.0
+                    return len(set_a & set_b) / len(set_a | set_b)
+
+                # 各维度权重（总和 = PREF_BOOST_WEIGHT）
+                PREF_BOOST_WEIGHT = 0.3  # 偏好加分总上限
+                DIM_WEIGHTS = {
+                    "genre": 0.30,     # Genre 匹配
+                    "mood": 0.30,      # Mood 匹配
+                    "scenario": 0.25,  # Scenario 匹配
+                    "theme": 0.15,     # Theme 匹配
+                }
 
                 pref_hits = 0
                 for c in candidates:
-                    genre_str = c.get("song", {}).get("genre", "")
-                    if not genre_str:
-                        continue
-                    # 拆分候选歌的 genre 标签: "Rock/Hard Rock/Energetic" → {"rock","hard rock","energetic"}
-                    cand_tags = {t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip()}
-                    if not cand_tags:
-                        continue
+                    song = c.get("song", {})
+                    title = song.get("title", "")
 
-                    # Jaccard: |A ∩ B| / |A ∪ B|
-                    intersection = len(expanded_prefs & cand_tags)
-                    union = len(expanded_prefs | cand_tags)
-                    jaccard = intersection / union if union > 0 else 0.0
+                    # Genre Jaccard（从候选歌的 genre 字段）
+                    genre_str = song.get("genre", "")
+                    cand_genre_tags = {t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip()} if genre_str else set()
+                    j_genre = _jaccard(expanded_genre_prefs, cand_genre_tags)
 
-                    boost = PREF_BOOST_WEIGHT * jaccard
+                    # Mood/Theme/Scenario Jaccard（从 Neo4j 查询结果）
+                    cand_tags = cand_tag_map.get(title, {})
+                    j_mood = _jaccard(user_pref_moods, cand_tags.get("moods", set()))
+                    j_theme = _jaccard(user_pref_themes, cand_tags.get("themes", set()))
+                    j_scenario = _jaccard(user_pref_scenarios, cand_tags.get("scenarios", set()))
+
+                    # 加权融合
+                    weighted_jaccard = (
+                        DIM_WEIGHTS["genre"] * j_genre
+                        + DIM_WEIGHTS["mood"] * j_mood
+                        + DIM_WEIGHTS["theme"] * j_theme
+                        + DIM_WEIGHTS["scenario"] * j_scenario
+                    )
+                    boost = PREF_BOOST_WEIGHT * weighted_jaccard
                     c["_graph_affinity"] += boost
                     c["_pref_boost"] = round(boost, 4)
+                    c["_pref_detail"] = {
+                        "genre": round(j_genre, 3), "mood": round(j_mood, 3),
+                        "theme": round(j_theme, 3), "scenario": round(j_scenario, 3),
+                    }
                     if boost > 0:
                         pref_hits += 1
 
                 logger.info(
-                    f"[GraphAffinity] 画像偏好加分(Jaccard): {pref_hits}/{len(candidates)} 首命中 "
-                    f"(用户偏好: {user_pref_genres}, 展开: {expanded_prefs})"
+                    f"[GraphAffinity] 四维画像偏好加分(Jaccard): {pref_hits}/{len(candidates)} 首命中 | "
+                    f"用户偏好维度: genre={len(user_pref_genres)}, mood={len(user_pref_moods)}, "
+                    f"theme={len(user_pref_themes)}, scenario={len(user_pref_scenarios)}"
                 )
             else:
-                logger.info("[GraphAffinity] 用户未设置画像偏好，跳过 Jaccard 加分")
+                logger.info("[GraphAffinity] 用户未设置画像偏好且无历史行为，跳过 Jaccard 加分")
 
         except Exception as e:
             logger.warning(f"[GraphAffinity] 画像偏好加分失败（不影响主流程）: {e}")
@@ -588,11 +701,12 @@ class MusicHybridRetrieval:
 
     def _format_results(self, strategy_name: str, graph_res: str, vector_res: str, web_res: str = "", web_playable: List[dict] = None, graph_entities: List[str] = None) -> ToolOutput:
         """
-        合并各检索引擎的结果，使用 **加权 RRF** 排序融合 + **Neo4j 图距离加权**。
+        合并各检索引擎的结果，使用 **加权 RRF** 排序融合 + **Cross-Encoder 精排** + **Neo4j 图距离加权**。
 
         排序管线:
           1. 解析各引擎原始 JSON → 标准化列表（含排名）
           2. 加权 RRF 融合两路排名 → 统一分数
+          2.5. Cross-Encoder 精排（bge-reranker-v2-m3 深度语义匹配）
           3. Neo4j 图距离亲和力评分 → 微调排序
           4. Artist 多样性过滤
           5. MMR genre-aware 多样性重排序
@@ -600,6 +714,11 @@ class MusicHybridRetrieval:
         # ---- Step 1: 解析各引擎结果 ----
         graph_items = self._parse_engine_results(graph_res, "知识图谱(GraphRAG)")
         vector_items = self._parse_engine_results(vector_res, "语义向量(Neo4j Vector)")
+        logger.info(
+            f"[诊断-融合入口] graph_items={len(graph_items)}, vector_items={len(vector_items)} | "
+            f"graph_res长度={len(graph_res)}, vector_res长度={len(vector_res)} | "
+            f"vector_res前100字符={vector_res[:100] if vector_res else '(空)'}"
+        )
 
         # ---- Step 2: 加权 RRF 融合 ----
         if graph_items and vector_items:
@@ -629,6 +748,33 @@ class MusicHybridRetrieval:
             for wp in web_playable:
                 wp["_graph_affinity"] = 0.0
             final_list.extend(web_playable)
+
+        # ---- Step 2.5: Cross-Encoder 精排 ----
+        from config.settings import settings as _settings
+        if _settings.reranker_enabled and final_list:
+            try:
+                from retrieval.cross_encoder_reranker import CrossEncoderReranker
+                reranker = CrossEncoderReranker()
+                # 使用 retrieve() 传入的原始 query（从 graph_entities 或策略推断）
+                rerank_query = ""
+                if graph_entities:
+                    rerank_query = " ".join(graph_entities)
+                if not rerank_query:
+                    # fallback: 从第一个候选的 reason 中无法获取 query，使用空字符串
+                    rerank_query = ""
+                # 注意: rerank_query 可能为空，此时由调用方在 retrieve() 中传入
+                # 这里我们通过检查 _format_results 的调用上下文来获取 query
+                # 由于 _format_results 没有 query 参数，我们需要通过实例变量传递
+                if hasattr(self, '_current_query') and self._current_query:
+                    rerank_query = self._current_query
+                elif rerank_query:
+                    pass  # 使用 graph_entities 拼接
+                else:
+                    rerank_query = strategy_name  # 最终 fallback
+
+                final_list = reranker.rerank(rerank_query, final_list)
+            except Exception as e:
+                logger.warning(f"[Reranker] Cross-Encoder 精排异常（降级跳过）: {e}")
 
         # ---- Step 3: Neo4j 图距离亲和力加权 ----
         if GRAPH_AFFINITY_ENABLED and final_list:
@@ -781,3 +927,60 @@ class MusicHybridRetrieval:
             raw_markdown=raw_markdown,
             error_message=None if final_list else "Not found"
         )
+
+    def _generate_hyde_description(
+        self,
+        query: str,
+        graphzep_facts: str = "",
+        intent_type: str = "",
+    ) -> str:
+        """
+        HyDE 声学描述生成（架构分离后的专用模块）。
+        
+        仅在 use_vector=true 时调用。接收用户输入和 GraphZep 记忆，
+        通过 HYDE_ACOUSTIC_GENERATOR_PROMPT 生成纯英文声学描述。
+        GraphZep 记忆只影响声学描述内容，不影响路由决策（路由已由 Planner 完成）。
+        
+        Args:
+            query: 用户原始输入
+            graphzep_facts: GraphZep 长期记忆文本（可为空）
+            intent_type: Planner 识别的意图类型
+
+        Returns:
+            英文声学描述文本，供 M2D-CLAP 编码
+        """
+        try:
+            from llms.prompts import HYDE_ACOUSTIC_GENERATOR_PROMPT
+            from langchain_core.prompts import ChatPromptTemplate
+            from langchain_core.output_parsers import StrOutputParser
+            from llms.multi_llm import get_intent_chat_model as get_intent_llm
+            import traceback
+            
+            llm = self.llm_client or get_intent_llm()
+            chain = (
+                ChatPromptTemplate.from_template(HYDE_ACOUSTIC_GENERATOR_PROMPT)
+                | llm
+                | StrOutputParser()
+            )
+            
+            invoke_params = {
+                "user_input": query,
+                "graphzep_facts": graphzep_facts or "暂无",
+                "intent_type": intent_type or "unknown",
+            }
+            
+            # 使用同步 invoke()，避免 async 上下文冲突
+            # retrieve() 在 nest_asyncio 环境中通过 run_in_executor 调用，
+            # 此处直接用同步调用最为稳健
+            result = chain.invoke(invoke_params)
+            
+            result = result.strip()
+            word_count = len(result.split())
+            logger.info(
+                f"[HyDE] 生成声学描述 ({word_count} words): {result[:100]}..."
+            )
+            return result
+            
+        except Exception as e:
+            logger.warning(f"[HyDE] 声学描述生成失败，降级使用原始查询: {e}\n{traceback.format_exc()}")
+            return query

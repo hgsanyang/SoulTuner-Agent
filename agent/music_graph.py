@@ -105,9 +105,10 @@ class MusicRecommendationGraph:
                 | structured_llm
             )
             # [P3] GSSC Token budget management
+            # 架构分离：路由决策只看 chat_history，不看 GraphZep（防止记忆绑架路由）
             from retrieval.gssc_context_builder import build_context
             _ctx = build_context(
-                graphzep_facts=state.get("graphzep_facts", "暂无用户长期记忆"),
+                graphzep_facts="",  # GraphZep 不注入 Planner，仅在 HyDE 阶段使用
                 chat_history=history_text,
                 total_budget=3000,
             )
@@ -115,7 +116,6 @@ class MusicRecommendationGraph:
             plan: MusicQueryPlan = await chain.ainvoke({
                 "user_input": user_input,
                 "chat_history": _ctx["chat_history"],
-                "graphzep_facts": _ctx["graphzep_facts"],
             })
             
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
@@ -128,11 +128,13 @@ class MusicRecommendationGraph:
             logger.info(f"决策理由: {plan.reasoning}")
             
             # ============================================================
-            # 【升级】将 intent_type 注入 retrieval_plan，供 HyDE 拦截判断
-            # 来源：HyDE 检索增强需要根据意图类型决定是否生成虚拟乐评
+            # 【升级】将 intent_type 和 graphzep_facts 注入 retrieval_plan
+            # intent_type: 供 HyDE 根据意图类型调整描述风格
+            # _graphzep_facts: 供 HyDE 参考用户偏好生成声学描述
             # ============================================================
             retrieval_plan_dict = plan.retrieval_plan.model_dump()
             retrieval_plan_dict["_intent_type"] = plan.intent_type
+            retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
             
             return {
                 "intent_type": plan.intent_type,

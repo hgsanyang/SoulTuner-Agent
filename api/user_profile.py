@@ -47,8 +47,9 @@ async def get_user_profile(user_id: str = "local_admin"):
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
 
+        # 使用 MERGE 确保 User 节点始终存在，避免 MATCH 返回空结果
         result = client.execute_query("""
-        MATCH (u:User {id: $user_id})
+        MERGE (u:User {id: $user_id})
         RETURN u.preferred_genres AS preferred_genres,
                u.preferred_moods AS preferred_moods,
                u.preferred_scenarios AS preferred_scenarios,
@@ -56,18 +57,22 @@ async def get_user_profile(user_id: str = "local_admin"):
                u.profile_free_text AS free_text
         """, {"user_id": user_id})
 
+        logger.info(f"[UserProfile] GET 原始查询结果: {result}")
+
         if result and result[0]:
             row = result[0]
+            profile = {
+                "user_id": user_id,
+                "preferred_genres": json.loads(row.get("preferred_genres") or "[]"),
+                "preferred_moods": json.loads(row.get("preferred_moods") or "[]"),
+                "preferred_scenarios": json.loads(row.get("preferred_scenarios") or "[]"),
+                "preferred_languages": json.loads(row.get("preferred_languages") or "[]"),
+                "free_text": row.get("free_text") or "",
+            }
+            logger.info(f"[UserProfile] 解析后偏好: genres={profile['preferred_genres']}, moods={profile['preferred_moods']}")
             return {
                 "success": True,
-                "profile": {
-                    "user_id": user_id,
-                    "preferred_genres": json.loads(row.get("preferred_genres") or "[]"),
-                    "preferred_moods": json.loads(row.get("preferred_moods") or "[]"),
-                    "preferred_scenarios": json.loads(row.get("preferred_scenarios") or "[]"),
-                    "preferred_languages": json.loads(row.get("preferred_languages") or "[]"),
-                    "free_text": row.get("free_text") or "",
-                },
+                "profile": profile,
                 "presets": {
                     "genres": PRESET_GENRES,
                     "moods": PRESET_MOODS,
