@@ -73,6 +73,8 @@ class GlobalSettings(BaseSettings):
     ollama_base_url: str = Field("http://localhost:11434/v1", validation_alias="OLLAMA_BASE_URL")
     vllm_api_key: str = Field("fake_key", validation_alias="VLLM_API_KEY")
     vllm_base_url: str = Field("http://localhost:8000/v1", validation_alias="VLLM_BASE_URL")
+    sglang_api_key: str = Field("fake_key", validation_alias="SGLANG_API_KEY")
+    sglang_base_url: str = Field("http://localhost:8000/v1", validation_alias="SGLANG_BASE_URL")
 
     # ================================================================
     # 4. 服务端口 & URL
@@ -178,7 +180,7 @@ class GlobalSettings(BaseSettings):
     )
 
     reranker_device: str = Field(
-        default="cpu",
+        default="cuda",
         description="Cross-Encoder 推理设备（cpu / cuda）",
     )
     reranker_batch_size: int = Field(

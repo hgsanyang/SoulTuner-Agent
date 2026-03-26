@@ -73,6 +73,13 @@ MODEL_REGISTRY = {
         "base_url_env": "VLLM_BASE_URL",
         "default_base_url": "http://localhost:8000/v1" # vLLM 默认路径
     },
+    "sglang": {
+        "prefix": "openai/",  # SGLang 也提供 OpenAI 兼容 API
+        "default_model": "planner_merged_fp16",
+        "api_key_env": ["SGLANG_API_KEY", "LLM_API_KEY"],
+        "base_url_env": "SGLANG_BASE_URL",
+        "default_base_url": "http://localhost:8000/v1"
+    },
     "google": {  # Google Gemini
         "prefix": "gemini/",
         "default_model": "gemini-3-flash-preview",
@@ -126,15 +133,15 @@ class MultiLLM(BaseLLM):
         elif self.provider == "minimax":
             os.environ["MINIMAX_API_KEY"] = api_key or ""
             
-        # 针对 OpenAPI 兼容模式（如 SiliconFlow, Ollama, vLLM 和 OpenAI 原生）
-        if self.provider in ["siliconflow", "ollama", "vllm", "openai"]:
+        # 针对 OpenAPI 兼容模式（如 SiliconFlow, Ollama, vLLM, SGLang 和 OpenAI 原生）
+        if self.provider in ["siliconflow", "ollama", "vllm", "sglang", "openai"]:
             os.environ["OPENAI_API_KEY"] = api_key or ""
             base_url = _get_env_val(config.get("base_url_env", ""), config.get("default_base_url"))
             if base_url:
                 os.environ["OPENAI_API_BASE"] = base_url
             
             self.model_name = model_name or config["default_model"]
-            self.litellm_model = f"openai/{self.model_name}" if self.provider in ["siliconflow", "ollama", "vllm"] else self.model_name
+            self.litellm_model = f"openai/{self.model_name}" if self.provider in ["siliconflow", "ollama", "vllm", "sglang"] else self.model_name
         else:
             base_model = model_name or config["default_model"]
             # 自动补全厂商前缀
@@ -211,8 +218,8 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
     api_key = _get_env_val(config["api_key_env"])
     base_url = _get_env_val(config.get("base_url_env", ""), config.get("default_base_url"))
     
-    # 策略 1：如果是 SiliconFlow 或本地 OpenAI 兼容服务 (Ollama, vLLM)，为了保证绝对稳定，直接使用 LangChain 原生 ChatOpenAI 包装
-    if provider in ["siliconflow", "ollama", "vllm"]:
+    # 策略 1：如果是 SiliconFlow 或本地 OpenAI 兼容服务 (Ollama, vLLM, SGLang)，为了保证绝对稳定，直接使用 LangChain 原生 ChatOpenAI 包装
+    if provider in ["siliconflow", "ollama", "vllm", "sglang"]:
         from langchain_openai import ChatOpenAI
         target_model = model_name or config["default_model"]
         # 读取超时配置（优先用参数，其次用 settings，默认 80s）
@@ -311,3 +318,7 @@ def ollama_llm(model_name: Optional[str] = None, temperature: float = 0.6):
 def vllm_llm(model_name: Optional[str] = None, temperature: float = 0.6):
     """便捷包装函数：快速获取本地 vLLM 模型实例"""
     return get_chat_model(provider="vllm", model_name=model_name, temperature=temperature)
+
+def sglang_llm(model_name: Optional[str] = None, temperature: float = 0.6):
+    """便捷包装函数：快速获取本地 SGLang 模型实例"""
+    return get_chat_model(provider="sglang", model_name=model_name, temperature=temperature)

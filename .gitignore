@@ -73,6 +73,7 @@ data/raw_audio/
 data/embeddings/
 data/kaggle/
 data/mtg/
+data/sft/
 
 # Media
 *.mp3
