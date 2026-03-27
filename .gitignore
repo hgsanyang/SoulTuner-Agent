@@ -106,3 +106,6 @@ package-lock.json
 
 # Web build artifacts
 web/tsconfig.tsbuildinfo
+
+*.deb
+*.run
