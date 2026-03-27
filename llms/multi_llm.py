@@ -75,7 +75,7 @@ MODEL_REGISTRY = {
     },
     "sglang": {
         "prefix": "openai/",  # SGLang 也提供 OpenAI 兼容 API
-        "default_model": "planner_merged_fp16",
+        "default_model": "local-planner-qwen3-4b-fp8",
         "api_key_env": ["SGLANG_API_KEY", "LLM_API_KEY"],
         "base_url_env": "SGLANG_BASE_URL",
         "default_base_url": "http://localhost:8000/v1"
@@ -229,12 +229,15 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
                 _timeout = settings.llm_timeout
             except Exception:
                 _timeout = 80
+        # 本地模型 context-length 通常较小（如 2048），max_tokens 不能超过它
+        _local_providers = {"sglang", "vllm", "ollama"}
+        _max_tokens = 1024 if provider in _local_providers else 4000
         return ChatOpenAI(
             api_key=api_key or "fake-key",
             base_url=base_url,
             model=target_model,
             temperature=temperature,
-            max_tokens=4000,
+            max_tokens=_max_tokens,
             request_timeout=_timeout,
         )
     

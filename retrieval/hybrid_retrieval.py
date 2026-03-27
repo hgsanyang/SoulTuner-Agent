@@ -152,7 +152,9 @@ class MusicHybridRetrieval:
             mood_filter = precomputed_plan.get("graph_mood_filter")
             language_filter = precomputed_plan.get("graph_language_filter")
             region_filter = precomputed_plan.get("graph_region_filter")
-            vector_desc = precomputed_plan.get("vector_acoustic_query", "")
+            # ⚠️ 强制忽略 Planner 填的 vector_acoustic_query（4B 模型常不听指令自行填写）
+            # HyDE 声学描述统一由下游 _generate_hyde_description() 专用模块生成
+            vector_desc = ""
             web_keywords = precomputed_plan.get("web_search_keywords", "")
             need_web_search = use_web
             search_keyword = web_keywords
@@ -200,9 +202,8 @@ class MusicHybridRetrieval:
                 f"entities={graph_entities} | query='{query[:50]}'"
             )
             
-            # ── 架构分离：HyDE 声学描述在此处按需生成 ──
-            # Planner 不再生成 vector_acoustic_query，由此处专用模块生成
-            if use_vector and not vector_desc:
+            # ── HyDE 声学描述：use_vector=true 时始终由专用模块生成 ──
+            if use_vector:
                 graphzep_for_hyde = precomputed_plan.get("_graphzep_facts", "")
                 intent_type = precomputed_plan.get("_intent_type", "")
                 vector_desc = self._generate_hyde_description(
@@ -210,8 +211,6 @@ class MusicHybridRetrieval:
                     graphzep_facts=graphzep_for_hyde,
                     intent_type=intent_type,
                 )
-            elif use_vector and vector_desc:
-                logger.info(f"[Vector] 使用预设声学描述 ({len(vector_desc)} chars): {vector_desc[:80]}...")
         else:
             # 安全默认：同时启用图谱和向量检索
             logger.info("[Retrieval] 无预计算计划，使用默认双引擎检索")

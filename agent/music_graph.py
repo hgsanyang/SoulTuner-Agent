@@ -27,6 +27,7 @@ from retrieval.user_memory import UserMemoryManager
 from retrieval.history import MusicContextManager
 from llms.prompts import (
     UNIFIED_MUSIC_QUERY_PLANNER_PROMPT,
+    LOCAL_PLANNER_PROMPT,
     MUSIC_RECOMMENDATION_EXPLAINER_PROMPT,
     MUSIC_CHAT_RESPONSE_PROMPT
 )
@@ -100,8 +101,14 @@ class MusicRecommendationGraph:
             # ✅ with_structured_output：让模型直接输出 MusicQueryPlan Pydantic 对象
             # 底层自动处理 json_schema 约束，无需任何正则或 json.loads
             structured_llm = get_intent_llm().with_structured_output(MusicQueryPlan)
+            
+            # ✅ Prompt 选择：统一使用完整版（含 one-shot 示例）
+            # 微调模型的 SFT 数据基于完整 prompt 生成，精简版会导致意图分类退化
+            # 如果未来用精简 prompt 重新微调，可切换为 LOCAL_PLANNER_PROMPT
+            _planner_prompt = UNIFIED_MUSIC_QUERY_PLANNER_PROMPT
+            
             chain = (
-                ChatPromptTemplate.from_template(UNIFIED_MUSIC_QUERY_PLANNER_PROMPT)
+                ChatPromptTemplate.from_template(_planner_prompt)
                 | structured_llm
             )
             # [P3] GSSC Token budget management

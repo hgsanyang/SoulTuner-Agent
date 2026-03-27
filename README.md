@@ -296,6 +296,34 @@ python startup_all.py --no-web    # 终端 A：后端
 cd web && npm run dev             # 终端 B：前端（热更新）
 ```
 
+### 方式三：本地大模型微调部署（WSL + SGLang）
+
+针对 8GB 显存（如 RTX 4070）设备的优化部署方案，支持跑满 4B 级别的本地微调大模型（如 `Qwen-4B`）同时保留显存给跨模态检索系统。
+
+**前置要求**：
+
+1. Windows 开启 WSL2 (Ubuntu)
+2. WSL 内部安装好 CUDA Toolkit (仅需 `nvcc`)
+3. 在 WSL 内的虚拟环境中安装 `sglang[all]`
+
+**启动步骤**：
+
+1. **终端A (WSL)**：启动大模型推理引擎
+   
+   ```bash
+   wsl
+   bash /mnt/c/Users/sanyang/sanyangworkspace/music_recommendation/Muisc-Research/scripts/start_sglang.sh
+   ```
+   
+   *内置显存切分逻辑：大模型 FP8 在线量化锁定 70% 显存 (~5.5GB)，预留充足空间给音频向量模型。*
+
+2. **终端B (Windows)**：在前端设置面板切换为本地模型
+   - 正常运行 `python startup_all.py`
+   - 打开系统设置 ⚙️
+   - **主提供商**：选择 `sglang`
+   - **Base URL**：填入 `http://localhost:8000/v1`
+   - 保存设置，系统即会自动切换为本地 4B 模型。
+
 > ⚠️ 启动前需先打开 Neo4j Desktop 并启动数据库。
 
 <details>

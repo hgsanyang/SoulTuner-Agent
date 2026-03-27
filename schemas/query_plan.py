@@ -19,7 +19,7 @@ class RetrievalPlan(BaseModel):
     graph_region_filter: Optional[str] = Field(default=None, description="地区过滤条件，如 Mainland China/Taiwan/Japan/Western")
 
     use_vector: bool = Field(default=False, description="是否启用声学向量检索（氛围/听感/情绪匹配）")
-    vector_acoustic_query: str = Field(default="", description="用于向量检索的英文声学描述")
+    # vector_acoustic_query 已移除：声学描述由下游 HyDE 专用模块自动生成，Planner 无需关心
 
     use_web_search: bool = Field(default=False, description="是否启用联网搜索（最新资讯/新闻/动态）")
     web_search_keywords: str = Field(default="", description="精炼的搜索引擎查询词")

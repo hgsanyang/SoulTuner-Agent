@@ -177,17 +177,39 @@ def start_netease_api():
     )
 
 
+def _kill_process_tree(pid: int):
+    """杀掉指定 PID 的整棵进程树（包括所有子进程、子子进程）"""
+    if sys.platform == "win32":
+        # taskkill /T = 终止进程树, /F = 强制
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(pid)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    else:
+        import signal as _sig
+        try:
+            os.killpg(os.getpgid(pid), _sig.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+_cleanup_done = False  # 防止重复执行
+
 def cleanup(signum=None, frame=None):
-    """统一关闭所有子进程"""
+    """统一关闭所有子进程（杀整棵进程树，防止僵尸残留）"""
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
+
     print("\n\n🛑 正在关闭所有服务...\n")
     for name, proc in reversed(_processes):
         if proc and proc.poll() is None:
             try:
-                proc.terminate()
+                _kill_process_tree(proc.pid)
                 proc.wait(timeout=5)
                 print(f"  ✅ {name} 已关闭")
             except Exception:
-                proc.kill()
                 print(f"  ⚠️ {name} 强制关闭")
     print("\n全部服务已关闭。")
     sys.exit(0)
@@ -208,6 +230,9 @@ def main():
         signal.signal(signal.SIGBREAK, cleanup)
     else:
         signal.signal(signal.SIGTERM, cleanup)
+    # atexit 兜底：即使未捕获的异常导致退出，也确保清理子进程树
+    import atexit
+    atexit.register(cleanup)
 
     _banner("🎵 音乐推荐系统 — 一键启动")
     print(f"  项目根目录: {PROJECT_ROOT}")
