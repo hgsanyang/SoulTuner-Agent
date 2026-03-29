@@ -18,7 +18,7 @@ import argparse
 import logging
 
 # 将项目根目录加入 sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from retrieval.neo4j_client import get_neo4j_client
 

@@ -131,18 +131,16 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                 where_clauses.append("toLower(g.name) CONTAINS toLower($genre_filter)")
                 params["genre_filter"] = genre_filter
 
-            # 语言过滤：连接 Language 节点
+            # 语言过滤：使用 Song 节点属性（不是关系节点）
             lang_match = ""
             if language_filter:
-                lang_match = ", (s)-[:HAS_LANGUAGE]->(lang:Language)"
-                where_clauses.append("toLower(lang.name) = toLower($language_filter)")
+                where_clauses.append("toLower(s.language) = toLower($language_filter)")
                 params["language_filter"] = language_filter
 
-            # 地区过滤：连接 Region 节点
+            # 地区过滤：使用 Song 节点属性（不是关系节点）
             region_match = ""
             if region_filter:
-                region_match = ", (s)-[:IN_REGION]->(reg:Region)"
-                where_clauses.append("toLower(reg.name) = toLower($region_filter)")
+                where_clauses.append("toLower(s.region) = toLower($region_filter)")
                 params["region_filter"] = region_filter
 
             where_str = " AND ".join(where_clauses)

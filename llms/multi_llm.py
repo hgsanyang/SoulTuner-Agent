@@ -198,7 +198,7 @@ class MultiLLM(BaseLLM):
         }
 
 
-def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = None, temperature: float = 0.7, timeout: Optional[int] = None):
+def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = None, temperature: float = 0.7, timeout: Optional[int] = None, max_tokens: Optional[int] = None):
     """
     获取 LangChain 专属的 ChatModel 对象 (工厂暴露函数)
     适用场景: graphs/music_graph.py 等复杂图节点工作流
@@ -229,9 +229,18 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
                 _timeout = settings.llm_timeout
             except Exception:
                 _timeout = 80
-        # 本地模型 context-length 通常较小（如 2048），max_tokens 不能超过它
-        _local_providers = {"sglang", "vllm", "ollama"}
-        _max_tokens = 1024 if provider in _local_providers else 4000
+        # max_tokens 优先使用调用方显式传入的值，否则默认 4000
+        _max_tokens = max_tokens if max_tokens is not None else 4000
+        # ── SGLang + Qwen3：通过 extra_body 硬关闭 Thinking Mode ──
+        # Qwen3 默认启用 thinking mode，会在输出 JSON 前生成数百个推理 token（在 RTX 4070 约 30-60s）。
+        # chat_template_kwargs.enable_thinking=False 直接在 Jinja2 chat template 层面跳过 <think> 推理链。
+        _model_kwargs = {}
+        if provider == "sglang":
+            _model_kwargs = {
+                "extra_body": {
+                    "chat_template_kwargs": {"enable_thinking": False}
+                }
+            }
         return ChatOpenAI(
             api_key=api_key or "fake-key",
             base_url=base_url,
@@ -239,6 +248,7 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
             temperature=temperature,
             max_tokens=_max_tokens,
             request_timeout=_timeout,
+            model_kwargs=_model_kwargs,
         )
     
     # 策略 2：其他所有厂商，走 LangChain 的 ChatLiteLLM 通用通道
@@ -275,7 +285,7 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
     return ChatLiteLLM(
         model=target_model,
         temperature=temperature,
-        max_tokens=4000
+        max_tokens=max_tokens if max_tokens is not None else 4000
     )
 
 def deepseek_llm(temperature: float = 0.7):
@@ -295,14 +305,18 @@ def get_intent_chat_model():
     
     可通过环境变量 INTENT_LLM_PROVIDER / INTENT_LLM_MODEL 配置。
     典型用法：配置一个更小更快的模型专门做意图分类，减少延迟。
+    
+    max_tokens 锁定 1024：意图分析输出为结构化 JSON（MusicQueryPlan），
+    典型输出约 200-400 tokens，1024 提供充足安全余量，同时避免
+    与本地模型的 context-length（如 8192）冲突。
     """
     try:
         provider = settings.intent_llm_provider or settings.llm_default_provider
         model_name = settings.intent_llm_model or None  # 空字符串转 None，用 provider 默认模型
-        return get_chat_model(provider=provider, model_name=model_name, temperature=0.3)
+        return get_chat_model(provider=provider, model_name=model_name, temperature=0.3, max_tokens=1024)
     except Exception:
         # 回退到默认配置
-        return get_chat_model(provider="siliconflow", temperature=0.3)
+        return get_chat_model(provider="siliconflow", temperature=0.3, max_tokens=1024)
 
 def gemini_llm(model_name: Optional[str] = None, temperature: float = 1.0):
     """便捷包装函数：快速获取 Google Gemini 模型实例

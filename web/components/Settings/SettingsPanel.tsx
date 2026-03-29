@@ -8,11 +8,12 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 
 // ---- LLM 提供商预设列表 ----
 const LLM_PROVIDERS = [
-  { value: 'siliconflow', label: 'SiliconFlow', defaultModel: 'deepseek-ai/DeepSeek-V3' },
-  { value: 'dashscope', label: '通义千问 (DashScope)', defaultModel: 'qwen-plus' },
-  { value: 'google', label: 'Google Gemini', defaultModel: 'gemini-2.5-flash' },
+  { value: 'siliconflow', label: 'SiliconFlow (API)', defaultModel: 'deepseek-ai/DeepSeek-V3.2' },
+  { value: 'dashscope', label: '通义千问 DashScope (API)', defaultModel: 'qwen-plus' },
+  { value: 'google', label: 'Google Gemini (API)', defaultModel: 'gemini-2.5-flash' },
+  { value: 'sglang', label: 'SGLang (本地推荐)', defaultModel: 'local-planner-qwen3-4b-fp8' },
   { value: 'ollama', label: 'Ollama (本地)', defaultModel: 'qwen2.5:7b' },
-  { value: 'vllm', label: 'vLLM (微调模型)', defaultModel: '' },
+  { value: 'vllm', label: 'vLLM (本地微调)', defaultModel: '' },
 ];
 
 // ---- 标签页定义 ----

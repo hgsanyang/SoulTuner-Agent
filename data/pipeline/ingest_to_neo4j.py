@@ -45,7 +45,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 将项目根目录加入 sys.path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from retrieval.neo4j_client import get_neo4j_client
@@ -66,8 +66,8 @@ DEFAULT_GEMINI_RESULT_PATH = os.path.join(
 # 默认数据集标签
 DEFAULT_DATASET = "personal"
 
-# 进度文件：断点续传用
-PROGRESS_FILE = os.path.join(str(PROJECT_ROOT), "pipeline", "ingest_progress.json")
+# 进度文件：断点续传用（与脚本同目录）
+PROGRESS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ingest_progress.json")
 
 # 多线程写入的并发数（--skip-embeddings 模式下使用）
 MAX_WORKERS = 8
@@ -313,6 +313,7 @@ class UnifiedIngestion:
             "moods": song_data.get("moods", []),
             "themes": song_data.get("themes", []),
             "scenarios": song_data.get("scenarios", []),
+            "genres": song_data.get("genres", []),
             "language": song_data.get("language", ""),
             "region": song_data.get("region", ""),
             "dataset": song_data.get("dataset", self.dataset),
@@ -336,6 +337,19 @@ class UnifiedIngestion:
         MERGE (s)-[:PERFORMED_BY]->(a)
 
         WITH s
+        OPTIONAL MATCH (s)-[r_m:HAS_MOOD]->()    DELETE r_m
+        WITH s
+        OPTIONAL MATCH (s)-[r_t:HAS_THEME]->()   DELETE r_t
+        WITH s
+        OPTIONAL MATCH (s)-[r_s:FITS_SCENARIO]->() DELETE r_s
+        WITH s
+        OPTIONAL MATCH (s)-[r_l:HAS_LANGUAGE]->() DELETE r_l
+        WITH s
+        OPTIONAL MATCH (s)-[r_r:IN_REGION]->()    DELETE r_r
+        WITH s
+        OPTIONAL MATCH (s)-[r_g:BELONGS_TO_GENRE]->() DELETE r_g
+
+        WITH s
         FOREACH (mood IN $moods |
             MERGE (m:Mood {{name: mood}})
             MERGE (s)-[:HAS_MOOD]->(m)
@@ -351,6 +365,12 @@ class UnifiedIngestion:
         FOREACH (scenario IN $scenarios |
             MERGE (sc:Scenario {{name: scenario}})
             MERGE (s)-[:FITS_SCENARIO]->(sc)
+        )
+
+        WITH s
+        FOREACH (genre IN $genres |
+            MERGE (g:Genre {{name: genre}})
+            MERGE (s)-[:BELONGS_TO_GENRE]->(g)
         )
 
         WITH s
@@ -396,6 +416,7 @@ class UnifiedIngestion:
             vibe = meta.get("vibe", "")
             language = meta.get("language", "English")
             region = meta.get("region", "")
+            genres = meta.get("genres", [])  # MTG 通常无此字段
         else:
             # 使用 Gemini 标签（个人音乐入库路径）
             tags = self._get_gemini_tags(basename)
@@ -405,6 +426,12 @@ class UnifiedIngestion:
             vibe = tags.get("vibe", "")
             language = tags.get("language", "")
             region = tags.get("region", "")
+            # genre 可能是字符串或列表（兼容旧版 JSON）
+            raw_genre = tags.get("genre", tags.get("genres", []))
+            if isinstance(raw_genre, str):
+                genres = [raw_genre] if raw_genre else []
+            else:
+                genres = raw_genre or []
 
         # 3. 构建静态 URL
         urls = self._build_static_urls(basename, ext)
@@ -420,6 +447,7 @@ class UnifiedIngestion:
             "moods": moods,
             "themes": themes,
             "scenarios": scenarios,
+            "genres": genres,
             "vibe": vibe,
             "language": language,
             "region": region,

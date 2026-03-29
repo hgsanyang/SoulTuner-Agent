@@ -38,7 +38,7 @@ case "$MODE" in
       --quantization fp8 \
       --kv-cache-dtype fp8_e5m2 \
       --mem-fraction-static 0.85 \
-      --context-length 2048 \
+      --context-length 8192 \
       --chat-template chatml
     ;;
 
@@ -57,7 +57,7 @@ case "$MODE" in
       --trust-remote-code \
       --quantization bitsandbytes \
       --mem-fraction-static 0.80 \
-      --context-length 2048 \
+      --context-length 8192 \
       --chat-template chatml
     ;;
 

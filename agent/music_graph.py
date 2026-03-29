@@ -100,30 +100,134 @@ class MusicRecommendationGraph:
             
             # ✅ with_structured_output：让模型直接输出 MusicQueryPlan Pydantic 对象
             # 底层自动处理 json_schema 约束，无需任何正则或 json.loads
-            structured_llm = get_intent_llm().with_structured_output(MusicQueryPlan)
+            _intent_llm_instance = get_intent_llm()
             
-            # ✅ Prompt 选择：统一使用完整版（含 one-shot 示例）
-            # 微调模型的 SFT 数据基于完整 prompt 生成，精简版会导致意图分类退化
-            # 如果未来用精简 prompt 重新微调，可切换为 LOCAL_PLANNER_PROMPT
-            _planner_prompt = UNIFIED_MUSIC_QUERY_PLANNER_PROMPT
+            # ✅ 根据 provider 类型选择提示词模板和 structured output 方法：
+            # 本地小模型（sglang/vllm/ollama）→ 正交化 6 示例的 LOCAL_PLANNER_PROMPT
+            #   + method='json_mode'（SGLang 不支持 function_calling 的 tools 参数，会返回 400）
+            # 云端大模型（API）→ 完整 12 示例的 UNIFIED_MUSIC_QUERY_PLANNER_PROMPT
+            #   + 默认 function_calling 模式
+            _local_providers = {"sglang", "vllm", "ollama"}
+            _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
+            if _intent_provider in _local_providers:
+                _planner_prompt = LOCAL_PLANNER_PROMPT
+                
+                if _intent_provider == "sglang":
+                    # ── SGLang + Qwen3：完全绕过 LangChain ChatOpenAI ──
+                    # LangChain 的 .bind(extra_body=...) 不可靠：首次请求能传 chat_template_kwargs，
+                    # 后续请求会丢失，导致 Qwen3 thinking 模式重新激活（0.1 tok/s vs 10 tok/s）。
+                    # 解决方案：用 httpx 直接构造 HTTP 请求体，完全控制每个字段。
+                    import httpx
+                    import json as _json
+                    
+                    from retrieval.gssc_context_builder import build_context
+                    _ctx = build_context(
+                        graphzep_facts="",
+                        chat_history=history_text,
+                        total_budget=3000,
+                    )
+                    
+                    # 渲染提示词模板
+                    _prompt = ChatPromptTemplate.from_template(_planner_prompt)
+                    _messages = _prompt.format_messages(
+                        user_input=user_input,
+                        chat_history=_ctx["chat_history"],
+                    )
+                    
+                    # 构造 OpenAI 兼容请求体
+                    _api_messages = []
+                    for m in _messages:
+                        _api_messages.append({"role": getattr(m, "type", "user"), "content": m.content})
+                    # LangChain 的 type 是 "human"/"ai"，需要映射
+                    for m in _api_messages:
+                        if m["role"] == "human":
+                            m["role"] = "user"
+                        elif m["role"] == "ai":
+                            m["role"] = "assistant"
+                    
+                    _base_url = str(_intent_llm_instance.openai_api_base).rstrip("/")
+                    _sglang_url = f"{_base_url}/chat/completions"
+                    _request_body = {
+                        "model": _intent_llm_instance.model_name,
+                        "messages": _api_messages,
+                        "max_tokens": 1024,
+                        "temperature": _intent_llm_instance.temperature,
+                        "response_format": {"type": "json_object"},
+                        "chat_template_kwargs": {"enable_thinking": False},
+                    }
+                    
+                    logger.info(f"[SGLang] POST → {_sglang_url} (model={_intent_llm_instance.model_name}, prompt_msgs={len(_api_messages)})")
+                    import time as _time
+                    _t0 = _time.time()
+                    try:
+                        async with httpx.AsyncClient(timeout=60.0) as _client:
+                            _resp = await _client.post(_sglang_url, json=_request_body)
+                    except httpx.TimeoutException as _te:
+                        _elapsed = _time.time() - _t0
+                        raise RuntimeError(f"SGLang 请求超时 ({_elapsed:.1f}s): {_sglang_url}") from _te
+                    except Exception as _he:
+                        _elapsed = _time.time() - _t0
+                        raise RuntimeError(f"SGLang HTTP 错误 ({_elapsed:.1f}s): {type(_he).__name__}: {_he}") from _he
+                    _elapsed = _time.time() - _t0
+                    
+                    if _resp.status_code != 200:
+                        raise RuntimeError(f"SGLang API 返回 {_resp.status_code}: {_resp.text[:300]}")
+                    
+                    _resp_json = _resp.json()
+                    raw_json_str = _resp_json["choices"][0]["message"]["content"]
+                    logger.info(f"[SGLang] 意图分析完成, 耗时 {_elapsed:.1f}s")
+                    
+                    # 手动 Pydantic 解析（兼容 <think>...</think> 残留）
+                    _clean = raw_json_str.strip()
+                    if "<think>" in _clean:
+                        _think_end = _clean.find("</think>")
+                        if _think_end > 0:
+                            _clean = _clean[_think_end + 8:].strip()
+                    if "```json" in _clean:
+                        _clean = _clean.split("```json")[-1].split("```")[0].strip()
+                    elif "```" in _clean:
+                        _clean = _clean.split("```")[1].strip()
+                    
+                    logger.debug(f"[SGLang] 原始 JSON 输出: {_clean[:500]}")
+                    logger.info(f"[SGLang] 原始 JSON 输出 (首100字符): {_clean[:100]}")
+                    plan = MusicQueryPlan.model_validate_json(_clean)
+                    
+                else:
+                    # vLLM / Ollama: 保留 with_structured_output 路径
+                    structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan, method="json_mode")
+                    chain = (
+                        ChatPromptTemplate.from_template(_planner_prompt)
+                        | structured_llm
+                    )
+                    from retrieval.gssc_context_builder import build_context
+                    _ctx = build_context(
+                        graphzep_facts="",
+                        chat_history=history_text,
+                        total_budget=3000,
+                    )
+                    plan: MusicQueryPlan = await chain.ainvoke({
+                        "user_input": user_input,
+                        "chat_history": _ctx["chat_history"],
+                    })
+            else:
+                _planner_prompt = UNIFIED_MUSIC_QUERY_PLANNER_PROMPT
+                structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan)
             
-            chain = (
-                ChatPromptTemplate.from_template(_planner_prompt)
-                | structured_llm
-            )
-            # [P3] GSSC Token budget management
-            # 架构分离：路由决策只看 chat_history，不看 GraphZep（防止记忆绑架路由）
-            from retrieval.gssc_context_builder import build_context
-            _ctx = build_context(
-                graphzep_facts="",  # GraphZep 不注入 Planner，仅在 HyDE 阶段使用
-                chat_history=history_text,
-                total_budget=3000,
-            )
+                chain = (
+                    ChatPromptTemplate.from_template(_planner_prompt)
+                    | structured_llm
+                )
+                from retrieval.gssc_context_builder import build_context
+                _ctx = build_context(
+                    graphzep_facts="",
+                    chat_history=history_text,
+                    total_budget=3000,
+                )
             
-            plan: MusicQueryPlan = await chain.ainvoke({
-                "user_input": user_input,
-                "chat_history": _ctx["chat_history"],
-            })
+                plan: MusicQueryPlan = await chain.ainvoke({
+                    "user_input": user_input,
+                    "chat_history": _ctx["chat_history"],
+                })
             
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(
@@ -166,24 +270,21 @@ class MusicRecommendationGraph:
     
     def route_by_intent(self, state: MusicAgentState) -> str:
         """
-        路由函数: 根据意图类型决定下一步
+        路由函数: 根据意图类型决定下一步（5 类检索策略 + 2 类功能性意图）
         """
         intent_type = state.get("intent_type", "general_chat")
         logger.info(f"根据意图 '{intent_type}' 进行路由")
-        
-        if intent_type == "play_specific_song_online":
-            return "fetch_online_music"
+
+        # 3 类检索策略意图 → 统一走 search_songs 节点（retrieval_plan 已明确 use_graph/use_vector）
+        if intent_type in ["graph_search", "hybrid_search", "vector_search", "web_search"]:
+            return "search_songs"
+        elif intent_type == "recommend_by_favorites":
+            # 查用户收藏：路由到 generate_recommendations，内部有专门的收藏召回逻辑
+            return "generate_recommendations"
         elif intent_type == "acquire_music":
             return "acquire_online_music"
-        elif intent_type == "search":
-            return "search_songs"
         elif intent_type.startswith("create_playlist"):
-            # 创建歌单意图，先分析用户偏好
             return "analyze_user_preferences"
-        elif intent_type in ["recommend_by_mood", "recommend_by_activity", 
-                            "recommend_by_genre", "recommend_by_artist", 
-                            "recommend_by_favorites"]:
-            return "generate_recommendations"
         else:
             return "general_chat"
     
@@ -1095,13 +1196,13 @@ class MusicRecommendationGraph:
         
         # 添加节点
         workflow.add_node("analyze_intent", self.analyze_intent)
-        workflow.add_node("fetch_online_music", self.fetch_online_music_node)
-        workflow.add_node("acquire_online_music", self.acquire_online_music_node)  # 🆕 数据飞轮
+        # fetch_online_music 节点已移除，播放具体歌曲统一走 graph_search → search_songs
+        workflow.add_node("acquire_online_music", self.acquire_online_music_node)  # 数据飞轮
         workflow.add_node("search_songs", self.search_songs_node)
         workflow.add_node("generate_recommendations", self.generate_recommendations_node)
-        workflow.add_node("analyze_user_preferences", self.analyze_user_preferences_node)  # ⭐ NEW
-        workflow.add_node("enhanced_recommendations", self.enhanced_recommendations_node)  # ⭐ NEW
-        workflow.add_node("create_playlist", self.create_playlist_node)  # ⭐ NEW
+        workflow.add_node("analyze_user_preferences", self.analyze_user_preferences_node)
+        workflow.add_node("enhanced_recommendations", self.enhanced_recommendations_node)
+        workflow.add_node("create_playlist", self.create_playlist_node)
         workflow.add_node("general_chat", self.general_chat_node)
         workflow.add_node("generate_explanation", self.generate_explanation)
         
@@ -1111,16 +1212,15 @@ class MusicRecommendationGraph:
         # 召回完成后 → 意图分析
         workflow.add_edge("recall_graphzep_memory", "analyze_intent")
         
-        # 添加条件边：根据意图路由
+        # 条件边：根据意图路由（移除 fetch_online_music 分支）
         workflow.add_conditional_edges(
             "analyze_intent",
             self.route_by_intent,
             {
-                "fetch_online_music": "fetch_online_music",
-                "acquire_online_music": "acquire_online_music",  # 🆕 数据飞轮
+                "acquire_online_music": "acquire_online_music",
                 "search_songs": "search_songs",
                 "generate_recommendations": "generate_recommendations",
-                "analyze_user_preferences": "analyze_user_preferences",  # ⭐ NEW
+                "analyze_user_preferences": "analyze_user_preferences",
                 "general_chat": "general_chat"
             }
         )
@@ -1146,8 +1246,7 @@ class MusicRecommendationGraph:
         )
         
         # 搜索和推荐后生成解释
-        workflow.add_edge("fetch_online_music", "generate_explanation")
-        workflow.add_edge("acquire_online_music", "generate_explanation")  # 🆕
+        workflow.add_edge("acquire_online_music", "generate_explanation")
         workflow.add_edge("search_songs", "generate_explanation")
         workflow.add_edge("generate_recommendations", "generate_explanation")
         

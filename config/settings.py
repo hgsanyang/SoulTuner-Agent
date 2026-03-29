@@ -8,12 +8,15 @@ class GlobalSettings(BaseSettings):
     """
     全局配置中心
     ============
-    所有可调参数通过此文件统一管理。
-    支持从 .env 文件或环境变量自动映射。
+    配置分工原则：
+      .env              → API 密钥、机器相关服务地址、模型部署选择（与 Key 绑定的）
+      config/settings.py → 所有功能开关、调参旋钮、检索参数（直接改 default= 即可）
+      前端设置面板       → 运行时即时调整（无需重启，关闭面板丢弃）
 
+    修改 settings.py 后重启后端生效：python startup_all.py --no-web
     使用方式：
       from config.settings import settings
-      settings.semantic_search_limit
+      settings.reranker_enabled
     """
 
     # ================================================================
@@ -29,22 +32,43 @@ class GlobalSettings(BaseSettings):
     # 2. LLM 推理参数
     # ================================================================
     llm_temperature: float = Field(default=0.7, description="LLM 默认温度（0-1，越高越随机）")
-    llm_default_provider: str = Field(default="siliconflow", description="默认 LLM 提供商")
+
+    # --- 主 LLM ---
+    # ★ 这里的 default= 就是启动时的实际值，可直接改；前端⚙️ 设置面板可运行时覆盖
+    # 可选提供商: siliconflow | dashscope | google | sglang | vllm | ollama
+    llm_default_provider: str = Field(
+        default="siliconflow",
+        validation_alias="MAIN_LLM_PROVIDER",
+        description="主 LLM 提供商（siliconflow / dashscope / google / sglang / vllm / ollama）",
+    )
     llm_default_model: str = Field(
         default="deepseek-ai/DeepSeek-V3.2",
         validation_alias="MODEL_NAME",
-        description="默认模型名称",
+        description="主 LLM 模型名称（云端 API 时为模型全名；本地时为 SGLang 部署的模型标识）",
     )
+
+    # --- 意图分析专用 LLM（Planner）---
+    # ★ 切换本地 vs API 就改这两行，或直接在前端⚙️ 设置面板修改
+    #
+    # 用 API 大模型（融合版）——一次调用输出: 意图 + 实体 + 标签 + 内联 HyDE
+    #   intent_llm_provider = "siliconflow"
+    #   intent_llm_model    = "deepseek-ai/DeepSeek-V3.2"
+    #
+    # 用本地小模型（精简版）——只输出: 意图 + 实体，HyDE 由下游独立生成
+    #   intent_llm_provider = "sglang"
+    #   intent_llm_model    = "local-planner-qwen3-4b-fp8"
     intent_llm_provider: str = Field(
         default="siliconflow",
         validation_alias="INTENT_LLM_PROVIDER",
-        description="意图分析专用 LLM 提供商（可独立于主模型配置更快/更小的模型）",
+        description="意图分析专用 LLM 提供商（siliconflow / sglang 等）",
     )
     intent_llm_model: str = Field(
-        default="",
+        default="deepseek-ai/DeepSeek-V3.2",
         validation_alias="INTENT_LLM_MODEL",
-        description="意图分析专用模型名（空则用该 provider 默认模型）",
+        description="意图分析专用模型名（空则复用主模型）",
     )
+
+    # --- HyDE 声学描述生成专用 LLM（本地模式专用；API 模式已内联，此字段留空）---
     hyde_llm_provider: str = Field(
         default="",
         validation_alias="HYDE_LLM_PROVIDER",
@@ -53,8 +77,9 @@ class GlobalSettings(BaseSettings):
     hyde_llm_model: str = Field(
         default="",
         validation_alias="HYDE_LLM_MODEL",
-        description="HyDE 声学描述生成专用模型名",
+        description="HyDE 声学描述生成专用模型名（空则复用主模型）",
     )
+
     finetuned_model_path: str = Field(
         default="",
         validation_alias="FINETUNED_MODEL_PATH",
@@ -164,10 +189,13 @@ class GlobalSettings(BaseSettings):
     )
 
     # ================================================================
-    # 6c. Cross-Encoder 精排（RRF 粗排后、Graph Affinity 前）
+    # 6c. Cross-Encoder 精排层
     # ================================================================
+    # ★ 直接修改 default= 来开关此功能，不需要在 .env 设置
+    # True  = 启用（需要加载 bge-reranker-v2-m3，占用显存，速度变慢）
+    # False = 关闭（推荐，RRF + Graph Affinity 已足够精准）
     reranker_enabled: bool = Field(
-        default=True,
+        default=False,
         description="是否启用 Cross-Encoder 精排层（bge-reranker-v2-m3）",
     )
     reranker_model_name: str = Field(
@@ -178,7 +206,6 @@ class GlobalSettings(BaseSettings):
         default=10,
         description="精排后保留的 Top K 结果",
     )
-
     reranker_device: str = Field(
         default="cuda",
         description="Cross-Encoder 推理设备（cpu / cuda）",

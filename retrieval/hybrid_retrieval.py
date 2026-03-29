@@ -1,14 +1,17 @@
 import json
 import logging
 import os
-from typing import Dict, Any, List
+import re
 import asyncio
+import unicodedata
+from typing import List, Dict, Any, Optional
 
 from tools.graphrag_search import graphrag_search
-# 【V2 升级】替换旧版 Milvus 向量检索为 Neo4j 原生图向量语义搜索
 from tools.semantic_search import semantic_search
 from tools.web_search_aggregator import _federated_search_async
+from retrieval.neo4j_client import get_neo4j_client
 from config.logging_config import get_logger
+from config.settings import settings
 from schemas.music_state import ToolOutput
 
 
@@ -152,65 +155,35 @@ class MusicHybridRetrieval:
             mood_filter = precomputed_plan.get("graph_mood_filter")
             language_filter = precomputed_plan.get("graph_language_filter")
             region_filter = precomputed_plan.get("graph_region_filter")
-            # ⚠️ 强制忽略 Planner 填的 vector_acoustic_query（4B 模型常不听指令自行填写）
-            # HyDE 声学描述统一由下游 _generate_hyde_description() 专用模块生成
-            vector_desc = ""
             web_keywords = precomputed_plan.get("web_search_keywords", "")
             need_web_search = use_web
             search_keyword = web_keywords
-            
-            # ── 确定性后处理兜底：扫描用户原文补充 LLM 漏填的过滤字段 ──
-            from tools.graphrag_search import SCENARIO_TAG_MAP, MOOD_TAG_MAP, GENRE_TAG_MAP
-            if not scenario_filter:
-                for keyword in SCENARIO_TAG_MAP:
-                    if keyword in query:
-                        scenario_filter = keyword
-                        logger.info(f"[Retrieval] 确定性兜底：从用户输入补充 scenario_filter='{keyword}'")
-                        break
-            if not mood_filter:
-                for keyword in MOOD_TAG_MAP:
-                    if keyword in query:
-                        mood_filter = keyword
-                        logger.info(f"[Retrieval] 确定性兜底：从用户输入补充 mood_filter='{keyword}'")
-                        break
-            if not genre_filter:
-                for keyword in GENRE_TAG_MAP:
-                    if keyword in query:
-                        genre_filter = keyword
-                        logger.info(f"[Retrieval] 确定性兜底：从用户输入补充 genre_filter='{keyword}'")
-                        break
-            
-            # ── 确定性兜底：语言/地区扫描 ──
-            from tools.graphrag_search import LANGUAGE_ALIAS_MAP, REGION_ALIAS_MAP
-            if not language_filter:
-                for keyword, lang in LANGUAGE_ALIAS_MAP.items():
-                    if keyword in query:
-                        language_filter = lang
-                        logger.info(f"[Retrieval] 确定性兜底：从用户输入补充 language_filter='{keyword}' → '{lang}'")
-                        break
-            if not region_filter:
-                for keyword, reg in REGION_ALIAS_MAP.items():
-                    if keyword in query:
-                        region_filter = reg
-                        logger.info(f"[Retrieval] 确定性兜底：从用户输入补充 region_filter='{keyword}' → '{reg}'")
-                        break
-            
-            # ── 调试日志：确认三维过滤字段最终值 ──
+            vector_desc = ""
+
+            # ── 调试日志：确认过滤字段最终值 ──
             logger.info(
                 f"[Retrieval] 过滤字段最终值: genre='{genre_filter}' | scenario='{scenario_filter}' | "
                 f"mood='{mood_filter}' | language='{language_filter}' | region='{region_filter}' | "
                 f"entities={graph_entities} | query='{query[:50]}'"
             )
-            
-            # ── HyDE 声学描述：use_vector=true 时始终由专用模块生成 ──
+
+            # ── HyDE 声学描述：双模式分支 ──
+            # API 模式：LLM 已在 retrieval_plan 中内联填写 vector_acoustic_query，直接使用
+            # 本地模式：vector_acoustic_query 为空，调用独立 HyDE 模块生成
             if use_vector:
-                graphzep_for_hyde = precomputed_plan.get("_graphzep_facts", "")
-                intent_type = precomputed_plan.get("_intent_type", "")
-                vector_desc = self._generate_hyde_description(
-                    query=query,
-                    graphzep_facts=graphzep_for_hyde,
-                    intent_type=intent_type,
-                )
+                vector_acoustic_query = precomputed_plan.get("vector_acoustic_query", "") or ""
+                if vector_acoustic_query:
+                    vector_desc = vector_acoustic_query
+                    logger.info(f"[HyDE] API 模式：使用 LLM 内联声学描述 ({len(vector_desc.split())} words)")
+                else:
+                    graphzep_for_hyde = precomputed_plan.get("_graphzep_facts", "")
+                    intent_type = precomputed_plan.get("_intent_type", "")
+                    logger.info("[HyDE] 本地模式：调用独立 HyDE 模块生成声学描述")
+                    vector_desc = self._generate_hyde_description(
+                        query=query,
+                        graphzep_facts=graphzep_for_hyde,
+                        intent_type=intent_type,
+                    )
         else:
             # 安全默认：同时启用图谱和向量检索
             logger.info("[Retrieval] 无预计算计划，使用默认双引擎检索")
@@ -431,6 +404,16 @@ class MusicHybridRetrieval:
     # ================================================================
 
     @staticmethod
+    def _normalize_key(title: str, artist: str) -> str:
+        """生成标准化的去重 key，消除全角/半角、标点、空格差异。"""
+        def _clean(s: str) -> str:
+            s = unicodedata.normalize("NFKC", s)  # 全角→半角
+            s = s.lower().strip()
+            s = re.sub(r"[,，、/\\\s()（）【】\[\]]+", "", s)  # 去掉标点和空格
+            return s
+        return f"{_clean(title)}_{_clean(artist)}"
+
+    @staticmethod
     def _parse_engine_results(res_str: str, engine_name: str) -> List[dict]:
         """将引擎原始 JSON 字符串解析为标准化的歌曲列表，保留原始排名。"""
         if not res_str:
@@ -442,6 +425,7 @@ class MusicHybridRetrieval:
             return []
 
         results = []
+        seen_keys = set()  # 引擎内部去重
         for rank, item in enumerate(items):
             if "error" in item:
                 logger.warning(f"Engine {engine_name} returned error: {item}")
@@ -452,6 +436,13 @@ class MusicHybridRetrieval:
             genre = item.get("genre", "")
             if genre == "Unknown":
                 genre = ""
+
+            # 标准化 key（消除全角/半角、标点差异）
+            key = HybridRetriever._normalize_key(title, artist)
+            if key in seen_keys:
+                logger.info(f"[{engine_name}] 引擎内部去重: '{title}' - '{artist}'")
+                continue
+            seen_keys.add(key)
 
             # 提取原始相似度（RRF 不直接使用，但保留用于日志和 MMR）
             raw_distance = item.get("distance", None)
@@ -464,7 +455,7 @@ class MusicHybridRetrieval:
                 raw_score = BASELINE_SIMILARITY_SCORE
 
             results.append({
-                "key": f"{title}_{artist}",
+                "key": key,
                 "rank": rank,          # 该引擎中的排名（0-based）
                 "raw_score": raw_score,
                 "engine": engine_name,
@@ -768,11 +759,21 @@ class MusicHybridRetrieval:
         else:
             final_list = []
 
-        # 将从全网转化来的真实可播歌曲加入
+        # 将从全网转化来的真实可播歌曲加入（去重后）
         if web_playable:
+            existing_keys = set()
+            for item in final_list:
+                s = item.get("song", {})
+                existing_keys.add(HybridRetriever._normalize_key(s.get("title", ""), s.get("artist", "")))
             for wp in web_playable:
                 wp["_graph_affinity"] = 0.0
-            final_list.extend(web_playable)
+                s = wp.get("song", {})
+                wp_key = HybridRetriever._normalize_key(s.get("title", ""), s.get("artist", ""))
+                if wp_key not in existing_keys:
+                    final_list.append(wp)
+                    existing_keys.add(wp_key)
+                else:
+                    logger.info(f"[Dedup] web_playable 重复跳过: {s.get('title', '')} - {s.get('artist', '')}")
 
         # ---- Step 2.5: Cross-Encoder 精排 ----
         from config.settings import settings as _settings
@@ -903,6 +904,21 @@ class MusicHybridRetrieval:
             final_list = selected
             logger.info(f"[MMR-Jaccard] 多样性重排序完成，流派分布: {[r.get('song', {}).get('genre', '?') for r in final_list[:5]]}")
         
+        # ---- 最终安全去重 ----
+        seen_final = set()
+        deduped_list = []
+        for item in final_list:
+            s = item.get("song", {})
+            fk = HybridRetriever._normalize_key(s.get("title", ""), s.get("artist", ""))
+            if fk not in seen_final:
+                seen_final.add(fk)
+                deduped_list.append(item)
+            else:
+                logger.info(f"[Dedup-Final] 最终去重: {s.get('title', '')} - {s.get('artist', '')}")
+        if len(deduped_list) < len(final_list):
+            logger.info(f"[Dedup-Final] 去重前={len(final_list)}, 去重后={len(deduped_list)}")
+        final_list = deduped_list
+
         # 如果有全网聚合结果，强行塞一条纯文本作为上下文给大模型，防止丢了
         if web_res and "未能找到相关有效信息" not in web_res:
             final_list.insert(0, {

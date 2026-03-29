@@ -1364,31 +1364,16 @@ def graphrag_search(query: str, limit: int = 5) -> str:
 
 
 
-        # ──「语言条件」──
-
+        # ──「语言 + 地区条件」── 属性过滤（不是关系节点）
+        prop_filters = []
         if language_normalized:
-
-            cypher_query += "MATCH (s)-[:HAS_LANGUAGE]->(lang:Language)\n"
-
-            cypher_query += f"WHERE toLower(lang.name) = toLower('{language_normalized}')\n"
-
-        else:
-
-            cypher_query += "OPTIONAL MATCH (s)-[:HAS_LANGUAGE]->(lang:Language)\n"
-
-
-
-        # ──「地区条件」──
-
+            prop_filters.append(f"toLower(s.language) = toLower('{language_normalized}')")
         if region_normalized:
+            prop_filters.append(f"toLower(s.region) = toLower('{region_normalized}')")
 
-            cypher_query += "MATCH (s)-[:IN_REGION]->(reg:Region)\n"
-
-            cypher_query += f"WHERE toLower(reg.name) = toLower('{region_normalized}')\n"
-
-        else:
-
-            cypher_query += "OPTIONAL MATCH (s)-[:IN_REGION]->(reg:Region)\n"
+        if prop_filters:
+            filter_str = " AND ".join(prop_filters)
+            cypher_query += f"WITH s, a, g, t, m, sc WHERE {filter_str}\n"
 
 
 
@@ -1412,8 +1397,8 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         collect(DISTINCT g.name) AS genres,
         collect(DISTINCT m.name) AS moods,
         collect(DISTINCT sc.name) AS scenarios,
-        coalesce(lang.name, s.language, 'Unknown') AS language,
-        coalesce(reg.name, s.region, 'Unknown') AS region,
+        coalesce(s.language, 'Unknown') AS language,
+        coalesce(s.region, 'Unknown') AS region,
         s.album AS album,
         s.audio_url AS audio_url,
         s.cover_url AS cover_url,

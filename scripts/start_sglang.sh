@@ -56,8 +56,8 @@ HOST="0.0.0.0"
 #
 QUANTIZATION="fp8"
 KV_CACHE_DTYPE="fp8_e5m2"
-MEM_FRACTION=0.70
-CONTEXT_LENGTH=4096
+MEM_FRACTION=0.81
+CONTEXT_LENGTH=8192
 MAX_RUNNING_REQUESTS=1
 
 # ----------------------------
@@ -119,8 +119,8 @@ python -m sglang.launch_server \
     --port "$PORT" \
     --host "$HOST" \
     --quantization "$QUANTIZATION" \
+    --kv-cache-dtype "$KV_CACHE_DTYPE" \
     --mem-fraction-static "$MEM_FRACTION" \
     --context-length "$CONTEXT_LENGTH" \
     --max-running-requests "$MAX_RUNNING_REQUESTS" \
-    --disable-cuda-graph \
     --attention-backend triton

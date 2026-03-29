@@ -22,10 +22,23 @@
    - 邓紫棋(G.E.M.)、张学友等港乐属于 "Hong Kong"
    - 周杰伦、陈奕迅(台)、五月天等台湾乐手属于 "Taiwan"
    - 欧美歌手（如 Taylor Swift, Current Joys, Benson Boone 等）属于 "Western"
-8. 所有标签使用英文单词，保持专业和统一。不要发明已有近义词之外的新标签。
+8. 判断歌曲的音乐流派 (genre)，提取 1~2 个最准确的流派标签。
+   必须使用以下固定的英文值，不要发明新词：
+   "Rock", "Pop", "Folk", "Indie", "Alternative", "Electronic", "Hip-Hop", "R&B", "Jazz", "Classical",
+   "Metal", "Punk", "Country", "Blues", "Soul", "Ballad", "Ambient", "Post-Rock", "Shoegaze",
+   "Singer-Songwriter", "Acoustic", "Experimental", "World Music", "Mandopop", "Cantopop", "J-Pop", "K-Pop"
+   - 例如：陈粒 → "Folk", "Indie"；草东没有派对 → "Alternative", "Rock"；窦唯 → "Rock", "Ambient"
+   - 如果是纯器乐/古典，可选 "Classical" 或 "Ambient"
+9. 所有标签使用英文单词，保持专业和统一。不要发明已有近义词之外的新标签。
+
+【联网搜索要求】你拥有联网搜索能力，这是你完成本任务的主要工具之一。对于每一首歌，请：
+- 搜索确认歌手的 **来源地区**（尤其是独立乐队、小众艺术家、日本/台湾/香港乐手等）
+- 搜索确认 **音乐流派**（尤其是风格融合、看名字无法判断流派的歌手）
+- 有歌词较少的歌，搜索该歌手/专辑的风格背景来辅助推断情绪和场景标签
+- 对艺名/译名歌手（如台湾、香港、日本、独立乐队）搜索真实身份信息
 
 特殊情况处理：
-- 如果歌词为纯音乐/器乐（无实质文字歌词），请将 moods 设为 ["Instrumental"]，themes 设为 []，language 设为 "Instrumental"，scenario 和 vibe 仍然根据歌曲名和专辑信息尽力推断。
+- 如果歌词为纯音乐/器乐（无实质文字歌词），请根据歌曲名、歌手风格和专辑名尽力推断其 moods（如 "Peaceful"、"Relaxing"、"Dreamy"、"Melancholy" 等真实情绪）、themes（如有则填，否则 []）、scenarios 和 vibe。language 固定设为 "Instrumental"。【重要】切勿将 "Instrumental" 放入 moods 列表——它是语言/类型属性而非情绪描述词。
 - 如果歌词极短或信息不足，请根据歌名、歌手风格和专辑名辅助推断。
 
 请严格返回一个纯净的 JSON 数组。注意以下约束：
@@ -43,7 +56,8 @@
         "scenarios": ["Late Night", "Commute"],
         "vibe": "Indie",
         "language": "Chinese",
-        "region": "Mainland China"
+        "region": "Mainland China",
+        "genre": ["Folk", "Indie"]
     },
     {
         "filename": "A Different Age - Current Joys.lrc",
@@ -52,7 +66,8 @@
         "scenarios": ["Late Night", "Driving"],
         "vibe": "Indie",
         "language": "English",
-        "region": "Western"
+        "region": "Western",
+        "genre": ["Indie", "Alternative"]
     },
     ...
 ]
@@ -215,6 +230,43 @@ Then I guess I'll just never know
 Seems such a long time ago
 
 --------------------------
+【歌曲文件】: 0909 ll - 法兹乐队 FAZI.lrc
+【基本信息】:
+  歌名: 0909 ll
+  歌手: 法兹乐队 FAZI
+  专辑: 童心之源 The Root of Innocence
+  时长: 5分31秒
+【歌词内容】:
+属于我们的时间
+不能丢失
+也不要被偷走
+让时间 停止吧
+你顺便把我，把我带走
+我希望身体，有个口袋
+随时可以，把你装进带走
+你从心中走来，空气弥漫着爱
+世界开始旋转，世界开始旋转
+临近终点的时候，为我指引方向
+世界开始旋转，世界开始旋转
+属于我们的时间
+不能丢失
+也不要被偷走
+让时间 停止吧
+你顺便把我，把我带走
+我希望身体，有个口袋
+随时可以，把你装进带走
+你从心中走来，空气弥漫着爱
+世界开始旋转，世界开始旋转
+临近终点的时候，为我指引方向
+世界开始旋转，世界开始旋转
+握着你的手，握着你的手
+握着你的手，握着你的手
+你从心中走来，空气弥漫着爱
+世界开始旋转，世界开始旋转
+临近终点的时候，为我指引方向
+世界开始旋转，世界开始旋转
+
+--------------------------
 【歌曲文件】: 10 Hz Alpha Thunderstorm (Extended Version) - White Noise Meditation.lrc
 【基本信息】:
   歌名: 10 Hz Alpha Thunderstorm (Extended Version)
@@ -255,6 +307,44 @@ Then we'd go to some party
 Oh really, your folks are away now?
 Alright I'm coming...
 I'll be right there.
+
+--------------------------
+【歌曲文件】: 13月 - downt.lrc
+【基本信息】:
+  歌名: 13月
+  歌手: downt
+  专辑: Underlight & Aftertime
+  时长: 8分30秒
+【歌词内容】:
+期待するほどでもない
+きみの目に映ったものが正しいんだ
+美しすぎて目を合わせることすらできない
+息を吸うのをためらっては
+底抜けのコップにそそぎつづけ
+手応えのない毎日
+悩んでるあの子に相槌をうった
+まあ、いっか
+いつまでたっても終わらないこの感覚
+当分の惰性な生活だって
+十分間に合っているし
+ねえ 今も気付いたら
+泡のように消えてしまうでしょう
+どこへいってしまうの
+きみのその細い指は
+だれも知らない
+だれも気づかない
+だれの頭にも残らないよ
+明日起きたらコーヒーでも飲もうよ
+ぼくらだけが13月のままだ
+何度もここで目が醒めるよ
+身を汚す影すら 心地よく遠のく
+もうだれもこないでくれ！
+傾く夕陽のすべてを知ろうともせず
+みつめていた
+何度もここで目を醒ますよ
+吹き荒れる風に飲み込まれようとも
+この手をつないで 忘れないでくれ
+どこから終わりがはじまろうとしても
 
 --------------------------
 【歌曲文件】: 15 Step - Radiohead.lrc
@@ -495,6 +585,36 @@ Atlantis full of cheer
 I can hear Atlantis full of cheer
 
 --------------------------
+【歌曲文件】: 1984 - andymori.lrc
+【基本信息】:
+  歌名: 1984
+  歌手: andymori
+  专辑: ファンファーレと熱狂
+  时长: 4分46秒
+【歌词内容】:
+5限が終わるのを待ってたわけもわからないまま
+椅子取りゲームへの手続きはまるで永遠のようなんだ
+真っ赤に染まっていく公園で自転車を追いかけた
+誰もが兄弟のように他人のように先を急いだんだ それは
+ファンファーレと熱狂 赤い太陽
+5時のサイレン 6時の一番星
+1984 花に囲まれて生まれた
+疑うことばかり覚えたのは戦争映画の見すぎか
+親たちが追い掛けた白人たちがロックスターを追い掛けた
+か弱い僕もきっとその後に続いたんだ
+1984 裸で泣いてた君は
+どこか遠い国の街角で同じように泣いている
+誰かに抱かれながら
+ファンファーレと熱狂 赤い太陽
+5時のサイレン 6時の一番星
+ファンファーレと熱狂 赤い太陽
+5時のサイレン 6時の一番星
+ファンファーレと熱狂 赤い太陽
+5時のサイレン 6時の一番星
+ファンファーレと熱狂 赤い太陽
+5時のサイレン 6時の一番星
+
+--------------------------
 【歌曲文件】: 1995 - The Radio Dept..lrc
 【基本信息】:
   歌名: 1995
@@ -678,6 +798,152 @@ Nothing he's got he really needs
 Twenty-first century schizoid man
 
 --------------------------
+【歌曲文件】: 25コ目の染色体 - RADWIMPS.lrc
+【基本信息】:
+  歌名: 25コ目の染色体
+  歌手: RADWIMPS
+  专辑: RADWIMPS 3 ~無人島に持っていき忘れた一枚~
+  时长: 5分16秒
+【歌词内容】:
+あなたがくれたモノ たくさん僕持ってる
+それを今ひとつずつ数えてる
+1、2、3個目が涙腺をノックする
+131個目が瞼にのったよ
+忘れてた泣き方
+でも
+今ここにある何か
+目を閉じても零れそうな気がして
+I will die for you,
+and I will live for you
+I will die for you,
+there is nothing more that I could really say
+to you
+あなたが死ぬ そのまさに一日前に
+僕の息を止めてください
+これが一生のお願い
+あなたが生きるその最期の日に僕は
+ソラからこの世が何色に染まるか当てたいんだ
+ここと天国のちょうど真ん中
+月から手のばすあのあたりかな
+あそこから見える景色
+目を閉じても覗けそうな気がして
+I will die for you
+and I will live for you
+I will die for you
+well you never ever told me to
+次の世の僕らはどうしよう?
+生まれ変わってまためぐり合って
+とかは もうめんどいからなしにしよう 一つの命として生まれよう
+そうすりゃケンカもしないですむ どちらかが先に死ぬこともない
+そして同じ友達を持ち みんなで祝おうよ誕生日
+あえてここでケーキ二つ用意 ショートとチョコ そこに特に意味はない
+ハッピーな時は2倍笑い 2倍顔にシワを残すんだい
+これが僕の2番目のお願い 2つ目の一生のお願い
+I will die for you
+and I will live for you
+I will cry for you
+because you're the one who told me how
+いつか生まれる二人の命 その時がきたらどうか君に
+そっくりなベイビーであって欲しい 無理承知で100%君の遺伝子
+伝わりますように 俺にはこれっぽっちも似ていませんように
+寝る前に毎晩 手を合わせるんだ
+そんなこと言うと いつも君は僕に似てほしいなんて言うの
+そんなのは絶対いやだよ 強いて言うなら俺のこの
+ハッピー運とラッキー運だけは一つずつ染色体に
+のせて
+あげて
+ほしいな
+
+--------------------------
+【歌曲文件】: 29 - 许钧.lrc
+【基本信息】:
+  歌名: 29
+  歌手: 许钧
+  专辑: 29
+  时长: 6分17秒
+【歌词内容】:
+制作人：许钧
+音乐总监：胡晨
+编曲：许钧/胡晨
+木吉他：胡晨
+电吉他：许钧/胡晨/刘巨然
+钢琴：黄歆婷
+贝斯：丹尼奥
+鼓：盛雄轩
+缩混：刘巨然/许钧
+和声：许钧
+和声编写：许钧
+录音师：崔桓 韩毅 罗颢夫
+录音室：响鼓录音棚/O2录音棚
+母带处理工程师：Ryan Smith
+母带处理录音室：Sterling Sound Studio
+越过山川
+前路虽不盎然
+五彩斑斓
+看起来缺少
+可惜遗憾
+只是
+一根筋
+两下思绪
+都怪言语 虽突破天际 但未曾飞起
+转过头
+空有情怀 止步 发呆
+未涉险滩
+孤单不孤单
+也不曾仰望
+贴地行走 表示沉默
+惺惺念念 惴惴不安
+羞于言说 品尝寂寞
+未来若遇到美好光景
+记得告诉我
+没有答案
+没有硝烟弥漫
+固执己见
+一头扎进 灯火阑珊
+过于紧张 举止奇怪
+闭口不谈 左顾右盼
+最终气急败坏
+假以自在
+没有答案
+没有硝烟弥漫
+愿你酷的像风
+野的像狗
+扎进灯火阑珊
+没有答案
+只有硝烟弥漫
+愿你酷的像风
+野的像狗
+扎进灯火阑珊
+没有答案
+没有硝烟弥漫
+愿你酷的像风
+野的像狗
+扎进灯火阑珊
+没有答案
+只有硝烟弥漫
+愿你酷的像风
+野的像狗
+扎进灯火阑珊
+没有答案
+没有答案
+没有答案
+不会有答案
+越过山川
+前路若不盎然
+
+--------------------------
+【歌曲文件】: 4 - aesthetics across the color line.lrc
+【基本信息】:
+  歌名: 4
+  歌手: aesthetics across the color line
+  专辑: Self-Titled
+  时长: 2分27秒
+【歌词内容】:
+I love myself with you
+I live my life for you
+I love you and I hate you
+
+--------------------------
 【歌曲文件】: 410 - ヨルシカ.lrc
 【基本信息】:
   歌名: 4/10
@@ -686,6 +952,93 @@ Twenty-first century schizoid man
   时长: 2分50秒
 【歌词内容】:
 
+
+--------------------------
+【歌曲文件】: 44 Seconds Road Movie - SoulFa 灵魂沙发.lrc
+【基本信息】:
+  歌名: 44 Seconds Road Movie
+  歌手: SoulFa 灵魂沙发
+  专辑: 44 Seconds Road Movie
+  时长: 4分44秒
+【歌词内容】:
+奔驰在最寂寞的公路
+引擎咆哮着像在 宣誓什么
+天边绽放破晓的光芒
+但那美好景色从不是我目的
+生存在这疯狂的年代
+也不愿浪费所有 喧嚣静默
+就算拥有年少和轻狂
+没那浪漫和自由就不算活过
+不管 精神是恍惚
+后头 还有几手啤酒
+故事 只剩四十四秒钟
+在我的脑袋里面
+重复着一遍又一遍
+追寻无边的疆界
+和遥远的明天
+我听见 我听见
+风在耳边
+把所有烦恼都吹不见
+让我活在这瞬间
+猖狂的冒险
+在我的脑袋里面
+重复着一遍又一遍
+追寻无边的疆界
+和遥远的明天
+我听见 我听见
+风在耳边
+把所有烦恼都吹不见
+让我活在这瞬间
+猖狂的冒险
+在城市我们四处流浪
+在荒野我们升起火光
+在白天我们没有理想
+在黑夜我们大声的唱
+在城市我们四处流浪
+在荒野我们升起火光
+在白天我们没有理想
+在黑夜我们大声的唱
+
+--------------------------
+【歌曲文件】: 451 - ヨルシカ.lrc
+【基本信息】:
+  歌名: 451
+  歌手: ヨルシカ
+  专辑: 幻燈
+  时长: 3分29秒
+【歌词内容】:
+あの太陽を見てた
+深く燃えてる
+見れば胸の辺りが少し燃えてる
+道を行く誰かが声を上げた
+「見ろよ、変な男」と笑いながら
+指の先で触れた紙が一つ遂に燃えた
+さぁ引火して　燃やして　燃やして　燃やして　燃やして　燃やして
+喜びを愛して
+さぁ昇華して　踊って　踊って　踊って　踊って　踊って　踊って
+踊って
+ほら、集まる人の顔が見える
+俺の蒔いた炎の意図を探してる
+見ろよ、変な奴らだ
+そんなに声を荒げて
+たかが炎一つに熱を上げてる
+燃えろ　早く　響く怒声の中で
+紙の束よ赤く盛って
+あぁ面倒くせえ　さぁ燃やして　燃やして　燃やして　燃やして　燃やして
+悲しみも愛して
+さぁ放火して　踊って　踊って　踊って　踊って　踊って　踊って
+踊って
+触れて消して触れて消して
+触れて胸の窓を開けて
+早く燃えて灰を見せて
+奥の奥に燻ぶる魂に
+さぁ引火して　燃やして　燃やして　燃やして　燃やして　燃やして
+妬けるほど愛して！
+さぁ放火して　燃やして　燃やして　燃やして　燃やして　燃やして
+飽きるまで愛して
+さぁ消費して　踊って　踊って　踊って　踊って　踊って　踊って
+踊って
+さぁ創造して　燃やして　燃やして　燃やして　燃やして　燃やして　燃やして
 
 --------------------------
 【歌曲文件】: 4am - girl in red.lrc
@@ -884,6 +1237,35 @@ Oh, all the poets are writing memoirs
 And I'm still singing songs
 And I wish you could sing along
 But this song is a joke and the melody I wrote, wrong!
+
+--------------------------
+【歌曲文件】: A Forest (live unplugged version) - The Cure.lrc
+【基本信息】:
+  歌名: A Forest (live unplugged version)
+  歌手: The Cure
+  专辑: Greatest Hits
+  时长: 4分50秒
+【歌词内容】:
+Come closer and see
+See into the trees
+Find the girl
+If you can
+See into the dark
+Just follow your eyes
+I hear her voice
+Calling my name
+The sound is deep
+In the dark
+And start to run
+Into the trees
+Suddenly I stop
+But I know it's too late
+I'm lost in a forest
+All alone
+The girl was never there
+It's always the same
+I'm running towards nothing
+Again and again and again and again
 
 --------------------------
 【歌曲文件】: A Million Signs - Vividry.lrc
@@ -1089,6 +1471,37 @@ So I'm just gonna...
   时长: 2分29秒
 【歌词内容】:
 
+
+--------------------------
+【歌曲文件】: Across the Sea - The KVB.lrc
+【基本信息】:
+  歌名: Across the Sea
+  歌手: The KVB
+  专辑: Out of Body
+  时长: 2分48秒
+【歌词内容】:
+Drifting out
+With the breeze
+Hoping to
+Just disappear
+Looking out
+Across the sea
+There's nothing here
+For you to feel
+Changing now
+Just like the tide
+Float away
+With your mind
+Swimming to
+With the shore
+Dry yourself
+Clear your mind
+There's nothing left
+For you or me
+Sinking down
+Just like a stone
+No one hears
+You're all alone
 
 --------------------------
 【歌曲文件】: Across The Universe (Remastered) - The Beatles.lrc
@@ -1320,6 +1733,60 @@ But I've nothing left to say
 No echo in this place
 
 --------------------------
+【歌曲文件】: Ain't My Man - 张悬.lrc
+【基本信息】:
+  歌名: Ain't My Man
+  歌手: 张悬
+  专辑: my life will…
+  时长: 3分47秒
+【歌词内容】:
+他用着所有语言
+让你等了才去发现
+全都是误会
+还想稳当拿捏
+才学会清醒并非解决
+多少都沾了点
+舔着过期点缀
+一种不算及格的甜
+拥抱后瞬间的狼狈
+揣摩着字眼找合理的脸
+He isn't no my man
+收敛也只是安全的消遣
+He isn't no my man
+He's no my man
+他说都有感觉
+让你等了才去发现
+什么都没变
+还想稳当拿捏
+才学会清醒并非解决
+多少都沾了点
+舔着过期点缀
+一种不算及格的甜
+那上下尴尬的完美
+揣摩着字眼找合理的脸
+He isn't no my man
+收敛也只是安全的消遣
+He isn't no my man
+He's no my man...
+乏味的机会
+He's no my man...
+抢先的疲惫
+（爱这般缺陷又这般亲切）
+（可快乐怎么筛选）
+收敛也只是安全的消遣
+谁不准备开心表演？
+He's no my man
+他用完所有语言
+让你等了才去误会
+Producer: Bean
+Drums: Rasmus Kihlberg
+E.Guitar/A.Guitar: Peter Masalkovski
+Piano arrangement: ciacia
+Chorus arrangement: Bean
+Engineer: Herman Sdöerström/Patrik Bartosch/Peter Masalkovski/Bean
+Mixing Engineer: Paul Yan
+
+--------------------------
 【歌曲文件】: Air Born - Camel.lrc
 【基本信息】:
   歌名: Air Born
@@ -1390,6 +1857,71 @@ Damn it all and blow it all,
 Sad memories I cannot recall,
 Who thought I would fall,
 A slave to demon alcohol.
+
+--------------------------
+【歌曲文件】: All Around the World - Oasis.lrc
+【基本信息】:
+  歌名: All Around the World
+  歌手: Oasis
+  专辑: All Around The World
+  时长: 9分41秒
+【歌词内容】:
+All around the world
+Oasis
+It's a bit early in the midnight hour for me
+To go through all the things that I want to be
+I don't believe in everything I see
+You know I'm blind so why d'you disagree?
+So take me away cos I just don't want to stay
+And the lies you make me say
+Are getting deeper everyday
+These are crazy days but they make me shine
+Time keeps rolling by
+All around the world, you've got to spread the word
+Tell them what you heard
+We're gonna make a better day
+All around the world, you've gotta spread the word
+Tell them what you heard
+You know it's gonna be o.k.
+So what you gonna do when the wallse falling down?
+You never move you never make a sound
+So where you gonna swim with the ridges that you found?
+If you're lost at sea, well I hope that you drown
+So take me away cos I just don't want to stay
+And the lies you make me say
+Are getting deeper everyday
+These are crazy days but they make me shine
+Time keeps rolling by
+All around the world, you've got to spread the word
+Tell them what you heard
+We're gonna make a better day
+All around the world, you've gotta spread the word
+Tell them what you heard
+You know it's gonna be o.k.
+All around the world,you've gotta spread the word
+Tell them what you heard
+We're gonna make a better day
+All around the world, you've gotta spread the word
+Tell them what you heard
+You know it's gonna be o.k.
+All around the world, you've got to spread the word
+Tell them what you heard
+We're gonna make a better day
+All around the world, you've gotta spread the word
+Tell them what you heard
+You know it's gonna be o.k.
+All around the world, you've got to spread the word
+Tell them what you heard
+We're gonna make a better day
+All around the world, you've gotta spread the word
+Tell them what you heard
+You know it's gonna be o.k.
+All around the world, you've got to spread the word
+Tell them what you heard
+We're gonna make a better day
+All around the world, you've gotta spread the word
+Tell them what you heard
+You know it's gonna be o.k.
 
 --------------------------
 【歌曲文件】: All My Life - WILD.lrc
@@ -1490,6 +2022,45 @@ Something really, really wrong with that
 I know is to be true
 (Ha-ah)
 (Ha-ah)
+
+--------------------------
+【歌曲文件】: Alone In The Evening (1994) - The fin..lrc
+【基本信息】:
+  歌名: Alone In The Evening (1994)
+  歌手: The fin.
+  专辑: There
+  时长: 1分51秒
+【歌词内容】:
+纯音乐，请欣赏
+
+--------------------------
+【歌曲文件】: ALRIGHT - The Birthday.lrc
+【基本信息】:
+  歌名: ALRIGHT
+  歌手: The Birthday
+  专辑: プレスファクトリー
+  时长: 4分28秒
+【歌词内容】:
+知らない国の艦隊が来て 鉄のカタマリを
+22発撃ち込まれたけど 誰も死ななかった
+静かに目を閉じて王様は ゆっくりと語る
+敵は味方ではないけれども 敵でもないんだと
+夢をみようぜBABY 世界中どこでも
+空は青いはず きっとうまくゆくさ
+路地裏でくらすネズミ達はドン・ジョージの焼く
+ピザがお気に入りだったけれど あの日から消えた
+夢をみようぜBABY 世界中どこでも
+空は青いはず きっとうまくゆくさ
+電源を切ってさぁ見上げよう はるか先の星
+誰がいるのか 裸のままの聖火ランナー
+夢をみようぜBABY 世界中どこでも
+空は青いはず きっとうまくゆくさ
+夢をみようぜBABY 世界中どこでも
+空は青いはず きっとうまくゆくさ
+夢をみようぜBABY
+夢をみようぜBABY
+夢をみようぜBABY
+夢をみようぜBABY
 
 --------------------------
 【歌曲文件】: Always & Forever - Lily Kershaw.lrc
@@ -1688,6 +2259,34 @@ bye, forgetting everyone
 Eleven high, ride a wave
 
 --------------------------
+【歌曲文件】: Anchor - Motorama.lrc
+【基本信息】:
+  歌名: Anchor
+  歌手: Motorama
+  专辑: Horse
+  时长: 3分16秒
+【歌词内容】:
+With the foam of the waves she comes
+They're right we'll collapse
+A certain female in the hands of purity
+She was the first she was the last I thought
+She was the first she was the last I thought
+She was the first she was the last I thought
+An ocean knows our time has faded
+She was the first she was the last
+She was the first she was the last
+With the heat of the sun she comes
+They're right we'll collapse
+A certain female in the hands of dignity
+She was the first she was the last I thought
+She was the first she was the last I thought
+She was the first she was the last I thought
+An ocean knows our time has faded
+She was the first she was the last
+She was the first she was the last I thought
+She was the first she was the last
+
+--------------------------
 【歌曲文件】: And I Love Her - Kurt Cobain.lrc
 【基本信息】:
   歌名: And I Love Her
@@ -1878,6 +2477,54 @@ The Bulls are already out there
 Pink Aaaaaaaaaaaaaaaaaaaaaaaarrrrrgh!
 
 --------------------------
+【歌曲文件】: Another Chance - Motorama.lrc
+【基本信息】:
+  歌名: Another Chance
+  歌手: Motorama
+  专辑: Another Chance
+  时长: 4分8秒
+【歌词内容】:
+A little heart with mighty beat
+Time is hitting like a brick
+Take another chance to believe
+You’ll see a trail in the sky
+Birds like angels sing in choir
+In a contrast to the world we live in
+In a whirlpool of all powers
+We live
+And another chance is ours
+Believe
+Give a hint for a secret date
+The smell of seconds in the flame
+Give another chance to believe
+I see a trail in the sky
+Hands on a clock are running wild
+Summer, Autumn, Winter, singing Spring
+In a whirlpool of all powers
+We live
+And another chance is ours
+Believe
+Our mortality is injustice
+What we have to overcome
+Our mortality is injustice
+It’s all wrong
+Our mortality is injustice
+What we have to overcome
+Our mortality is injustice
+It’s all wrong
+Our mortality is injustice
+What we have to overcome
+Our mortality is injustice
+It’s all wrong
+Our mortality is injustice
+What we have to overcome
+Our mortality is injustice
+It’s all wrong
+All wrong
+All wrong
+All wrong
+
+--------------------------
 【歌曲文件】: Another One - Mac Demarco.lrc
 【基本信息】:
   歌名: Another One
@@ -2036,6 +2683,101 @@ and a screaming head
 under the april sky
 under the april sun
 under the april sky
+
+--------------------------
+【歌曲文件】: Arabian Knights - Siouxsie and the Banshees.lrc
+【基本信息】:
+  歌名: Arabian Knights
+  歌手: Siouxsie and the Banshees
+  专辑: Juju (Remastered & Expanded)
+  时长: 3分5秒
+【歌词内容】:
+The jewel the price
+Looking into your eyes
+Cool pools drawn your mind
+What else you find
+I hear a rumour it was just a rumour
+I heard a rumour
+What have you done to her
+Myriad lights
+They said I'd be impressed
+Arabian Knights at your primitive best
+A tourist oasis
+Reflects in seedy sunshades
+A monstrous oil tanker
+It's wound bleeding in seas
+I heard a rumour
+What have you done to her
+I heard a rumour
+What have you done to her
+Veiled behind screens
+Kept as your baby machine
+Whilst you conquer more orifices
+Of boys goats and things
+Ripped out sheeps eyes no forks or knives
+Myriad lights they said I'd be impressed
+Arabian Knights at your primitive best
+I heard a rumour
+What have you done to her
+I heard a rumor
+What have you done to her
+I heard a rumor
+
+--------------------------
+【歌曲文件】: Arrows - She Her Her Hers.lrc
+【基本信息】:
+  歌名: Arrows
+  歌手: She Her Her Hers
+  专辑: Arrows
+  时长: 4分26秒
+【歌词内容】:
+差異のない 舞台ではじまる
+そばにおいでといいたい
+迎えたい 志向の息吹を
+ここにおいでといいたい
+風任せ
+時任せ
+最大級の包囲網
+敷きたいぐらいの
+行き過ぎた思いが
+絡まる程の
+この上ない程の
+よろこびに逢えたら
+風の便り
+時の便り
+絶え間なく 白色注ぐ
+そばにおいでといいたい
+響かせて 新たな呼吸
+ここにおいでといいたい
+風任せ
+時任せ
+最大級の包囲網
+敷きたいぐらいの
+行き過ぎた思いが
+絡まる程の
+この上ない程の
+よろこびに逢えたら
+風の便り
+時の便り
+重なる日くるかな
+時計の針みたく
+おもいこがれて
+最愛級の抱擁
+なんて売り文句で
+恥じらいも何もうせ
+引き寄せられたら
+この上ない程の
+よろこびに逢えたら
+風の便り
+時の便り
+最大級の包囲網
+敷きたいぐらいの
+行き過ぎた思いが
+絡まる程の
+この上ない程の
+よろこびに逢えたら
+風の便り
+時の便り
 
 --------------------------
 【歌曲文件】: As It Was - Harry Grover.lrc
@@ -2226,6 +2968,71 @@ The sound surrounds the icy waters under
 Lime and limpid green
 The sound surrounds the icy waters
 Underground
+
+--------------------------
+【歌曲文件】: Autumn Wounds - Soror Dolorosa.lrc
+【基本信息】:
+  歌名: Autumn Wounds
+  歌手: Soror Dolorosa
+  专辑: Blind Scenes
+  时长: 5分27秒
+【歌词内容】:
+Oh unfortunate
+Partner of mine
+Beautiful lover
+Tragic and silent
+Let me slide
+One more time
+Falling into your winter's cradle
+Let me slide
+One more time
+Falling into your winter's cradle
+How many years have you stood beside me?
+Faithful and pious
+Graceful and pious
+How many years did you stand for me?
+Faithful and pious
+How much this tired body
+Corrupted in every ways
+Left into your arms
+With numerous and all tortured folds
+How much this tired body
+Corrupted in every ways
+Left into your arms
+With numerous
+Innumerous and tortured folds
+Tortured folds
+Tortured folds
+Tortured folds
+Here my soul will come
+To forget the time
+Unchanging and conspirator
+Unchanging and disintegrator
+To give you
+In a cold and shady gift
+My autumn
+My autumn
+My autumn
+Autumn wounds
+Here my soul will come
+To forget the time
+Unchanging and conspirator
+Unchanging and disintegrator
+To give you
+In a cold and shady gift
+My autumn
+My autumn
+My autumn
+Autumn wounds
+My autumn
+My autumn
+My autumn wounds
+To give you
+In a cold and shady gift
+My autumn
+My autumn
+My autumn wounds
+My autumn wounds...
 
 --------------------------
 【歌曲文件】: Babe I'm Gonna Leave You (Remaster) - Led Zeppelin.lrc
@@ -2787,6 +3594,55 @@ the best, the best of you?
 Oh...
 
 --------------------------
+【歌曲文件】: BIRTHDAY - ReoNa.lrc
+【基本信息】:
+  歌名: BIRTHDAY
+  歌手: ReoNa
+  专辑: unknown
+  时长: 3分36秒
+【歌词内容】:
+浅く眠った　夜の終わりは
+砂細工の夢を　見るんだ
+ふって吹けば　消えるまぼろし
+なんのために　苦しめるの
+叶わなくて　息絶えた
+未来を避けて　何処まで行こう
+明日が来るのは嫌だ
+でも　ここで終わるのは　もっと嫌
+わたしの今日は　続くよ
+耳を塞いだって　続くよ
+止まない　ノイズたちが
+「まだ　消えるな」とさ
+生きていたくなど　ないよ
+でも　死にたいわけじゃ　ないから
+こんな　痛みにも
+理由を付けるよ
+いつか　笑うためと
+理由を付けるよ
+明日の予定がまだ　あったから
+小さな命を　拾ったから
+罪も　憎しみも　その一つだ
+わたしの中の　サイレントノイズ
+孤島みたいな部屋からは
+溺れそうな海が見える
+明日が来るのが怖いよ
+でも　優しい声を聞きたいよ
+「誰も　悲しませないで
+迷惑の一つも　掛けずに」
+砂細工みたいには
+なれませんでした
+わたしの今日は　続くよ
+耳を塞いだって　続くよ
+止まない　ノイズたちが
+「まだ　消えるな」とさ
+生きていたくなど　ないよ
+でも　死にたいわけじゃ　ないから
+こんな　痛みにも
+理由を付けるよ
+いつか　笑うためと
+理由を付けたよ
+
+--------------------------
 【歌曲文件】: Blitzkrieg Bop (2001 Remaster) - Ramones.lrc
 【基本信息】:
   歌名: Blitzkrieg Bop (2001 Remaster)
@@ -2935,6 +3791,71 @@ I hear it call to me, I hear it call
 Blues is my wailing wall
 
 --------------------------
+【歌曲文件】: bmbmbm - black midi.lrc
+【基本信息】:
+  歌名: bmbmbm
+  歌手: black midi
+  专辑: Schlagenheim
+  时长: 4分56秒
+【歌词内容】:
+She moves with a purpose
+And what a magnificent purpose
+Moves with a purpose
+Moves with a purpose
+Oh, what a purpose
+Oh, what a purpose
+Oh, what a magnificent purpose
+They find different ways to suck themselves off
+She does not care at all
+She moves with a purpose
+She moves with a purpose
+It is oh, such a purpose, it is such a purpose
+It is so, what a magnificent purpose
+Move with a purpose
+Such a purpose
+It is such a purpose *3
+It is such a magnificent purpose
+It is so magnificent
+She moves with such a purpose
+It is so magnificent
+It is a magnificent purpose
+It is, a magnificent
+Purpose
+She moves with a purpose
+She still moves with a purpose
+Moves with a purpose
+It is so magnificent *3
+And they find different ways to suck themselves off
+She does not care at all
+She moves with a purpose
+She moves with a purpose
+It is such a purpose
+And it is such a purpose
+It is so magnificent
+It is such a purpose
+Move with a purpose
+It is such a purpose
+It is so magnificent
+It is such a magnificent purpose
+It is such a purpose
+And it is so
+And she moves with a purpose
+And she moves with a purpose
+With a purpose, it is so magnificent
+So magnificent
+So so so so so so so so so so so magnificent
+It is such a magnificent purpose
+Pur-pur-pur-pur-pur-purpose
+And they find different ways to suck themselves off
+But she does not care at all
+She moves with a purpose
+She moves with a purpose
+And what a magnificent purpose
+And she moves with a purpose
+And ah, so magnificent
+Ah, so magnificent
+
+--------------------------
 【歌曲文件】: Bodys - Car Seat Headrest.lrc
 【基本信息】:
   歌名: Bodys
@@ -3074,6 +3995,37 @@ Bass Guitar : John Deacon
 Drums, Timpani & Gong : Roger Taylor
 Operatic Vocals : Freddie Mercury (Middle Register) / Brian May (Low Register) / Roger Taylor (High Register)
 Recorded at Rockfield Studio, Roundhouse, Sarm East Studios, Scorpio Sound, and Wessex Sound Studios
+
+--------------------------
+【歌曲文件】: Bomb of Love - 落日飞车.lrc
+【基本信息】:
+  歌名: Bomb of Love
+  歌手: 落日飞车
+  专辑: Bossa Nova
+  时长: 3分0秒
+【歌词内容】:
+Here comes the bomb of love.
+Here comes the bomb of love.
+Here comes the bomb of love.
+Here comes the bomb of love.
+Welcome to my stage,would you walk with me today?
+Would you shake my hand?Would you call my name?
+Would you be afraid?Would you hope me to stay?
+I shoot the shotgun of love。
+I shoot the shotgun of love。
+I shoot the shotgun of love。
+I shoot the shotgun of love。
+Here comes the bomb of love.
+Here comes the bomb of love.
+Here comes the bomb of love.
+Here comes the bomb of love.
+Welcome to my stage,you’ll need a man.
+He said he got a tank,it can roll this place.
+Targets in my hands,I call it love revenge.
+I shoot the shotgun of love。
+I shoot the shotgun of love。
+I shoot the shotgun of love。
+I shoot the shotgun of love。
 
 --------------------------
 【歌曲文件】: Bones - Michael Kiwanuka.lrc
@@ -3256,1035 +4208,6 @@ She said, she said
 She said, she said
 She said
 Said... good
-
---------------------------
-【歌曲文件】: Broken Brights - Angus Stone.lrc
-【基本信息】:
-  歌名: Broken Brights
-  歌手: Angus Stone
-  专辑: Broken Brights
-  时长: 4分12秒
-【歌词内容】:
-Is that the old man walking in the dark
-Is that the old man walking in the dark
-Is that the old man walking in the dark
-Is that the old man walking in the dark
-Take me home where them broken brights
-Are shinning down, make me feel alright
-When we were young
-When we were young
-When we were young
-When we were young
-Is that the old man walking in the dark
-Is that the old man walking in the dark
-Shake them bones let me lost tonight
-We'll grow young make me feel alright
-When we were young
-When we were young
-When we were young
-When we were young
-Is that the old man walking in the dark
-Is that the old man walking in the dark
-Is that the old man
-
---------------------------
-【歌曲文件】: Brothers and Sisters - Blur.lrc
-【基本信息】:
-  歌名: Brothers and Sisters
-  歌手: Blur
-  专辑: Think Tank
-  时长: 3分47秒
-【歌词内容】:
-Brothers and sisters
-Rebuild your lives
-We're all drug takers
-Give us something tonight
-A cartoon in a ketamine
-Jelly mixed with margarine
-White doves from the war machine
-Every body moving
-****ing is for murderers
-****ing for the jurors
-Caffeine been through all of us
-Everybody horny
-Crackwhores back in town again
-Eggships sniffing benelyn
-Burning all the oil again
-Smoking makes you holy
-Textin abbreviates the brain
-Aspirin takes away the pain
-Rock on, everyone the same
-That's the way it is
-Brothers and sisters
-Rebuild your lives
-We're all drug takers
-Give us something tonight
-Rohypnol like a chloroform
-Sugar from the day you are born
-Washed out like a dinosaur
-Really don't believe it
-Sticky sniffing superglue
-Sulphates keeps you in a zoo
-Monkeys turning into you
-Everybody horny
-Acid good up on the moors
-Gimpo stops you getting bored
-Beta's busy making laws
-Procaine stops you screaming
-Librium for anxiety
-Drinking is our society
-Guessing out of tirety
-That's the way it is
-That's the way it is
-Even when we're pissed
-That's the way it is
-That's the way it is
-Brothers and sisters
-Rebuild your lives
-We're all drug takers
-Give us something tonight
-
---------------------------
-【歌曲文件】: Bullet Proof ... I Wish I Was - Radiohead.lrc
-【基本信息】:
-  歌名: Bullet Proof ... I Wish I Was
-  歌手: Radiohead
-  专辑: The Bends
-  时长: 3分28秒
-【歌词内容】:
-Limb by limb and tooth by tooth
-Tearing up inside of me.
-Everyday, everyhour, wish that I was..
-Was bullet proof
-Wax me, mould me
-Heat the pins and stab them in.
-You have turned me into this, just wish that it..
-Was bullet proof
-So pay me money, and take a shot
-Lead fill the hole in me.
-I could burst a million bubbles, all surrogate..
-& bullet proof (slowdown, slowdown, slowdown)
-Bullet proof (slowdown, slowdown, slowdown)
-
---------------------------
-【歌曲文件】: Busy and Important - Tom Rosenthal.lrc
-【基本信息】:
-  歌名: Busy and Important
-  歌手: Tom Rosenthal
-  专辑: Busy and Important
-  时长: 2分43秒
-【歌词内容】:
-Don't you know how busy and important I am
-I have got so much to do
-Ask me out to dinner on a Friday night I can't go
-I have got too much to do
-Maybe I am just trying to distract myself from my mortality
-Maybe I am just trying to distract myself from my mortality
-Oh I am too busy to finish this song
-I am too busy to dance
-too busy to cry
-too busy to die
-too busy to see my chance
-Don't you know how busy and important I am
-I have got so much to do
-Ask me to the disco on a Friday night I can't go
-I have got too much to do
-Maybe I am just trying to distract myself from my mortality
-Maybe I am just trying to distract myself from my mortality
-Oh I am too busy to see the sky
-I am too busy to know
-too busy to fly
-too busy to die
-too busy to rest my soul
-Don't you know how busy and important I am
-I have got so much to do
-Don't you know how busy and important I am
-I have got so much to do
-Oh I am too busy to finish this song
-I am too busy to finish this song
-I am too busy to finish this song
-I am too busy to finish
-
---------------------------
-【歌曲文件】: Call It Fate, Call It Karma - The Strokes.lrc
-【基本信息】:
-  歌名: Call It Fate, Call It Karma
-  歌手: The Strokes
-  专辑: Comedown Machine
-  时长: 3分24秒
-【歌词内容】:
-Close the door
-Not all the way
-He don’t understand
-We don’t understand
-So don’t you wanna remind me
-I don’t know a thing
-And some of us remember
-And some run out of place
-Can I waste all your time here on the sidewalk?
-Can I stand in your light just for a while?
-I’ve waited around and oh no, you are are not around
-I made up more time watchin’ you
-You got it down now, don’t you?
-I wanted to understand your face
-So don’t you wanna remind me
-I don’t know a thing
-And some of us remember
-And some run out of place
-Can I waste all your time here on the sidewalk?
-Can I stand in your light just for a while?
-I’ve waited around and oh no, you are are not around
-I made up more time watchin’ you
-I needed someone
-I needed someone
-
---------------------------
-【歌曲文件】: Can't Stop - Red Hot Chili Peppers.lrc
-【基本信息】:
-  歌名: Can't Stop
-  歌手: Red Hot Chili Peppers
-  专辑: Road Trippin' Through Time
-  时长: 4分29秒
-【歌词内容】:
-Can't stop addicted to the shindig
-Chop top he says I'm gonna win big
-Choose not a life of imitation
-Distant cousin to the reservation
-Defunkt the pistol that you pay for
-This punk the feeling that you stay for
-In time I want to be your best friend
-Eastside love is living on the westend
-Knock out but boy you better come to
-Don't die you know the truth is some do
-Go write your message on the pavement
-Burnin' so bright I wonder what the wave meant
-White heat is screaming in the jungle
-Complete the motion if you stumble
-Go ask the dust for any answers
-Come back strong with 50 belly dancers
-The world I love
-The tears I drop
-To be part of
-The wave can't stop
-Ever wonder if it's all for you
-The world I love
-The trains I hop
-To be part of
-The wave can't stop
-Come and tell me when it's time to
-Sweetheart is bleeding in the snowcone
-So smart she's leading me to ozone
-Music the great communicator
-Use two sticks to make it in the nature
-I'll get you into penetration
-The gender of a generation
-The birth of every other nation
-Worth your weight the gold of meditation
-This chapter's going to be a close one
-Smoke rings I know your going to blow one
-All on a spaceship persevering
-Use my hands for everything but steering
-Can't stop the spirits when they need you
-Mop tops are happy when they feed you
-J. Butterfly is in the treetop
-Birds that blow the meaning into bebop
-The world I love
-The tears I drop
-To be part of
-The wave can't stop
-Ever wonder if it's all for you
-The world I love
-The trains I hop
-To be part of
-The wave can't stop
-Come and tell me when it's time to
-Wait a minute I'm passing out
-Win or lose just like you
-Far more shocking
-Than anything i ever knew
-How about you
-10 more reasons
-Why i need somebody new just like you
-Far more shocking than anything I ever knew
-Right on cue
-Can't stop addicted to the shin dig
-Cop top he says I'm gonna win big
-Choose not a life of imitation
-Distant cousin to the reservation
-Defunkt the pistol that you pay for
-This punk the feeling that you stay for
-In time I want to be your best friend
-Eastside love is living on the westend
-Knock out but boy you better come to
-Don't die you know the truth is some do
-Go write your message on the pavement
-Burnin' so bright I wonder what the wave meant
-Kick start the golden generator
-Sweet talk but don't intimidate her
-Can't stop the gods from engineering
-Feel no need for any interfering
-Your image in the dictionary
-This life is more than ordinary
-Can I get 2 maybe even 3 of these
-Come from the space
-To teach you of the pleiades
-Can't stop the spirits when they need you
-This life is more than just a read thru
-
---------------------------
-【歌曲文件】: Candy And A Current Bun - Pink Floyd.lrc
-【基本信息】:
-  歌名: Candy And A Current Bun
-  歌手: Pink Floyd
-  专辑: Arnold Layne / Candy and a Current Bun
-  时长: 2分43秒
-【歌词内容】:
-Oh  my girl sitting in the sky
-Go buy candy and a currant bun
-I like to see you run
-Lay back
-Don't talk to me
-Please just **** with me
-Please you know I'm feeling frail
-It's true  sun shining very bright
-It's you  I'm gonna love tonight
-Ice cream tastes good in the afternoon
-Ice cream tastes good if you eat it soon
-Don't touch me child
-Please know you drive me wild
-Please you know I'm feeling frail
-Don't try another cat
-Don't go where other you must know why
-Very very very frail
-Oh  my girl sitting in the sun
-Go buy candy and a currant bun
-I like to see you run
-Like that
-
---------------------------
-【歌曲文件】: Car Crash in G Major - fanclubwallet.lrc
-【基本信息】:
-  歌名: Car Crash in G Major
-  歌手: fanclubwallet
-  专辑: Car Crash in G Major
-  时长: 2分12秒
-【歌词内容】:
-I was driving when the airbag popped and knocked sense into me
-I was crying when the shrapnel hit and cut out part of me
-You were lying when the cop asked you about me
-The car's on fire
-With you inside
-Who's to say what it means
-Now your mom she is going to therapy
-And your dad says you're a disappointment to me
-I was drunk when I crawled out of the wreck and screamed
-The car's on fire
-With you inside
-And that's okay with me
-
---------------------------
-【歌曲文件】: Cat Cafe - Shoffy.lrc
-【基本信息】:
-  歌名: Cat Cafe
-  歌手: Shoffy
-  专辑: Cat Cafe
-  时长: 2分30秒
-【歌词内容】:
-Don’t wake me up if this is a dream
-Cause now I got everything
-You’re my love you’re my life
-Forever
-Late night movie in September
-Leaves about to fall
-Stay up talking politics
-Dancing in the hall
-Cat cafe on Saturday
-Hot chocolate with whip
-See you light up like a star
-Nothing better than this
-Don’t wake me up if this is a dream
-Cause now I got everything
-You’re my love you’re my life
-Forever
-When the world knocks me down
-And my head starts to pound
-You patch me up and makе it all
-So much better
-Tik tok binge till thе morning sun
-And playing chess in bed
-Long walks on the waterfront
-Then off to break some bread
-Road trip up to Jackson Hole
-Ansel Adams view
-Rolling down the Snake River
-Laying next to you
-Don’t wake me up if this is a dream
-Cause now I got everything
-You’re my love you’re my life
-Forever
-When the world knocks me down
-And my head starts to pound
-You patch me up and make it all
-So much better
-You wore me in like your denim
-And now we fit for good
-Comfortable but the spark ain’t gone
-Oh it never could
-Don’t wake me up if this is a dream
-Cause now I got everything
-You’re my love you’re my life
-Forever
-When the world knocks me down
-And my head starts to pound
-You patch me up and make it all
-So much better
-
---------------------------
-【歌曲文件】: Catching The Butterfly - The Verve.lrc
-【基本信息】:
-  歌名: Catching The Butterfly
-  歌手: The Verve
-  专辑: Urban Hymns
-  时长: 6分26秒
-【歌词内容】:
-So you were born and so you thought
-The future's ours to keep and hold
-A child within has healing ways
-It sees me through my darkest days
-I'm gonna keep catching that butterfly
-In that dream of mine
-I'm gonna keep catching that butterfly
-In that dream of mine
-In my lucid dreams
-In my lucid dreams
-Something numb
-Through life no fun
-I wanna feel
-I wanna run
-I'm gonna keep catching that butterfly
-In that dream of mine
-I'm gonna keep catching that butterfly
-In that dream of mine
-In my lucid dreams
-In my lucid dreams
-I'm gonna keep catching that butterfly
-In that dream of mine
-Keep catching that butterfly
-In that dream of mine
-In that dream of mine
-keep catching that butterfly
-keep catching that butterfly
-In that dream of mine
-My.... In my darkest dream
-My.... In my darkest dream
-My.... In My private scream
-My lucid dreams, My forgotten schemes (x2)
-I see through you, You see through me (x4)
-Believe in me (x4)
-I see through you, You see through me (x4)
-To be in your eye (x4)
-
---------------------------
-【歌曲文件】: Caution - Tiny Moving Parts.lrc
-【基本信息】:
-  歌名: Caution
-  歌手: Tiny Moving Parts
-  专辑: Swell
-  时长: 3分18秒
-【歌词内容】:
-The caution tape that you’ve wrapped around my brain
-Has continued to stay as I’m waiting for a break
-Constantly connecting dots
-Trying my best, consuming facts
-All I’ve learned what’s done is done
-And you can not change the past
-Helping or hurting?
-I am numb
-I haven’t felt anything in days
-Confusion is key as I am locked inside
-Or am I just really gone?
-...
-The caution tape wrapped around my brain
-Has continued to stay
-A constant strain right behind my face
-I’m still waiting for a slight break
-For a slight break
-...
-And I know we’re just different
-I know we're just different
-Keep drinking from the same cup
-It’ll fill you up
-It’ll keep you numb
-Simplify the motions
-Counteract the movements
-Don’t think twice because this is love
-This is love
-This is love
-.
-The caution tape wrapped around my brain
-Has continued to stay
-A constant strain right behind my face
-I’m still waiting for a slight break
-.
-You are caffeine in my bloodstream
-You are the energy hidden in-between two muscles sleeping
-Please don’t wake me up
-I miss myself too much
-I miss myself too much
-I miss myself too much
-So please don't wake me up
-Don't wake me up
-'Cause all I have is patience
-We all lose strength some days
-I’ve been waiting for a slight break
-
---------------------------
-【歌曲文件】: Celestial - Ed Sheeran.lrc
-【基本信息】:
-  歌名: Celestial
-  歌手: Ed Sheeran
-  专辑: Celestial
-  时长: 3分29秒
-【歌词内容】:
-You see tonight, it could go either way
-Hearts balanced on a razer blade
-We are designed to love and break
-And to rinse and repeat it all again
-I get stuck when the world’s too loud
-And things don't look up when you're going down
-I know your arms are reaching out
-From somewhere beyond the clouds
-You make me feel
-Like my troubled heart is a million miles away
-You make me feel
-Like I'm drunk on stars and we're dancing out into space
-Celestial
-Celestial
-I see the light shining through the rain
-A thousand colors in a brighter shade
-Need it to rise from the lowest place
-There's silver lining surrounds the grey
-When I get lost will it come back round
-Things don't look up when you're going down
-I know your arms they are reaching out
-From somewhere beyond the clouds
-You make me feel
-Like my troubled heart is a million miles away
-You make me feel
-Like I'm drunk on stars and we're dancing out into space
-Celestial
-Celestial
-We were made to be  nothing more than this
-Finding magic in all the smallest things
-The way we noticed that's what really matters
-Let's make tonight go on and on and on
-You make me feel
-We were made to be nothing more than this
-Finding magic in all the smallest things
-You make me feel
-The way we noticed that's what really matters
-Let's make tonight go on and on and on
-You make me feel
-Like my troubled heart is a million miles away
-You make me feel
-Like I'm drunk on stars and we're dancing out into space
-Celestial
-Celestial
-Celestial
-We were made to be nothing more than this
-Finding magic in all the smallest things
-The way we noticed that's what really matters
-Let's make tonight go on and on and on
-Celestial
-
---------------------------
-【歌曲文件】: Ceremony - Galaxie 500.lrc
-【基本信息】:
-  歌名: Ceremony
-  歌手: Galaxie 500
-  专辑: On Fire
-  时长: 5分56秒
-【歌词内容】:
-This is why events unnerve me,
-They find it all, a different story,
-Notice whom for wheels are turning,
-Turn again and turn towards this time,
-All she ask's the strength to hold me,
-Then again the same old story,
-World will travel, oh so quickly,
-Travel first and turn towards this time.
-Oh, I'll break them down, no mercy shown,
-Heaven knows, it's got to be this time,
-Watching her, these things she said,
-The times she cried,
-Too frail to wake this time.
-Oh I'll break them down, no mercy shown
-Heaven knows, it's got to be this time,
-Avenues all lined with trees,
-Picture me and then you start watching,
-Avenues all lined with trees,
-Picture me and then you start watching,
-Watching forever, forever,
-Watching love grow, forever,
-Watching love grow, forever,
-Letting me know, forever.
-
---------------------------
-【歌曲文件】: Champagne Supernova - Oasis.lrc
-【基本信息】:
-  歌名: Champagne Supernova
-  歌手: Oasis
-  专辑: Stop The Clocks
-  时长: 7分29秒
-【歌词内容】:
-How many special people change?
-How many lives are living strange?
-Where were you while we were getting high?
-Slowly walking down the hall
-Faster than a cannon ball
-Where were you while we were getting high?
-Someday you will find me
-Caught beneath the landslide
-In a Champagne Supernova in the sky
-Someday you will find me
-Caught beneath the landslide
-In a Champagne Supernova
-A Champagne Supernova in the sky
-Wake up the dawn and ask her why?
-A dreamer dreams she never dies
-Wipe that tear away now from your eye
-Slowly walking down the hall
-Faster than a cannon ball
-Where were you while we were getting high?
-Someday you will find me
-Caught beneath the landslide
-In a Champagne Supernova in the sky
-Someday you will find me
-Caught beneath the landslide
-In a Champagne Supernova
-A Champagne Supernova
-'Cos people believe
-That they’re gonna get away for the summer
-But you and I, we live and die
-The world's still spinning round
-We don't know why?
-Why? Why? Why? Why?
-How many special people change?
-How many lives are living strange?
-Where were you while we were getting high?
-Slowly walking down the hall
-Faster than a cannon ball
-Where were you while we were getting high?
-Someday you will find me
-Caught beneath the landslide
-In a Champagne Supernova in the sky
-Someday you will find me
-Caught beneath the landslide
-In a Champagne Supernova
-A Champagne Supernova
-'Cos people believe
-That they’re Gonna get away for the summer
-But you and I, we live and die
-The world's still spinning round
-We don't know why?
-Why? Why? Why? Why?
-How many special people change?
-How many lives are living strange?
-Where were you while we were getting high?
-We were getting high
-We were getting high
-We were getting high
-
---------------------------
-【歌曲文件】: Change - Big Thief.lrc
-【基本信息】:
-  歌名: Change
-  歌手: Big Thief
-  专辑: Dragon New Warm Mountain I Believe In You
-  时长: 4分55秒
-【歌词内容】:
-Okay
-Change, like the wind, like the water, like skin
-Change, like the sky, like the leaves, like a butterfly
-Would you live forever, never die
-While everything around passes?
-Would you smile forever, never cry
-While everything you know passes?
-Death's like a door to a place we've never been before
-Death, like space, the deep sea, a suitcase
-Would you stare forever at the sun
-Never watch the moon rising?
-Would you walk forever in the light
-To never learn the secret of the quiet night?
-Still, like a stone, like a hill, like home
-Still, what I find is you are always on my mind
-Could I feel happy for you
-When I hear you talk with her like we used to?
-Could I set everything free
-When I watch you holding her the way you once held me?
-Change, like the sky, like the leaves, like a butterfly
-Death, like a door, to a place we've never been before
-Would you live forever, never die
-While everything around passes?
-Would you smile forever, never cry?
-
---------------------------
-【歌曲文件】: Chemical Bus - 逃跑计划.lrc
-【基本信息】:
-  歌名: Chemical Bus
-  歌手: 逃跑计划
-  专辑: 世界
-  时长: 4分10秒
-【歌词内容】:
-Life repeats again and again just like spinning wheels
-And its like everyday for the morning bus
-As I almost fall asleep she coming and sitting by me
-The electricity goes through my body is going to shout
-What a strange world to make me feel so crazy
-What a strange love to make me feel so real
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-Work repeats again and again just like broken dream
-And its going every way but the one I want
-What a strange world to make me feel so crazy
-What a strange love to make me feel so real
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-I had a dream and I make it beautiful
-This is a love just like chemical
-I had a dream and I make it beautiful
-And you now take my breath away
-
---------------------------
-【歌曲文件】: Cigarette Daydreams - Cage the Elephant.lrc
-【基本信息】:
-  歌名: Cigarette Daydreams
-  歌手: Cage the Elephant
-  专辑: Melophobia
-  时长: 3分28秒
-【歌词内容】:
-Cigarette Daydreams - Cage The Elephant
-Did you stand there all alone?
-Oh I cannot explain what's going down
-I can see you standing next to me
-In and out somewhere else right now
-You sigh look away
-I can see it clear as day
-Close your eyes so afraid
-Hide behind that baby face
-You can drive all night
-Looking for the answers in the pouring rain
-You wanna find peace of mind
-Looking for the answer
-Funny how it seems like yesterday
-As I recall you were looking out of place
-Gathered up your things and slipped away
-No time at all I followed you into the hall
-Cigarette Daydream
-You were only seventeen
-Soft speak with a mean streak
-Nearly brought me to my knees
-You can drive all night
-Looking for the answers in the pouring rain
-You wanna find peace of mind
-Looking for the answer
-If we could find a reason, a reason to change
-Looking for the answer
-If you can find a reason, a reason to say
-Standing in the pouring rain
-You can drive all night
-Looking for the answers in the pouring rain
-You wanna find peace of mind
-Looking for the answer
-If we could find a reason, a reason to change
-Looking for the answer
-If you can find a reason, a reason to say
-Standing in the pouring rain
-
---------------------------
-【歌曲文件】: Circle On The Snows - The fin..lrc
-【基本信息】:
-  歌名: Circle On The Snows
-  歌手: The fin.
-  专辑: Glowing Red On The Shore (Remastered)
-  时长: 3分33秒
-【歌词内容】:
-I'm just standing on a snow field
-A stag is looking at a girl ringing a bell
-They seem to know what life is
-Give more light to them
-She doesn't know I'm here
-Pure white envelops us
-My hands are numb with cold
-I want her to know I'm here
-'cause here is a solitude
-Where does the feeling come from?
-She draws a circle on the snows
-As if she danced with someone
-I understand, we can't share anything
-I try to throw some words towards her
-No voice comes from my throat
-I've got the point, we can't share anything
-I'm watching a fireplace
-I've dozed off many times
-Days are passing away
-There's nothing we can do for it
-We live in an apathetic way
-Waiting for the snows melting
-I hope there's no ending
-But we'll be tired someday
-Counting time everyday,
-Losing time everyday
-Where does the feeling come from?
-She draws a circle on the snows
-As if she danced with someone
-I understand, we can't share anything
-I try to throw some words towards her
-No voice comes from my throat
-I've got the point, we can't share anything
-Oh, I know
-
---------------------------
-【歌曲文件】: Closure - Hayd.lrc
-【基本信息】:
-  歌名: Closure
-  歌手: Hayd
-  专辑: Closure
-  时长: 3分16秒
-【歌词内容】:
-Did we both fall in love
-Before we were ready?
-Or did we both give up
-Before we were steady?
-I don't know, I don't know, all I know
-Is that now I'm alone
-Were we both too scared?
-Or were we well-prepared?
-For the future and all
-The mistakes that it bears
-I don't know, I don't know, all I know
-Is that now I'm alone
-Yeah, these are questions in my head
-Answers I won't get
-Thoughts I never said
-That I kinda wish I did
-I guess sometimes you find the one
-But the timing's off
-The place is wrong
-Maybe we would be closer
-If we were a couple years older
-I guess sometimes you fall in love
-Then one day feels like you wake up
-And everything's over
-Without any closure
-Did we both think that this
-Was the best that we found?
-Or were we too afraid
-To have no one around?
-I don't know, I don't know, all I know
-Is that now I'm alone
-Did we hope on a star
-A bit too far?
-Was the distance between
-Too great for our hearts?
-I don't know, I don't know, all I know
-Is that now I'm alone
-Yeah, these are questions in my head
-Answers I won't get
-Thoughts I never said
-That I kinda wish I did
-I guess sometimes you find the one
-But the timing's off
-The place is wrong
-Maybe we would be closer
-If we were a couple years older
-I guess sometimes you fall in love
-Then one day feels like you wake up
-And everything's over
-Without any closure
-
---------------------------
-【歌曲文件】: coffee - Corn Wave.lrc
-【基本信息】:
-  歌名: coffee
-  歌手: Corn Wave
-  专辑: philosophy of structures
-  时长: 4分34秒
-【歌词内容】:
-Надеюсь каждый полюбил
-Своё кофе
-Своё кофе
-И на бумагу не разлил
-На работе
-На работе
-И хоть зимой хоть летом
-Две чашки за обедом
-И мне ничего не надо
-Столько тёплых кружек рядом
-И днём и даже в вечер
-Кофе меня подлечит
-И мне ничего не надо
-Жду от кофе я удара
-И иностранный гражданин
-Поведал мне что я один
-Я буду биться наспех
-С ним буду биться насмерть
-Пока на улице светло
-Собака доедает плов
-Я больше не погасну
-Я больше не погасну
-Надеюсь ты уже допил
-Своё кофе
-Своё кофе
-И зарубился в Silent Hill
-На работе
-На работе
-(Похуй)
-И иностранный гражданин
-Поведал мне что я один
-Я буду биться наспех
-С ним буду биться насмерть
-Пока на улице светло
-Собака доедает плов
-Я больше не погасну
-И  вылечу я насморк
-
---------------------------
-【歌曲文件】: Coffee's On Me - 落日飞车.lrc
-【基本信息】:
-  歌名: Coffee's On Me
-  歌手: 落日飞车
-  专辑: Coffee's on Me
-  时长: 3分43秒
-【歌词内容】:
-Here comes the summer
-Woo woo woo
-That’s why I’m calling
-I have a plan
-Let’s meet at the corner
-Down the street
-We’ll stroll in the park
-Or lay in the sand
-I’ll bring you iced coffee
-Woo woo woo
-Maybe passion fruits
-And strawberries too
-I know
-I’m in love
-I just can’t take my eyes off you
-So good
-To be true
-I’m glad to have this coffee with you
-Here comes the summer
-Woo woo woo
-I got a feeling
-You don’t understand
-It’s me at the corner
-Down the street
-I walk in the park
-And I’m not your man
-I drink my iced coffee
-Woo woo woo
-Lonely passion fruit
-My strawberry’s who
-I know
-I’m in love
-I just can’t take my eyes off you
-So good
-To be true
-I’m glad to have this coffee with you
-I got back in my room
-Making coffee thinking of you
-The sun is golden blue
-Produced by Tseng Kuo Hung 曾國宏, Alex Zhang Hungtai 張洪泰
-Composed＆Lyrics by Tseng Kuo Hung 曾國宏
-Arranged by Tseng Kuo Hung 曾國宏與Sunset Rollercoaster 落日飛車
-Vocal / Guitars - Tseng Kuo Hung 曾國宏
-Bass - Chen Hung Li 陳弘禮
-Keys / Synths - Wang Shao Hsuan 王少軒
-Drums / Drum Machine / 合音 - Lo Tsun Lung 羅尊龍
-Saxophone - Huang Hao Ting 黃浩庭
-Recorded by Zen Chien @ 112F Recording Studio
-Assisted by Chris Chen @ 112F Recording Studio
-Mixed by Yuchian Wang 王昱辰 @ Eastcote Studios, London, UK
-Assisted by George Murphy
-Mastered by Alex Wharton at Abbey Road Studios, London, UK
-Cover art by Camilo Medina @camilo.m3dina
-Cover Art co-ordinated by Joy 張芳瑜
-Artist management by Mary Ying 應佳霖
-OP: Sunset Music Productions Co., Ltd
-SP: Sony Music Publishing (Pte) Ltd., Taiwan Branch
-
---------------------------
-【歌曲文件】: Cold Cold Man - Saint Motel.lrc
-【基本信息】:
-  歌名: Cold Cold Man
-  歌手: Saint Motel
-  专辑: My Type EP
-  时长: 3分50秒
-【歌词内容】:
-Oh my love,
-I know I am a cold cold man.
-Quite slow to pay you compliments.
-Or public displayed affections.
-But baby don't you go over-analyze,
-No need to theorize
-I can put your doubts to rest.
-You're the only one worth seeing.
-The only place worth being.
-The only bed worth sleeping's
-the one right next to you.
-You're the only one worth seeing.
-The only place worth being.
-The only bed worth sleeping's
-the one right next to you.
-Oh my love,
-I know you're used to desperate men.
-Who say the words that others said,
-For too long and for too often.
-But baby you can lay off a little bit,
-No need to smother it
-I can put your doubts to rest.
-You're the only one worth seeing.
-The only place worth being.
-The only bed worth sleeping's
-the one right next to you.
-You're the only one worth seeing.
-The only place worth being.
-The only bed worth sleeping's
-the one right next to you.
-You're the only one worth seeing.
-The only place worth being.
-The only bed worth sleeping's
-the one right next to you.
-You're the only one worth seeing.
-The only place worth being.
-The only bed worth sleeping's
-the one right next to you.
 
 --------------------------
 

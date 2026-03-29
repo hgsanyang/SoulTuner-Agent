@@ -28,9 +28,10 @@
 | 🔀 **Hybrid RAG** | GraphRAG + Semantic Search 并发检索，加权 RRF 融合排序 |
 | 🎵 **双模型音频向量** | M2D-CLAP 跨模态语义 × 0.7 + OMAR-RQ 声学特征 × 0.3 |
 | 🧠 **长期记忆** | GraphZep 双阶段召回，跨会话保留用户偏好 |
-| 📊 **Graph Affinity** | Neo4j 图距离亲和力 + 用户画像偏好 Jaccard 加分，双重个性化排序 |
+| 📊 **Graph Affinity** | Neo4j 图距离 + 用户画像偏好 Jaccard 双重个性化排序 |
+| 🤖 **双套 Planner** | API 大模型融合版（意图+标签+HyDE 一次完成）/ 本地小模型精简版（HyDE 分离） |
 | 👤 **用户画像** | 前端可视化画像面板，流派/情绪/场景/语言偏好 → Neo4j + GraphZep 双写 |
-| 🌐 **联网搜索回退** | 本地库不足时自动触发 SearxNG 联邦搜索 + LLM 摘要提取 |
+| 🌐 **联网搜索回退** | 本地库不足时自动触发 SearxNG 联邦搜索 + LLM 摘要 |
 | 🎼 **音乐旅程** | LLM 故事→情绪拆解→逐段检索，SSE 实时推送 |
 | ♻️ **数据飞轮** | 用户一键入库：搜索→发现→下载→标签提取→向量编码→Neo4j |
 | 📡 **SSE 流式** | 前端实时渲染 thinking → 歌曲卡片 → 推荐理由 |
@@ -75,11 +76,11 @@
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  LangGraph Agent (StateGraph)                                       │
 │                                                                     │
-│  start → GraphZep Recall → Unified Planner (LLM) → 5-way Router   │
+│  start → GraphZep Recall → Planner (LLM) → Intent Router          │
 │                                                                     │
-│     ┌──────────┬──────────┬──────────┬──────────┐                  │
-│     ▼          ▼          ▼          ▼          ▼                  │
-│   search    chat     play_song   acquire   journey                 │
+│     ┌─────────┬─────────┬─────────┬──────────┐                     │
+│     ▼         ▼         ▼         ▼          ▼                     │
+│  search_songs  chat  acquire  gen_reco  journey                    │
 │     │                                                               │
 │     ▼                                                               │
 │  Hybrid Retrieval ──→ LLM Explainer ──→ GraphZep Write → end      │
@@ -100,7 +101,7 @@
 │                            ▼                                        │
 │              Artist Diversity Filter (指定歌手豁免)                  │
 │                            ▼                                        │
-│              MMR Jaccard Rerank (λ=0.7, 集合相似度驱动)             │
+│              MMR Jaccard Rerank (λ=0.7)                            │
 └─────────────────────────────────────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────────┐
@@ -114,11 +115,11 @@
 | 层 | 技术 |
 |---|---|
 | **前端** | Next.js 14 + React 18 + Framer Motion |
-| **Agent** | LangGraph StateGraph（11 节点 + 5 条件路由） |
+| **Agent** | LangGraph StateGraph（7 意图路由） |
 | **后端** | FastAPI + Uvicorn，SSE 流式推送，运行时设置 API |
 | **图数据库** | Neo4j（原生向量索引 + 图谱关系） |
 | **音频嵌入** | M2D-CLAP 2025（跨模态，768d）+ OMAR-RQ（声学，768d） |
-| **大语言模型** | DeepSeek-V3 / 通义千问 / Gemini（可切换，支持微调模型） |
+| **大语言模型** | DeepSeek-V3.2 / 通义千问 / Gemini（可切换，支持本地微调模型） |
 | **长期记忆** | GraphZep（Hono 微服务，双阶段召回） |
 | **联网搜索** | SearxNG 联邦搜索 + Tavily + 智谱 WebSearch |
 | **容器化** | Docker Compose（Neo4j + GraphZep + Backend + Frontend） |
@@ -127,39 +128,84 @@
 
 ## 🔬 技术深度
 
-### RAG 混合检索
+### 🤖 双套 Planner 架构（V3）
+
+本系统针对不同 LLM 部署场景设计了两套 Planner Prompt，均使用简化后的 **7 类意图分类**（5 类检索策略 + 2 类功能性意图）：
 
 ```
-用户查询 → Unified Planner (LLM Structured Output · 一次调用完成意图+路由+HyDE)
-                    ↓
-        ┌──────────┼──────────┐
-        ▼          ▼          ▼
-   GraphRAG    VectorKNN   WebSearch
-  (Cypher)    (M2D+OMAR)  (SearxNG)
-        └──────────┼──────────┘
-                   ▼
-     加权 RRF 融合 (α·向量 + β·图谱，可前端调节)
-                   ▼
-     Graph Affinity 双重加分:
-       Step A: Neo4j shortestPath 图距离 (1/(1+d))
-       Step B: 用户画像偏好 Jaccard 相似度 (× 0.3)
-                   ▼
-     Artist 多样性过滤 (每歌手≤3首，指定歌手豁免)
-                   ▼
-     MMR Jaccard 多样性重排 (λ=0.7, 集合相似度驱动)
-                   ▼
-              Top-K 结果
+意图类型：
+  graph_search         — 有具体实体（歌手/歌名）或可精确匹配的流派/场景/语言/地区
+  hybrid_search        — 有具体实体 + 无法用标签穷举的主观声学描述
+  vector_search        — 纯情绪/氛围/画面感，无任何可匹配实体
+  web_search           — 时效性内容或用户明确要求联网
+  general_chat         — 闲聊
+  acquire_music        — 确认下载/获取推荐歌曲（功能性）
+  recommend_by_favorites — 查看用户收藏/点赞（功能性）
+```
+
+#### 方案 A：API 大模型融合版（`UNIFIED_MUSIC_QUERY_PLANNER_PROMPT`）
+
+适用于 DeepSeek / Claude / GPT 等云端大模型。**一次 LLM 调用**同时完成：
+
+| 输出字段 | 内容 |
+|---------|------|
+| `intent_type` | 7 类意图之一 |
+| `parameters.entities` | 提取的歌手名、歌曲名（含中外文别名） |
+| `graph_*_filter` | 流派/情绪/场景/语言/地区五维标签 |
+| `vector_acoustic_query` | **内联 HyDE**：直接生成英文声学描述（仅 hybrid/vector 时填写） |
+
+优点：省掉第二次专用 HyDE LLM 调用，总延迟降低约 30-50%。
+
+#### 方案 B：本地小模型精简版（`LOCAL_PLANNER_PROMPT`）
+
+适用于 SGLang / vLLM / Ollama 部署的 Qwen3-4B 等本地模型。以 `/no_think` 前缀关闭思维链，**只输出意图分类 + 实体提取 + 标签**，`vector_acoustic_query` 留空。
+
+HyDE 声学描述由下游 `retrieval/hybrid_retrieval.py` 中的 `_generate_hyde_description()` 独立生成（调用独立 HyDE 专用 prompt `HYDE_ACOUSTIC_GENERATOR_PROMPT`）。
+
+#### 双模式 HyDE 分支逻辑（`hybrid_retrieval.py`）
+
+```python
+if use_vector:
+    vector_acoustic_query = precomputed_plan.get("vector_acoustic_query", "")
+    if vector_acoustic_query:
+        # API 模式：LLM 已内联生成，直接使用
+        vector_desc = vector_acoustic_query
+    else:
+        # 本地模式：调用独立 HyDE 模块生成
+        vector_desc = self._generate_hyde_description(query, graphzep_facts, intent_type)
+```
+
+### RAG 混合检索流水线
+
+```
+用户查询 → Planner (LLM)
+              ↓  intent_type + retrieval_plan
+   ┌──────────┼──────────┐
+   ▼          ▼          ▼
+GraphRAG   VectorKNN  WebSearch
+(Cypher)  (M2D+OMAR) (SearxNG)
+   └──────────┼──────────┘
+              ▼
+  加权 RRF 融合 (α·向量 + β·图谱，前端可调)
+              ▼
+  Graph Affinity 双重加分:
+    Step A: Neo4j shortestPath 图距离 1/(1+d)
+    Step B: 用户画像偏好 Jaccard 相似度 × 0.3
+              ▼
+  Artist 多样性过滤 (每歌手≤3首，指定歌手豁免)
+              ▼
+  MMR Jaccard 多样性重排 (λ=0.7)
+              ▼
+         Top-K 结果
 ```
 
 **关键设计决策**：
 
 - **GraphRAG**：五维标签过滤（genre / scenario / mood / language / region），200+ 中英文别名映射
 - **双模型向量**：M2D-CLAP 跨模态语义 + OMAR-RQ 纯声学，三阶段流水线融合
-- **HyDE**：Planner 一次调用生成 80-120 词英文声学描述，7 种情形自适应模板
+- **Cross-Encoder 精排**：已关闭（`reranker_enabled = False`）。对短标签歌曲文档场景提升有限，RRF + Graph Affinity 已足够，保留接口供未来评估后启用
 - **RRF 加权**：向量/图谱权重前端可调，避免单一通道主导
-- **Graph Affinity 双重加分**：Step A 基于 Neo4j `shortestPath` 计算用户→候选歌图距离 `1/(1+d)`；Step B 读取用户画像偏好与候选歌流派做 Jaccard 集合相似度加分 `|A∩B|/|A∪B| × 0.3`
-- **MMR Jaccard**：利用候选歌的 `{genre, mood, theme}` 标签集合计算 Jaccard 相似度替代余弦距离，无需向量即可实现多样性重排
-- **歌手豁免**：用户指定"推荐周杰伦的歌"时，`graph_entities` 中的歌手自动豁免多样性限制
+- **MMR Jaccard**：利用候选歌的 `{genre, mood}` 标签集合计算 Jaccard 相似度实现流派级多样性重排，无需向量
 
 ### Agent 工作流
 
@@ -167,28 +213,24 @@
 stateDiagram-v2
     [*] --> recall_memory: 入口
     recall_memory --> plan_query: GraphZep 粗/精召回
-    plan_query --> route_intent: LLM Structured Output
+    plan_query --> route_intent: LLM Structured Output (7 类意图)
 
-    route_intent --> hybrid_retrieve: search / recommend
+    route_intent --> search_songs: graph_search / hybrid_search / vector_search / web_search
     route_intent --> chat_response: general_chat
-    route_intent --> play_specific: play_specific_song
     route_intent --> acquire_music: acquire_music
-    route_intent --> music_journey: journey
+    route_intent --> gen_recommendations: recommend_by_favorites
 
-    hybrid_retrieve --> explain_results: 多路融合
+    search_songs --> explain_results: 多路融合检索
     explain_results --> persist_memory: LLM 推荐解释
 
     chat_response --> persist_memory
-    play_specific --> persist_memory
     acquire_music --> persist_memory
-    music_journey --> persist_memory
+    gen_recommendations --> persist_memory
 
     persist_memory --> [*]: GraphZep 异步写入
 ```
 
-**统一查询规划器（Unified Query Planner）**
-
-一次 LLM 调用同时完成：意图识别（9 种）→ 检索路由（Graph/Vector/Web）→ 过滤参数提取 → HyDE 声学描述。确定性后处理兜底自动补充 LLM 漏填的字段。
+> **注意**：旧版 `play_specific_song_online`（在线播放指定歌曲）意图已移除。用户搜索具体歌曲时统一走 `graph_search → search_songs` 路径，在本地库中查找；如未命中，由 LLM Explainer 提示用户通过数据飞轮入库。
 
 ### 记忆系统
 
@@ -214,8 +256,6 @@ User节点    长期记忆
        Jaccard(user_pref, song_tags)
        → 候选歌排序加分
 ```
-
-前端可设置流派 / 情绪 / 场景 / 语言四维偏好 + 自由文本描述。保存后 Neo4j User 节点存储 JSON 格式偏好属性，GraphZep 接收自然语言描述事件进行实体抽取。Graph Affinity 检索时读取偏好，通过 Jaccard 相似度为匹配的候选歌加分。
 
 ### 数据飞轮
 
@@ -292,7 +332,7 @@ cd web && npm install && cd ..
 python startup_all.py
 
 # 或前后端分离开发
-python startup_all.py --no-web    # 终端 A：后端
+conda activate music_agent; python startup_all.py --no-web    # 终端 A：后端
 cd web && npm run dev             # 终端 B：前端（热更新）
 ```
 
@@ -309,12 +349,12 @@ cd web && npm run dev             # 终端 B：前端（热更新）
 **启动步骤**：
 
 1. **终端A (WSL)**：启动大模型推理引擎
-   
+
    ```bash
    wsl
    bash /mnt/c/Users/sanyang/sanyangworkspace/music_recommendation/Muisc-Research/scripts/start_sglang.sh
    ```
-   
+
    *内置显存切分逻辑：大模型 FP8 在线量化锁定 70% 显存 (~5.5GB)，预留充足空间给音频向量模型。*
 
 2. **终端B (Windows)**：在前端设置面板切换为本地模型
@@ -322,7 +362,7 @@ cd web && npm run dev             # 终端 B：前端（热更新）
    - 打开系统设置 ⚙️
    - **主提供商**：选择 `sglang`
    - **Base URL**：填入 `http://localhost:8000/v1`
-   - 保存设置，系统即会自动切换为本地 4B 模型。
+   - 保存设置，系统即会自动切换为本地 4B 模型，使用精简版 Planner
 
 > ⚠️ 启动前需先打开 Neo4j Desktop 并启动数据库。
 
@@ -342,13 +382,6 @@ cd web && npm run dev             # 终端 B：前端（热更新）
 <details>
 <summary>前置服务安装</summary>
 
-**NeteaseCloudMusicApi**
-
-```bash
-git clone --depth 1 https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced.git NeteaseCloudMusicApi
-cd NeteaseCloudMusicApi && npm install && npm start  # :3000
-```
-
 **SearxNG 联网搜索**
 
 ```bash
@@ -365,29 +398,36 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 .
 ├── agent/                      # LangGraph Agent
 │   ├── music_agent.py          # Agent 主入口
-│   └── music_graph.py          # StateGraph 工作流定义
+│   └── music_graph.py          # StateGraph 工作流（7 意图路由）
 │
 ├── api/                        # FastAPI 接口层
 │   ├── server.py               # 主服务 + Settings API
 │   └── user_profile.py         # 用户画像 API（GET/POST /api/user-profile）
 │
 ├── config/settings.py          # 全局配置（支持运行时修改）
+│                               # reranker_enabled = False（Cross-Encoder 已关闭）
 │
 ├── retrieval/                  # 检索引擎层
-│   ├── hybrid_retrieval.py     # 多路融合 + RRF + Graph Affinity Jaccard + MMR
+│   ├── hybrid_retrieval.py     # 多路融合 + RRF + Graph Affinity + MMR
+│   │                           # 内置双模式 HyDE 分支（API内联 / 本地独立生成）
 │   ├── audio_embedder.py       # M2D-CLAP 跨模态编码
 │   ├── neo4j_client.py         # Neo4j 连接封装
 │   ├── music_journey.py        # 音乐旅程编排器
 │   └── user_memory.py          # 用户偏好 Neo4j 记忆
 │
 ├── tools/                      # 工具层
-│   ├── graphrag_search.py      # 知识图谱检索（Neo4j Cypher）
+│   ├── graphrag_search.py      # 知识图谱检索（Neo4j Cypher，五维标签）
 │   ├── semantic_search.py      # 向量检索（M2D-CLAP + OMAR）
-│   ├── web_search_aggregator.py # 联网搜索聚合
+│   ├── web_search_aggregator.py # 联网搜索聚合（SearxNG + Tavily）
 │   └── acquire_music.py        # 数据飞轮（下载入库）
 │
 ├── llms/                       # LLM 接口 + Prompts
+│   ├── prompts.py              # 双套 Planner（融合版 + 精简版）+ 5 个辅助 Prompt
+│   └── multi_llm.py            # 多提供商 LLM 工厂
+│
 ├── schemas/                    # Pydantic 数据模型
+│   └── query_plan.py           # MusicQueryPlan + RetrievalPlan（含 vector_acoustic_query）
+│
 ├── services/                   # 外部服务客户端（GraphZep）
 │
 ├── data/pipeline/              # 数据管线
@@ -403,7 +443,6 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 ├── graphzep_service/           # GraphZep 微服务
 ├── docker-compose.yml          # Docker 全栈编排
 ├── Dockerfile                  # 后端镜像
-├── web/Dockerfile              # 前端镜像
 ├── .env.example                # 环境变量模板
 ├── startup_all.py              # 本地一键启动器
 └── requirements.txt            # Python 依赖
@@ -416,13 +455,10 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 首次部署或新增音乐时执行：
 
 ```bash
-# 1. 下载音频和元数据
-python data/pipeline/ncm_pipeline.py
-
-# 2. 歌词标签提取（LLM 自动化）
+# 1. 歌词标签提取（LLM 自动化）
 python data/pipeline/lyrics_analyzer.py
 
-# 3. 入库 Neo4j
+# 2. 入库 Neo4j
 python data/pipeline/ingest_to_neo4j.py              # 完整入库
 python data/pipeline/ingest_to_neo4j.py --skip-embeddings   # 仅元数据
 python data/pipeline/ingest_to_neo4j.py --update-embeddings # 仅补充向量
@@ -463,7 +499,7 @@ python data/pipeline/neo4j_schema_v2.py --backfill
 
 | 分类 | 可调参数 |
 |------|----------|
-| **模型配置** | 主 LLM 提供商/模型、意图分析模型、HyDE 模型、微调模型路径、超时 |
+| **模型配置** | 主 LLM 提供商/模型、意图分析模型、使用本地模型开关、超时 |
 | **检索参数** | 图谱/向量/歌单数量、RRF 权重、图距离加权开关/权重/跳数 |
 | **音乐数据** | 本地音乐/MTG/联网获取/模型导出目录 |
 | **记忆系统** | 上下文保留轮数、用户 ID |
