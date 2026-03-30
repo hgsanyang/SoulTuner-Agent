@@ -131,9 +131,9 @@ class MusicHybridRetrieval:
         # 保存 llm_client 引用（预留，供未来扩展使用）
         self.llm_client = llm_client
 
-    def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
+    async def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
         """
-        主检索入口
+        主检索入口（异步版本）
         
         Args:
             query: 用户查询
@@ -168,8 +168,6 @@ class MusicHybridRetrieval:
             )
 
             # ── HyDE 声学描述：双模式分支 ──
-            # API 模式：LLM 已在 retrieval_plan 中内联填写 vector_acoustic_query，直接使用
-            # 本地模式：vector_acoustic_query 为空，调用独立 HyDE 模块生成
             if use_vector:
                 vector_acoustic_query = precomputed_plan.get("vector_acoustic_query", "") or ""
                 if vector_acoustic_query:
@@ -203,18 +201,10 @@ class MusicHybridRetrieval:
         graph_result = ""
         vector_result = ""
         
-        # 2. 根据策略分发执行 (加入并发机制和全网搜索支持)
-        # 建立异步运行环境
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        import nest_asyncio
-        nest_asyncio.apply()
+        # 2. 根据策略分发执行（直接 await，无需 nest_asyncio）
+        loop = asyncio.get_running_loop()
         
-        # 定义任务包装器
+        # 定义任务包装器：将同步的 LangChain tool.invoke 放到线程池执行
         async def run_sync_in_executor(func, *args, **kwargs):
             return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
             
@@ -270,115 +260,84 @@ class MusicHybridRetrieval:
             except Exception as e:
                 logger.error(f"提取全网歌曲失败: {e}")
                 return []
+        
+        # ── 执行检索（直接内联，不再嵌套 execute_retrieval）──
+        local_tasks = []
+        
+        # 根据统一的 use_graph/use_vector 标志分发任务
+        if use_graph and not use_vector:
+            graph_query_dict = {"tags": graph_entities, "genre": genre_filter,
+                                "scenario": scenario_filter, "mood": mood_filter,
+                                "language": language_filter, "region": region_filter}
+            if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
+                graph_query_dict["tags"] = [query]
+            search_term = json.dumps(graph_query_dict, ensure_ascii=False)
+            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": search_term, "limit": limit}))
+            local_tasks.append(asyncio.sleep(0))  # 占位 vector
+        elif use_vector and not use_graph:
+            local_tasks.append(asyncio.sleep(0))  # 占位 graph
+            search_term = vector_desc if vector_desc else query
+            local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
+                "query": search_term, "limit": limit,
+                "language_filter": language_filter or "",
+                "region_filter": region_filter or "",
+            }))
+        else:
+            graph_query_dict = {"tags": graph_entities, "genre": genre_filter,
+                                "scenario": scenario_filter, "mood": mood_filter,
+                                "language": language_filter, "region": region_filter}
+            if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
+                graph_query_dict["tags"] = [query]
+            graph_term = json.dumps(graph_query_dict, ensure_ascii=False)
+            vector_term = vector_desc if vector_desc else query
             
-        async def execute_retrieval():
-            local_tasks = []
+            logger.info(f"[Hybrid] 混合检索：向子引擎传递 limit={limit}")
+            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": limit}))
+            local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
+                "query": vector_term, "limit": limit,
+                "language_filter": language_filter or "",
+                "region_filter": region_filter or "",
+            }))
             
-            # 根据统一的 use_graph/use_vector 标志分发任务
-            if use_graph and not use_vector:
-                # 仅图谱检索
-                graph_query_dict = {"tags": graph_entities, "genre": genre_filter,
-                                    "scenario": scenario_filter, "mood": mood_filter,
-                                    "language": language_filter, "region": region_filter}
-                if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
-                    graph_query_dict["tags"] = [query]
-                search_term = json.dumps(graph_query_dict, ensure_ascii=False)
-                local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": search_term, "limit": limit}))
-                local_tasks.append(asyncio.sleep(0))  # 占位 vector
-            elif use_vector and not use_graph:
-                # 仅向量检索（带 language/region 硬过滤）
-                local_tasks.append(asyncio.sleep(0))  # 占位 graph
-                search_term = vector_desc if vector_desc else query
-                local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                    "query": search_term, "limit": limit,
-                    "language_filter": language_filter or "",
-                    "region_filter": region_filter or "",
-                }))
+        # 并发执行本地数据库检索
+        local_results = await asyncio.gather(*local_tasks, return_exceptions=True)
+        
+        # ── 诊断日志 ──
+        for idx, label in enumerate(["Graph", "Vector"]):
+            r = local_results[idx] if idx < len(local_results) else None
+            if isinstance(r, Exception):
+                logger.error(f"[诊断] {label} 引擎抛出异常: {type(r).__name__}: {r}")
+            elif r is None or r == "" or r == 0:
+                logger.warning(f"[诊断] {label} 引擎返回空值: repr={repr(r)[:200]}")
             else:
-                # 混合检索（同时启用 graph + vector，或两者都未指定时的默认行为）
-                graph_query_dict = {"tags": graph_entities, "genre": genre_filter,
-                                    "scenario": scenario_filter, "mood": mood_filter,
-                                    "language": language_filter, "region": region_filter}
-                if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
-                    graph_query_dict["tags"] = [query]
-                graph_term = json.dumps(graph_query_dict, ensure_ascii=False)
-                vector_term = vector_desc if vector_desc else query
+                logger.info(f"[诊断] {label} 引擎返回: 长度={len(str(r))}, 前200字符={str(r)[:200]}")
+        
+        graph_raw = local_results[0] if not isinstance(local_results[0], Exception) and local_results[0] else ""
+        vector_raw = local_results[1] if not isinstance(local_results[1], Exception) and local_results[1] else ""
+        
+        web_raw = ""
+        _web_search_globally_enabled = os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0"
+        
+        if _web_search_globally_enabled:
+            if need_web_search and search_keyword:
+                logger.info(f"⚡ 意图明确要求联网: '{search_keyword}'")
+                web_raw = await _federated_search_async(search_keyword)
+            else:
+                graph_empty = not graph_raw or graph_raw == "[]" or "error" in graph_raw.lower()
+                vector_empty = not vector_raw or vector_raw == "[]" or "error" in vector_raw.lower()
                 
-                logger.info(f"[Hybrid] 混合检索：向子引擎传递 limit={limit}")
-                local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": limit}))
-                local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                    "query": vector_term, "limit": limit,
-                    "language_filter": language_filter or "",
-                    "region_filter": region_filter or "",
-                }))
-                
-            # 并发执行本地数据库检索
-            local_results = await asyncio.gather(*local_tasks, return_exceptions=True)
-            
-            # ── 诊断日志：检查各引擎原始返回（同时写文件防丢失） ──
-            diag_lines = [f"=== 诊断时间: {__import__('datetime').datetime.now()} ===\n"]
-            diag_lines.append(f"use_graph={use_graph}, use_vector={use_vector}\n")
-            diag_lines.append(f"vector_desc(HyDE输出)={repr(vector_desc)[:300]}\n")
-            for idx, label in enumerate(["Graph", "Vector"]):
-                r = local_results[idx] if idx < len(local_results) else None
-                if isinstance(r, Exception):
-                    msg = f"[诊断] {label} 引擎抛出异常: {type(r).__name__}: {r}"
-                    logger.error(msg)
-                    diag_lines.append(msg + "\n")
-                    # 打印完整异常栈
-                    import traceback
-                    tb = "".join(traceback.format_exception(type(r), r, r.__traceback__))
-                    diag_lines.append(f"[诊断] {label} 异常栈:\n{tb}\n")
-                elif r is None or r == "" or r == 0:
-                    msg = f"[诊断] {label} 引擎返回空值: repr={repr(r)[:200]}"
-                    logger.warning(msg)
-                    diag_lines.append(msg + "\n")
-                else:
-                    msg = f"[诊断] {label} 引擎返回: 长度={len(str(r))}, 前200字符={str(r)[:200]}"
-                    logger.info(msg)
-                    diag_lines.append(msg + "\n")
-            
-            # 写入诊断文件
-            try:
-                with open("/tmp/hyde_diag.txt", "w", encoding="utf-8") as f:
-                    f.writelines(diag_lines)
-            except Exception:
-                pass
-            
-            graph_raw = local_results[0] if not isinstance(local_results[0], Exception) and local_results[0] else ""
-            vector_raw = local_results[1] if not isinstance(local_results[1], Exception) and local_results[1] else ""
-            
-            web_raw = ""
-            
-            _web_search_globally_enabled = os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0"
-            
-            if _web_search_globally_enabled:
-                # 情况A: 预计算计划或路由器明确要求联网搜索
-                if need_web_search and search_keyword:
-                    logger.info(f"⚡ 意图明确要求联网: '{search_keyword}'")
-                    web_raw = await _federated_search_async(search_keyword)
-                else:
-                    # 情况B: Fallback 逻辑 - 本地数据库未找到结果
-                    graph_empty = not graph_raw or graph_raw == "[]" or "error" in graph_raw.lower()
-                    vector_empty = not vector_raw or vector_raw == "[]" or "error" in vector_raw.lower()
+                needs_fallback = False
+                if graph_entities and graph_empty:
+                    needs_fallback = True
+                elif graph_empty and vector_empty:
+                    needs_fallback = True
                     
-                    needs_fallback = False
-                    if graph_entities and graph_empty:
-                        needs_fallback = True
-                    elif graph_empty and vector_empty:
-                        needs_fallback = True
-                        
-                    if needs_fallback:
-                        logger.warning(f"本地数据库未能找到核心实体或结果太少，触发联网保底搜索 (Fallback): '{query}'")
-                        search_kw = search_keyword if search_keyword else query
-                        web_raw = await _federated_search_async(search_kw)
-                        
-            web_playable = await _extract_and_fetch_web_songs(web_raw)
-                        
-            return graph_raw, vector_raw, web_raw, web_playable
-            
-        # 同步等待结果
-        graph_raw, vector_raw, web_raw, web_playable = loop.run_until_complete(execute_retrieval())
+                if needs_fallback:
+                    logger.warning(f"本地数据库未能找到核心实体或结果太少，触发联网保底搜索 (Fallback): '{query}'")
+                    search_kw = search_keyword if search_keyword else query
+                    web_raw = await _federated_search_async(search_kw)
+                    
+        web_playable = await _extract_and_fetch_web_songs(web_raw)
         
         # 确定策略名称（用于日志和结果格式化）
         if use_graph and use_vector:
@@ -389,7 +348,6 @@ class MusicHybridRetrieval:
             strategy_name = "vector_only"
         else:
             strategy_name = "hybrid_balanced"
-        
         
         # 保存当前 query 供 _format_results 中的 Cross-Encoder 精排使用
         self._current_query = query
@@ -1010,9 +968,9 @@ class MusicHybridRetrieval:
                 "intent_type": intent_type or "unknown",
             }
             
-            # 使用同步 invoke()，避免 async 上下文冲突
-            # retrieve() 在 nest_asyncio 环境中通过 run_in_executor 调用，
-            # 此处直接用同步调用最为稳健
+            # 使用同步 invoke() 来调用 HyDE chain
+            # _generate_hyde_description 在 async retrieve() 中被调用，
+            # 但 LangChain chain.invoke() 本身是同步的，这里无需 await
             result = chain.invoke(invoke_params)
             
             result = result.strip()

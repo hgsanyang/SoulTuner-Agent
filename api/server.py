@@ -25,7 +25,6 @@ from pydantic import BaseModel
 
 from config.logging_config import get_logger
 from agent.music_agent import MusicRecommendationAgent
-from tools.music_tools import get_music_search_tool
 
 logger = get_logger(__name__)
 

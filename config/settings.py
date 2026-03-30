@@ -230,13 +230,6 @@ class GlobalSettings(BaseSettings):
     netease_api_timeout: int = Field(default=10, description="网易云 API 请求超时")
     audio_download_timeout: int = Field(default=60, description="音频文件下载超时")
 
-    # ================================================================
-    # 9. 兼容旧字段（保留但不推荐直接使用）
-    # ================================================================
-    default_search_limit: int = Field(default=10, description="（旧）检索默认条数")
-    default_recommend_limit: int = Field(default=5, description="（旧）推荐歌曲时的默认返回条数")
-    tavily_api_key: str = Field("", validation_alias="TAVILY_API_KEY")
-
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

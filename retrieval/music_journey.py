@@ -215,14 +215,11 @@ async def retrieve_for_segment(
 
     try:
         retriever = MusicHybridRetrieval()
-        # retrieve() 是同步的，放到线程池执行
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: retriever.retrieve(
-                query=query,
-                limit=songs_count + 3,  # 多拿几首以便去重
-                precomputed_plan=plan,
-            )
+        # retrieve() 已改为 async，直接 await
+        result = await retriever.retrieve(
+            query=query,
+            limit=songs_count + 3,  # 多拿几首以便去重
+            precomputed_plan=plan,
         )
 
         songs = []

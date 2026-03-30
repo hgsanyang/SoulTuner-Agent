@@ -1,4 +1,6 @@
+# ================================================================
 # Python
+# ================================================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -19,14 +21,18 @@ venv/
 env/
 ENV/
 
-# IDE
+# ================================================================
+# IDE / Editor
+# ================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Env / secrets
+# ================================================================
+# Env / Secrets（.env.example 保留作为模板）
+# ================================================================
 .env
 .env.*
 .env.local
@@ -36,12 +42,17 @@ ENV/
 *.pem
 config/setting.local.json
 
-# Logs
+# ================================================================
+# Logs & Debug Output
+# ================================================================
 *.log
 logs/
 output/
+vllm_test*.log
 
-# Databases
+# ================================================================
+# Databases（本地数据库文件）
+# ================================================================
 *.db
 *.sqlite
 *.sqlite3
@@ -50,12 +61,16 @@ chroma_db/
 milvus_data/
 neo4j_data/
 
+# ================================================================
 # OS
+# ================================================================
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Temp/cache/test
+# ================================================================
+# Temp / Cache / Test
+# ================================================================
 .cache
 .cache/
 *.tmp
@@ -65,47 +80,77 @@ desktop.ini
 htmlcov/
 .ipynb_checkpoints
 
-# Data/artifacts
-data/**/*.json
-!data/music_database.json
+# ================================================================
+# Data & Artifacts（运行时生成的数据，不上传）
+# ================================================================
+# 运行时下载的音频/歌词/封面
 data/download/
 data/raw_audio/
+data/online_audio/
 data/embeddings/
 data/kaggle/
 data/mtg/
-data/sft/
 
-# Media
+# JSON 数据文件（保留 music_database.json 作为种子数据）
+data/**/*.json
+!data/music_database.json
+
+# Pipeline 运行时产物
+data/pipeline/ingest_progress.json
+data/pipeline/gemini_prompts/gemini_result.json
+data/pipeline/mtg_metadata/*.tsv
+
+# SFT 训练数据（大文件，通过其他渠道分发）
+data/sft/*.jsonl
+data/sft/*.json
+data/sft/planner_sft_training/
+
+# ================================================================
+# Media（音频/模型权重）
+# ================================================================
 *.mp3
 *.wav
 *.flac
 *.m4a
+*.ogg
+*.aac
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
 
+# ================================================================
 # Web (Next.js)
+# ================================================================
 web/node_modules/
 web/.next/
 web/out/
 web/build/
 web/*.tsbuildinfo
 web/next-env.d.ts
+web/package-lock.json
+web/dark_mode_home.png
 
-
-# Pipeline temp scripts
-data_pipeline/_*
-data_pipeline/ingest_progress.json
-data_pipeline/gemini_prompts/gemini_result.json
-
-# NeteaseCloudMusicApi (本地反向代理，不上传)
+# ================================================================
+# NeteaseCloudMusicApi（本地反向代理，不上传）
+# ================================================================
 NeteaseCloudMusicApi/
 
-# GraphZep service
+# ================================================================
+# GraphZep Service
+# ================================================================
+# Node modules
 graphzep_service/**/node_modules/
 
+# TypeScript 编译产物（保留 .ts 源码即可）
+graphzep_service/src/**/*.d.ts
+graphzep_service/src/**/*.js
+graphzep_service/src/**/*.js.map
+
+# ================================================================
 # Root-level stale files
+# ================================================================
 package-lock.json
-
-# Web build artifacts
-web/tsconfig.tsbuildinfo
-
 *.deb
 *.run

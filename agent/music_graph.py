@@ -16,11 +16,9 @@ from config.settings import settings
 from llms.multi_llm import get_chat_model, get_intent_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
-from tools.music_tools import get_music_search_tool, get_music_recommender, Song
 from tools.graphrag_search import graphrag_search
 # 【V2 升级】替换旧版 vector_search 为 Neo4j 原生语义搜索
 from tools.semantic_search import semantic_search
-from tools.music_fetch_tool import search_online_music, execute_search_online_music
 from tools.acquire_music import acquire_online_music
 from retrieval.hybrid_retrieval import MusicHybridRetrieval
 from retrieval.user_memory import UserMemoryManager
@@ -307,7 +305,7 @@ class MusicRecommendationGraph:
             
             # 传递上游统一规划的 retrieval_plan，避免二次 LLM 调用
             retrieval_plan = state.get("retrieval_plan")
-            raw_hybrid_result = retriever.retrieve(search_intent, limit=settings.graph_search_limit, precomputed_plan=retrieval_plan)
+            raw_hybrid_result = await retriever.retrieve(search_intent, limit=settings.graph_search_limit, precomputed_plan=retrieval_plan)
             
             # 直接使用标准的 ToolOutput
             if raw_hybrid_result and raw_hybrid_result.success:
@@ -334,29 +332,6 @@ class MusicRecommendationGraph:
                 ]
             }
 
-    async def fetch_online_music_node(self, state: MusicAgentState) -> Dict[str, Any]:
-        """
-        节点：通过公共外网大盘获取真实的流媒体播放链接
-        """
-        logger.info("--- [步骤 2] 联网抓取试听级音乐源 ---")
-        
-        user_query = state.get("intent_parameters", {}).get("query", state.get("input", ""))
-        try:
-            result = await execute_search_online_music(user_query)
-            
-            # 直接使用标准的 ToolOutput 透传给 explanation 节点
-            return {
-                "recommendations": result,
-                "step_count": state.get("step_count", 0) + 1
-            }
-        except Exception as e:
-            logger.error(f"联网抓取音乐源失败: {str(e)}")
-            return {
-                "error_log": state.get("error_log", []) + [
-                    {"node": "fetch_online_music", "error": str(e)}
-                ],
-                "step_count": state.get("step_count", 0) + 1
-            }
 
     async def acquire_online_music_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
@@ -450,7 +425,7 @@ class MusicRecommendationGraph:
             
             # 传递上游统一规划的 retrieval_plan，避免二次 LLM 调用
             retrieval_plan = state.get("retrieval_plan")
-            raw_hybrid_result = retriever.retrieve(search_query, limit=settings.hybrid_retrieval_limit, precomputed_plan=retrieval_plan)
+            raw_hybrid_result = await retriever.retrieve(search_query, limit=settings.hybrid_retrieval_limit, precomputed_plan=retrieval_plan)
             
             # 直接使用标准的 ToolOutput
             if raw_hybrid_result and raw_hybrid_result.success:
@@ -890,21 +865,20 @@ class MusicRecommendationGraph:
                 query = f"流派:{','.join(seed_genres)} 活动:{activity} 心情:{mood}"
                 
                 logger.info(f"调用检索引擎进行增强推荐: {query}")
-                raw_hybrid_result = retriever.retrieve(query, limit=settings.graph_search_limit)
+                raw_hybrid_result = await retriever.retrieve(query, limit=settings.graph_search_limit)
                 
                 # 直接扩展到推荐列表
                 recommendations.extend(raw_hybrid_result)
             else:
-                # 其他推荐类型，使用原有逻辑
-                recommender = get_music_recommender()
-                if intent_type == "recommend_by_mood":
-                    mood = parameters.get("mood", "开心")
-                    recs = await recommender.recommend_by_mood(mood, limit=settings.enhanced_recommend_limit)
-                    recommendations = [rec.to_dict() for rec in recs]
-                elif intent_type == "recommend_by_activity":
-                    activity = parameters.get("activity", "放松")
-                    recs = await recommender.recommend_by_activity(activity, limit=settings.enhanced_recommend_limit)
-                    recommendations = [rec.to_dict() for rec in recs]
+                # 其他推荐类型，走统一检索管线
+                retriever = MusicHybridRetrieval(llm_client=get_llm())
+                fallback_query = state.get("input", intent_type)
+                logger.info(f"调用检索引擎进行增强推荐(fallback): {fallback_query}")
+                raw_hybrid_result = retriever.retrieve(fallback_query, limit=settings.graph_search_limit)
+                if raw_hybrid_result and hasattr(raw_hybrid_result, 'data'):
+                    recommendations = raw_hybrid_result.data if raw_hybrid_result.data else []
+                else:
+                    recommendations = []
             
             logger.info(f"生成了 {len(recommendations)} 条增强推荐")
             
@@ -1196,7 +1170,6 @@ class MusicRecommendationGraph:
         
         # 添加节点
         workflow.add_node("analyze_intent", self.analyze_intent)
-        # fetch_online_music 节点已移除，播放具体歌曲统一走 graph_search → search_songs
         workflow.add_node("acquire_online_music", self.acquire_online_music_node)  # 数据飞轮
         workflow.add_node("search_songs", self.search_songs_node)
         workflow.add_node("generate_recommendations", self.generate_recommendations_node)
@@ -1212,7 +1185,7 @@ class MusicRecommendationGraph:
         # 召回完成后 → 意图分析
         workflow.add_edge("recall_graphzep_memory", "analyze_intent")
         
-        # 条件边：根据意图路由（移除 fetch_online_music 分支）
+        # 条件边：根据意图路由
         workflow.add_conditional_edges(
             "analyze_intent",
             self.route_by_intent,
