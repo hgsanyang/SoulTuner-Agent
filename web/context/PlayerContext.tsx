@@ -38,7 +38,7 @@ interface PlayerContextType {
     setVolume: (v: number) => void;
     seek: (time: number) => void;
     setPlayMode: (mode: PlayMode) => void;
-    setExpanded: (expanded: boolean) => void;
+    setExpanded: (expanded: boolean | ((prev: boolean) => boolean)) => void;
     addToQueue: (song: Song) => void;
     removeFromQueue: (title: string, artist: string) => void;
     addAllToQueue: (songs: Song[]) => void;
