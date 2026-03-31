@@ -549,7 +549,6 @@ async def get_settings_endpoint():
     返回当前所有可配置设置（供前端设置面板加载）。
     """
     from config.settings import settings
-    import retrieval.hybrid_retrieval as hr
 
     return {
         # 模型配置
@@ -570,13 +569,16 @@ async def get_settings_endpoint():
         "semantic_search_limit": settings.semantic_search_limit,
         "hybrid_retrieval_limit": settings.hybrid_retrieval_limit,
         "web_search_max_results": settings.web_search_max_results,
-        # RRF 融合参数
-        "rrf_weight_vector": hr.RRF_WEIGHT_VECTOR,
-        "rrf_weight_graph": hr.RRF_WEIGHT_GRAPH,
+        # 双锚精排参数
+        "dual_anchor_weight_semantic": settings.dual_anchor_weight_semantic,
+        "dual_anchor_weight_acoustic": settings.dual_anchor_weight_acoustic,
         # 图距离参数
-        "graph_affinity_enabled": hr.GRAPH_AFFINITY_ENABLED,
-        "graph_affinity_weight": hr.GRAPH_AFFINITY_WEIGHT,
-        "graph_affinity_max_hops": hr.GRAPH_AFFINITY_MAX_HOPS,
+        "graph_affinity_enabled": settings.graph_affinity_enabled,
+        "graph_affinity_weight": settings.graph_affinity_weight,
+        "graph_affinity_max_hops": settings.graph_affinity_max_hops,
+        # 多样性参数
+        "max_songs_per_artist": settings.max_songs_per_artist,
+        "mmr_lambda": settings.mmr_lambda,
         # 记忆系统
         "memory_retain_rounds": settings.memory_retain_rounds,
         "default_user_id": settings.default_user_id,
@@ -601,10 +603,13 @@ class SettingsUpdateRequest(BaseModel):
     semantic_search_limit: int | None = None
     hybrid_retrieval_limit: int | None = None
     web_search_max_results: int | None = None
-    rrf_weight_vector: float | None = None
+    dual_anchor_weight_semantic: float | None = None
+    dual_anchor_weight_acoustic: float | None = None
     graph_affinity_enabled: bool | None = None
     graph_affinity_weight: float | None = None
     graph_affinity_max_hops: int | None = None
+    max_songs_per_artist: int | None = None
+    mmr_lambda: float | None = None
     memory_retain_rounds: int | None = None
     default_user_id: str | None = None
 
@@ -616,29 +621,13 @@ async def update_settings_endpoint(request: SettingsUpdateRequest):
     前端只发送修改了的字段，未发送的字段保持不变。
     """
     from config.settings import settings
-    import retrieval.hybrid_retrieval as hr
 
     updated_fields = []
 
-    # 遍历请求中所有非 None 字段
+    # 遍历请求中所有非 None 字段，统一更新 settings 对象
     update_data = request.model_dump(exclude_none=True)
     for key, val in update_data.items():
-        # RRF / GraphAffinity 参数 → 更新模块级常量
-        if key == "rrf_weight_vector":
-            hr.RRF_WEIGHT_VECTOR = val
-            hr.RRF_WEIGHT_GRAPH = round(1.0 - val, 2)
-            updated_fields.extend(["rrf_weight_vector", "rrf_weight_graph"])
-        elif key == "graph_affinity_enabled":
-            hr.GRAPH_AFFINITY_ENABLED = val
-            updated_fields.append(key)
-        elif key == "graph_affinity_weight":
-            hr.GRAPH_AFFINITY_WEIGHT = val
-            updated_fields.append(key)
-        elif key == "graph_affinity_max_hops":
-            hr.GRAPH_AFFINITY_MAX_HOPS = val
-            updated_fields.append(key)
-        # 其他字段 → 更新 pydantic settings 对象
-        elif hasattr(settings, key):
+        if hasattr(settings, key):
             setattr(settings, key, val)
             updated_fields.append(key)
 
@@ -664,19 +653,11 @@ async def reset_settings_endpoint():
     还原所有配置为默认值（从环境变量 + 代码默认值重新加载）。
     """
     import config.settings as settings_module
-    import retrieval.hybrid_retrieval as hr
     from config.settings import GlobalSettings
 
     # 重新实例化 settings（拾取 .env / 环境变量中的默认值）
     fresh = GlobalSettings()
     settings_module.settings = fresh
-
-    # 重置 RRF / GraphAffinity 模块级常量
-    hr.RRF_WEIGHT_VECTOR = fresh.rrf_weight_vector
-    hr.RRF_WEIGHT_GRAPH = fresh.rrf_weight_graph
-    hr.GRAPH_AFFINITY_ENABLED = fresh.graph_affinity_enabled
-    hr.GRAPH_AFFINITY_WEIGHT = fresh.graph_affinity_weight
-    hr.GRAPH_AFFINITY_MAX_HOPS = fresh.graph_affinity_max_hops
 
     # 返回新的完整设置给前端
     return {
@@ -697,11 +678,13 @@ async def reset_settings_endpoint():
             "semantic_search_limit": fresh.semantic_search_limit,
             "hybrid_retrieval_limit": fresh.hybrid_retrieval_limit,
             "web_search_max_results": fresh.web_search_max_results,
-            "rrf_weight_vector": fresh.rrf_weight_vector,
-            "rrf_weight_graph": fresh.rrf_weight_graph,
+            "dual_anchor_weight_semantic": fresh.dual_anchor_weight_semantic,
+            "dual_anchor_weight_acoustic": fresh.dual_anchor_weight_acoustic,
             "graph_affinity_enabled": fresh.graph_affinity_enabled,
             "graph_affinity_weight": fresh.graph_affinity_weight,
             "graph_affinity_max_hops": fresh.graph_affinity_max_hops,
+            "max_songs_per_artist": fresh.max_songs_per_artist,
+            "mmr_lambda": fresh.mmr_lambda,
             "memory_retain_rounds": fresh.memory_retain_rounds,
             "default_user_id": fresh.default_user_id,
         },
@@ -794,6 +777,81 @@ async def capture_user_event(request: UserEventRequest):
         return {"success": False, "error": str(e)}
 
 
+# ================================================================
+# 用户收藏 / 不喜欢 查询 API（供前端同步使用）
+# ================================================================
+
+@app.get("/api/liked-songs")
+async def get_liked_songs(user_id: str = "local_admin", limit: int = 50):
+    """
+    查询用户点赞+收藏的歌曲列表（从 Neo4j 读取）。
+    前端启动时调用此接口同步 liked songs 状态。
+    """
+    try:
+        from retrieval.user_memory import UserMemoryManager
+        memory = UserMemoryManager()
+        songs = memory.get_liked_songs(user_id=user_id, limit=limit)
+        return {"success": True, "songs": songs, "total": len(songs)}
+    except Exception as e:
+        logger.error(f"查询 liked songs 失败: {e}")
+        return {"success": False, "songs": [], "error": str(e)}
+
+
+@app.get("/api/disliked-songs")
+async def get_disliked_songs(user_id: str = "local_admin", limit: int = 50):
+    """
+    查询用户标记为「不喜欢」的歌曲列表（从 Neo4j 读取）。
+    供前端展示「不喜欢」管理页面。
+    """
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        client = get_neo4j_client()
+        query = """
+        MATCH (u:User {id: $user_id})-[r:DISLIKES]->(s:Song)
+        OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        RETURN s.title AS title, coalesce(a.name, s.artist, '未知') AS artist,
+               s.audio_url AS audio_url, s.cover_url AS cover_url,
+               s.album AS album,
+               r.created_at AS disliked_at
+        ORDER BY r.created_at DESC
+        LIMIT $limit
+        """
+        results = client.execute_query(query, {"user_id": user_id, "limit": limit})
+        songs = [
+            {
+                "title": r.get("title", ""),
+                "artist": r.get("artist", ""),
+                "audio_url": r.get("audio_url", ""),
+                "cover_url": r.get("cover_url", ""),
+                "album": r.get("album", ""),
+                "disliked_at": r.get("disliked_at"),
+            }
+            for r in results
+        ]
+        return {"success": True, "songs": songs, "total": len(songs)}
+    except Exception as e:
+        logger.error(f"查询 disliked songs 失败: {e}")
+        return {"success": False, "songs": [], "error": str(e)}
+
+
+@app.delete("/api/disliked-songs")
+async def remove_dislike(song_title: str, artist: str, user_id: str = "local_admin"):
+    """从「不喜欢」列表中移除一首歌"""
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        client = get_neo4j_client()
+        query = """
+        MATCH (u:User {id: $user_id})-[r:DISLIKES]->(s:Song {title: $title})
+        DELETE r
+        """
+        client.execute_query(query, {"user_id": user_id, "title": song_title})
+        logger.info(f"用户 {user_id} 撤销不喜欢: {song_title}")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"撤销不喜欢失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     
@@ -805,4 +863,3 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     )
-

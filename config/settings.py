@@ -136,15 +136,15 @@ class GlobalSettings(BaseSettings):
     # 6. 检索 & 推荐参数（★ 核心调参区）
     # ================================================================
     semantic_search_limit: int = Field(
-        default=12,
+        default=15,
         description="语义向量搜索默认返回条数（Neo4j KNN）",
     )
     graph_search_limit: int = Field(
-        default=12,
+        default=15,
         description="GraphRAG 图谱搜索默认返回条数",
     )
     hybrid_retrieval_limit: int = Field(
-        default=12,
+        default=15,
         description="混合检索合并后最终返回条数（传给 LLM 推荐解释）",
     )
     web_search_max_results: int = Field(
@@ -165,27 +165,51 @@ class GlobalSettings(BaseSettings):
     )
 
     # ================================================================
-    # 6b. RRF 融合 & 图距离加权参数
+    # 6b. 精排管线参数（双锚精排 + 图距离 + 多样性）
     # ================================================================
-    rrf_weight_vector: float = Field(
-        default=0.7,
-        description="加权 RRF 中向量检索路的权重",
+
+    # --- 双锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚）---
+    dual_anchor_weight_semantic: float = Field(
+        default=0.6,
+        description="双锚精排中 M2D-CLAP 语义锚（text embedding cosine）的权重",
     )
-    rrf_weight_graph: float = Field(
-        default=0.3,
-        description="加权 RRF 中图谱检索路的权重",
+    dual_anchor_weight_acoustic: float = Field(
+        default=0.4,
+        description="双锚精排中 OMAR-RQ 声学锚（centroid cosine）的权重",
     )
+
+    # --- Graph Affinity（图距离 + 用户画像 Jaccard）---
     graph_affinity_enabled: bool = Field(
         default=True,
-        description="是否启用 Neo4j 图距离亲和力加权",
+        description="是否启用 Neo4j 图距离亲和力 + 用户画像 Jaccard 加权",
     )
     graph_affinity_weight: float = Field(
         default=0.15,
-        description="图亲和力分数在最终排序中的权重",
+        description="Graph Affinity 分数在精排前微调排序中的权重",
     )
     graph_affinity_max_hops: int = Field(
         default=4,
         description="图距离计算最大跳数",
+    )
+
+    # --- Artist 多样性 & MMR ---
+    max_songs_per_artist: int = Field(
+        default=2,
+        description="多样性过滤：每个艺术家最多占的歌曲数",
+    )
+    mmr_lambda: float = Field(
+        default=0.7,
+        description="MMR 多样性重排序中 relevance vs diversity 的平衡系数（越高越偏向相关性）",
+    )
+
+    # --- recommend_by_favorites 智能推荐 ---
+    favorites_seed_limit: int = Field(
+        default=5,
+        description="recommend_by_favorites: 种子展示数量（来自用户收藏）",
+    )
+    favorites_discovery_limit: int = Field(
+        default=10,
+        description="recommend_by_favorites: 新歌发现数量（来自向量检索扩展）",
     )
 
     # ================================================================
