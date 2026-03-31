@@ -114,14 +114,20 @@
 
 | 层 | 技术 |
 |---|---|
-| **前端** | Next.js 14 + React 18 + Framer Motion |
-| **Agent** | LangGraph StateGraph（7 意图路由） |
-| **后端** | FastAPI + Uvicorn，SSE 流式推送，运行时设置 API |
-| **图数据库** | Neo4j（原生向量索引 + 图谱关系） |
-| **音频嵌入** | M2D-CLAP 2025（跨模态，768d）+ OMAR-RQ（声学，768d） |
-| **大语言模型** | DeepSeek-V3.2 / 通义千问 / Gemini（可切换，支持本地微调模型） |
-| **长期记忆** | GraphZep（Hono 微服务，双阶段召回） |
+| **前端** | Next.js 14 (App Router) + React 18 + TypeScript 5.5 + Framer Motion 12 |
+| **前端状态** | React Context API（PlayerContext 播放器 + LibraryContext 音乐库） |
+| **前端设计** | CSS-in-JS 自定义 theme.ts（Spotify 深色设计系统） |
+| **Agent** | LangGraph StateGraph（7 意图路由 / 双套 Planner） |
+| **后端** | FastAPI + Uvicorn (ASGI)，SSE 流式推送，Pydantic 结构化校验 |
+| **异步 I/O** | Python asyncio 全异步（多引擎并发检索 + GraphZep fire-and-forget 写入） |
+| **图数据库** | Neo4j 5.x（原生向量索引 + 图谱关系 + 用户行为直写） |
+| **音频嵌入** | M2D-CLAP 2025（跨模态语义，768d）+ OMAR-RQ（纯声学特征，768d） |
+| **AI 推理** | PyTorch ≥2.2 + torchaudio（GPU/CPU 自适应，懒加载单例缓存） |
+| **大语言模型** | DeepSeek-V3 / Gemini / 通义千问（API）+ Qwen3-4B（SGLang 本地部署） |
+| **长期记忆** | GraphZep（Hono + TypeScript 微服务，时序知识图谱，双阶段召回） |
 | **联网搜索** | SearxNG 联邦搜索 + Tavily + 智谱 WebSearch |
+| **排序算法** | 双锚精排（cosine）+ Graph Affinity（shortestPath + Jaccard）+ MMR |
+| **上下文管理** | GSSC Token 预算管线（Gather/Select/Structure/Compress） |
 | **容器化** | Docker Compose（Neo4j + GraphZep + Backend + Frontend） |
 
 ---
@@ -514,20 +520,28 @@ python data/pipeline/neo4j_schema_v2.py --backfill
 
 | 端点 | 说明 |
 |------|------|
-| `POST /api/recommendations/stream` | 音乐推荐（流式） |
-| `POST /api/journey/stream` | 音乐旅程（流式） |
+| `POST /api/recommendations/stream` | 音乐推荐（SSE 流式：thinking → song × N → response → complete） |
+| `POST /api/journey/stream` | 音乐旅程（SSE 流式：segment_start → song × N → segment_complete × M） |
 
-### REST
+### REST — 用户行为
 
 | 端点 | 说明 |
 |------|------|
-| `POST /api/search` | 歌曲搜索 |
-| `POST /api/acquire-song` | 加入本地曲库 |
-| `POST /api/user-event` | 用户行为上报（LIKES/SAVES/LISTENED_TO） |
+| `POST /api/user-event` | 用户行为上报（like/unlike/save/unsave/skip/dislike/full_play/repeat） |
+| `GET /api/liked-songs` | 查询用户点赞+收藏歌曲列表（从 Neo4j，含时间衰减排序） |
+| `GET /api/disliked-songs` | 查询用户不喜欢歌曲列表（从 Neo4j） |
+| `DELETE /api/disliked-songs` | 撤销不喜欢标记（从 Neo4j 删除 DISLIKES 关系） |
+
+### REST — 功能
+
+| 端点 | 说明 |
+|------|------|
+| `POST /api/search` | 非流式歌曲搜索 |
+| `POST /api/acquire-song` | 数据飞轮：下载音频/封面/歌词 → 双模型编码 → Neo4j 入库 |
 | `GET /api/user-profile` | 读取用户画像偏好 |
-| `POST /api/user-profile` | 保存用户画像偏好 → Neo4j + GraphZep |
-| `GET /api/settings` | 获取当前配置 |
-| `POST /api/settings` | 更新配置 |
+| `POST /api/user-profile` | 保存用户画像偏好 → Neo4j User 属性 + GraphZep 长期记忆 |
+| `GET /api/settings` | 获取当前运行时配置 |
+| `POST /api/settings` | 更新运行时配置（即时生效，无需重启） |
 | `POST /api/settings/reset` | 还原默认配置 |
 | `GET /health` | 健康检查 |
 
