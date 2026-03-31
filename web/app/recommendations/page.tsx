@@ -228,7 +228,20 @@ export default function RecommendationsPage() {
 
   const hasMessages = messages.length > 0;
 
-  // 搜索栏上方工具栏
+  // 临时返回情绪卡片（不清空聊天记录）
+  const [showWelcome, setShowWelcome] = useState(false);
+
+  /** 返回推荐卡片视图（保留聊天历史，下次发送时自动回到对话视图） */
+  const handleBackToCards = useCallback(() => {
+    setShowWelcome(true);
+  }, []);
+
+  /** 包装 handleSubmit：从卡片/输入框发送时自动回到对话视图 */
+  const handleSubmitAndHideWelcome = useCallback(async (value: string) => {
+    setShowWelcome(false);
+    return handleSubmit(value);
+  }, [handleSubmit]);
+
   const toolbar = (
     <div style={{
       display: 'flex',
@@ -325,42 +338,68 @@ export default function RecommendationsPage() {
         </button>
       </div>
 
-      {/* 右侧：新建聊天按钮（仅在有聊天记录时显示） */}
-      {hasMessages && (
-        <button
-          onClick={handleNewChat}
-          title="清空当前对话，开始新的聊天"
-          style={{
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            padding: '0.35rem 0.8rem', borderRadius: '2rem',
-            backgroundColor: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'rgba(255,255,255,0.6)', fontSize: '0.82rem',
-            cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,80,60,0.15)'; e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = 'rgba(255,80,60,0.35)'; }}
-          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          新建聊天
-        </button>
-      )}
+      {/* 右侧按钮组 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {/* 返回推荐卡片按钮（仅在对话视图时显示） */}
+        {hasMessages && !showWelcome && (
+          <button
+            onClick={handleBackToCards}
+            title="返回场景推荐卡片"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.4rem',
+              padding: '0.35rem 0.8rem', borderRadius: '2rem',
+              backgroundColor: 'rgba(99, 102, 241, 0.1)',
+              border: '1px solid rgba(99, 102, 241, 0.25)',
+              color: 'rgba(165, 165, 255, 0.85)', fontSize: '0.82rem',
+              cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(99, 102, 241, 0.2)'; e.currentTarget.style.color = '#fff'; }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(99, 102, 241, 0.1)'; e.currentTarget.style.color = 'rgba(165, 165, 255, 0.85)'; }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
+            </svg>
+            推荐卡片
+          </button>
+        )}
+        {/* 新建聊天按钮 */}
+        {hasMessages && (
+          <button
+            onClick={handleNewChat}
+            title="清空当前对话，开始新的聊天"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.4rem',
+              padding: '0.35rem 0.8rem', borderRadius: '2rem',
+              backgroundColor: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              color: 'rgba(255,255,255,0.6)', fontSize: '0.82rem',
+              cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,80,60,0.15)'; e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = 'rgba(255,80,60,0.35)'; }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.6)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            新建聊天
+          </button>
+        )}
+      </div>
     </div>
   );
 
   return (
     <MainLayout
-      onInputSubmit={handleSubmit}
+      onInputSubmit={handleSubmitAndHideWelcome}
       onInputAbort={handleAbort}
       inputPlaceholder="例如：想运动，来点劲爆的"
       inputIsLoading={loading}
       toolbar={toolbar}
     >
-      {!hasMessages && !loading && <WelcomeScreen onPromptClick={handleSubmit} />}
+      {(!hasMessages || showWelcome) && !loading && <WelcomeScreen onPromptClick={handleSubmitAndHideWelcome} />}
 
-      {hasMessages && (() => {
+      {hasMessages && !showWelcome && (() => {
         // 汇总所有 assistant 消息中的歌曲
         const allSongs = messages
           .filter(m => m.role === 'assistant' && m.songs && m.songs.length > 0)
