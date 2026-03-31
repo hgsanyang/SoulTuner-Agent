@@ -145,11 +145,23 @@ class UserMemoryManager:
                 self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
             logger.info(f"记录用户 {user_id} 收藏歌曲: {song_title} - {artist}")
     def record_dislike(self, user_id: str, song_title: str, artist: str):
-        """记录用户明确不喜欢 → DISLIKES 关系（优先关联已有 Song）"""
+        """记录用户明确不喜欢 → DISLIKES 关系（优先关联已有 Song）。
+        同时自动撤销该歌曲的 LIKES / SAVES 关系，避免矛盾状态。
+        """
         if not song_title or not artist or artist == "未知":
             logger.warning(f"跳过记录不喜欢（缺少必要信息）: title={song_title}, artist={artist}")
             return
         if self.neo4j_client:
+            # ① 先清理矛盾关系：删除可能存在的 LIKES / SAVES
+            cleanup_query = """
+            MATCH (u:User {id: $user_id})-[r:LIKES|SAVES]->(s:Song {title: $song_title})
+            DELETE r
+            """
+            self.neo4j_client.execute_query(cleanup_query, {
+                "user_id": user_id, "song_title": song_title
+            })
+
+            # ② 创建 DISLIKES 关系
             existing_id = self._find_or_create_song(song_title, artist)
             if existing_id is not None:
                 query = """
@@ -169,7 +181,7 @@ class UserMemoryManager:
                 ON CREATE SET r.created_at = timestamp(), r.weight = 1.0
                 """
                 self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
-            logger.info(f"记录用户 {user_id} 不喜欢歌曲: {song_title} - {artist}")
+            logger.info(f"记录用户 {user_id} 不喜欢歌曲: {song_title} - {artist} (已清理 LIKES/SAVES)")
     def record_skipped(self, user_id: str, song_title: str, artist: str):
         """记录用户跳过 → SKIPPED 关系（优先关联已有 Song）"""
         if not song_title or not artist or artist == "未知":
@@ -248,7 +260,8 @@ class UserMemoryManager:
         RETURN s.title AS title, coalesce(a.name, s.artist, '未知') AS artist,
                s.audio_url AS audio_url, s.cover_url AS cover_url,
                s.lrc_url AS lrc_url, s.album AS album,
-               moods, themes, rel_type, decayed_score
+               moods, themes, rel_type, decayed_score,
+               s.genre AS genre
         """
         if not self.neo4j_client:
             return []
@@ -264,6 +277,7 @@ class UserMemoryManager:
                         "cover_url": r.get("cover_url", ""),
                         "lrc_url": r.get("lrc_url", ""),
                         "album": r.get("album", ""),
+                        "genre": r.get("genre", ""),
                         "moods": r.get("moods", []),
                         "themes": r.get("themes", []),
                     },
