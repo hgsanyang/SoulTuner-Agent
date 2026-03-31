@@ -20,18 +20,9 @@ logger = get_logger(__name__)
 # ---- 检索结果融合常量 ----
 BASELINE_SIMILARITY_SCORE = 0.85      # 单引擎命中的基础相似度分（仅作 fallback）
 WEB_RESULT_PRIORITY_SCORE = 9.9       # 网络资讯结果的优先级分数
-MAX_SONGS_PER_ARTIST = 3              # 多样性过滤：每个艺术家最多占的歌曲数
 MIN_DIVERSE_RESULTS = 6               # 多样性过滤后的最少结果数
 
-# ---- 加权 RRF 融合参数 ----
-RRF_K = 60                            # RRF 平滑常数（标准值 60）
-RRF_WEIGHT_VECTOR = 0.7               # 向量检索路的 RRF 权重（主导）
-RRF_WEIGHT_GRAPH = 0.3                # 图谱检索路的 RRF 权重（辅助）
-
-# ---- Neo4j 图距离加权参数 ----
-GRAPH_AFFINITY_ENABLED = True         # 是否启用图距离加权
-GRAPH_AFFINITY_WEIGHT = 0.15          # 图亲和力分数在最终排序中的权重
-GRAPH_AFFINITY_MAX_HOPS = 4           # 最大跳数（超过视为无关联）
+# ---- Neo4j 图距离加权参数（从 settings 读取，此处为 fallback 默认值） ----
 GRAPH_AFFINITY_USER_ID = "local_admin" # 图距离计算的用户 ID
 
 # ---- 用户偏好缓存（启动时加载一次，避免每次请求都查 Neo4j） ----
@@ -130,6 +121,28 @@ class MusicHybridRetrieval:
     def __init__(self, llm_client=None):
         # 保存 llm_client 引用（预留，供未来扩展使用）
         self.llm_client = llm_client
+        self._disliked_cache: set = None  # 同一请求内缓存
+
+    def _get_disliked_titles(self, user_id: str = GRAPH_AFFINITY_USER_ID) -> set:
+        """查询用户 DISLIKES 的歌曲标题集合（同一实例内缓存）"""
+        if self._disliked_cache is not None:
+            return self._disliked_cache
+        try:
+            from retrieval.neo4j_client import get_neo4j_client
+            client = get_neo4j_client()
+            query = """
+            MATCH (u:User {id: $uid})-[:DISLIKES]->(s:Song)
+            RETURN collect(s.title) AS titles
+            """
+            result = client.execute_query(query, {"uid": user_id})
+            self._disliked_cache = set(result[0]["titles"]) if result and result[0].get("titles") else set()
+            if self._disliked_cache:
+                logger.info(f"[DislikeFilter] 加载到 {len(self._disliked_cache)} 首不喜欢的歌")
+            return self._disliked_cache
+        except Exception as e:
+            logger.warning(f"[DislikeFilter] 查询失败: {e}")
+            self._disliked_cache = set()
+            return self._disliked_cache
 
     async def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
         """
@@ -142,6 +155,9 @@ class MusicHybridRetrieval:
                               如果提供，则使用预计算计划；否则默认启用图谱+向量双引擎。
         """
         logger.info(f"[Retrieval] 开始处理请求: {query}")
+
+        # 过召回策略: 各子引擎多召回 50%，精排后再截断到 limit
+        engine_limit = max(limit, int(limit * 1.5))
         
         # 1. 确定检索策略：优先用预计算计划，否则安全默认（双引擎）
         if precomputed_plan:
@@ -272,13 +288,13 @@ class MusicHybridRetrieval:
             if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
                 graph_query_dict["tags"] = [query]
             search_term = json.dumps(graph_query_dict, ensure_ascii=False)
-            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": search_term, "limit": limit}))
+            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": search_term, "limit": engine_limit}))
             local_tasks.append(asyncio.sleep(0))  # 占位 vector
         elif use_vector and not use_graph:
             local_tasks.append(asyncio.sleep(0))  # 占位 graph
             search_term = vector_desc if vector_desc else query
             local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                "query": search_term, "limit": limit,
+                "query": search_term, "limit": engine_limit,
                 "language_filter": language_filter or "",
                 "region_filter": region_filter or "",
             }))
@@ -291,10 +307,10 @@ class MusicHybridRetrieval:
             graph_term = json.dumps(graph_query_dict, ensure_ascii=False)
             vector_term = vector_desc if vector_desc else query
             
-            logger.info(f"[Hybrid] 混合检索：向子引擎传递 limit={limit}")
-            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": limit}))
+            logger.info(f"[Hybrid] 混合检索：向子引擎传递 engine_limit={engine_limit} (final_limit={limit})")
+            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": engine_limit}))
             local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                "query": vector_term, "limit": limit,
+                "query": vector_term, "limit": engine_limit,
                 "language_filter": language_filter or "",
                 "region_filter": region_filter or "",
             }))
@@ -352,7 +368,7 @@ class MusicHybridRetrieval:
         # 保存当前 query 供 _format_results 中的 Cross-Encoder 精排使用
         self._current_query = query
         
-        return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable, graph_entities)
+        return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable, graph_entities, final_limit=limit)
 
 
     # ================================================================
@@ -396,7 +412,7 @@ class MusicHybridRetrieval:
                 genre = ""
 
             # 标准化 key（消除全角/半角、标点差异）
-            key = HybridRetriever._normalize_key(title, artist)
+            key = MusicHybridRetrieval._normalize_key(title, artist)
             if key in seen_keys:
                 logger.info(f"[{engine_name}] 引擎内部去重: '{title}' - '{artist}'")
                 continue
@@ -430,85 +446,177 @@ class MusicHybridRetrieval:
         return results
 
     @staticmethod
-    def _weighted_rrf_fusion(
+    def _merge_and_dedup(
         graph_items: List[dict],
         vector_items: List[dict],
-        k: int = RRF_K,
-        w_vector: float = RRF_WEIGHT_VECTOR,
-        w_graph: float = RRF_WEIGHT_GRAPH,
     ) -> List[dict]:
         """
-        加权 RRF 融合两路检索结果。
+        平等合并两路检索结果（替代旧版加权 RRF）。
 
-        公式:
-            RRF_Score(d) = w_vector / (k + rank_vector(d))
-                         + w_graph  / (k + rank_graph(d))
-
-        如果某首歌只出现在一路中，另一路的贡献为 0。
-        双路都命中的歌曲天然获得更高分数。
+        两路候选不再有权重偏差，公平进入后续精排管线。
+        双路命中的歌曲打上交叉标记，但不额外加分（由双锚精排统一评分）。
         """
-        # 以 key 为索引收集各路排名
         song_data: Dict[str, dict] = {}   # key → 歌曲元数据
-        graph_ranks: Dict[str, int] = {}   # key → 图谱排名
-        vector_ranks: Dict[str, int] = {}  # key → 向量排名
+        key_engines: Dict[str, List[str]] = {}  # key → 命中引擎列表
 
         for item in graph_items:
             key = item["key"]
-            graph_ranks[key] = item["rank"]
             if key not in song_data:
                 song_data[key] = item
+                key_engines[key] = []
+            key_engines[key].append("知识图谱(GraphRAG)")
 
         for item in vector_items:
             key = item["key"]
-            vector_ranks[key] = item["rank"]
             if key not in song_data:
                 song_data[key] = item
+                key_engines[key] = []
+            if "语义向量(Neo4j Vector)" not in key_engines.get(key, []):
+                key_engines.setdefault(key, []).append("语义向量(Neo4j Vector)")
 
-        # 计算每首歌的加权 RRF 分数
-        rrf_scores: Dict[str, float] = {}
-        all_keys = set(graph_ranks.keys()) | set(vector_ranks.keys())
-
-        for key in all_keys:
-            score = 0.0
-            if key in vector_ranks:
-                score += w_vector / (k + vector_ranks[key])
-            if key in graph_ranks:
-                score += w_graph / (k + graph_ranks[key])
-            rrf_scores[key] = score
-
-        # 构建融合结果列表
-        fused = []
-        for key in all_keys:
-            item = song_data[key]
-            both_hit = key in graph_ranks and key in vector_ranks
-            engines = []
-            if key in graph_ranks:
-                engines.append("知识图谱(GraphRAG)")
-            if key in vector_ranks:
-                engines.append("语义向量(Neo4j Vector)")
-
+        # 构建合并列表（初始分数统一用 raw_score，不区分引擎）
+        merged = []
+        for key, item in song_data.items():
+            engines = key_engines.get(key, [])
+            both_hit = len(engines) > 1
             reason = "引擎检索来源: " + " + ".join(engines)
             if both_hit:
                 reason += " 🔥双引擎交叉命中"
 
-            fused.append({
+            merged.append({
                 "song": item["song"],
                 "reason": reason,
-                "similarity_score": rrf_scores[key],
-                "_rrf_score": rrf_scores[key],
-                "_graph_rank": graph_ranks.get(key),
-                "_vector_rank": vector_ranks.get(key),
+                "similarity_score": item["raw_score"],
                 "_both_engines": both_hit,
             })
 
-        # 按 RRF 分数降序排列
-        fused.sort(key=lambda x: x["similarity_score"], reverse=True)
+        # 按原始分数降序（仅作初始排序，后续由双锚精排重排）
+        merged.sort(key=lambda x: x["similarity_score"], reverse=True)
+        both_count = sum(1 for m in merged if m["_both_engines"])
         logger.info(
-            f"[RRF] 加权融合完成: {len(fused)} 首 "
-            f"(双引擎命中: {sum(1 for f in fused if f['_both_engines'])} 首) "
-            f"| 权重 vector={w_vector} graph={w_graph} k={k}"
+            f"[MergeDedup] 平等合并完成: {len(merged)} 首 "
+            f"(双引擎交叉命中: {both_count} 首)"
         )
-        return fused
+        return merged
+
+    @staticmethod
+    def _dual_anchor_rerank(
+        candidates: List[dict],
+        query_text: str,
+        w_semantic: float = None,
+        w_acoustic: float = None,
+    ) -> List[dict]:
+        """
+        双锚精排：M2D-CLAP 语义锚 + OMAR-RQ 声学锚。
+
+        - 语义锚：用户查询文本 → M2D-CLAP text embedding → cosine(song_m2d, query_text_emb)
+        - 声学锚：所有候选歌曲的 OMAR embedding → 质心 → cosine(song_omar, centroid)
+
+        最终分数 = w_semantic × semantic_score + w_acoustic × acoustic_score
+
+        当候选歌曲缺少 OMAR embedding 时，自动退回纯语义排序。
+        """
+        if not candidates:
+            return candidates
+
+        from config.settings import settings as _s
+        if w_semantic is None:
+            w_semantic = _s.dual_anchor_weight_semantic
+        if w_acoustic is None:
+            w_acoustic = _s.dual_anchor_weight_acoustic
+
+        try:
+            import numpy as np
+            from retrieval.neo4j_client import get_neo4j_client
+            from retrieval.audio_embedder import encode_text_to_embedding
+
+            neo4j = get_neo4j_client()
+            if not neo4j or not neo4j.driver:
+                logger.warning("[DualAnchor] Neo4j 不可用，跳过双锚精排")
+                return candidates
+
+            # ── 语义锚：query → text embedding ──
+            logger.info(f"[DualAnchor] 编码 query text embedding...")
+            query_emb = np.array(encode_text_to_embedding(query_text))
+
+            # ── 批量获取候选歌曲的 M2D + OMAR embedding ──
+            titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
+            emb_cypher = """
+            UNWIND $titles AS t
+            MATCH (s:Song {title: t})
+            RETURN s.title AS title,
+                   s.m2d2_embedding AS m2d_emb,
+                   s.omar_embedding AS omar_emb
+            """
+            emb_rows = neo4j.execute_query(emb_cypher, {"titles": titles})
+
+            m2d_map = {}   # title → np.array
+            omar_map = {}  # title → np.array
+            for row in (emb_rows or []):
+                t = row.get("title", "")
+                if row.get("m2d_emb"):
+                    m2d_map[t] = np.array(row["m2d_emb"])
+                if row.get("omar_emb"):
+                    omar_map[t] = np.array(row["omar_emb"])
+
+            logger.info(
+                f"[DualAnchor] embedding 命中: M2D={len(m2d_map)}/{len(titles)}, "
+                f"OMAR={len(omar_map)}/{len(titles)}"
+            )
+
+            # ── 声学锚：OMAR 质心 ──
+            omar_centroid = None
+            if omar_map:
+                omar_vectors = list(omar_map.values())
+                omar_centroid = np.mean(omar_vectors, axis=0)
+                logger.info(f"[DualAnchor] OMAR 质心已计算 (基于 {len(omar_vectors)} 首)")
+
+            # ── 计算双锚分数 ──
+            def _cosine(a, b):
+                dot = np.dot(a, b)
+                norm = np.linalg.norm(a) * np.linalg.norm(b)
+                return float(dot / norm) if norm > 0 else 0.0
+
+            for c in candidates:
+                title = c.get("song", {}).get("title", "")
+
+                # 语义分：song 的 M2D embedding vs query text embedding
+                m2d_emb = m2d_map.get(title)
+                if m2d_emb is not None:
+                    semantic_score = _cosine(m2d_emb, query_emb)
+                else:
+                    semantic_score = c.get("similarity_score", 0.5)  # fallback
+
+                # 声学分：song 的 OMAR embedding vs OMAR 质心
+                omar_emb = omar_map.get(title)
+                if omar_emb is not None and omar_centroid is not None:
+                    acoustic_score = _cosine(omar_emb, omar_centroid)
+                else:
+                    acoustic_score = 0.0  # 无 OMAR 数据时不贡献
+
+                # 动态权重：如果没有 OMAR 数据，将声学权重转移给语义
+                if omar_emb is None or omar_centroid is None:
+                    final_score = semantic_score
+                else:
+                    final_score = w_semantic * semantic_score + w_acoustic * acoustic_score
+
+                c["similarity_score"] = final_score
+                c["_semantic_score"] = round(semantic_score, 4)
+                c["_acoustic_score"] = round(acoustic_score, 4)
+
+            # 按双锚分数重排
+            candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
+            logger.info(
+                f"[DualAnchor] 双锚精排完成 (w_sem={w_semantic}, w_aco={w_acoustic}) | "
+                f"Top3: {[(c['song']['title'], round(c['similarity_score'], 4)) for c in candidates[:3]]}"
+            )
+            return candidates
+
+        except Exception as e:
+            logger.warning(f"[DualAnchor] 双锚精排异常（降级保持原排序）: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return candidates
 
     # ================================================================
     # 【P0 升级 + 优化】Neo4j 图距离亲和力评分
@@ -521,18 +629,24 @@ class MusicHybridRetrieval:
     def _compute_graph_affinity(
         candidates: List[dict],
         user_id: str = GRAPH_AFFINITY_USER_ID,
-        max_hops: int = GRAPH_AFFINITY_MAX_HOPS,
-    ) -> List[dict]:
+        max_hops: int = None,
+    ) -> tuple:
         """
         为每首候选歌曲计算与用户的图距离亲和力 + 用户画像偏好加分。
 
-        优化点（相比旧版）：
-          - 用户偏好从缓存读取（_load_user_preferences），不再每次查 Neo4j
-          - 图距离 + 候选歌曲标签合并为 1 条 Cypher（原来是 2 条）
-          - 总共从 3 次 Neo4j round-trip → 1 次（+ 首次启动时的偏好缓存查询）
+        Returns:
+            (candidates, cand_tag_map)
+            - candidates: 加上 _graph_affinity 字段的候选列表
+            - cand_tag_map: {title: {moods: set, themes: set, scenarios: set}}
+              供下游 MMR 多维多样性重排使用
         """
+        from config.settings import settings as _s
+        if max_hops is None:
+            max_hops = _s.graph_affinity_max_hops
+
+        empty_tag_map = {}
         if not candidates:
-            return candidates
+            return candidates, empty_tag_map
 
         try:
             from retrieval.neo4j_client import get_neo4j_client
@@ -541,18 +655,18 @@ class MusicHybridRetrieval:
                 logger.warning("[GraphAffinity] Neo4j 不可用，跳过图距离计算")
                 for c in candidates:
                     c["_graph_affinity"] = 0.0
-                return candidates
+                return candidates, empty_tag_map
         except Exception:
             logger.warning("[GraphAffinity] 无法导入 Neo4j 客户端，跳过")
             for c in candidates:
                 c["_graph_affinity"] = 0.0
-            return candidates
+            return candidates, empty_tag_map
 
         titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
         if not titles:
             for c in candidates:
                 c["_graph_affinity"] = 0.0
-            return candidates
+            return candidates, empty_tag_map
 
         # ── Step A: 用户偏好（从缓存读取，首次自动加载） ──
         user_prefs = _load_user_preferences(user_id)
@@ -564,7 +678,6 @@ class MusicHybridRetrieval:
         has_any_pref = user_pref_genres or user_pref_moods or user_pref_themes or user_pref_scenarios
 
         # ── Step B: 合并查询（图距离 + 候选歌曲标签，1 次 Neo4j round-trip） ──
-        # 将原来的 2 条独立 Cypher 合并为 1 条，同时返回 distance 和 tags
         combined_query = """
         MATCH (u:User {id: $user_id})
         UNWIND $titles AS candidate_title
@@ -583,12 +696,11 @@ class MusicHybridRetrieval:
                collect(DISTINCT sc.name) AS scenarios
         """
 
+        cand_tag_map = {}
         try:
             results = neo4j.execute_query(combined_query, {"user_id": user_id, "titles": titles})
 
-            # 解析合并结果：同时提取 distance 和 tags
             distance_map = {}
-            cand_tag_map = {}
             for r in results:
                 t = r.get("title", "")
                 distance_map[t] = r.get("distance", -1)
@@ -598,7 +710,6 @@ class MusicHybridRetrieval:
                     "scenarios": {x.strip().lower() for x in (r.get("scenarios") or []) if x and x.strip()},
                 }
 
-            # 计算图距离亲和力
             for c in candidates:
                 title = c.get("song", {}).get("title", "")
                 dist = distance_map.get(title, -1)
@@ -636,12 +747,10 @@ class MusicHybridRetrieval:
                 song = c.get("song", {})
                 title = song.get("title", "")
 
-                # Genre Jaccard
                 genre_str = song.get("genre", "")
                 cand_genre_tags = {t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip()} if genre_str else set()
                 j_genre = _jaccard(expanded_genre_prefs, cand_genre_tags)
 
-                # Mood/Theme/Scenario Jaccard（从合并查询结果）
                 cand_tags = cand_tag_map.get(title, {})
                 j_mood = _jaccard(user_pref_moods, cand_tags.get("moods", set()))
                 j_theme = _jaccard(user_pref_themes, cand_tags.get("themes", set()))
@@ -671,20 +780,23 @@ class MusicHybridRetrieval:
         else:
             logger.info("[GraphAffinity] 用户未设置画像偏好且无历史行为，跳过 Jaccard 加分")
 
-        return candidates
+        return candidates, cand_tag_map
 
-    def _format_results(self, strategy_name: str, graph_res: str, vector_res: str, web_res: str = "", web_playable: List[dict] = None, graph_entities: List[str] = None) -> ToolOutput:
+    def _format_results(self, strategy_name: str, graph_res: str, vector_res: str, web_res: str = "", web_playable: List[dict] = None, graph_entities: List[str] = None, final_limit: int = 15) -> ToolOutput:
         """
-        合并各检索引擎的结果，使用 **加权 RRF** 排序融合 + **Cross-Encoder 精排** + **Neo4j 图距离加权**。
+        合并各检索引擎的结果 —— 新版精排管线。
 
-        排序管线:
-          1. 解析各引擎原始 JSON → 标准化列表（含排名）
-          2. 加权 RRF 融合两路排名 → 统一分数
-          2.5. Cross-Encoder 精排（bge-reranker-v2-m3 深度语义匹配）
-          3. Neo4j 图距离亲和力评分 → 微调排序
-          4. Artist 多样性过滤
-          5. MMR genre-aware 多样性重排序
+        排序管线（V3）:
+          1. 解析各引擎原始 JSON → 标准化列表
+          2. 平等合并去重（替代旧版加权 RRF）
+          3. Artist 多样性初筛（每个歌手最多 N 首）
+          4. Graph Affinity（图距离 + Jaccard 偏好 → 个性化微调）→ 产出 cand_tag_map
+          5. 双锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚 → 核心排序）
+          6. MMR 多维多样性重排（genre + mood + theme + scenario）
+          7. 最终安全去重 + FinalCut
         """
+        from config.settings import settings as _settings
+
         # ---- Step 1: 解析各引擎结果 ----
         graph_items = self._parse_engine_results(graph_res, "知识图谱(GraphRAG)")
         vector_items = self._parse_engine_results(vector_res, "语义向量(Neo4j Vector)")
@@ -694,25 +806,20 @@ class MusicHybridRetrieval:
             f"vector_res前100字符={vector_res[:100] if vector_res else '(空)'}"
         )
 
-        # ---- Step 2: 加权 RRF 融合 ----
+        # ---- Step 2: 平等合并去重（替代旧版加权 RRF）----
         if graph_items and vector_items:
-            # 双引擎混合检索 → RRF 融合
-            final_list = self._weighted_rrf_fusion(graph_items, vector_items)
+            final_list = self._merge_and_dedup(graph_items, vector_items)
         elif graph_items:
-            # 仅图谱 → 保留图谱原始排序
             final_list = [{
                 "song": item["song"],
                 "reason": f"引擎检索来源: {item['engine']}",
                 "similarity_score": item["raw_score"],
-                "_graph_affinity": 0.0,
             } for item in graph_items]
         elif vector_items:
-            # 仅向量 → 保留向量原始排序
             final_list = [{
                 "song": item["song"],
                 "reason": f"引擎检索来源: {item['engine']}",
                 "similarity_score": item["raw_score"],
-                "_graph_affinity": 0.0,
             } for item in vector_items]
         else:
             final_list = []
@@ -722,62 +829,30 @@ class MusicHybridRetrieval:
             existing_keys = set()
             for item in final_list:
                 s = item.get("song", {})
-                existing_keys.add(HybridRetriever._normalize_key(s.get("title", ""), s.get("artist", "")))
+                existing_keys.add(MusicHybridRetrieval._normalize_key(s.get("title", ""), s.get("artist", "")))
             for wp in web_playable:
-                wp["_graph_affinity"] = 0.0
                 s = wp.get("song", {})
-                wp_key = HybridRetriever._normalize_key(s.get("title", ""), s.get("artist", ""))
+                wp_key = MusicHybridRetrieval._normalize_key(s.get("title", ""), s.get("artist", ""))
                 if wp_key not in existing_keys:
                     final_list.append(wp)
                     existing_keys.add(wp_key)
                 else:
                     logger.info(f"[Dedup] web_playable 重复跳过: {s.get('title', '')} - {s.get('artist', '')}")
 
-        # ---- Step 2.5: Cross-Encoder 精排 ----
-        from config.settings import settings as _settings
-        if _settings.reranker_enabled and final_list:
-            try:
-                from retrieval.cross_encoder_reranker import CrossEncoderReranker
-                reranker = CrossEncoderReranker()
-                # 使用 retrieve() 传入的原始 query（从 graph_entities 或策略推断）
-                rerank_query = ""
-                if graph_entities:
-                    rerank_query = " ".join(graph_entities)
-                if not rerank_query:
-                    # fallback: 从第一个候选的 reason 中无法获取 query，使用空字符串
-                    rerank_query = ""
-                # 注意: rerank_query 可能为空，此时由调用方在 retrieve() 中传入
-                # 这里我们通过检查 _format_results 的调用上下文来获取 query
-                # 由于 _format_results 没有 query 参数，我们需要通过实例变量传递
-                if hasattr(self, '_current_query') and self._current_query:
-                    rerank_query = self._current_query
-                elif rerank_query:
-                    pass  # 使用 graph_entities 拼接
-                else:
-                    rerank_query = strategy_name  # 最终 fallback
+        # ---- Step 2.5: DISLIKES 过滤（排除用户明确不喜欢的歌曲）----
+        disliked_titles = self._get_disliked_titles()
+        if disliked_titles and final_list:
+            before_count = len(final_list)
+            final_list = [
+                item for item in final_list
+                if item.get("song", {}).get("title", "") not in disliked_titles
+            ]
+            filtered = before_count - len(final_list)
+            if filtered > 0:
+                logger.info(f"[DislikeFilter] 过滤掉 {filtered} 首用户不喜欢的歌曲")
 
-                final_list = reranker.rerank(rerank_query, final_list)
-            except Exception as e:
-                logger.warning(f"[Reranker] Cross-Encoder 精排异常（降级跳过）: {e}")
-
-        # ---- Step 3: Neo4j 图距离亲和力加权 ----
-        if GRAPH_AFFINITY_ENABLED and final_list:
-            final_list = self._compute_graph_affinity(final_list)
-            # 将亲和力分数融入最终排序分:
-            # final_score = (1 - α) × rrf_score + α × graph_affinity
-            for item in final_list:
-                rrf = item.get("similarity_score", 0)
-                affinity = item.get("_graph_affinity", 0)
-                item["similarity_score"] = (1 - GRAPH_AFFINITY_WEIGHT) * rrf + GRAPH_AFFINITY_WEIGHT * affinity
-            # 重新排序
-            final_list.sort(key=lambda x: x["similarity_score"], reverse=True)
-            logger.info(
-                f"[GraphAffinity] 亲和力加权后 Top3: "
-                f"{[(r['song']['title'], round(r['similarity_score'], 4)) for r in final_list[:3]]}"
-            )
-
-        # ---- Step 4: Artist 多样性过滤 ----
-        # 如果用户指定了某个歌手（graph_entities 中包含该歌手名），则该歌手不受限制
+        # ---- Step 3: Artist 多样性初筛（提前执行，减轻后续计算负担）----
+        max_per_artist = _settings.max_songs_per_artist
         exempt_artists: set = set()
         if graph_entities:
             exempt_artists = {e.lower().strip() for e in graph_entities if e}
@@ -796,7 +871,7 @@ class MusicHybridRetrieval:
                 artist_count[artist_lower] = artist_count.get(artist_lower, 0) + 1
                 continue
             count = artist_count.get(artist_lower, 0)
-            if count < MAX_SONGS_PER_ARTIST:
+            if count < max_per_artist:
                 diverse_list.append(item)
                 artist_count[artist_lower] = count + 1
             else:
@@ -805,44 +880,85 @@ class MusicHybridRetrieval:
             diverse_list.extend(overflow_list[:MIN_DIVERSE_RESULTS - len(diverse_list)])
         final_list = diverse_list
         if exempt_artists:
-            logger.info(f"[多样性过滤] 指定歌手豁免: {exempt_artists}")
-        logger.info(f"多样性过滤完成，艺术家分布: {dict(artist_count)}")
+            logger.info(f"[ArtistDiversity] 指定歌手豁免: {exempt_artists}")
+        logger.info(f"[ArtistDiversity] 初筛完成 (max={max_per_artist}/artist)，剩余 {len(final_list)} 首，艺术家分布: {dict(artist_count)}")
 
-        # ---- Step 5: MMR genre-aware 多样性重排序 (Jaccard 集合相似度) ----
-        def _genre_tags(genre_str: str) -> set:
-            """将 'Rock/Hard Rock/Energetic' 拆分为 {'rock', 'hard rock', 'energetic'}"""
-            if not genre_str:
-                return set()
-            return {t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip()}
+        # ---- Step 4: Graph Affinity（图距离 + Jaccard 偏好 → 个性化微调）----
+        cand_tag_map = {}
+        if _settings.graph_affinity_enabled and final_list:
+            final_list, cand_tag_map = self._compute_graph_affinity(final_list)
+            # 将亲和力分数融入排序分（微调）:
+            # final_score = (1 - α) × current_score + α × graph_affinity
+            affinity_weight = _settings.graph_affinity_weight
+            for item in final_list:
+                base = item.get("similarity_score", 0)
+                affinity = item.get("_graph_affinity", 0)
+                item["similarity_score"] = (1 - affinity_weight) * base + affinity_weight * affinity
+            final_list.sort(key=lambda x: x["similarity_score"], reverse=True)
+            logger.info(
+                f"[GraphAffinity] 亲和力加权后 Top3: "
+                f"{[(r['song']['title'], round(r['similarity_score'], 4)) for r in final_list[:3]]}"
+            )
+
+        # ---- Step 5: 双锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚）----
+        query_text = getattr(self, '_current_query', '') or ''
+        if query_text and final_list:
+            final_list = self._dual_anchor_rerank(final_list, query_text)
+
+        # ---- Step 5.5: Cross-Encoder 精排（可选，默认关闭）----
+        if _settings.reranker_enabled and final_list:
+            try:
+                from retrieval.cross_encoder_reranker import CrossEncoderReranker
+                reranker = CrossEncoderReranker()
+                rerank_query = query_text or strategy_name
+                final_list = reranker.rerank(rerank_query, final_list)
+            except Exception as e:
+                logger.warning(f"[Reranker] Cross-Encoder 精排异常（降级跳过）: {e}")
+
+        # ---- Step 6: MMR 多维多样性重排（genre + mood + theme + scenario）----
+        def _build_rich_tags(item: dict, tag_map: dict) -> set:
+            """
+            构建丰富的多维标签集合（替代旧版仅用 genre 字段）。
+            合并 genre 字段 + cand_tag_map 中的 mood/theme/scenario。
+            """
+            song = item.get("song", {})
+            title = song.get("title", "")
+            tags = set()
+            # genre 字段（如果有）
+            genre_str = song.get("genre", "")
+            if genre_str:
+                tags.update(t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip())
+            # 从 cand_tag_map 获取 mood/theme/scenario
+            ct = tag_map.get(title, {})
+            tags.update(ct.get("moods", set()))
+            tags.update(ct.get("themes", set()))
+            tags.update(ct.get("scenarios", set()))
+            return tags
 
         def _jaccard(set_a: set, set_b: set) -> float:
-            """计算 Jaccard 相似度: |A ∩ B| / |A ∪ B|"""
             if not set_a or not set_b:
                 return 0.0
-            intersection = len(set_a & set_b)
-            union = len(set_a | set_b)
-            return intersection / union if union > 0 else 0.0
+            return len(set_a & set_b) / len(set_a | set_b)
 
         if len(final_list) > 2:
-            mmr_lambda = 0.7
+            mmr_lambda = _settings.mmr_lambda
             selected = [final_list[0]]
-            candidates = final_list[1:]
+            mmr_candidates = final_list[1:]
 
-            # 预计算每首歌的 genre 标签集合
-            genre_cache: Dict[int, set] = {}
-            for idx, item in enumerate(final_list):
-                genre_cache[id(item)] = _genre_tags(item.get("song", {}).get("genre", ""))
+            # 预计算每首歌的多维标签集合
+            tag_cache: Dict[int, set] = {}
+            for item in final_list:
+                tag_cache[id(item)] = _build_rich_tags(item, cand_tag_map)
 
-            while candidates and len(selected) < len(final_list):
-                best_score = -1
+            while mmr_candidates and len(selected) < len(final_list):
+                best_score = -float('inf')
                 best_idx = 0
 
-                # 收集已选歌曲的所有 genre 标签集合
-                selected_tag_sets = [genre_cache[id(s)] for s in selected]
+                selected_tag_sets = [tag_cache[id(s)] for s in selected]
 
-                for i, cand in enumerate(candidates):
+                for i, cand in enumerate(mmr_candidates):
                     relevance = cand.get("similarity_score", 0)
-                    cand_tags = genre_cache[id(cand)]
+                    cand_tags = tag_cache[id(cand)]
 
                     # 与已选集合中 Jaccard 最大的作为重叠度
                     max_overlap = 0.0
@@ -857,17 +973,22 @@ class MusicHybridRetrieval:
                         best_score = mmr_score
                         best_idx = i
 
-                selected.append(candidates.pop(best_idx))
+                selected.append(mmr_candidates.pop(best_idx))
 
             final_list = selected
-            logger.info(f"[MMR-Jaccard] 多样性重排序完成，流派分布: {[r.get('song', {}).get('genre', '?') for r in final_list[:5]]}")
-        
-        # ---- 最终安全去重 ----
+            # 日志：展示前 5 首的多维标签
+            top5_tags = []
+            for item in final_list[:5]:
+                tags = _build_rich_tags(item, cand_tag_map)
+                top5_tags.append(sorted(tags)[:4] if tags else ["(无标签)"])
+            logger.info(f"[MMR-MultiDim] 多维多样性重排序完成，前5首标签: {top5_tags}")
+
+        # ---- Step 7: 最终安全去重 + FinalCut ----
         seen_final = set()
         deduped_list = []
         for item in final_list:
             s = item.get("song", {})
-            fk = HybridRetriever._normalize_key(s.get("title", ""), s.get("artist", ""))
+            fk = MusicHybridRetrieval._normalize_key(s.get("title", ""), s.get("artist", ""))
             if fk not in seen_final:
                 seen_final.add(fk)
                 deduped_list.append(item)
@@ -877,20 +998,24 @@ class MusicHybridRetrieval:
             logger.info(f"[Dedup-Final] 去重前={len(final_list)}, 去重后={len(deduped_list)}")
         final_list = deduped_list
 
-        # 如果有全网聚合结果，强行塞一条纯文本作为上下文给大模型，防止丢了
+        if final_limit and len(final_list) > final_limit:
+            logger.info(f"[FinalCut] 精排后截断: {len(final_list)} → {final_limit} 首")
+            final_list = final_list[:final_limit]
+
+        # 如果有全网聚合结果，强行塞一条纯文本作为上下文给大模型
         if web_res and "未能找到相关有效信息" not in web_res:
             final_list.insert(0, {
-                "_raw_markdown": web_res,  # 特殊标记位，供音乐推荐管线解析
+                "_raw_markdown": web_res,
                 "song": {"title": "🌐 全网资讯补充", "artist": "互联网最新情报", "genre": "News"},
                 "reason": "包含通过多源聚合引擎获取的最新的互联网关联资讯，用于补充音乐库之外的信息。",
                 "similarity_score": WEB_RESULT_PRIORITY_SCORE
             })
-            
-        # 为了让终端观测更清晰，打印每一首入选的歌曲及其来源引擎
+
+        # 终端日志：打印每一首入选歌曲及来源
         logger.info(f"=== 🎵 检索引擎合并完毕，共找到 {len(final_list)} 条结果 (包含资讯) ===")
         for i, item in enumerate(final_list):
             logger.info(f"  [{i+1}] {item['song']['title']} - {item['reason']}")
-            
+
         # 构建 raw_markdown 供大模型参考
         markdown_lines: List[str] = []
         if web_res and "未能找到" not in web_res:
@@ -904,22 +1029,21 @@ class MusicHybridRetrieval:
                 artist = song.get("artist", "未知") if isinstance(song, dict) else "未定"
                 genre = song.get("genre", "") if isinstance(song, dict) else ""
                 reason = item.get("reason", "") if isinstance(item, dict) else ""
-                
-                # 避免重复展示已包含在 web_res 的资讯补充
+
                 if title == "🎪 全网资讯补充":
                     continue
-                
+
                 line = f"{idx}. **{title}** - {artist}"
                 if genre:
                     line += f" ({genre})"
                 markdown_lines.append(line)
                 if reason:
                     markdown_lines.append(f"   推荐理由: {reason}")
-        
+
         raw_markdown = "\n".join(markdown_lines).strip()
         if not raw_markdown:
             raw_markdown = "抱歉，没有找到合适的音乐推荐。"
-        
+
         return ToolOutput(
             success=len(final_list) > 0,
             data=final_list,
