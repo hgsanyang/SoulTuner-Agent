@@ -1,7 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { sendUserEvent } from '@/lib/api';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { sendUserEvent, fetchLikedSongs, fetchDislikedSongs, removeDislike as apiRemoveDislike } from '@/lib/api';
 
 export interface LikedSong {
     id: string;
@@ -12,6 +12,14 @@ export interface LikedSong {
     coverUrl?: string;
     lrc_url?: string;
     addedAt: number;
+}
+
+export interface DislikedSong {
+    id: string;
+    title: string;
+    artist: string;
+    coverUrl?: string;
+    dislikedAt: number;
 }
 
 export interface CollectionSong extends LikedSong { }
@@ -25,14 +33,21 @@ export interface Collection {
 
 interface LibraryContextType {
     likedSongs: LikedSong[];
+    dislikedSongs: DislikedSong[];
     toggleLike: (song: Omit<LikedSong, 'id' | 'addedAt'>) => void;
+    toggleDislike: (song: { title: string; artist: string; coverUrl?: string }) => void;
+    undoDislike: (title: string, artist: string) => void;
     isLiked: (title: string, artist: string) => boolean;
+    isDisliked: (title: string, artist: string) => boolean;
     // Collections
     collections: Collection[];
     addCollection: (name: string) => number;
     addToCollection: (collectionId: number, song: Omit<CollectionSong, 'id' | 'addedAt'>) => void;
     removeFromCollection: (collectionId: number, songId: string) => void;
     isInCollection: (collectionId: number, title: string, artist: string) => boolean;
+    // Sync
+    syncFromBackend: () => Promise<void>;
+    isSyncing: boolean;
     // Toast
     toast: string | null;
     showToast: (msg: string) => void;
@@ -47,26 +62,98 @@ const LibraryContext = createContext<LibraryContextType | undefined>(undefined);
 
 export function LibraryProvider({ children }: { children: React.ReactNode }) {
     const [likedSongs, setLikedSongs] = useState<LikedSong[]>([]);
+    const [dislikedSongs, setDislikedSongs] = useState<DislikedSong[]>([]);
     const [collections, setCollections] = useState<Collection[]>(INITIAL_COLLECTIONS);
     const [toast, setToast] = useState<string | null>(null);
+    const [isSyncing, setIsSyncing] = useState(false);
 
-    // Load from local storage
+    // Load from local storage first (fast startup)
     useEffect(() => {
         try {
             const stored = localStorage.getItem('music_likes');
             if (stored) setLikedSongs(JSON.parse(stored));
             const storedCols = localStorage.getItem('music_collections');
             if (storedCols) setCollections(JSON.parse(storedCols));
+            const storedDislikes = localStorage.getItem('music_dislikes');
+            if (storedDislikes) setDislikedSongs(JSON.parse(storedDislikes));
         } catch (e) {
             console.error('Failed to load from local storage', e);
         }
     }, []);
+
+    // Then sync from backend (authoritative source)
+    const syncFromBackend = useCallback(async () => {
+        setIsSyncing(true);
+        try {
+            const [backendLiked, backendDisliked] = await Promise.all([
+                fetchLikedSongs(50),
+                fetchDislikedSongs(50),
+            ]);
+
+            // Merge backend liked songs with local state
+            if (backendLiked.length > 0) {
+                const existingIds = new Set(likedSongs.map(s => s.id));
+                const newSongs: LikedSong[] = [];
+                for (const bl of backendLiked) {
+                    const id = `${bl.song.title}_${bl.song.artist}`;
+                    if (!existingIds.has(id)) {
+                        newSongs.push({
+                            id,
+                            title: bl.song.title,
+                            artist: bl.song.artist,
+                            genre: bl.song.genre,
+                            preview_url: bl.song.audio_url,
+                            coverUrl: bl.song.cover_url,
+                            lrc_url: undefined,
+                            addedAt: Date.now(),
+                        });
+                    }
+                }
+                if (newSongs.length > 0) {
+                    setLikedSongs(prev => {
+                        const ids = new Set(prev.map(s => s.id));
+                        const toAdd = newSongs.filter(s => !ids.has(s.id));
+                        return [...prev, ...toAdd];
+                    });
+                    console.log(`[Sync] 从后端同步了 ${newSongs.length} 首新的喜欢歌曲`);
+                }
+            }
+
+            // Sync disliked songs
+            if (backendDisliked.length > 0) {
+                const newDislikes: DislikedSong[] = backendDisliked.map(d => ({
+                    id: `${d.title}_${d.artist}`,
+                    title: d.title,
+                    artist: d.artist,
+                    coverUrl: d.cover_url,
+                    dislikedAt: d.disliked_at || Date.now(),
+                }));
+                setDislikedSongs(newDislikes);
+                console.log(`[Sync] 从后端同步了 ${newDislikes.length} 首不喜欢的歌曲`);
+            }
+        } catch (err) {
+            console.warn('[Sync] 后端同步失败:', err);
+        } finally {
+            setIsSyncing(false);
+        }
+    }, []);
+
+    // Auto-sync on mount
+    useEffect(() => {
+        syncFromBackend();
+    }, [syncFromBackend]);
 
     // Save likes to local storage
     useEffect(() => {
         try { localStorage.setItem('music_likes', JSON.stringify(likedSongs)); }
         catch (e) { console.error('Failed to save liked songs', e); }
     }, [likedSongs]);
+
+    // Save dislikes to local storage
+    useEffect(() => {
+        try { localStorage.setItem('music_dislikes', JSON.stringify(dislikedSongs)); }
+        catch (e) { console.error('Failed to save disliked songs', e); }
+    }, [dislikedSongs]);
 
     // Save collections to local storage
     useEffect(() => {
@@ -84,6 +171,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         return likedSongs.some(song => song.id === id);
     };
 
+    const isDisliked = (title: string, artist: string) => {
+        const id = `${title}_${artist}`;
+        return dislikedSongs.some(song => song.id === id);
+    };
+
     const toggleLike = (song: Omit<LikedSong, 'id' | 'addedAt'>) => {
         const id = `${song.title}_${song.artist}`;
         setLikedSongs(prev => {
@@ -96,6 +188,34 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             sendUserEvent('like', song.title, song.artist);
             return [{ ...song, id, addedAt: Date.now() }, ...prev];
         });
+    };
+
+    const toggleDislike = (song: { title: string; artist: string; coverUrl?: string }) => {
+        const id = `${song.title}_${song.artist}`;
+        setDislikedSongs(prev => {
+            const existing = prev.find(s => s.id === id);
+            if (existing) {
+                // 已经是不喜欢 → 撤销
+                apiRemoveDislike(song.title, song.artist);
+                showToast(`已撤销「不喜欢」`);
+                return prev.filter(s => s.id !== id);
+            }
+            // 标记为不喜欢
+            sendUserEvent('dislike', song.title, song.artist);
+            showToast(`👎 已标记为「不喜欢」，后续推荐将过滤此歌曲`);
+            // 同时从 likes 中移除
+            setLikedSongs(lp => lp.filter(s => s.id !== id));
+            return [{ ...song, id, coverUrl: song.coverUrl, dislikedAt: Date.now() }, ...prev];
+        });
+    };
+
+    const undoDislike = async (title: string, artist: string) => {
+        const id = `${title}_${artist}`;
+        const ok = await apiRemoveDislike(title, artist);
+        if (ok) {
+            setDislikedSongs(prev => prev.filter(s => s.id !== id));
+            showToast(`✓ 已从「不喜欢」列表中移除`);
+        }
     };
 
     const addCollection = (name: string) => {
@@ -129,8 +249,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
 
     return (
         <LibraryContext.Provider value={{
-            likedSongs, toggleLike, isLiked,
+            likedSongs, dislikedSongs,
+            toggleLike, toggleDislike, undoDislike,
+            isLiked, isDisliked,
             collections, addCollection, addToCollection, removeFromCollection, isInCollection,
+            syncFromBackend, isSyncing,
             toast, showToast,
         }}>
             {children}

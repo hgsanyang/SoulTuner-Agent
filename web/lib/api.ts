@@ -158,6 +158,74 @@ export async function sendUserEvent(
     }
 }
 
+// ---- 查询用户喜欢/不喜欢的歌曲（从 Neo4j 同步）----
+
+export interface BackendSong {
+    title: string;
+    artist: string;
+    audio_url?: string;
+    cover_url?: string;
+    album?: string;
+    genre?: string;
+    moods?: string[];
+    themes?: string[];
+}
+
+export interface LikedSongBackend {
+    song: BackendSong;
+    reason: string;
+    source: string;
+    score: number;
+}
+
+export interface DislikedSongBackend {
+    title: string;
+    artist: string;
+    audio_url?: string;
+    cover_url?: string;
+    album?: string;
+    disliked_at?: number;
+}
+
+export async function fetchLikedSongs(limit: number = 50): Promise<LikedSongBackend[]> {
+    try {
+        const resp = await fetch(`http://localhost:8501/api/liked-songs?limit=${limit}`);
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        return data.success ? data.songs : [];
+    } catch (err) {
+        console.warn('[API] fetchLikedSongs 失败:', err);
+        return [];
+    }
+}
+
+export async function fetchDislikedSongs(limit: number = 50): Promise<DislikedSongBackend[]> {
+    try {
+        const resp = await fetch(`http://localhost:8501/api/disliked-songs?limit=${limit}`);
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        return data.success ? data.songs : [];
+    } catch (err) {
+        console.warn('[API] fetchDislikedSongs 失败:', err);
+        return [];
+    }
+}
+
+export async function removeDislike(songTitle: string, artist: string): Promise<boolean> {
+    try {
+        const resp = await fetch(
+            `http://localhost:8501/api/disliked-songs?song_title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(artist)}`,
+            { method: 'DELETE' }
+        );
+        if (!resp.ok) return false;
+        const data = await resp.json();
+        return data.success;
+    } catch (err) {
+        console.warn('[API] removeDislike 失败:', err);
+        return false;
+    }
+}
+
 // ---- 加入本地（数据飞轮按需触发）----
 export async function acquireSong(song: {
     title: string;
