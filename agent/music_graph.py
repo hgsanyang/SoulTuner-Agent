@@ -120,7 +120,7 @@ class MusicRecommendationGraph:
                     
                     from retrieval.gssc_context_builder import build_context
                     _ctx = build_context(
-                        graphzep_facts="",
+                        graphzep_facts=state.get("graphzep_facts", ""),
                         chat_history=history_text,
                         total_budget=3000,
                     )
@@ -199,7 +199,7 @@ class MusicRecommendationGraph:
                     )
                     from retrieval.gssc_context_builder import build_context
                     _ctx = build_context(
-                        graphzep_facts="",
+                        graphzep_facts=state.get("graphzep_facts", ""),
                         chat_history=history_text,
                         total_budget=3000,
                     )
@@ -217,7 +217,7 @@ class MusicRecommendationGraph:
                 )
                 from retrieval.gssc_context_builder import build_context
                 _ctx = build_context(
-                    graphzep_facts="",
+                    graphzep_facts=state.get("graphzep_facts", ""),
                     chat_history=history_text,
                     total_budget=3000,
                 )
@@ -376,6 +376,66 @@ class MusicRecommendationGraph:
                 "step_count": state.get("step_count", 0) + 1,
             }
 
+    def _build_preference_query(self, seed_songs: list, graphzep_facts: str = "") -> str:
+        """
+        从种子歌曲标签 + 用户 Neo4j 画像 + GraphZep 记忆中提炼偏好文本。
+        零 LLM 调用，纯结构化数据拼装。
+        """
+        import re
+        tags = set()
+
+        # 1. 从种子歌曲收集标签
+        for song_item in seed_songs:
+            s = song_item.get("song", {})
+            moods = s.get("moods", [])
+            themes = s.get("themes", [])
+            genre = s.get("genre", "")
+            if moods:
+                tags.update(m.strip() for m in moods if m and m.strip())
+            if themes:
+                tags.update(t.strip() for t in themes if t and t.strip())
+            if genre:
+                # genre 可能是 "Pop/Indie/Driving" 格式
+                tags.update(t.strip() for t in genre.replace(",", "/").split("/") if t.strip())
+
+        # 2. 从 Neo4j 用户画像补充
+        try:
+            from retrieval.user_memory import UserMemoryManager
+            mem = UserMemoryManager()
+            profile = mem.get_user_preferences("local_admin")
+            if profile:
+                for g in profile.get("favorite_genres", []):
+                    if g:
+                        tags.add(g.strip())
+                mood_tendency = profile.get("mood_tendency", "")
+                if mood_tendency:
+                    tags.update(m.strip() for m in mood_tendency.replace(",", "，").split("，") if m.strip())
+        except Exception as e:
+            logger.warning(f"[Favorites] 加载用户画像失败: {e}")
+
+        # 3. 从 GraphZep 记忆提取场景/情绪关键词
+        if graphzep_facts and graphzep_facts != "暂无用户长期记忆":
+            # 提取场景标签（如"开车"、"深夜"、"学习"）
+            scene_matches = re.findall(r'场景[：:]\s*(\S+)', graphzep_facts)
+            tags.update(scene_matches)
+            # 提取情绪关键词
+            mood_matches = re.findall(r'情绪偏好[：:]\s*([^；\n]+)', graphzep_facts)
+            for match in mood_matches:
+                tags.update(m.strip() for m in match.replace(",", "，").split("，") if m.strip())
+            # 提取流派
+            genre_matches = re.findall(r'流派[：:]\s*([^；\n]+)', graphzep_facts)
+            for match in genre_matches:
+                tags.update(g.strip() for g in match.replace(",", "，").split("，") if g.strip())
+
+        # 清理无效标签
+        tags.discard("")
+        tags.discard("Unknown")
+        tags.discard("未知")
+
+        result = " ".join(sorted(tags)) if tags else "relaxing chill indie folk"
+        logger.info(f"[Favorites] 偏好标签集合({len(tags)}个): {tags}")
+        return result
+
     async def generate_recommendations_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点2b: 生成推荐
@@ -387,30 +447,92 @@ class MusicRecommendationGraph:
         parameters = state.get("intent_parameters", {})
         
         try:
-            # ── 特殊意图：查询用户已标记的歌曲（直接走 Neo4j 关系图）──
+            # ── 特殊意图：recommend_by_favorites（两层智能推荐）──
             if intent_type == "recommend_by_favorites":
-                logger.info("检测到 recommend_by_favorites 意图，直接查询 Neo4j 用户关系")
+                logger.info("检测到 recommend_by_favorites 意图，启动两层智能推荐")
                 memory = UserMemoryManager()
                 memory.ensure_user_exists("local_admin")
-                liked_songs = memory.get_liked_songs(user_id="local_admin", limit=20)
-                
-                if liked_songs:
+                all_liked = memory.get_liked_songs(user_id="local_admin", limit=20)
+
+                if not all_liked:
+                    logger.info("用户暂无点赞/收藏记录，退回常规推荐")
+                    # fallthrough 到常规检索
+                else:
+                    from config.settings import settings as _fav_settings
+
+                    # ── Tier 1: Seeds（可播放的收藏歌曲，最多 N 首）──
+                    seed_limit = _fav_settings.favorites_seed_limit
+                    discovery_limit = _fav_settings.favorites_discovery_limit
+                    playable_seeds = [
+                        s for s in all_liked
+                        if s.get("song", {}).get("audio_url")
+                    ][:seed_limit]
+                    logger.info(f"[Favorites] Seeds: {len(playable_seeds)} 首可播放收藏 (总收藏 {len(all_liked)})")
+
+                    # ── 构建偏好查询文本（零 LLM 调用）──
+                    preference_query = self._build_preference_query(
+                        seed_songs=playable_seeds or all_liked[:seed_limit],
+                        graphzep_facts=state.get("graphzep_facts", ""),
+                    )
+                    logger.info(f"[Favorites] 偏好查询文本: {preference_query}")
+
+                    # ── Tier 2: Discoveries（向量检索发现新歌）──
+                    retriever = MusicHybridRetrieval(llm_client=get_llm())
+                    discovery_plan = {
+                        "use_graph": False,
+                        "use_vector": True,
+                        "use_web_search": False,
+                        "_intent_type": "recommend_by_favorites",
+                        "_graphzep_facts": state.get("graphzep_facts", ""),
+                    }
+                    discovery_result = await retriever.retrieve(
+                        preference_query,
+                        limit=discovery_limit + 5,  # 多取一些以备去重
+                        precomputed_plan=discovery_plan,
+                    )
+
+                    # 排除已在种子中的歌曲
+                    seed_titles = {s["song"]["title"] for s in playable_seeds}
+                    discoveries = []
+                    if discovery_result and discovery_result.success:
+                        for item in discovery_result.data:
+                            t = item.get("song", {}).get("title", "")
+                            if t and t not in seed_titles and t != "🌐 全网资讯补充":
+                                item["reason"] = f"基于你的品味发现 🔍 {item.get('reason', '')}"
+                                discoveries.append(item)
+                            if len(discoveries) >= discovery_limit:
+                                break
+                    logger.info(f"[Favorites] Discoveries: {len(discoveries)} 首新发现")
+
+                    # ── 合并 Seeds + Discoveries ──
+                    for s in playable_seeds:
+                        s["reason"] = f"❤️ {s.get('reason', '你喜欢的歌')}"
+                    merged = playable_seeds + discoveries
+
+                    # 构建 raw_markdown
+                    md_lines = []
+                    if playable_seeds:
+                        md_lines.append("**🎵 你的收藏**")
+                        for i, s in enumerate(playable_seeds, 1):
+                            song = s["song"]
+                            md_lines.append(f"{i}. **{song['title']}** - {song['artist']}")
+                    if discoveries:
+                        md_lines.append("")
+                        md_lines.append("**🔍 猜你可能喜欢**")
+                        for i, d in enumerate(discoveries, len(playable_seeds) + 1):
+                            song = d["song"]
+                            md_lines.append(f"{i}. **{song['title']}** - {song.get('artist', '未知')}")
+
                     result = ToolOutput(
                         success=True,
-                        data=liked_songs,
-                        raw_markdown="\n".join([
-                            f"{i+1}. 《{s['song']['title']}》 - {s['song']['artist']} ({s['reason']})"
-                            for i, s in enumerate(liked_songs)
-                        ]),
+                        data=merged,
+                        raw_markdown="\n".join(md_lines),
                     )
-                    logger.info(f"从用户收藏中召回 {len(liked_songs)} 首歌")
+                    logger.info(f"[Favorites] 两层推荐完成: Seeds={len(playable_seeds)}, Discoveries={len(discoveries)}, Total={len(merged)}")
                     return {
                         "recommendations": result,
                         "step_count": state.get("step_count", 0) + 1
                     }
-                else:
-                    logger.info("用户暂无点赞/收藏记录，退回常规推荐")
-                    # 没有收藏记录时 fallthrough 到常规检索
 
             retriever = MusicHybridRetrieval(llm_client=get_llm())
             recommendations = []
