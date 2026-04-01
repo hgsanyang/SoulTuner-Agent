@@ -13,7 +13,8 @@
 # 激活虚拟环境
 source ~/vllm-env/bin/activate
 
-MODEL_PATH="/mnt/c/Users/sanyang/Models/planner_model/planner_merged_fp16"
+# ★ 请修改为你的模型实际路径
+MODEL_PATH="/mnt/c/YOUR_USERNAME/Models/planner_model/planner_merged_fp16"
 OLLAMA_MODEL="planner"   # Ollama 中注册的模型名
 HOST="0.0.0.0"
 PORT=8000

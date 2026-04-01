@@ -28,5 +28,5 @@ if "%MODE%"=="sglang" (
 )
 
 echo.
-wsl bash /mnt/c/Users/sanyang/sanyangworkspace/music_recommendation/Muisc-Research/scripts/start_vllm.sh %MODE%
+wsl bash /mnt/c/path/to/SoulTuner-Agent/scripts/start_vllm.sh %MODE%
 pause

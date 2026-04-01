@@ -152,5 +152,6 @@ graphzep_service/src/**/*.js.map
 # Root-level stale files
 # ================================================================
 package-lock.json
+diff_changes.txt
 *.deb
 *.run

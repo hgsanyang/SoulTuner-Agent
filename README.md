@@ -17,6 +17,10 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
 </p>
 
+<p align="center">
+  <a href="README.md">中文</a> | <a href="README_EN.md">English</a>
+</p>
+
 > 融合知识图谱（Neo4j）、双模型音频向量（M2D-CLAP + OMAR-RQ）、大语言模型和 GraphZep 长期记忆，通过 LangGraph 编排的多节点 Agent 工作流，实现多路混合检索、加权 RRF 融合、Neo4j 图距离加权、SSE 流式推荐、联网搜索回退、音乐旅程编排和用户行为数据飞轮。
 
 ---
@@ -83,7 +87,7 @@
 │  search_songs  chat  acquire  gen_reco  journey                    │
 │     │                                                               │
 │     ▼                                                               │
-│  Hybrid Retrieval ──→ LLM Explainer ──→ GraphZep Write → end      │
+│  Hybrid Retrieval ──→ LLM Explainer ──→ Pref Extract ──→ GraphZep Write → end │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────────┐
@@ -127,7 +131,7 @@
 | **长期记忆** | GraphZep（Hono + TypeScript 微服务，时序知识图谱，双阶段召回） |
 | **联网搜索** | SearxNG 联邦搜索 + Tavily + 智谱 WebSearch |
 | **排序算法** | 双锚精排（cosine）+ Graph Affinity（shortestPath + Jaccard）+ MMR |
-| **上下文管理** | GSSC Token 预算管线（Gather/Select/Structure/Compress） |
+| **上下文管理** | GSSC Token 预算管线 V2（Gather/Select/Structure/Compress），Stage 4 支持 LLM 摘要压缩 |
 | **容器化** | Docker Compose（Neo4j + GraphZep + Backend + Frontend） |
 
 ---
@@ -227,14 +231,18 @@ stateDiagram-v2
     route_intent --> gen_recommendations: recommend_by_favorites
 
     search_songs --> explain_results: 多路融合检索
-    explain_results --> persist_memory: LLM 推荐解释
+    acquire_music --> explain_results
+    gen_recommendations --> explain_results
 
-    chat_response --> persist_memory
-    acquire_music --> persist_memory
-    gen_recommendations --> persist_memory
+    explain_results --> extract_preferences: LLM 推荐解释
+    extract_preferences --> persist_memory: LLM 偏好提取 (fire-and-forget)
+
+    chat_response --> persist_memory: 闲聊无推荐，跳过偏好提取
 
     persist_memory --> [*]: GraphZep 异步写入
 ```
+
+> **V2 架构升级**：偏好提取从 `generate_explanation` 中解耦为独立 LangGraph 节点 `extract_preferences`，出口管线变为 `explain → extract_preferences → persist → END`。闲聊意图（无推荐结果）直接跳过偏好提取节点。
 
 > **注意**：旧版 `play_specific_song_online`（在线播放指定歌曲）意图已移除。用户搜索具体歌曲时统一走 `graph_search → search_songs` 路径，在本地库中查找；如未命中，由 LLM Explainer 提示用户通过数据飞轮入库。
 
@@ -243,8 +251,8 @@ stateDiagram-v2
 | 组件 | 说明 |
 |------|------|
 | **GraphZep 双阶段** | Stage 1 粗召回 20 条 → Stage 2 精排 5 条（相似度+时间衰减） |
-| **GSSC Token 预算** | facts + chat_history 在 3000 token 内动态分配 |
-| **Neo4j 偏好图谱** | 每轮对话 LLM 提取用户偏好，fire-and-forget 写入 User 节点 |
+| **GSSC Token 预算 V2** | facts + chat_history 在 3000 token 内动态分配；Stage 4 支持 LLM 对话摘要压缩（超出 1.5 倍预算时触发，兜底按行截断） |
+| **Neo4j 偏好图谱** | 独立 `extract_preferences` LangGraph 节点，每轮对话 LLM 提取用户偏好，fire-and-forget 写入 User 节点 |
 | **用户画像双写** | 前端画像面板保存 → 同时写入 Neo4j User 属性 + GraphZep 长期记忆 |
 
 ### 用户画像系统
@@ -358,7 +366,7 @@ cd web && npm run dev             # 终端 B：前端（热更新）
 
    ```bash
    wsl
-   bash /mnt/c/Users/sanyang/sanyangworkspace/music_recommendation/Muisc-Research/scripts/start_sglang.sh
+   bash /path/to/SoulTuner-Agent/scripts/start_sglang.sh
    ```
 
    *内置显存切分逻辑：大模型 FP8 在线量化锁定 70% 显存 (~5.5GB)，预留充足空间给音频向量模型。*

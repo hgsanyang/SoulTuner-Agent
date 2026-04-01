@@ -13,7 +13,7 @@
 #        wsl
 #
 #   2. 启动服务:
-#        bash /mnt/c/Users/sanyang/sanyangworkspace/music_recommendation/Muisc-Research/scripts/start_sglang.sh
+#        bash /path/to/SoulTuner-Agent/scripts/start_sglang.sh
 #
 #   3. 服务启动后，在 Windows 端用 http://localhost:8000 访问（OpenAI 兼容 API）
 #
@@ -25,7 +25,8 @@
 VENV_DIR="$HOME/vllm-env"
 
 # 微调模型路径（Windows 路径通过 /mnt/ 映射到 WSL）
-MODEL_PATH="/mnt/c/Users/sanyang/Models/Qwen3-4B-Instruct-2507"
+# ★ 请修改为你的模型实际路径（WSL 挂载路径格式）
+MODEL_PATH="/mnt/c/YOUR_USERNAME/Models/Qwen3-4B-Instruct-2507"
 
 # 服务端口和地址
 PORT=8000

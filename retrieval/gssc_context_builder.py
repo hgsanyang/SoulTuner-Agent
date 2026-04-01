@@ -1,18 +1,23 @@
 """
 P3: GSSC 上下文构建器 (Gather / Select / Structure / Compress)
 灵感来源：HelloAgents 的 ContextBuilder 流水线
+压缩升级：Claude Code compact.ts 的 LLM Agent 压缩模式
 
 作用：在注入 LLM Prompt 之前，将多个上下文源（GraphZep 记忆、对话历史、
 检索结果）按优先级筛选并截断到 Token 预算内，避免 Prompt 超长导致的
 截断、遗忘和高成本问题。
 
+Stage 4 升级（V2）：
+  当 chat_history 远超预算（> 1.5 倍分配量）时，使用 LLM 生成摘要替代硬截断，
+  减少信息损失。短对话仍保留原有的按行截断逻辑作为兜底。
+
 典型调用点：
   analyze_intent / generate_explanation 等节点在拼 Prompt 前调用
-  build_context(sources, budget=2000) → 截断后的文本
+  await build_context(sources, budget=2000) → 截断后的文本
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,9 @@ PRIORITY_GRAPHZEP_FACTS = 1    # 长期记忆（高优先级）
 PRIORITY_CHAT_HISTORY = 2      # 最近对话历史
 PRIORITY_RETRIEVAL = 3         # 检索结果
 
+# ---- LLM 压缩触发阈值 ----
+LLM_COMPRESS_RATIO = 1.5       # 超出分配预算的倍数阈值
+
 
 class ContextSource:
     """一个上下文源"""
@@ -48,7 +56,7 @@ class ContextSource:
         self.estimated_tokens = estimate_tokens(content)
     
     def truncate_to(self, max_tokens: int) -> str:
-        """截断内容到指定 Token 数"""
+        """按行截断内容到指定 Token 数（传统兜底方式）"""
         if self.estimated_tokens <= max_tokens:
             return self.content
         
@@ -67,7 +75,50 @@ class ContextSource:
         return "\n".join(result)
 
 
-def build_context(
+async def _llm_compress_chat_history(chat_history: str) -> str:
+    """
+    使用 LLM 将冗长的对话历史压缩为摘要。
+    
+    借鉴 Claude Code compact.ts 的思路：用一个轻量 LLM 调用，
+    将旧对话轮次生成结构化摘要，替代硬截断。
+    
+    使用意图分析专用的小模型（如 Qwen3-4B），成本低、速度快。
+    """
+    try:
+        from llms.multi_llm import get_intent_chat_model
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.output_parsers import StrOutputParser
+        from llms.prompts import CONTEXT_COMPRESSOR_PROMPT
+        
+        llm = get_intent_chat_model()
+        chain = (
+            ChatPromptTemplate.from_template(CONTEXT_COMPRESSOR_PROMPT)
+            | llm
+            | StrOutputParser()
+        )
+        summary = await chain.ainvoke({"chat_history": chat_history})
+        summary = summary.strip()
+        
+        # 清理可能的 <think>...</think> 残留（本地模型常见）
+        if "<think>" in summary:
+            think_end = summary.find("</think>")
+            if think_end > 0:
+                summary = summary[think_end + 8:].strip()
+        
+        original_tokens = estimate_tokens(chat_history)
+        compressed_tokens = estimate_tokens(summary)
+        logger.info(
+            f"[GSSC] LLM 压缩成功: {original_tokens} → {compressed_tokens} tokens "
+            f"(压缩率: {compressed_tokens / max(original_tokens, 1):.1%})"
+        )
+        return summary
+        
+    except Exception as e:
+        logger.warning(f"[GSSC] LLM 压缩失败，退回按行截断: {e}")
+        return None  # 返回 None 表示失败，调用方会退回 truncate_to
+
+
+async def build_context(
     graphzep_facts: str = "",
     chat_history: str = "",
     retrieval_context: str = "",
@@ -75,7 +126,11 @@ def build_context(
     total_budget: int = 3000,
 ) -> Dict[str, str]:
     """
-    GSSC 四阶段上下文构建
+    GSSC 四阶段上下文构建（V2 异步版）
+
+    V2 升级：Stage 4 新增 LLM 智能压缩分支。
+    当 chat_history 的 token 数远超分配预算（> 1.5 倍）时，
+    调用 LLM 生成摘要来替代硬截断，减少信息损失。
 
     Args:
         graphzep_facts: GraphZep 长期记忆文本
@@ -151,7 +206,7 @@ def build_context(
         allocations[src.name] = src.min_tokens + extra_allocated
         remaining_budget -= extra_allocated
     
-    # ---- Stage 4: Compress（截断到分配量） ----
+    # ---- Stage 4: Compress（智能压缩 — V2 升级） ----
     result = {
         "graphzep_facts": graphzep_facts,
         "chat_history": chat_history,
@@ -160,12 +215,34 @@ def build_context(
     
     for src in sources:
         budget = allocations.get(src.name, src.estimated_tokens)
-        if src.estimated_tokens > budget:
-            truncated = src.truncate_to(budget)
-            result[src.name] = truncated
+        if src.estimated_tokens <= budget:
+            continue  # 不需要压缩
+        
+        # V2 升级：chat_history 远超预算时尝试 LLM 摘要压缩
+        if (
+            src.name == "chat_history"
+            and src.estimated_tokens > budget * LLM_COMPRESS_RATIO
+        ):
             logger.info(
-                f"[GSSC] {src.name}: {src.estimated_tokens} → {estimate_tokens(truncated)} tokens "
-                f"(预算: {budget})"
+                f"[GSSC] chat_history ({src.estimated_tokens} tokens) 远超预算 "
+                f"({budget} tokens, ×{LLM_COMPRESS_RATIO})，尝试 LLM 压缩"
             )
+            compressed = await _llm_compress_chat_history(src.content)
+            if compressed is not None:
+                result[src.name] = compressed
+                logger.info(
+                    f"[GSSC] {src.name}: LLM 压缩 {src.estimated_tokens} → "
+                    f"{estimate_tokens(compressed)} tokens (预算: {budget})"
+                )
+                continue
+            # LLM 压缩失败，fall through 到按行截断
+        
+        # 按行截断兜底（V1 原有逻辑）
+        truncated = src.truncate_to(budget)
+        result[src.name] = truncated
+        logger.info(
+            f"[GSSC] {src.name}: 按行截断 {src.estimated_tokens} → "
+            f"{estimate_tokens(truncated)} tokens (预算: {budget})"
+        )
     
     return result
