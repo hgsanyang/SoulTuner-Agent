@@ -55,8 +55,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3003",   # Frontend (Next.js)
         "http://127.0.0.1:3003",
-        "http://localhost:3100",   # GraphZep Server
-        "http://127.0.0.1:3100",
+        "http://localhost:8350",   # GraphZep Server
+        "http://127.0.0.1:8350",
         "http://localhost:31000",
         "http://127.0.0.1:31000"
     ],
@@ -153,6 +153,7 @@ class JourneyRequest(BaseModel):
     duration: int = 60  # 总时长(分钟)
     user_preferences: Optional[Dict[str, Any]] = None
     context: Optional[Dict[str, Any]] = None  # 天气、地点、时间等
+    llm_provider: str = "siliconflow"  # 模型提供商，和推荐页保持一致
 
 
 class SearchRequest(BaseModel):
@@ -483,6 +484,17 @@ async def stream_journey_endpoint(request: JourneyRequest):
     import datetime
     print(f"\n🔥🔥🔥 [Journey Endpoint] CALLED at {datetime.datetime.now()} "
           f"story={request.story!r} duration={request.duration}\n", flush=True)
+
+    # 根据前端传入的 provider 切换 LLM（与推荐页保持一致）
+    try:
+        from llms.multi_llm import get_chat_model
+        from agent.music_graph import set_llm
+        new_llm = get_chat_model(provider=request.llm_provider)
+        set_llm(new_llm)
+        logger.info(f"[Journey] 切换 LLM provider 到 {request.llm_provider}")
+    except Exception as _e:
+        logger.warning(f"[Journey] 切换 LLM 失败，使用默认: {_e}")
+
     return StreamingResponse(
         stream_journey(
             story=request.story,
