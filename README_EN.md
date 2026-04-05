@@ -21,7 +21,19 @@
   <a href="README.md">中文</a> | <a href="README_EN.md">English</a>
 </p>
 
-> A multi-node Agent workflow orchestrated by LangGraph that combines a Knowledge Graph (Neo4j), dual audio embedding models (M2D-CLAP + OMAR-RQ), Large Language Models, and GraphZep long-term memory to deliver hybrid retrieval, weighted RRF fusion, graph-distance reranking, SSE streaming recommendations, web search fallback, music journey curation, and a user behavior data flywheel.
+## 🎯 Discover Music with Natural Language — AI That Truly Understands You
+
+SoulTuner is a **locally deployed** AI music recommendation agent. It's not a simple "search & play" tool, but a personal DJ that **continuously learns your music taste**:
+
+- 🗣️ **Describe what you want to hear** — "I'm feeling really down today, just want to be alone", and the system automatically identifies your emotion and scene to recommend music that fits your current state
+- 🧠 **Gets smarter with every interaction** — Every like, save, skip, and conversation silently builds your personalized music profile
+- 🌐 **Local library not enough? Real-time web search** — Automatically searches the web for the latest music when the local library can't satisfy your needs
+- 🗺️ **Immersive Music Journeys** — Describe a story or scene, and AI curates an entire musical journey with emotional arcs
+- ♻️ **Discover & Ingest** — Found a great song? One-click download with automatic acoustic analysis and ingestion
+
+> 📖 Full feature details and interaction guide: [Feature_Walkthrough.md](Feature_Walkthrough.md)
+>
+> A multi-node Agent workflow orchestrated by LangGraph that combines a Knowledge Graph (Neo4j), dual audio embedding models (M2D-CLAP + OMAR-RQ), Large Language Models, and GraphZep long-term memory to deliver hybrid retrieval, dual-anchor reranking, graph-distance personalization, SSE streaming recommendations, web search fallback, music journey curation, and a user behavior data flywheel.
 
 ---
 
@@ -29,22 +41,23 @@
 
 | Feature | Description |
 |---------|-------------|
-| 🔀 **Hybrid RAG** | GraphRAG + Semantic Search concurrent retrieval with weighted RRF fusion |
+| 🔀 **Hybrid RAG** | GraphRAG + Semantic Search concurrent retrieval with merge & dedup fusion |
 | 🎵 **Dual Audio Embeddings** | M2D-CLAP cross-modal semantics × 0.7 + OMAR-RQ acoustic features × 0.3 |
 | 🧠 **Long-term Memory** | GraphZep two-stage recall, cross-session user preference retention |
 | 📊 **Graph Affinity** | Neo4j graph distance + user profile Jaccard dual personalized ranking |
-| 🤖 **Dual Planner** | API large model (intent + tags + HyDE in one call) / Local small model (HyDE separated) |
+| 🤖 **Smart Intent Recognition** | 7-class intent routing, supports API LLM + local Qwen3-4B dual mode |
 | 👤 **User Profile** | Visual profile panel with genre/mood/scenario/language preferences → Neo4j + GraphZep dual-write |
 | 🌐 **Web Search Fallback** | Auto-triggers SearxNG federated search + LLM summarization when local library is insufficient |
 | 🎼 **Music Journey** | LLM story → emotion decomposition → segment-by-segment retrieval, SSE real-time push |
 | ♻️ **Data Flywheel** | One-click ingestion: search → discover → download → tag extraction → vector encoding → Neo4j |
 | 📡 **SSE Streaming** | Real-time frontend rendering: thinking → song cards → recommendation explanations |
-| ⚙️ **Runtime Config** | Frontend settings panel for real-time adjustment of LLM, retrieval, and RRF parameters |
 | 🐳 **Docker Deploy** | `docker compose up` for full-stack one-command startup |
 
 ---
 
 ## 🖼️ Feature Preview
+
+📺 [**Demo Video**](https://www.bilibili.com/video/BV1ZzSDBaEhj/) — Full feature demonstration (Bilibili)
 
 ### 🏠 Home · 💬 Chat · 🎵 Recommendations · 🎧 Player · 🗺️ Journey
 
@@ -99,13 +112,13 @@
 │  └──────┬──────┘  └────────┬─────────┘  └──────┬───────┘          │
 │         └──────────────────┼───────────────────┘                   │
 │                            ▼                                        │
-│              Weighted RRF Fusion (α·Vector + β·Graph)              │
+│              Merge & Dedup (Equal-weight fusion)                    │
 │                            ▼                                        │
 │              Graph Affinity (Graph Distance + Profile Jaccard)      │
 │                            ▼                                        │
-│              Artist Diversity Filter (exempt specified artists)     │
+│              Dual-Anchor Rerank (M2D-CLAP + OMAR-RQ)               │
 │                            ▼                                        │
-│              MMR Jaccard Rerank (λ=0.7)                            │
+│              MMR Multi-dim Diversity (λ=0.7)                       │
 └─────────────────────────────────────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────────┐
@@ -118,25 +131,38 @@
 
 | Layer | Technology |
 |-------|------------|
-| **Frontend** | Next.js 14 (App Router) + React 18 + TypeScript 5.5 + Framer Motion 12 |
-| **State Mgmt** | React Context API (PlayerContext + LibraryContext) |
-| **Design** | CSS-in-JS custom theme.ts (Spotify-inspired dark design system) |
-| **Agent** | LangGraph StateGraph (7 intent routing / dual Planner) |
-| **Backend** | FastAPI + Uvicorn (ASGI), SSE streaming, Pydantic schema validation |
-| **Async I/O** | Python asyncio fully async (concurrent retrieval + GraphZep fire-and-forget writes) |
+| **Frontend** | Next.js 14 + React 18 |
+| **Agent** | LangGraph StateGraph (7-class intent routing) |
+| **Backend** | FastAPI + SSE streaming |
 | **Graph DB** | Neo4j 5.x (native vector index + graph relations + user behavior direct-write) |
 | **Audio Embed** | M2D-CLAP 2025 (cross-modal semantic, 768d) + OMAR-RQ (pure acoustic, 768d) |
-| **AI Inference** | PyTorch ≥2.2 + torchaudio (GPU/CPU adaptive, lazy-load singleton cache) |
-| **LLM** | DeepSeek-V3 / Gemini / Doubao (Volcengine) / Qwen (API) + Qwen3-4B (SGLang local deployment) |
-| **Memory** | GraphZep (Hono + TypeScript microservice, temporal knowledge graph, two-stage recall) |
+| **LLM** | DeepSeek-V3.2 / Gemini / Doubao (Volcengine) / Qwen (API) + Qwen3-4B (SGLang local) |
+| **Memory** | GraphZep temporal memory (two-stage recall) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
 | **Ranking** | Dual-anchor rerank (cosine) + Graph Affinity (shortestPath + Jaccard) + MMR |
-| **Context Mgmt** | GSSC Token Budget Pipeline V3 (Gather/Select/Structure/Compress) with LLM summary + **async pre-compression cache** (background compression after each round, instant cache hit on next) |
+| **Context Mgmt** | GSSC Token Budget Pipeline (Gather/Select/Structure/Compress + async pre-compression cache) |
 | **Container** | Docker Compose (Neo4j + GraphZep + Backend + Frontend) |
+
+> 📖 Full tech stack and frontend engineering details: [Technical_Report.md](Technical_Report.md)
 
 ---
 
 ## 🚀 Quick Start
+
+### ⚠️ Prerequisites: Music Data
+
+The system requires local MP3 audio files for vector encoding and ingestion. Place your music files in:
+
+```
+data/
+├── processed_audio/
+│   └── audio/          ← Place MP3 files here (main music directory)
+├── online_acquired/    ← Web-acquired music is stored here automatically
+└── mtg_sample/
+    └── audio/          ← MTG dataset audio (optional)
+```
+
+> 📁 The audio directory path can be customized via `MUSIC_AUDIO_DATA_DIR` in `.env` or the frontend settings panel. After adding audio, run the [Data Pipeline](#-data-pipeline) to complete ingestion.
 
 ### Option 1: Docker Compose (Recommended)
 
@@ -173,13 +199,7 @@ cd web && npm run dev             # Terminal B: Frontend (hot reload)
 
 ### Option 3: Local LLM Deployment (WSL + SGLang)
 
-Optimized deployment for 8GB VRAM devices (e.g., RTX 4070), supporting 4B-level fine-tuned local models (e.g., `Qwen-4B`) while reserving VRAM for the cross-modal retrieval system.
-
-**Prerequisites**:
-
-1. Windows with WSL2 (Ubuntu) enabled
-2. CUDA Toolkit installed in WSL (only `nvcc` needed)
-3. `sglang[all]` installed in a WSL virtual environment
+Optimized for 8GB VRAM devices (e.g., RTX 4070), supporting local Qwen3-4B for intent recognition.
 
 **Launch Steps**:
 
@@ -190,14 +210,9 @@ Optimized deployment for 8GB VRAM devices (e.g., RTX 4070), supporting 4B-level 
    bash /path/to/SoulTuner-Agent/scripts/start_sglang.sh
    ```
 
-   *Built-in VRAM partitioning: FP8 online quantization locks 70% VRAM (~5.5GB), reserving space for audio vector models.*
-
 2. **Terminal B (Windows)**: Switch to local model in the frontend settings
    - Run `python startup_all.py` normally
-   - Open System Settings ⚙️
-   - **Main Provider**: Select `sglang`
-   - **Base URL**: Enter `http://localhost:8000/v1`
-   - Save settings — the system will automatically switch to the local 4B model using the streamlined Planner
+   - Open System Settings ⚙️ → **Main Provider**: select `sglang` → Save
 
 > ⚠️ Start Neo4j Desktop and launch the database before starting.
 
@@ -226,13 +241,13 @@ Optimized deployment for 8GB VRAM devices (e.g., RTX 4070), supporting 4B-level 
 │
 ├── api/                        # FastAPI interface layer
 │   ├── server.py               # Main server + Settings API
-│   └── user_profile.py         # User Profile API (GET/POST /api/user-profile)
+│   └── user_profile.py         # User Profile API
 │
 ├── config/settings.py          # Global config (supports runtime modification)
 │
 ├── retrieval/                  # Retrieval engine layer
-│   ├── hybrid_retrieval.py     # Multi-source fusion + RRF + Graph Affinity + MMR
-│   ├── gssc_context_builder.py # GSSC V3 context pipeline (Token budget + LLM compress + async pre-compress cache)
+│   ├── hybrid_retrieval.py     # Multi-source fusion + Dual-Anchor + Graph Affinity + MMR
+│   ├── gssc_context_builder.py # GSSC context pipeline (Token budget + LLM compress + async pre-compress cache)
 │   ├── audio_embedder.py       # M2D-CLAP cross-modal encoding
 │   ├── neo4j_client.py         # Neo4j connection wrapper
 │   ├── music_journey.py        # Music journey orchestrator
@@ -245,8 +260,8 @@ Optimized deployment for 8GB VRAM devices (e.g., RTX 4070), supporting 4B-level 
 │   └── acquire_music.py        # Data flywheel (download & ingest)
 │
 ├── llms/                       # LLM interfaces + Prompts
-│   ├── prompts.py              # Dual Planner (SYSTEM/HUMAN split + streamlined) + 6 auxiliary prompts
-│   └── multi_llm.py            # Multi-provider LLM factory (SiliconFlow / Volcengine / Gemini / OpenAI)
+│   ├── prompts.py              # Planner Prompt + auxiliary prompts
+│   └── multi_llm.py            # Multi-provider LLM factory
 │
 ├── schemas/                    # Pydantic data models
 │   └── query_plan.py           # MusicQueryPlan + RetrievalPlan
@@ -255,7 +270,7 @@ Optimized deployment for 8GB VRAM devices (e.g., RTX 4070), supporting 4B-level 
 │
 ├── data/pipeline/              # Data pipeline
 │   ├── ingest_to_neo4j.py      # Neo4j ingestion
-│   ├── neo4j_schema_v2.py      # Dataset management CLI (list/verify/backfill)
+│   ├── neo4j_schema_v2.py      # Dataset management tool
 │   └── lyrics_analyzer.py      # LLM lyrics tag analysis
 │
 ├── web/                        # Next.js frontend
@@ -287,18 +302,7 @@ python data/pipeline/ingest_to_neo4j.py --skip-embeddings   # Metadata only
 python data/pipeline/ingest_to_neo4j.py --update-embeddings # Vectors only
 ```
 
-### Dataset Management CLI
-
-```bash
-# View song distribution by dataset
-python data/pipeline/neo4j_schema_v2.py --list-datasets
-
-# Verify vector index status
-python data/pipeline/neo4j_schema_v2.py --verify
-
-# Backfill missing dataset labels
-python data/pipeline/neo4j_schema_v2.py --backfill
-```
+> 📖 Dataset management CLI tools (list/verify/backfill) are documented in [Technical_Report.md](Technical_Report.md)
 
 ---
 
@@ -310,7 +314,7 @@ python data/pipeline/neo4j_schema_v2.py --backfill
 |----------|-------------|---------|
 | `OPENAI_BASE_URL` | LLM API endpoint | `https://api.siliconflow.cn/v1` |
 | `OPENAI_API_KEY` | LLM API key | — |
-| `MODEL_NAME` | Main inference model | `deepseek-ai/DeepSeek-V3` |
+| `MODEL_NAME` | Main inference model | `deepseek-ai/DeepSeek-V3.2` |
 | `VOLCENGINE_BASE_URL` | Volcengine (Doubao) API endpoint | `https://ark.cn-beijing.volces.com/api/v3` |
 | `VOLCENGINE_API_KEY` | Volcengine API key | Optional |
 | `NEO4J_URI` | Neo4j connection | `neo4j://127.0.0.1:7687` |
@@ -318,51 +322,7 @@ python data/pipeline/neo4j_schema_v2.py --backfill
 | `TAVILY_API_KEY` | Web search | Optional |
 | `GOOGLE_API_KEY` | Gemini API | Optional |
 
-### Runtime Settings (Frontend)
-
-The frontend settings panel (⚙️ System Settings) supports real-time adjustment:
-
-| Category | Adjustable Parameters |
-|----------|----------------------|
-| **Model Config** | Main LLM provider/model, intent analysis model, local model toggle, timeout |
-| **Retrieval Params** | Graph/vector/playlist counts, RRF weights, graph distance weighting toggle/weight/hops |
-| **Music Data** | Local music/MTG/web-acquired/model export directories |
-| **Memory System** | Context retention rounds, user ID |
-
-Changes take effect immediately upon saving. Unsaved changes are discarded when closing the panel. Supports "↩ Reset Defaults".
-
----
-
-## 🔌 API Endpoints
-
-### SSE Streaming
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/recommendations/stream` | Music recommendations (SSE: thinking → song × N → response → complete) |
-| `POST /api/journey/stream` | Music journey (SSE: segment_start → song × N → segment_complete × M) |
-
-### REST — User Behavior
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/user-event` | User event reporting (like/unlike/save/unsave/skip/dislike/full_play/repeat) |
-| `GET /api/liked-songs` | Get user liked + saved songs (from Neo4j, with time-decay sorting) |
-| `GET /api/disliked-songs` | Get user disliked songs (from Neo4j) |
-| `DELETE /api/disliked-songs` | Remove dislike marks (delete DISLIKES relation from Neo4j) |
-
-### REST — Features
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/search` | Non-streaming song search |
-| `POST /api/acquire-song` | Data flywheel: download audio/cover/lyrics → dual-model encoding → Neo4j ingestion |
-| `GET /api/user-profile` | Read user profile preferences |
-| `POST /api/user-profile` | Save user profile → Neo4j User properties + GraphZep long-term memory |
-| `GET /api/settings` | Get current runtime configuration |
-| `POST /api/settings` | Update runtime configuration (takes effect immediately) |
-| `POST /api/settings/reset` | Reset to default configuration |
-| `GET /health` | Health check |
+> 📖 Runtime settings panel (LLM switching / retrieval params / RRF weights) and API endpoints are documented in [Technical_Report.md](Technical_Report.md)
 
 ---
 
@@ -375,8 +335,20 @@ The initial architecture of this project is inspired by [imagist13/Muisc-Researc
 | [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | GraphZep long-term memory |
 | [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP cross-modal model |
 | [MTG/omar](https://github.com/MTG/omar) | OMAR-RQ audio model |
-| [langchain-ai/langgraph](https://github.com/langchain-ai/langgraph) | Agent orchestration |
-| [searxng/searxng](https://github.com/searxng/searxng) | Federated meta-search |
+
+---
+
+## 📚 References
+
+1. Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.*
+2. Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model Trained with Multi-Feature Masked Token Prediction.*
+3. Rasmussen, P. et al. (2025). *Zep: A Temporal Knowledge Graph Architecture for Agent Memory.*
+4. Palumbo, E. et al. (Spotify, 2025). *You Say Search, I Say Recs: A Scalable Agentic Approach to Query Understanding and Exploratory Search.* (RecSys 2025)
+5. D'Amico, E. et al. (Spotify, 2025). *Deploying Semantic ID-based Generative Retrieval for Large-Scale Podcast Discovery at Spotify.*
+6. Penha, G. et al. (2025). *Semantic IDs for Joint Generative Search and Recommendation.* (RecSys 2025 LBR)
+7. Palumbo, E. et al. (2025). *Text2Tracks: Prompt-based Music Recommendation via Generative Retrieval.*
+8. Xu, S. et al. (NetEase Cloud Music, 2025). *Climber: Toward Efficient Scaling Laws for Large Recommendation Models.*
+9. Wang, S. et al. (2025). *Knowledge Graph Retrieval-Augmented Generation for LLM-based Recommendation.* (ACL 2025)
 
 ---
 

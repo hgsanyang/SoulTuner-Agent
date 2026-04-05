@@ -44,7 +44,7 @@ services:
       NEO4J_PASSWORD: "12345678"
       OPENAI_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
       OPENAI_API_KEY: ${SILICONFLOW_API_KEY}
-      MODEL_NAME: ${GRAPHZEP_MODEL_NAME:-deepseek-ai/DeepSeek-V3}
+      MODEL_NAME: ${GRAPHZEP_MODEL_NAME:-deepseek-ai/DeepSeek-V3.2}
       EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-BAAI/bge-m3}
       PORT: "3100"
     restart: unless-stopped
@@ -72,7 +72,7 @@ services:
       GRAPHZEP_BASE_URL: http://graphzep:3100
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
       SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
-      MODEL_NAME: ${MODEL_NAME:-deepseek-ai/DeepSeek-V3}
+      MODEL_NAME: ${MODEL_NAME:-deepseek-ai/DeepSeek-V3.2}
       MUSIC_AUDIO_DATA_DIR: /app/data/processed_audio/audio
       MUSIC_WEB_SEARCH_ENABLED: "1"
       # 本地模型推理（可选，通过宿主机暴露的 vLLM 端口）
