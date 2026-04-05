@@ -17,7 +17,8 @@ Stage 4 升级（V2）：
 """
 
 import logging
-from typing import Dict
+import asyncio
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,76 @@ PRIORITY_RETRIEVAL = 3         # 检索结果
 
 # ---- LLM 压缩触发阈值 ----
 LLM_COMPRESS_RATIO = 1.5       # 超出分配预算的倍数阈值
+
+# ============================================================
+# ★ 预压缩缓存（AsyncPreCompress Cache）
+# 每轮对话结束后，异步预压缩对话历史并缓存，
+# 下次请求直接读取，消除 17s 阻塞等待。
+#
+# 结构：{ user_id: (compressed_text, original_token_count) }
+#   compressed_text     —— 压缩后的摘要
+#   original_token_count —— 压缩时原始历史的 token 数
+#                          （用于判断缓存是否过期：如果下次进来的历史 token 数
+#                            比缓存时少，说明前端重置了历史，缓存作废）
+# ============================================================
+_compress_cache: Dict[str, Tuple[str, int]] = {}
+
+
+def get_cached_compression(user_id: str, current_token_count: int) -> Optional[str]:
+    """
+    读取预压缩缓存。
+
+    只有在「当前历史 token 数 >= 缓存时原始 token 数」时才视为有效缓存：
+    - >=  说明历史在原来基础上增长了（多了新一轮对话），缓存仍有代表性
+    - <   说明前端重置了历史（用户刷新页面），缓存无效，重新压缩
+    """
+    cached = _compress_cache.get(user_id)
+    if cached is None:
+        return None
+    compressed_text, original_tokens = cached
+    if current_token_count >= original_tokens:
+        logger.info(
+            f"[GSSC-Cache] 命中预压缩缓存 (user={user_id}): "
+            f"original={original_tokens} tokens → compressed={estimate_tokens(compressed_text)} tokens"
+        )
+        return compressed_text
+    else:
+        # 缓存过期（历史被重置），清除
+        logger.info(f"[GSSC-Cache] 缓存过期 (user={user_id})，历史已重置，清除缓存")
+        _compress_cache.pop(user_id, None)
+        return None
+
+
+async def pre_compress_and_cache(user_id: str, chat_history_text: str) -> None:
+    """
+    ★ 在每轮对话结束后异步调用（asyncio.create_task），
+    预压缩本轮对话历史，写入缓存供下次请求直接使用。
+
+    调用时机：与 extract_preferences_node 并行执行，
+    在推荐解释生成完毕、返回响应之后触发。
+    """
+    original_tokens = estimate_tokens(chat_history_text)
+
+    # 只有历史足够长（> 1500 tokens）时才预压缩，短历史直接截断即可
+    if original_tokens <= 1500:
+        logger.info(
+            f"[GSSC-Cache] 历史较短 ({original_tokens} tokens)，无需预压缩 (user={user_id})"
+        )
+        return
+
+    logger.info(
+        f"[GSSC-Cache] 开始异步预压缩 (user={user_id}, {original_tokens} tokens) ..."
+    )
+    compressed = await _llm_compress_chat_history(chat_history_text)
+    if compressed:
+        _compress_cache[user_id] = (compressed, original_tokens)
+        logger.info(
+            f"[GSSC-Cache] 预压缩完成并写入缓存 (user={user_id}): "
+            f"{original_tokens} → {estimate_tokens(compressed)} tokens"
+        )
+    else:
+        logger.warning(f"[GSSC-Cache] 预压缩失败 (user={user_id})，下次请求将重新压缩")
+
 
 
 class ContextSource:
@@ -223,6 +294,17 @@ async def build_context(
             src.name == "chat_history"
             and src.estimated_tokens > budget * LLM_COMPRESS_RATIO
         ):
+            # ★ 先查预压缩缓存（上一轮结束后异步预计算的结果）
+            user_id = "local_admin"  # 当前单用户，后续多用户时可从参数传入
+            cached = get_cached_compression(user_id, src.estimated_tokens)
+            if cached is not None:
+                result[src.name] = cached
+                logger.info(
+                    f"[GSSC] chat_history: 使用预压缩缓存，跳过 LLM 调用 "
+                    f"(节省 ~15-20s)"
+                )
+                continue
+            
             logger.info(
                 f"[GSSC] chat_history ({src.estimated_tokens} tokens) 远超预算 "
                 f"({budget} tokens, ×{LLM_COMPRESS_RATIO})，尝试 LLM 压缩"
@@ -230,6 +312,8 @@ async def build_context(
             compressed = await _llm_compress_chat_history(src.content)
             if compressed is not None:
                 result[src.name] = compressed
+                # 同步写入缓存（本次压缩结果供下次用，防止下下轮再等待）
+                _compress_cache[user_id] = (compressed, src.estimated_tokens)
                 logger.info(
                     f"[GSSC] {src.name}: LLM 压缩 {src.estimated_tokens} → "
                     f"{estimate_tokens(compressed)} tokens (预算: {budget})"

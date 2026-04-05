@@ -85,6 +85,13 @@ MODEL_REGISTRY = {
         "default_model": "gemini-3-flash-preview",
         "api_key_env": "GOOGLE_API_KEY",
         "base_url_env": ""
+    },
+    "volcengine": {  # 火山引擎 / 豆包（字节跳动）
+        "prefix": "openai/",  # 火山引擎 Ark 完全兼容 OpenAI 协议
+        "default_model": "ep-20260405142751-x4jm6",
+        "api_key_env": "VOLCENGINE_API_KEY",
+        "base_url_env": "VOLCENGINE_BASE_URL",
+        "default_base_url": "https://ark.cn-beijing.volces.com/api/v3"
     }
 }
 
@@ -219,7 +226,7 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
     base_url = _get_env_val(config.get("base_url_env", ""), config.get("default_base_url"))
     
     # 策略 1：如果是 SiliconFlow 或本地 OpenAI 兼容服务 (Ollama, vLLM, SGLang)，为了保证绝对稳定，直接使用 LangChain 原生 ChatOpenAI 包装
-    if provider in ["siliconflow", "ollama", "vllm", "sglang"]:
+    if provider in ["siliconflow", "volcengine", "ollama", "vllm", "sglang"]:
         from langchain_openai import ChatOpenAI
         target_model = model_name or config["default_model"]
         # 读取超时配置（优先用参数，其次用 settings，默认 80s）
