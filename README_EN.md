@@ -127,11 +127,11 @@
 | **Graph DB** | Neo4j 5.x (native vector index + graph relations + user behavior direct-write) |
 | **Audio Embed** | M2D-CLAP 2025 (cross-modal semantic, 768d) + OMAR-RQ (pure acoustic, 768d) |
 | **AI Inference** | PyTorch ≥2.2 + torchaudio (GPU/CPU adaptive, lazy-load singleton cache) |
-| **LLM** | DeepSeek-V3 / Gemini / Qwen (API) + Qwen3-4B (SGLang local deployment) |
+| **LLM** | DeepSeek-V3 / Gemini / Doubao (Volcengine) / Qwen (API) + Qwen3-4B (SGLang local deployment) |
 | **Memory** | GraphZep (Hono + TypeScript microservice, temporal knowledge graph, two-stage recall) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
 | **Ranking** | Dual-anchor rerank (cosine) + Graph Affinity (shortestPath + Jaccard) + MMR |
-| **Context Mgmt** | GSSC Token Budget Pipeline V2 (Gather/Select/Structure/Compress) with LLM summary |
+| **Context Mgmt** | GSSC Token Budget Pipeline V3 (Gather/Select/Structure/Compress) with LLM summary + **async pre-compression cache** (background compression after each round, instant cache hit on next) |
 | **Container** | Docker Compose (Neo4j + GraphZep + Backend + Frontend) |
 
 ---
@@ -232,6 +232,7 @@ Optimized deployment for 8GB VRAM devices (e.g., RTX 4070), supporting 4B-level 
 │
 ├── retrieval/                  # Retrieval engine layer
 │   ├── hybrid_retrieval.py     # Multi-source fusion + RRF + Graph Affinity + MMR
+│   ├── gssc_context_builder.py # GSSC V3 context pipeline (Token budget + LLM compress + async pre-compress cache)
 │   ├── audio_embedder.py       # M2D-CLAP cross-modal encoding
 │   ├── neo4j_client.py         # Neo4j connection wrapper
 │   ├── music_journey.py        # Music journey orchestrator
@@ -244,8 +245,8 @@ Optimized deployment for 8GB VRAM devices (e.g., RTX 4070), supporting 4B-level 
 │   └── acquire_music.py        # Data flywheel (download & ingest)
 │
 ├── llms/                       # LLM interfaces + Prompts
-│   ├── prompts.py              # Dual Planner (unified + streamlined) + 5 auxiliary prompts
-│   └── multi_llm.py            # Multi-provider LLM factory
+│   ├── prompts.py              # Dual Planner (SYSTEM/HUMAN split + streamlined) + 6 auxiliary prompts
+│   └── multi_llm.py            # Multi-provider LLM factory (SiliconFlow / Volcengine / Gemini / OpenAI)
 │
 ├── schemas/                    # Pydantic data models
 │   └── query_plan.py           # MusicQueryPlan + RetrievalPlan
@@ -310,6 +311,8 @@ python data/pipeline/neo4j_schema_v2.py --backfill
 | `OPENAI_BASE_URL` | LLM API endpoint | `https://api.siliconflow.cn/v1` |
 | `OPENAI_API_KEY` | LLM API key | — |
 | `MODEL_NAME` | Main inference model | `deepseek-ai/DeepSeek-V3` |
+| `VOLCENGINE_BASE_URL` | Volcengine (Doubao) API endpoint | `https://ark.cn-beijing.volces.com/api/v3` |
+| `VOLCENGINE_API_KEY` | Volcengine API key | Optional |
 | `NEO4J_URI` | Neo4j connection | `neo4j://127.0.0.1:7687` |
 | `NEO4J_PASSWORD` | Neo4j password | — |
 | `TAVILY_API_KEY` | Web search | Optional |

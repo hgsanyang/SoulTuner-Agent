@@ -127,11 +127,11 @@
 | **图数据库** | Neo4j 5.x（原生向量索引 + 图谱关系 + 用户行为直写） |
 | **音频嵌入** | M2D-CLAP 2025（跨模态语义，768d）+ OMAR-RQ（纯声学特征，768d） |
 | **AI 推理** | PyTorch ≥2.2 + torchaudio（GPU/CPU 自适应，懒加载单例缓存） |
-| **大语言模型** | DeepSeek-V3 / Gemini / 通义千问（API）+ Qwen3-4B（SGLang 本地部署） |
+| **大语言模型** | DeepSeek-V3 / Gemini / 豆包（火山引擎）/ 通义千问（API）+ Qwen3-4B（SGLang 本地部署） |
 | **长期记忆** | GraphZep（Hono + TypeScript 微服务，时序知识图谱，双阶段召回） |
 | **联网搜索** | SearxNG 联邦搜索 + Tavily + 智谱 WebSearch |
 | **排序算法** | 双锚精排（cosine）+ Graph Affinity（shortestPath + Jaccard）+ MMR |
-| **上下文管理** | GSSC Token 预算管线 V2（Gather/Select/Structure/Compress），Stage 4 支持 LLM 摘要压缩 |
+| **上下文管理** | GSSC Token 预算管线 V3（Gather/Select/Structure/Compress），Stage 4 支持 LLM 摘要压缩 + **异步预压缩缓存**（每轮结束后后台压缩，下轮直接命中） |
 | **容器化** | Docker Compose（Neo4j + GraphZep + Backend + Frontend） |
 
 ---
@@ -153,9 +153,9 @@
   recommend_by_favorites — 查看用户收藏/点赞（功能性）
 ```
 
-#### 方案 A：API 大模型融合版（`UNIFIED_MUSIC_QUERY_PLANNER_PROMPT`）
+#### 方案 A：API 大模型融合版（`UNIFIED_PLANNER_SYSTEM` + `UNIFIED_PLANNER_HUMAN`）
 
-适用于 DeepSeek / Claude / GPT 等云端大模型。**一次 LLM 调用**同时完成：
+适用于 DeepSeek / Gemini / 豆包（火山引擎）/ GPT 等云端大模型。**一次 LLM 调用**同时完成：
 
 | 输出字段 | 内容 |
 |---------|------|
@@ -164,7 +164,7 @@
 | `graph_*_filter` | 流派/情绪/场景/语言/地区五维标签 |
 | `vector_acoustic_query` | **内联 HyDE**：直接生成英文声学描述（仅 hybrid/vector 时填写） |
 
-优点：省掉第二次专用 HyDE LLM 调用，总延迟降低约 30-50%。
+**V4 优化 — KV Prefix Cache**：Prompt 已拆分为 `SYSTEM`（固定规则+示例，~930 tokens）和 `HUMAN`（动态历史+输入）两段。使用 `ChatPromptTemplate.from_messages([system, human])` 发送，使服务商自动缓存 SYSTEM 部分的 KV 状态。首次请求冷启动后，后续请求仅需计算 HUMAN 部分（~100-200 tokens），Prefill 延迟降低约 60-70%。
 
 #### 方案 B：本地小模型精简版（`LOCAL_PLANNER_PROMPT`）
 
@@ -251,7 +251,7 @@ stateDiagram-v2
 | 组件 | 说明 |
 |------|------|
 | **GraphZep 双阶段** | Stage 1 粗召回 20 条 → Stage 2 精排 5 条（相似度+时间衰减） |
-| **GSSC Token 预算 V2** | facts + chat_history 在 3000 token 内动态分配；Stage 4 支持 LLM 对话摘要压缩（超出 1.5 倍预算时触发，兜底按行截断） |
+| **GSSC Token 预算 V3** | facts + chat_history 在 3000 token 内动态分配；Stage 4 支持 LLM 对话摘要压缩 + **异步预压缩缓存**。每轮结束后 `asyncio.create_task` 预压缩历史并写入内存缓存，下轮直接命中（跳过 ~17s LLM 阻塞），缓存失效检测基于 token 数对比 |
 | **Neo4j 偏好图谱** | 独立 `extract_preferences` LangGraph 节点，每轮对话 LLM 提取用户偏好，fire-and-forget 写入 User 节点 |
 | **用户画像双写** | 前端画像面板保存 → 同时写入 Neo4j User 属性 + GraphZep 长期记忆 |
 
@@ -424,6 +424,7 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 ├── retrieval/                  # 检索引擎层
 │   ├── hybrid_retrieval.py     # 多路融合 + RRF + Graph Affinity + MMR
 │   │                           # 内置双模式 HyDE 分支（API内联 / 本地独立生成）
+│   ├── gssc_context_builder.py # GSSC V3 上下文管线（Token 预算 + LLM 压缩 + 异步预压缩缓存）
 │   ├── audio_embedder.py       # M2D-CLAP 跨模态编码
 │   ├── neo4j_client.py         # Neo4j 连接封装
 │   ├── music_journey.py        # 音乐旅程编排器
@@ -436,8 +437,8 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 │   └── acquire_music.py        # 数据飞轮（下载入库）
 │
 ├── llms/                       # LLM 接口 + Prompts
-│   ├── prompts.py              # 双套 Planner（融合版 + 精简版）+ 5 个辅助 Prompt
-│   └── multi_llm.py            # 多提供商 LLM 工厂
+│   ├── prompts.py              # 双套 Planner（SYSTEM/HUMAN 拆分 + 精简版）+ 6 个辅助 Prompt
+│   └── multi_llm.py            # 多提供商 LLM 工厂（SiliconFlow / Volcengine / Gemini / OpenAI）
 │
 ├── schemas/                    # Pydantic 数据模型
 │   └── query_plan.py           # MusicQueryPlan + RetrievalPlan（含 vector_acoustic_query）
@@ -502,6 +503,8 @@ python data/pipeline/neo4j_schema_v2.py --backfill
 | `OPENAI_BASE_URL` | LLM API 地址 | `https://api.siliconflow.cn/v1` |
 | `OPENAI_API_KEY` | LLM API 密钥 | — |
 | `MODEL_NAME` | 主推理模型 | `deepseek-ai/DeepSeek-V3` |
+| `VOLCENGINE_BASE_URL` | 火山引擎 API 地址 | `https://ark.cn-beijing.volces.com/api/v3` |
+| `VOLCENGINE_API_KEY` | 火山引擎 API 密钥 | 可选 |
 | `NEO4J_URI` | Neo4j 连接 | `neo4j://127.0.0.1:7687` |
 | `NEO4J_PASSWORD` | Neo4j 密码 | — |
 | `TAVILY_API_KEY` | 联网搜索 | 可选 |
