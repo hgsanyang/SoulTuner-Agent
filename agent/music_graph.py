@@ -208,11 +208,20 @@ class MusicRecommendationGraph:
                         "chat_history": _ctx["chat_history"],
                     })
             else:
-                _planner_prompt = UNIFIED_MUSIC_QUERY_PLANNER_PROMPT
+                # ── API 大模型路径（SiliconFlow / Volcengine / Gemini / DeepSeek 等）──
+                # ★ 关键优化：拆分 system + human 消息，启用 KV Prefix Cache
+                #   - system 消息 = UNIFIED_PLANNER_SYSTEM（固定规则+示例，~1400 token）
+                #     → 服务商自动缓存，后续请求只需重算 human 部分
+                #   - human 消息  = UNIFIED_PLANNER_HUMAN（动态历史+输入，~100-200 token）
+                #     → 每次都算，但量很小
+                # 预期效果：首次 8-12s（冷启动），后续 2-4s（缓存命中）
+                from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
                 structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan)
-            
                 chain = (
-                    ChatPromptTemplate.from_template(_planner_prompt)
+                    ChatPromptTemplate.from_messages([
+                        ("system", UNIFIED_PLANNER_SYSTEM),
+                        ("human", UNIFIED_PLANNER_HUMAN),
+                    ])
                     | structured_llm
                 )
                 from retrieval.gssc_context_builder import build_context
@@ -226,6 +235,7 @@ class MusicRecommendationGraph:
                     "user_input": user_input,
                     "chat_history": _ctx["chat_history"],
                 })
+
             
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(
@@ -1241,6 +1251,21 @@ class MusicRecommendationGraph:
             
             asyncio.create_task(_bg_extract_preferences())
             logger.info("[SemanticMemory] 偏好提取任务已投递到后台")
+            
+            # ★ 同步投递：预压缩对话历史，为下一轮请求消除 17s 阻塞
+            # 与偏好提取并行执行，互不干扰，在推荐响应返回之后进行
+            try:
+                from retrieval.gssc_context_builder import pre_compress_and_cache
+                from retrieval.history import MusicContextManager as _HisMgr
+                _ctx_mgr = _HisMgr()
+                # 获取本次请求携带的 chat_history（已包含当前轮 user query，但不含本轮 bot 回复）
+                _raw_history = state.get("chat_history", [])
+                _history_str = _ctx_mgr.format_chat_history(_raw_history)
+                asyncio.create_task(pre_compress_and_cache("local_admin", _history_str))
+                logger.info("[GSSC-Cache] 历史预压缩任务已投递到后台")
+            except Exception as _cache_e:
+                logger.warning(f"[GSSC-Cache] 投递预压缩任务失败（不影响主流程）: {_cache_e}")
+
             
         except Exception as pref_e:
             logger.warning(f"[SemanticMemory] 偏好提取节点异常（不影响主流程）: {pref_e}")
