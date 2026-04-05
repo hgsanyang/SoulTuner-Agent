@@ -39,7 +39,7 @@ class GlobalSettings(BaseSettings):
     llm_default_provider: str = Field(
         default="siliconflow",
         validation_alias="MAIN_LLM_PROVIDER",
-        description="主 LLM 提供商（siliconflow / dashscope / google / sglang / vllm / ollama）",
+        description="主 LLM 提供商（siliconflow / volcengine / dashscope / google / sglang / vllm / ollama）",
     )
     llm_default_model: str = Field(
         default="deepseek-ai/DeepSeek-V3.2",
@@ -113,7 +113,7 @@ class GlobalSettings(BaseSettings):
     frontend_port: int = Field(default=3000, description="前端 dev server 端口")
     netease_api_base: str = Field("http://localhost:3000", validation_alias="NETEASE_API_BASE")
     searxng_base_url: str = Field("http://localhost:8888", validation_alias="SEARXNG_BASE_URL")
-    graphzep_base_url: str = Field("http://localhost:3100", validation_alias="GRAPHZEP_BASE_URL")
+    graphzep_base_url: str = Field("http://localhost:8350", validation_alias="GRAPHZEP_BASE_URL")
 
     # ================================================================
     # 5. 路径配置
