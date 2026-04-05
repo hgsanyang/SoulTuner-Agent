@@ -23,6 +23,7 @@ export interface ChatMessage {
 // 可选模型配置
 const MODEL_OPTIONS = [
   { provider: 'siliconflow', label: 'SiliconFlow', icon: '⚡' },
+  { provider: 'volcengine', label: '豆包 (字节)', icon: '🔥' },
   { provider: 'dashscope', label: '通义千问', icon: '🔮' },
   { provider: 'google', label: 'Gemini', icon: '✨' },
   { provider: 'deepseek', label: 'DeepSeek', icon: '🧠' },
@@ -41,11 +42,33 @@ export default function RecommendationsPage() {
   const searchParams = useSearchParams();
   const seedPrompt = searchParams?.get('prompt');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const songListRef = useRef<HTMLDivElement>(null);
 
-  // 模型切换和联网开关状态
-  const [selectedProvider, setSelectedProvider] = useState('siliconflow');
-  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+  // 模型切换和联网开关状态（持久化到 localStorage，切换页面后不丢失）
+  const [selectedProvider, setSelectedProvider] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('music_selected_provider') || 'siliconflow';
+    }
+    return 'siliconflow';
+  });
+  const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('music_web_search_enabled');
+      return saved !== null ? saved === 'true' : true;
+    }
+    return true;
+  });
   const [showModelMenu, setShowModelMenu] = useState(false);
+
+  // 持久化模型选择
+  useEffect(() => {
+    localStorage.setItem('music_selected_provider', selectedProvider);
+  }, [selectedProvider]);
+
+  // 持久化联网搜索开关
+  useEffect(() => {
+    localStorage.setItem('music_web_search_enabled', String(webSearchEnabled));
+  }, [webSearchEnabled]);
 
   const selectedModel = MODEL_OPTIONS.find(m => m.provider === selectedProvider) || MODEL_OPTIONS[0];
 
@@ -78,6 +101,22 @@ export default function RecommendationsPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages]);
+
+  // ── 只显示最新一条 assistant 消息的歌曲 ──
+  const latestAssistantWithSongs = [...messages]
+    .reverse()
+    .find(m => m.role === 'assistant' && m.songs && m.songs.length > 0);
+  const allSongs = latestAssistantWithSongs
+    ? (latestAssistantWithSongs.songs || []).map((song: any, idx: number) => ({ song, msgId: latestAssistantWithSongs.id, idx }))
+    : [];
+
+  // 当最新推荐歌曲变化时，右侧面板自动滚到顶部
+  useEffect(() => {
+    if (allSongs.length > 0 && songListRef.current) {
+      songListRef.current.scrollTop = 0;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestAssistantWithSongs?.id, allSongs.length]);
 
   const handleSubmit = useCallback(async (value: string) => {
     setShowModelMenu(false);
@@ -400,10 +439,6 @@ export default function RecommendationsPage() {
       {(!hasMessages || showWelcome) && !loading && <WelcomeScreen onPromptClick={handleSubmitAndHideWelcome} />}
 
       {hasMessages && !showWelcome && (() => {
-        // 汇总所有 assistant 消息中的歌曲
-        const allSongs = messages
-          .filter(m => m.role === 'assistant' && m.songs && m.songs.length > 0)
-          .flatMap(m => (m.songs || []).map((song, idx) => ({ song, msgId: m.id, idx })));
 
         return (
           <div style={{
@@ -562,11 +597,14 @@ export default function RecommendationsPage() {
                 </div>
 
                 {/* 歌曲滚动列表 */}
-                <div style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  padding: '0.75rem',
-                }}>
+                <div
+                  ref={songListRef}
+                  style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '0.75rem',
+                  }}
+                >
                   {allSongs.map(({ song, msgId, idx }, i) => (
                     <SongCard
                       key={`${song.title}_${song.artist}_${i}`}
