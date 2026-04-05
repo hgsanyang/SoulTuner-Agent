@@ -14,6 +14,7 @@ export interface JourneyRequest {
     duration?: number;
     user_preferences?: Record<string, any>;
     context?: Record<string, any>;
+    llm_provider?: string;  // 模型提供商，和推荐页保持一致
 }
 
 export type MoodTransitionInput = { time: number; mood: string; intensity: number };
@@ -258,10 +259,14 @@ export function streamJourney(
     const controller = new AbortController();
     const run = async () => {
         try {
+            // 读取和推荐页同步的持久化模型选择
+            const provider = (typeof window !== 'undefined'
+                ? localStorage.getItem('music_selected_provider')
+                : null) || 'siliconflow';
             const resp = await fetch('http://localhost:8501/api/journey/stream', {
                 method: 'POST',
                 headers: { 'Accept': 'text/event-stream', 'Content-Type': 'application/json' },
-                body: JSON.stringify(params),
+                body: JSON.stringify({ ...params, llm_provider: params.llm_provider || provider }),
                 signal: controller.signal,
             });
             if (!resp.ok) throw new Error(`Server error: ${resp.status}`);

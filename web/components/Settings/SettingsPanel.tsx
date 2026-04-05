@@ -9,6 +9,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 // ---- LLM 提供商预设列表 ----
 const LLM_PROVIDERS = [
   { value: 'siliconflow', label: 'SiliconFlow (API)', defaultModel: 'deepseek-ai/DeepSeek-V3.2' },
+  { value: 'volcengine', label: '火山引擎 / 豆包 (字节跳动)', defaultModel: 'ep-20260405142751-x4jm6' },
   { value: 'dashscope', label: '通义千问 DashScope (API)', defaultModel: 'qwen-plus' },
   { value: 'google', label: 'Google Gemini (API)', defaultModel: 'gemini-2.5-flash' },
   { value: 'sglang', label: 'SGLang (本地推荐)', defaultModel: 'local-planner-qwen3-4b-fp8' },
