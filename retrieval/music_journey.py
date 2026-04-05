@@ -113,7 +113,8 @@ async def plan_journey(
             return result
         except Exception as e2:
             logger.error(f"[Journey] JSON Fallback 也失败: {e2}")
-            # 最终 fallback: 基于规则生成简单旅程            return _rule_based_fallback(story, mood_transitions, duration)
+            # 最终 fallback: 基于规则生成简单旅程
+            return _rule_based_fallback(story, mood_transitions, duration)
 
 
 def _rule_based_fallback(
@@ -149,7 +150,8 @@ def _rule_based_fallback(
             "reasoning": "基于情绪曲线的规则生成",
         }
 
-    # 默认 4 段旅程    default_moods = ["平静", "专注", "活力", "放松"]
+    # 默认 4 段旅程
+    default_moods = ["平静", "专注", "活力", "放松"]
     segments = []
     for i, mood in enumerate(default_moods):
         segments.append({
@@ -276,9 +278,14 @@ async def stream_journey_events(
             context=context,
         )
 
+        if not plan:
+            logger.error("[Journey] plan_journey 返回了 None，返回备用旅程")
+            plan = _rule_based_fallback(story, mood_transitions, duration)
+
         segments = plan.get("segments", [])
         total_songs_estimate = sum(s.get("songs_count", 3) for s in segments)
-        # 每首歌约 4 分钟，总时长由歌曲数决定        estimated_total_duration = total_songs_estimate * 4
+        # 每首歌约 4 分钟，总时长由歌曲数决定
+        estimated_total_duration = total_songs_estimate * 4
 
         yield {"type": "thinking", "message": f"规划完成：{len(segments)} 个情绪阶段，预计 {total_songs_estimate} 首歌曲"}
 

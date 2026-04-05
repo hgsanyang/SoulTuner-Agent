@@ -3,8 +3,8 @@
 LLM Structured Output 用于将用户故事/情绪曲线解析为分段旅程规划
 """
 
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from typing import List, Optional, Union
+from pydantic import BaseModel, Field, field_validator
 
 
 class JourneySegmentPlan(BaseModel):
@@ -26,18 +26,27 @@ class JourneySegmentPlan(BaseModel):
             "如果留空，系统会根据 mood 自动生成。"
         ),
     )
-    graph_genre_filter: Optional[str] = Field(
+    graph_genre_filter: Optional[Union[str, List[str]]] = Field(
         default=None,
         description="可选的流派过滤（英文），如 pop/rock/jazz/classical/folk/electronic",
     )
-    graph_mood_filter: Optional[str] = Field(
+    graph_mood_filter: Optional[Union[str, List[str]]] = Field(
         default=None,
         description="可选的情绪过滤（中文），如 开心/悲伤/放松/治愈/浪漫",
     )
-    graph_scenario_filter: Optional[str] = Field(
+    graph_scenario_filter: Optional[Union[str, List[str]]] = Field(
         default=None,
         description="可选的场景过滤（中文），如 运动/学习/开车/睡觉",
     )
+
+    @field_validator("graph_genre_filter", "graph_mood_filter", "graph_scenario_filter", mode="before")
+    @classmethod
+    def coerce_list_to_str(cls, v):
+        """豆包等推理模型有时会返回 list，自动拼接为逗号分隔的字符串"""
+        if isinstance(v, list):
+            return ", ".join(str(x) for x in v if x) or None
+        return v
+
     songs_count: int = Field(
         default=3,
         description="该片段需要推荐的歌曲数量（每首歌约 4 分钟），通常 2-4 首",

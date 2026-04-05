@@ -183,6 +183,19 @@ class MusicHybridRetrieval:
                 f"entities={graph_entities} | query='{query[:50]}'"
             )
 
+            # ── 确定性兜底：纯音乐/器乐关键词 → 强制 language=Instrumental + graph-only ──
+            # 即使 LLM 判了 hybrid_search 且未填 language_filter，这里也会自动修正
+            _INSTRUMENTAL_KEYWORDS = {"纯音乐", "器乐", "没有人声", "无人声", "无歌词", "instrumental"}
+            _query_lower = query.lower()
+            if not language_filter and any(kw in _query_lower for kw in _INSTRUMENTAL_KEYWORDS):
+                language_filter = "Instrumental"
+                use_graph = True
+                use_vector = False  # 纯音乐是硬约束，向量引擎无法可靠过滤
+                logger.warning(
+                    f"[Retrieval] ⚠️ 确定性兜底触发：检测到纯音乐关键词，"
+                    f"强制设置 language=Instrumental + graph-only 模式"
+                )
+
             # ── HyDE 声学描述：双模式分支 ──
             if use_vector:
                 vector_acoustic_query = precomputed_plan.get("vector_acoustic_query", "") or ""
@@ -367,6 +380,8 @@ class MusicHybridRetrieval:
         
         # 保存当前 query 供 _format_results 中的 Cross-Encoder 精排使用
         self._current_query = query
+        # 保存当前 language_filter 供 _format_results 中的 Instrumental 后过滤使用
+        self._current_language_filter = language_filter
         
         return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable, graph_entities, final_limit=limit)
 
@@ -850,6 +865,39 @@ class MusicHybridRetrieval:
             filtered = before_count - len(final_list)
             if filtered > 0:
                 logger.info(f"[DislikeFilter] 过滤掉 {filtered} 首用户不喜欢的歌曲")
+
+        # ---- Step 2.6: 语言硬约束后过滤（纯音乐/Instrumental 兜底） ----
+        # 如果 language_filter=Instrumental，但向量引擎仍混入了有人声的歌曲，通过 Neo4j 属性二次过滤
+        _active_lang_filter = getattr(self, '_current_language_filter', None)
+        if _active_lang_filter and _active_lang_filter.lower() == "instrumental" and final_list:
+            try:
+                from retrieval.neo4j_client import get_neo4j_client
+                neo4j = get_neo4j_client()
+                if neo4j and neo4j.driver:
+                    check_titles = [item.get("song", {}).get("title", "") for item in final_list if item.get("song", {}).get("title")]
+                    if check_titles:
+                        lang_query = """
+                        UNWIND $titles AS t
+                        MATCH (s:Song {title: t})
+                        WHERE toLower(s.language) = 'instrumental'
+                        RETURN collect(s.title) AS instrumental_titles
+                        """
+                        result = neo4j.execute_query(lang_query, {"titles": check_titles})
+                        instrumental_set = set(result[0]["instrumental_titles"]) if result and result[0].get("instrumental_titles") else set()
+                        before_count = len(final_list)
+                        final_list = [
+                            item for item in final_list
+                            if item.get("song", {}).get("title", "") in instrumental_set
+                            or item.get("song", {}).get("title", "") == "🌐 全网资讯补充"  # 保留资讯条目
+                        ]
+                        removed = before_count - len(final_list)
+                        if removed > 0:
+                            logger.info(
+                                f"[InstrumentalFilter] 语言硬约束后过滤：移除 {removed} 首非纯音乐歌曲 "
+                                f"（{before_count} → {len(final_list)}）"
+                            )
+            except Exception as e:
+                logger.warning(f"[InstrumentalFilter] 语言后过滤失败（降级不过滤）: {e}")
 
         # ---- Step 3: Artist 多样性初筛（提前执行，减轻后续计算负担）----
         max_per_artist = _settings.max_songs_per_artist
