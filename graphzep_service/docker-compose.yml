@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3100:3000"
+      - "8350:3000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/healthcheck"]
       interval: 10s
@@ -14,7 +14,7 @@ services:
     env_file:
       - ../.env  # 从项目根目录读取 OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME / NEO4J_PASSWORD 等
     environment:
-      # PORT 必须显式覆盖，因为根 .env 里 PORT=3100（外部端口），容器内部应为 3000
+      # PORT 必须显式覆盖，因为根 .env 里 PORT=8350（外部端口），容器内部应为 3000
       - PORT=3000
       # Neo4j 连接宿主机，地址需要替换成 Docker 内网地址
       - NEO4J_URI=bolt://host.docker.internal:7687
@@ -29,11 +29,11 @@ services:
       context: .
       dockerfile: mcp_server/Dockerfile
     ports:
-      - "3001:3001"
+      - "8351:3001"
     env_file:
       - ../.env  # 从项目根目录读取所有环境变量
     environment:
-      # 同理，MCP Server 内部端口固定 3001
+      # 同理，MCP Server 内部端口固定 3001（宿主机映射到 8351）
       - PORT=3001
       - NEO4J_URI=bolt://host.docker.internal:7687
     extra_hosts:
