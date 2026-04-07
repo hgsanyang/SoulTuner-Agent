@@ -196,6 +196,46 @@ class MusicHybridRetrieval:
                     f"强制设置 language=Instrumental + graph-only 模式"
                 )
 
+            # ── 确定性兜底：情绪词 + 标签（无实体）→ 升级为 hybrid（graph + vector）──
+            # 即使 LLM 判了 graph_search，只要 query 中含有情绪词且有流派/语言标签但无实体，
+            # 应升级为 hybrid 以获得更好的声学匹配。动态从 MOOD_TAG_MAP 获取词表。
+            if use_graph and not use_vector:
+                try:
+                    from tools.graphrag_search import MOOD_TAG_MAP
+                    _mood_signal_words = set(MOOD_TAG_MAP.keys())
+                except ImportError:
+                    _mood_signal_words = {"深情", "悲伤", "伤感", "热血", "燃", "带感", "激情",
+                                          "温柔", "治愈", "孤独", "浪漫", "梦幻", "忧伤", "感动",
+                                          "壮阔", "沉醉", "抒情", "惆怅", "忧郁", "愤怒"}
+                _matched_moods = [m for m in _mood_signal_words if m in query]
+                _has_tag_filter = bool(genre_filter or language_filter or region_filter)
+                _has_no_entity = not graph_entities or all(
+                    e.strip() == "" for e in graph_entities
+                )
+                if _matched_moods and _has_tag_filter and _has_no_entity:
+                    use_vector = True
+                    logger.warning(
+                        f"[Retrieval] ⚠️ 确定性兜底触发：检测到情绪词 {_matched_moods} + "
+                        f"标签过滤（genre={genre_filter}, lang={language_filter}）且无实体，"
+                        f"升级为 hybrid 模式（graph + vector）"
+                    )
+
+            # ── 确定性兜底：从 query 中的复合概念词推断 language/region ──
+            # 例："国摇" 隐含 language=Chinese + genre=rock，但 LLM 可能只填了 genre
+            if not language_filter:
+                try:
+                    from tools.graphrag_search import LANGUAGE_ALIAS_MAP
+                    for word, lang in LANGUAGE_ALIAS_MAP.items():
+                        if len(word) >= 2 and word in query:
+                            language_filter = lang
+                            logger.info(
+                                f"[Retrieval] 确定性推断 language='{language_filter}' "
+                                f"(from '{word}' in query)"
+                            )
+                            break
+                except ImportError:
+                    pass
+
             # ── HyDE 声学描述：双模式分支 ──
             if use_vector:
                 vector_acoustic_query = precomputed_plan.get("vector_acoustic_query", "") or ""
@@ -811,6 +851,79 @@ class MusicHybridRetrieval:
           7. 最终安全去重 + FinalCut
         """
         from config.settings import settings as _settings
+
+        # ================================================================
+        # 🚀 短路优化：graph_only + 有明确实体 → 跳过全部精排管线
+        # 场景：用户搜索指定歌曲（如"痛仰乐队 西湖"），无需双锚精排、
+        #        Graph Affinity、MMR 多样性重排等，直接返回图谱结果。
+        # 节省：~300-600ms（跳过 M2D-CLAP 编码 + OMAR 质心 + Neo4j 图距离查询）
+        # ================================================================
+        if strategy_name == "graph_only" and graph_entities:
+            graph_items = self._parse_engine_results(graph_res, "知识图谱(GraphRAG)")
+            if graph_items:
+                logger.info(
+                    f"[ShortCircuit] 🚀 graph_only + 实体={graph_entities} → "
+                    f"跳过精排管线，直接返回 {len(graph_items)} 条图谱结果"
+                )
+                fast_list = [{
+                    "song": item["song"],
+                    "reason": "引擎检索来源: 知识图谱(GraphRAG) ⚡精确匹配",
+                    "similarity_score": item["raw_score"],
+                } for item in graph_items]
+
+                # 仅保留 DISLIKES 过滤（安全需要）
+                disliked_titles = self._get_disliked_titles()
+                if disliked_titles:
+                    before = len(fast_list)
+                    fast_list = [
+                        item for item in fast_list
+                        if item.get("song", {}).get("title", "") not in disliked_titles
+                    ]
+                    filtered = before - len(fast_list)
+                    if filtered > 0:
+                        logger.info(f"[ShortCircuit] DISLIKES 过滤掉 {filtered} 首")
+
+                # 安全去重
+                seen = set()
+                deduped = []
+                for item in fast_list:
+                    s = item.get("song", {})
+                    fk = MusicHybridRetrieval._normalize_key(
+                        s.get("title", ""), s.get("artist", "")
+                    )
+                    if fk not in seen:
+                        seen.add(fk)
+                        deduped.append(item)
+                fast_list = deduped
+
+                # FinalCut
+                if final_limit and len(fast_list) > final_limit:
+                    fast_list = fast_list[:final_limit]
+
+                # 构建 raw_markdown
+                md_lines = ["**推荐结果**"]
+                for idx, item in enumerate(fast_list, 1):
+                    song = item.get("song", {})
+                    title = song.get("title", "未知")
+                    artist = song.get("artist", "未知")
+                    genre = song.get("genre", "")
+                    line = f"{idx}. **{title}** - {artist}"
+                    if genre:
+                        line += f" ({genre})"
+                    md_lines.append(line)
+
+                raw_md = "\n".join(md_lines).strip()
+                logger.info(f"=== 🚀 [ShortCircuit] 精确检索完毕，共 {len(fast_list)} 条结果 ===")
+                for i, item in enumerate(fast_list):
+                    logger.info(f"  [{i+1}] {item['song']['title']} - {item['reason']}")
+
+                return ToolOutput(
+                    success=len(fast_list) > 0,
+                    data=fast_list,
+                    raw_markdown=raw_md,
+                    error_message=None if fast_list else "Not found",
+                )
+            # graph_items 为空时，落入下方完整管线（可能触发联网兜底）
 
         # ---- Step 1: 解析各引擎结果 ----
         graph_items = self._parse_engine_results(graph_res, "知识图谱(GraphRAG)")
