@@ -27,7 +27,7 @@ const settingsSchema = z.object({
   OPENAI_BASE_URL: z.string().optional(),
   MODEL_NAME: z.string().default('deepseek-ai/DeepSeek-V3.2'),
   EMBEDDING_MODEL_NAME: z.string().default('BAAI/bge-m3'),
-  NEO4J_URI: z.string().default('bolt://localhost:7687'),
+  NEO4J_URI: z.string().default('bolt://localhost:49687'),
   NEO4J_USER: z.string().default('neo4j'),
   NEO4J_PASSWORD: z.string().default('12345678'),
   PORT: z.string().default('3100').transform(Number),
