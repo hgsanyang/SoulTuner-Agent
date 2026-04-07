@@ -60,6 +60,10 @@ class MusicAgentState(TypedDict, total=False):
     # 流式输出队列（内部使用）
     _explanation_queue: Any  # asyncio.Queue，用于流式推送推荐解释 chunk
 
+    # 本地未命中 → 联网降级标志（内部使用，节点间通信）
+    _need_web_fallback: bool   # True 时 route_after_search 会跳转到 web_fallback 节点
+    _web_fallback_query: str   # 传给网易云 API 的干净搜索词（歌名 歌手）
+
 
 class UserPreferences(TypedDict, total=False):
     """用户音乐偏好"""
