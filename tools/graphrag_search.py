@@ -727,13 +727,38 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         # ── 个性化排序由 Graph Affinity (hybrid_retrieval.py) 完成 ──
         # 不在图谱查询中使用 WITH 链（会破坏 collect(DISTINCT) 聚合）
         # ── RETURN + ORDER BY ──
+        # 排序优先级（从高到低）：
+        #   0 = 标题精确匹配某 tag（如 tag='西湖', title='西湖'）
+        #   1 = 标题以 tag 开头 + 后缀变体（如 '西湖(Live)', '西湖（现场版）'）
+        #   2 = 标题包含 tag（宽泛匹配）
+        #   3 = 仅歌手名匹配（如 tag='痛仰', artist='痛仰乐队'）
+        #   4 = 其他
         if tags:
-            order_by_exact = " OR ".join([f"toLower(a.name) = toLower($tags[{i}])" for i in range(len(tags))])
-            order_by_contains = " OR ".join([f"toLower(a.name) CONTAINS toLower($tags[{i}])" for i in range(len(tags))])
+            # 标题精确匹配（tag 就是完整歌名）
+            title_exact_conds = " OR ".join(
+                [f"toLower(s.title) = toLower($tags[{i}])" for i in range(len(tags))]
+            )
+            # 标题以 tag 开头（捕获 Live/Remix/Acoustic 等后缀变体）
+            title_starts_conds = " OR ".join(
+                [f"toLower(s.title) STARTS WITH toLower($tags[{i}])" for i in range(len(tags))]
+            )
+            # 标题包含 tag（宽泛）
+            title_contains_conds = " OR ".join(
+                [f"toLower(s.title) CONTAINS toLower($tags[{i}])" for i in range(len(tags))]
+            )
+            # 歌手名精确/包含
+            artist_exact_conds = " OR ".join(
+                [f"toLower(a.name) = toLower($tags[{i}])" for i in range(len(tags))]
+            )
+            artist_contains_conds = " OR ".join(
+                [f"toLower(a.name) CONTAINS toLower($tags[{i}])" for i in range(len(tags))]
+            )
             order_clause = f"""ORDER BY
-            CASE WHEN {order_by_exact} THEN 0
-                 WHEN {order_by_contains} THEN 1
-                 ELSE 2 END ASC"""
+            CASE WHEN {title_exact_conds} THEN 0
+                 WHEN {title_starts_conds} THEN 1
+                 WHEN {title_contains_conds} THEN 2
+                 WHEN {artist_exact_conds} OR {artist_contains_conds} THEN 3
+                 ELSE 4 END ASC"""
         else:
             order_clause = "ORDER BY s.title ASC"
         cypher_query += f"""RETURN s.title AS track_name, s.music_id AS raw_name, s.title AS title,
@@ -765,16 +790,29 @@ def graphrag_search(query: str, limit: int = 5) -> str:
                 cover_url = f"{BASE_API_URL}{cover_url}" if cover_url else None
                 lrc_url = record.get("lrc_url", "") or ""
                 lrc_url = f"{BASE_API_URL}{lrc_url}" if lrc_url else None
-                # 图谱匹配置信度评分
+                # 图谱匹配置信度评分（标题 + 歌手综合评分）
                 graph_score = 0.85
                 artist_name = record.get("artist", "").lower()
+                track_title = track_name.lower()
                 if tags:
                     for tag in tags:
-                        if tag and tag.lower() == artist_name:
-                            graph_score = 1.0
-                            break
-                        elif tag and tag.lower() in artist_name:
-                            graph_score = 0.95
+                        if not tag:
+                            continue
+                        tag_lower = tag.lower()
+                        # 标题精确匹配 → 最高分
+                        if tag_lower == track_title:
+                            graph_score = max(graph_score, 1.0)
+                        # 标题以 tag 开头（Live/Remix 等变体）
+                        elif track_title.startswith(tag_lower):
+                            graph_score = max(graph_score, 0.97)
+                        # 标题包含 tag
+                        elif tag_lower in track_title:
+                            graph_score = max(graph_score, 0.92)
+                        # 歌手精确匹配
+                        if tag_lower == artist_name:
+                            graph_score = max(graph_score, 1.0)
+                        elif tag_lower in artist_name:
+                            graph_score = max(graph_score, 0.95)
                 # 构建 genre 展示字段
                 themes_list = [x for x in (record.get("themes") or []) if x]
                 genres_list = [x for x in (record.get("genres") or []) if x]
