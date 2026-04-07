@@ -135,7 +135,7 @@ SoulTuner is a **locally deployed** AI music recommendation agent. It's not a si
 | **Agent** | LangGraph StateGraph (7-class intent routing) |
 | **Backend** | FastAPI + SSE streaming |
 | **Graph DB** | Neo4j 5.x (native vector index + graph relations + user behavior direct-write) |
-| **Audio Embed** | M2D-CLAP 2025 (cross-modal semantic, 768d) + OMAR-RQ (pure acoustic, 768d) |
+| **Audio Embed** | M2D-CLAP 2025 (cross-modal semantic, 768d) + OMAR-RQ (pure acoustic, 1024d) |
 | **LLM** | DeepSeek-V3.2 / Gemini / Doubao (Volcengine) / Qwen (API) + Qwen3-4B (SGLang local) |
 | **Memory** | GraphZep temporal memory (two-stage recall) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
