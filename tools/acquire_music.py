@@ -107,7 +107,8 @@ class OnlineMusicAcquirer:
                 logger.warning(f"搜索无结果: {query}")
                 return None
 
-        # 取第一首        song = songs[0]
+        # 取第一首
+        song = songs[0]
         song_id = str(song["id"])
         title = song.get("name", "Unknown")
         artists = [a["name"] for a in song.get("artists", [])]
@@ -119,7 +120,8 @@ class OnlineMusicAcquirer:
         safe_artist = _safe_filename(artist_str)
         file_basename = f"{safe_title} - {safe_artist}"
 
-        # 防重：如果音频文件已存在则跳过下载        existing_audio = None
+        # 防重：如果音频文件已存在则跳过下载
+        existing_audio = None
         for ext in ["mp3", "flac", "m4a"]:
             candidate = os.path.join(ONLINE_AUDIO_DIR, f"{file_basename}.{ext}")
             if os.path.exists(candidate):
@@ -211,13 +213,15 @@ class OnlineMusicAcquirer:
     ) -> Dict[str, Any]:
         """构建返回结果"""
         lrc_url = f"{STATIC_PREFIX_ONLINE_LYRICS}/{file_basename}.lrc" if has_lyrics else ""
+        audio = f"{STATIC_PREFIX_ONLINE}/{file_basename}.{ext}"
         return {
             "song_id": song_id,
             "title": title,
             "artist": artist,
             "album": album,
             "duration": duration,
-            "audio_url": f"{STATIC_PREFIX_ONLINE}/{file_basename}.{ext}",
+            "audio_url": audio,
+            "preview_url": audio,  # 前端播放器用 preview_url
             "cover_url": f"{STATIC_PREFIX_ONLINE_COVERS}/{file_basename}_cover.jpg",
             "lrc_url": lrc_url,
             "file_basename": file_basename,
@@ -524,9 +528,11 @@ async def acquire_online_music(song_queries: list[str]) -> ToolOutput:
             error_message="No songs acquired",
         )
 
-    # 秒级写入 Neo4j（元数据 + audio_url）    await _quick_ingest_to_neo4j(acquired)
+    # 秒级写入 Neo4j（元数据 + audio_url）
+    await _quick_ingest_to_neo4j(acquired)
 
-    # 启动后台飞轮（歌词标签 + 向量提取），不阻塞当前响应    asyncio.create_task(_background_flywheel(acquired))
+    # 启动后台飞轮（歌词标签 + 向量提取），不阻塞当前响应
+    asyncio.create_task(_background_flywheel(acquired))
 
     # 构建返回给前端的 markdown
     md = f"🎵 **已成功获取 {len(acquired)} 首歌曲并入库！**\n\n"
@@ -540,12 +546,18 @@ async def acquire_online_music(song_queries: list[str]) -> ToolOutput:
     return ToolOutput(
         success=True,
         data=[{
-            "title": s["title"],
-            "artist": s["artist"],
-            "album": s.get("album", "Unknown"),
-            "audio_url": s["audio_url"],
-            "cover_url": s.get("cover_url", ""),
-            "source": "online",
+            "song": {
+                "title": s["title"],
+                "artist": s["artist"],
+                "album": s.get("album", "Unknown"),
+                "audio_url": s["audio_url"],
+                "preview_url": s.get("preview_url", s["audio_url"]),
+                "cover_url": s.get("cover_url", ""),
+                "lrc_url": s.get("lrc_url", ""),
+                "song_id": s.get("song_id", ""),
+                "source": "online",
+                "platform": "netease",
+            }
         } for s in acquired],
         raw_markdown=md,
     )

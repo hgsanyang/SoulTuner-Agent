@@ -372,6 +372,28 @@ THEME_TAG_MAP: Dict[str, List[str]] = {
 
 # ============================================================
 
+# 语言别名推断表：query 中的复合概念词 → 对应的 language 标签
+# 用于确定性兜底层自动补全 LLM 可能遗漏的 language_filter
+# 例："国摇" → "Chinese"（国 = 国产 = 中文）
+# 注意：只包含足够短且明确的复合缩写，避免误匹配
+
+# ============================================================
+
+LANGUAGE_ALIAS_MAP: Dict[str, str] = {
+    "国摇": "Chinese",  # 国产摇滚
+    "国语": "Chinese",
+    "中文": "Chinese",
+    "华语": "Chinese",
+    "粤语": "Cantonese",
+    "日语": "Japanese",
+    "日摇": "Japanese",  # 日本摇滚
+    "韩语": "Korean",
+    "英文": "English",
+    "英语": "English",
+}
+
+# ============================================================
+
 # 合并字典（供确定性后处理扫描使用）
 # ============================================================
 
@@ -661,7 +683,7 @@ def graphrag_search(query: str, limit: int = 5) -> str:
                     f"(toLower(s.title) CONTAINS toLower($tags[{i}]) "
                     f"OR toLower(a.name) CONTAINS toLower($tags[{i}]))"
                 )
-            cypher_query += f"WHERE {' OR '.join(tag_conditions)}\n"
+            cypher_query += f"WHERE {' AND '.join(tag_conditions)}\n"
         elif not genre_aliases and not scenario_aliases and not mood_aliases and not language_normalized and not region_normalized:
             logger.warning("GraphRAG 参数全空（tags/genre/scenario/mood/language/region），避免盲捞。")
             return json.dumps([])
