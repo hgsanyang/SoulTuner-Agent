@@ -18,7 +18,7 @@ class Neo4jClient:
         if hasattr(self, 'driver'):
             return
             
-        uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        uri = os.getenv("NEO4J_URI", "bolt://localhost:49687")
         user = os.getenv("NEO4J_USER", "neo4j")
         password = os.getenv("NEO4J_PASSWORD", "12345678")
         
