@@ -324,10 +324,63 @@ class MusicRecommendationGraph:
                 search_results = []
             
             logger.info(f"搜索到 {len(search_results)} 首歌曲")
-            
+
+            # ══ 本地未命中检测：graph_search 有实体但结果不精确时，降级联网 ══
+            # Case 1: 完全无结果
+            # Case 2: 有结果但没有精确匹配请求的歌名（如搜"痛仰西湖"返回痛仰的其他歌）
+            intent_type = state.get("intent_type", "")
+            graph_entities = (retrieval_plan or {}).get("graph_entities", [])
+            need_web_fallback = False
+
+            if intent_type == "graph_search" and bool(graph_entities):
+                if not search_results:
+                    # Case 1: 完全无结果
+                    need_web_fallback = True
+                    logger.warning(
+                        f"[search_songs] 本地库完全未命中，将降级联网搜索: entities={graph_entities}"
+                    )
+                elif len(graph_entities) >= 2:
+                    # Case 2: 有多个实体（歌手+歌名），检查返回结果是否精确包含歌名
+                    # 实体可能是 ["痛仰乐队", "西湖"] 或 ["周杰伦", "Jay Chou", "稻香"]
+                    # 检查 graph 返回的歌名是否与任何 entity 模糊匹配
+                    result_titles = set()
+                    for r in search_results:
+                        t = ""
+                        if isinstance(r, dict):
+                            t = r.get("title", "") or r.get("song_name", "") or r.get("name", "")
+                            song_dict = r.get("song", {})
+                            if isinstance(song_dict, dict):
+                                t = t or song_dict.get("title", "") or song_dict.get("song_name", "")
+                        result_titles.add(t.lower().strip())
+
+                    # 对每个 entity，看它是否出现在某首歌名中（或者歌名出现在它中）
+                    entity_matched_in_title = False
+                    for ent in graph_entities:
+                        ent_lower = ent.lower().strip()
+                        if not ent_lower:
+                            continue
+                        for title in result_titles:
+                            if not title:
+                                continue
+                            if ent_lower in title or title in ent_lower:
+                                entity_matched_in_title = True
+                                break
+                        if entity_matched_in_title:
+                            break
+
+                    if not entity_matched_in_title:
+                        need_web_fallback = True
+                        logger.warning(
+                            f"[search_songs] 本地库返回 {len(search_results)} 首但无精确歌名匹配，"
+                            f"降级联网搜索: entities={graph_entities}, "
+                            f"result_titles={list(result_titles)[:3]}"
+                        )
+
             return {
                 "search_results": search_results,
-                "recommendations": raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else [],  # 存入完整的 ToolOutput 对象供解释节点读取
+                "recommendations": raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else [],
+                "_need_web_fallback": need_web_fallback,
+                "_web_fallback_query": " ".join(graph_entities[:2]) if graph_entities else query,
                 "step_count": state.get("step_count", 0) + 1
             }
             
@@ -336,12 +389,127 @@ class MusicRecommendationGraph:
             return {
                 "search_results": [],
                 "recommendations": [],
+                "_need_web_fallback": False,
+                "_web_fallback_query": "",
                 "step_count": state.get("step_count", 0) + 1,
                 "error_log": state.get("error_log", []) + [
                     {"node": "search_songs", "error": str(e)}
                 ]
             }
 
+
+    def route_after_search(self, state: MusicAgentState) -> str:
+        """搜索后路由：本地未命中时降级到联网，否则就线生成解释"""
+        if state.get("_need_web_fallback"):
+            logger.info("[route_after_search] 本地未命中 → web_fallback")
+            return "web_fallback"
+        return "generate_explanation"
+
+    async def web_fallback_node(self, state: MusicAgentState) -> Dict[str, Any]:
+        """
+        节点：本地库未命中时自动降级到网易云 API 联网搜索。
+        不下载，只返回流媒体 URL，供前端即时播放。
+        """
+        logger.info("--- [步骤] 本地未命中，降级联网搜索 ---")
+        query = state.get("_web_fallback_query") or state.get("input", "")
+
+        try:
+            import aiohttp
+            from config.settings import settings as _cfg
+            api_base = _cfg.netease_api_base
+            timeout = aiohttp.ClientTimeout(total=8)
+
+            async with aiohttp.ClientSession() as session:
+                # 1) 搜索
+                search_url = f"{api_base}/search?keywords={query}&limit=5"
+                async with session.get(search_url, timeout=timeout) as resp:
+                    data = await resp.json()
+
+                songs = data.get("result", {}).get("songs", [])
+                if not songs:
+                    logger.warning(f"[web_fallback] 联网搜索无结果: {query}")
+                    return {"search_results": [], "recommendations": [],
+                            "_need_web_fallback": False,
+                            "step_count": state.get("step_count", 0) + 1}
+
+                # 收集 song_ids 用于批量获取详情
+                song_ids = [str(s["id"]) for s in songs[:5]]
+
+                # 2) 批量获取详情 (封面 + 更准确的元数据)
+                detail_url = f"{api_base}/song/detail?ids={','.join(song_ids)}"
+                detail_map = {}
+                try:
+                    async with session.get(detail_url, timeout=timeout) as dresp:
+                        ddata = await dresp.json()
+                    for ds in ddata.get("songs", []):
+                        detail_map[str(ds["id"])] = ds
+                except Exception:
+                    pass  # 详情获取失败不影响主流程
+
+                # 3) 批量获取播放链接
+                play_url_map = {}
+                try:
+                    url_api = f"{api_base}/song/url?id={','.join(song_ids)}&level=exhigh"
+                    async with session.get(url_api, timeout=timeout) as uresp:
+                        udata = await uresp.json()
+                    for item in udata.get("data", []):
+                        if item.get("url"):
+                            play_url_map[str(item["id"])] = item["url"]
+                except Exception:
+                    pass
+
+                # 4) 组装结果 —— 必须包含 preview_url (前端播放用) + cover_url
+                results = []
+                for s in songs[:5]:
+                    sid = str(s["id"])
+                    title = s.get("name", "Unknown")
+                    artists = [a["name"] for a in s.get("artists", [])]
+                    artist_str = "、".join(artists)
+
+                    # 从 detail 获取封面
+                    detail = detail_map.get(sid, {})
+                    cover_url = (detail.get("al", {}).get("picUrl", "")
+                                 or s.get("album", {}).get("picUrl", ""))
+                    album = detail.get("al", {}).get("name", "") or s.get("album", {}).get("name", "")
+
+                    play_url = play_url_map.get(sid, "")
+
+                    results.append({
+                        "song": {
+                            "title": title,
+                            "artist": artist_str,
+                            "album": album,
+                            "song_id": sid,
+                            "preview_url": play_url,   # 前端用 preview_url 播放
+                            "audio_url": play_url,      # 兼容
+                            "cover_url": cover_url,
+                            "source": "online_search",
+                            "platform": "netease",
+                        }
+                    })
+
+            matched = sum(1 for r in results if r["song"]["preview_url"])
+            logger.info(f"[web_fallback] 联网返回 {len(results)} 首歌曲，{matched} 首可播放")
+
+            from schemas.music_state import ToolOutput
+            return {
+                "search_results": [r["song"] for r in results],
+                "recommendations": ToolOutput(
+                    success=True,
+                    data=results,
+                    raw_markdown="",
+                ),
+                "_need_web_fallback": False,
+                "step_count": state.get("step_count", 0) + 1,
+            }
+
+        except Exception as e:
+            logger.error(f"[web_fallback] 联网搜索失败: {e}")
+            return {
+                "search_results": [], "recommendations": [],
+                "_need_web_fallback": False,
+                "step_count": state.get("step_count", 0) + 1,
+            }
 
     async def acquire_online_music_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
@@ -354,11 +522,32 @@ class MusicRecommendationGraph:
         # song_queries 从 parameters 中取，LLM 应该填入类似 ["歌名 歌手", ...]
         song_queries = parameters.get("song_queries", [])
 
-        # 如果 LLM 没有提供 song_queries，尝试从 query 字段构造
+        # 如果 LLM 没有提供 song_queries，按优先级从其他字段提取
         if not song_queries:
-            query = parameters.get("query", state.get("input", ""))
-            if query:
-                song_queries = [query]
+            # 优先从 graph_entities 提取（LLM 识别到的歌手/歌名实体，最干净）
+            retrieval_plan = state.get("retrieval_plan") or {}
+            graph_entities = retrieval_plan.get("graph_entities", [])
+            entities = parameters.get("entities", [])
+
+            if graph_entities:
+                song_queries = [" ".join(graph_entities[:2])]
+                logger.info(f"[acquire] 从 graph_entities 提取搜索词: {song_queries}")
+            elif entities:
+                song_queries = [" ".join(entities[:2])]
+                logger.info(f"[acquire] 从 entities 提取搜索词: {song_queries}")
+            else:
+                # 最后兜底：清洗掉动作动词后使用 query
+                import re
+                raw_query = parameters.get("query", state.get("input", ""))
+                if raw_query:
+                    clean = re.sub(
+                        r'^(帮我|请帮我|帮忙|麻烦|能不能|可以)?\s*'
+                        r'(下载|获取|帮我下载|帮我获取|下载获取|搜索|找一下|找到)\s*',
+                        '', raw_query, flags=re.IGNORECASE
+                    ).strip()
+                    clean = re.sub(r'(这首歌|这首歌曲|歌曲|这首)[\s。.]*$', '', clean).strip()
+                    song_queries = [clean] if clean else [raw_query]
+                    logger.info(f"[acquire] 清洗后搜索词: {raw_query!r} → {song_queries}")
 
         if not song_queries:
             return {
@@ -1344,6 +1533,7 @@ class MusicRecommendationGraph:
         workflow.add_node("analyze_intent", self.analyze_intent)
         workflow.add_node("acquire_online_music", self.acquire_online_music_node)  # 数据飞轮
         workflow.add_node("search_songs", self.search_songs_node)
+        workflow.add_node("web_fallback", self.web_fallback_node)  # 本地未命中 → 联网降级
         workflow.add_node("generate_recommendations", self.generate_recommendations_node)
         workflow.add_node("analyze_user_preferences", self.analyze_user_preferences_node)
         workflow.add_node("enhanced_recommendations", self.enhanced_recommendations_node)
@@ -1392,7 +1582,16 @@ class MusicRecommendationGraph:
         
         # 搜索和推荐后生成解释
         workflow.add_edge("acquire_online_music", "generate_explanation")
-        workflow.add_edge("search_songs", "generate_explanation")
+        # search_songs 后根据是否需要降级联网进行条件路由
+        workflow.add_conditional_edges(
+            "search_songs",
+            self.route_after_search,
+            {
+                "web_fallback": "web_fallback",
+                "generate_explanation": "generate_explanation",
+            }
+        )
+        workflow.add_edge("web_fallback", "generate_explanation")
         workflow.add_edge("generate_recommendations", "generate_explanation")
         
         # 创建播放列表后生成解释
