@@ -74,7 +74,7 @@ async def evaluate_intent(
 
     # 使用 API 大模型的 Planner Prompt
     from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
-    structured_llm = llm.with_structured_output(MusicQueryPlan)
+    structured_llm = llm.with_structured_output(MusicQueryPlan, include_raw=True)
     chain = (
         ChatPromptTemplate.from_messages([
             ("system", UNIFIED_PLANNER_SYSTEM),
@@ -85,7 +85,8 @@ async def evaluate_intent(
 
     # 运行评测
     results = []
-    total_tokens = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
     total_latency = 0.0
 
     for i, case in enumerate(test_cases):
@@ -95,16 +96,23 @@ async def evaluate_intent(
 
         try:
             t0 = time.time()
-            plan: MusicQueryPlan = await chain.ainvoke({
+            raw_result = await chain.ainvoke({
                 "user_input": query,
                 "chat_history": "",
             })
             latency = time.time() - t0
+            plan = raw_result["parsed"]
             predicted = plan.intent_type
 
-            # Token 估算（Prompt + 输出）
-            prompt_tokens = estimate_tokens(query)
-            total_tokens += prompt_tokens
+            # 从 API 返回值提取真实 Token 消耗
+            prompt_tok = 0
+            completion_tok = 0
+            raw_msg = raw_result.get("raw")
+            if raw_msg and hasattr(raw_msg, "usage_metadata") and raw_msg.usage_metadata:
+                prompt_tok = raw_msg.usage_metadata.get("input_tokens", 0)
+                completion_tok = raw_msg.usage_metadata.get("output_tokens", 0)
+            total_prompt_tokens += prompt_tok
+            total_completion_tokens += completion_tok
             total_latency += latency
 
             correct = predicted == expected
@@ -115,6 +123,8 @@ async def evaluate_intent(
                 "predicted": predicted,
                 "correct": correct,
                 "latency": round(latency, 2),
+                "prompt_tokens": prompt_tok,
+                "completion_tokens": completion_tok,
                 "reasoning": plan.reasoning[:80] if plan.reasoning else "",
             })
 
@@ -147,7 +157,10 @@ async def evaluate_intent(
     print(f"{'='*60}")
     print(f"总准确率: {correct_count}/{total_count} = {accuracy:.1%}")
     print(f"平均延迟: {total_latency / max(total_count, 1):.2f}s")
-    print(f"总 Token 估算: ~{total_tokens}")
+    avg_prompt = total_prompt_tokens / max(total_count, 1)
+    avg_completion = total_completion_tokens / max(total_count, 1)
+    print(f"API Token 消耗: prompt={total_prompt_tokens:,} + completion={total_completion_tokens:,} = {total_prompt_tokens + total_completion_tokens:,} total")
+    print(f"平均每次: prompt≈{avg_prompt:.0f} + completion≈{avg_completion:.0f} = {avg_prompt + avg_completion:.0f} tokens/query")
     print()
 
     # 按意图类型分类统计
@@ -187,6 +200,13 @@ async def evaluate_intent(
         "correct_count": correct_count,
         "accuracy": round(accuracy, 4),
         "avg_latency_s": round(total_latency / max(total_count, 1), 2),
+        "token_usage": {
+            "total_prompt_tokens": total_prompt_tokens,
+            "total_completion_tokens": total_completion_tokens,
+            "total_tokens": total_prompt_tokens + total_completion_tokens,
+            "avg_prompt_per_query": round(total_prompt_tokens / max(total_count, 1)),
+            "avg_completion_per_query": round(total_completion_tokens / max(total_count, 1)),
+        },
         "intent_stats": dict(intent_stats),
         "details": results,
     }

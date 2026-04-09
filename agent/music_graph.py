@@ -233,7 +233,7 @@ class MusicRecommendationGraph:
                 #     → 每次都算，但量很小
                 # 预期效果：首次 8-12s（冷启动），后续 2-4s（缓存命中）
                 from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
-                structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan)
+                structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan, include_raw=True)
                 chain = (
                     ChatPromptTemplate.from_messages([
                         ("system", UNIFIED_PLANNER_SYSTEM),
@@ -248,10 +248,22 @@ class MusicRecommendationGraph:
                     total_budget=3000,
                 )
             
-                plan: MusicQueryPlan = await chain.ainvoke({
+                _raw_result = await chain.ainvoke({
                     "user_input": user_input,
                     "chat_history": _ctx["chat_history"],
                 })
+                plan: MusicQueryPlan = _raw_result["parsed"]
+                
+                # ── Token 消耗追踪 ──
+                _raw_msg = _raw_result.get("raw")
+                if _raw_msg and hasattr(_raw_msg, "usage_metadata") and _raw_msg.usage_metadata:
+                    _usage = _raw_msg.usage_metadata
+                    _p = _usage.get("input_tokens", 0)
+                    _c = _usage.get("output_tokens", 0)
+                    logger.info(
+                        f"[Token Report] 意图分析: "
+                        f"prompt={_p:,} + completion={_c:,} = {_p + _c:,} tokens"
+                    )
 
             
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
