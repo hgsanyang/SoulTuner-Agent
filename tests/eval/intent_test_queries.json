@@ -1,0 +1,442 @@
+[
+    {
+        "id": "intent_01",
+        "query": "周杰伦的歌",
+        "expected_intent": "graph_search",
+        "category": "specific_artist",
+        "rule": "规则2: 只有实体，无场景无情绪",
+        "description": "纯实体名，graph_search"
+    },
+    {
+        "id": "intent_02",
+        "query": "来几首青花瓷",
+        "expected_intent": "graph_search",
+        "category": "specific_song",
+        "rule": "规则2: 只有歌名实体",
+        "description": "指定歌名"
+    },
+    {
+        "id": "intent_03",
+        "query": "林俊杰的那首江南",
+        "expected_intent": "graph_search",
+        "category": "specific_artist_song",
+        "rule": "规则2: 歌手+歌名实体",
+        "description": "歌手+歌名精确查找"
+    },
+    {
+        "id": "intent_04",
+        "query": "英文摇滚",
+        "expected_intent": "graph_search",
+        "category": "genre_language",
+        "rule": "规则2: 纯硬属性标签组合(语言+流派)",
+        "description": "语言+流派标签，无场景无情绪无描述"
+    },
+    {
+        "id": "intent_05",
+        "query": "日语歌",
+        "expected_intent": "graph_search",
+        "category": "language_only",
+        "rule": "规则2: 纯硬属性标签(语言)",
+        "description": "只有语言标签"
+    },
+    {
+        "id": "intent_06",
+        "query": "周杰伦的情歌",
+        "expected_intent": "graph_search",
+        "category": "entity_plus_mood",
+        "rule": "规则2: 有明确实体+情绪标签，graph足够精确",
+        "description": "歌手实体+情绪词，但有实体所以 graph 够用"
+    },
+    {
+        "id": "intent_07",
+        "query": "来点摇滚",
+        "expected_intent": "graph_search",
+        "category": "genre_only",
+        "rule": "规则2: 纯流派标签",
+        "description": "只有流派标签"
+    },
+    {
+        "id": "intent_08",
+        "query": "陈奕迅的粤语歌",
+        "expected_intent": "graph_search",
+        "category": "entity_language",
+        "rule": "规则2: 实体+语言标签",
+        "description": "歌手实体+语言过滤"
+    },
+    {
+        "id": "intent_09",
+        "query": "帮我找稻香",
+        "expected_intent": "graph_search",
+        "category": "find_song",
+        "rule": "规则2: 具体歌名实体",
+        "description": "查找特定歌曲"
+    },
+    {
+        "id": "intent_10",
+        "query": "想听Beatles",
+        "expected_intent": "graph_search",
+        "category": "english_artist",
+        "rule": "规则2: 外文歌手实体",
+        "description": "英文歌手名"
+    },
+    {
+        "id": "intent_11",
+        "query": "安静的日语歌",
+        "expected_intent": "hybrid_search",
+        "category": "mood_plus_language",
+        "rule": "规则2.5: 无实体+情绪词'安静'+语言标签'日语'",
+        "description": "'安静'是主观情绪词，不是纯硬属性标签"
+    },
+    {
+        "id": "intent_12",
+        "query": "深情的国摇",
+        "expected_intent": "hybrid_search",
+        "category": "mood_genre_language",
+        "rule": "规则2.5: 无实体+情绪词'深情'+流派'摇滚'+语言'Chinese'",
+        "description": "情绪+流派+隐含语言"
+    },
+    {
+        "id": "intent_13",
+        "query": "来点悲伤的金属",
+        "expected_intent": "hybrid_search",
+        "category": "mood_plus_genre",
+        "rule": "规则2.5: 无实体+情绪词'悲伤'+流派'金属'",
+        "description": "情绪+流派，无实体"
+    },
+    {
+        "id": "intent_14",
+        "query": "想听温柔的民谣",
+        "expected_intent": "hybrid_search",
+        "category": "mood_plus_genre_signal",
+        "rule": "规则2.5+规则3: 无实体+情绪词'温柔'+流派'民谣'+'想听'信号词",
+        "description": "情绪+流派+信号词"
+    },
+    {
+        "id": "intent_15",
+        "query": "温柔的民谣，适合深夜独处",
+        "expected_intent": "hybrid_search",
+        "category": "genre_mood_scenario",
+        "rule": "规则1: 有场景词'深夜独处'(隐含场景)",
+        "description": "流派+情绪+场景"
+    },
+    {
+        "id": "intent_16",
+        "query": "适合跑步听的歌",
+        "expected_intent": "hybrid_search",
+        "category": "scenario_running",
+        "rule": "规则1: 有场景词'跑步'",
+        "description": "运动场景，场景词触发 hybrid"
+    },
+    {
+        "id": "intent_17",
+        "query": "上班路上推荐歌",
+        "expected_intent": "hybrid_search",
+        "category": "scenario_commute",
+        "rule": "规则1: 有场景词'上班路上'(通勤)",
+        "description": "通勤场景"
+    },
+    {
+        "id": "intent_18",
+        "query": "开车的歌",
+        "expected_intent": "hybrid_search",
+        "category": "scenario_driving",
+        "rule": "规则1: 有场景词'开车'",
+        "description": "驾驶场景"
+    },
+    {
+        "id": "intent_19",
+        "query": "运动时听的摇滚",
+        "expected_intent": "hybrid_search",
+        "category": "scenario_plus_genre",
+        "rule": "规则1: 有场景词'运动'",
+        "description": "运动场景+流派"
+    },
+    {
+        "id": "intent_20",
+        "query": "睡前听的",
+        "expected_intent": "hybrid_search",
+        "category": "scenario_sleep",
+        "rule": "规则1: 有场景词'睡前'",
+        "description": "睡眠场景"
+    },
+    {
+        "id": "intent_21",
+        "query": "深情的摇滚，那种让人热泪盈眶的",
+        "expected_intent": "hybrid_search",
+        "category": "mood_genre_description",
+        "rule": "规则3: 有标签+'那种让人热泪盈眶'体验性描述",
+        "description": "情绪+流派+主观体验描述"
+    },
+    {
+        "id": "intent_22",
+        "query": "周杰伦那种中国风带点忧郁的歌",
+        "expected_intent": "hybrid_search",
+        "category": "entity_plus_description",
+        "rule": "规则4: 有实体+声学描述'中国风带点忧郁'",
+        "description": "歌手+无法标签化的声学描述"
+    },
+    {
+        "id": "intent_23",
+        "query": "嗨一点的电子音乐，那种让人沸腾的",
+        "expected_intent": "hybrid_search",
+        "category": "genre_plus_feeling",
+        "rule": "规则3: 有标签+'那种让人沸腾'体验性描述(信号词'沸腾')",
+        "description": "流派+体验性描述"
+    },
+    {
+        "id": "intent_24",
+        "query": "有没有像Radiohead那种迷幻又实验性的",
+        "expected_intent": "hybrid_search",
+        "category": "like_artist_style",
+        "rule": "规则4: 有实体+声学描述'迷幻又实验性'",
+        "description": "类似XX风格+声学描述"
+    },
+    {
+        "id": "intent_25",
+        "query": "治愈系的日本动漫歌曲",
+        "expected_intent": "hybrid_search",
+        "category": "multi_dimension",
+        "rule": "规则2.5: 无实体+情绪词'治愈'+语言'Japanese'+流派暗示",
+        "description": "情绪+语言+类型"
+    },
+    {
+        "id": "intent_26",
+        "query": "适合开车时听的嗨歌，要那种重低音砸耳朵的",
+        "expected_intent": "hybrid_search",
+        "category": "scenario_plus_acoustic",
+        "rule": "规则1+规则3: 场景词'开车'+声学描述'重低音砸耳朵'",
+        "description": "场景+声学描述"
+    },
+    {
+        "id": "intent_27",
+        "query": "跑步健身中，需要热血沸腾、节奏感强的音乐让我停不下来",
+        "expected_intent": "hybrid_search",
+        "category": "scenario_experience",
+        "rule": "规则1: 场景词'跑步健身'+体验描述'热血沸腾''让我停不下来'",
+        "description": "场景+体验性描述"
+    },
+    {
+        "id": "intent_28",
+        "query": "林肯公园那种重低音砸耳朵的感觉",
+        "expected_intent": "hybrid_search",
+        "category": "entity_acoustic",
+        "rule": "规则4: 有实体+声学描述'重低音砸耳朵'",
+        "description": "歌手+声学体验描述"
+    },
+    {
+        "id": "intent_29",
+        "query": "来点粤语老歌",
+        "expected_intent": "graph_search",
+        "category": "language_style",
+        "rule": "规则2: 语言标签+风格标签，无场景无情绪无描述",
+        "description": "语言+风格组合"
+    },
+    {
+        "id": "intent_30",
+        "query": "国摇推荐几首",
+        "expected_intent": "graph_search",
+        "category": "shorthand",
+        "rule": "规则2: '国摇'=华语摇滚，纯标签(语言+流派)",
+        "description": "缩写词，纯双标签"
+    },
+    {
+        "id": "intent_31",
+        "query": "我今天心情很差，想一个人静一静",
+        "expected_intent": "vector_search",
+        "category": "pure_emotion",
+        "rule": "规则5: 纯情绪描述，无实体无标签",
+        "description": "纯情绪，无任何可精确匹配特征"
+    },
+    {
+        "id": "intent_32",
+        "query": "那种夏天傍晚在海边吹风的感觉",
+        "expected_intent": "vector_search",
+        "category": "pure_atmosphere",
+        "rule": "规则5: 纯氛围画面感，无实体无流派无语言标签",
+        "description": "纯画面感，没有可标签化的要素"
+    },
+    {
+        "id": "intent_33",
+        "query": "刚下过雨的夜晚，一个人走在路上",
+        "expected_intent": "vector_search",
+        "category": "scene_description",
+        "rule": "规则5: 纯画面场景描述，无可匹配实体/标签",
+        "description": "纯场景画面"
+    },
+    {
+        "id": "intent_34",
+        "query": "我心情很差，想哭",
+        "expected_intent": "vector_search",
+        "category": "pure_sad",
+        "rule": "规则5: 纯情绪无实体无标签",
+        "description": "纯悲伤情绪"
+    },
+    {
+        "id": "intent_35",
+        "query": "温暖治愈的感觉",
+        "expected_intent": "vector_search",
+        "category": "pure_feeling",
+        "rule": "规则5: 纯情绪感受",
+        "description": "纯情绪词"
+    },
+    {
+        "id": "intent_36",
+        "query": "开心的歌",
+        "expected_intent": "vector_search",
+        "category": "mood_no_tag",
+        "rule": "规则5: 有情绪但无流派/语言标签，graph发挥不了作用",
+        "description": "情绪+泛化词'歌'，无硬属性标签可筛选"
+    },
+    {
+        "id": "intent_37",
+        "query": "最近有什么新歌推荐",
+        "expected_intent": "web_search",
+        "category": "timeliness",
+        "rule": "时效性: '最近'+'新歌'",
+        "description": "时效性查询"
+    },
+    {
+        "id": "intent_38",
+        "query": "2026年最火的华语歌曲",
+        "expected_intent": "web_search",
+        "category": "timeliness_year",
+        "rule": "时效性: 指定年份",
+        "description": "指定年份的时效性查询"
+    },
+    {
+        "id": "intent_39",
+        "query": "周杰伦最近出新歌了吗",
+        "expected_intent": "web_search",
+        "category": "timeliness_artist",
+        "rule": "时效性: 有实体但问的是'最近''新'",
+        "description": "实体+时效性"
+    },
+    {
+        "id": "intent_40",
+        "query": "联网搜一下最新流行什么",
+        "expected_intent": "web_search",
+        "category": "explicit_web",
+        "rule": "时效性: 明确要求联网",
+        "description": "用户明确说'联网'"
+    },
+    {
+        "id": "intent_41",
+        "query": "你好呀",
+        "expected_intent": "general_chat",
+        "category": "greeting",
+        "rule": "闲聊: 问候",
+        "description": "简单问候"
+    },
+    {
+        "id": "intent_42",
+        "query": "你是谁？能做什么？",
+        "expected_intent": "general_chat",
+        "category": "self_intro",
+        "rule": "闲聊: 询问系统功能",
+        "description": "自我介绍请求"
+    },
+    {
+        "id": "intent_43",
+        "query": "什么是混合检索？",
+        "expected_intent": "general_chat",
+        "category": "knowledge_question",
+        "rule": "闲聊: 知识性问题",
+        "description": "非音乐推荐的知识问答"
+    },
+    {
+        "id": "intent_44",
+        "query": "谢谢你的推荐",
+        "expected_intent": "general_chat",
+        "category": "thanks",
+        "rule": "闲聊: 感谢反馈",
+        "description": "用户表达感谢"
+    },
+    {
+        "id": "intent_45",
+        "query": "帮我下载这首歌",
+        "expected_intent": "acquire_music",
+        "category": "download",
+        "rule": "功能性: 确认下载",
+        "description": "下载请求"
+    },
+    {
+        "id": "intent_46",
+        "query": "能不能获取一下痛仰的西湖",
+        "expected_intent": "acquire_music",
+        "category": "download_specific",
+        "rule": "功能性: 获取特定歌曲",
+        "description": "下载特定歌曲"
+    },
+    {
+        "id": "intent_47",
+        "query": "好的帮我下载",
+        "expected_intent": "acquire_music",
+        "category": "confirm_download",
+        "rule": "功能性: 确认下载动作",
+        "description": "用户确认下载"
+    },
+    {
+        "id": "intent_48",
+        "query": "我喜欢的歌有哪些",
+        "expected_intent": "recommend_by_favorites",
+        "category": "favorites",
+        "rule": "功能性: 查看收藏/点赞",
+        "description": "查看收藏"
+    },
+    {
+        "id": "intent_49",
+        "query": "看看我收藏了什么",
+        "expected_intent": "recommend_by_favorites",
+        "category": "favorites_alt",
+        "rule": "功能性: 收藏查询",
+        "description": "查看收藏的另一种表达"
+    },
+    {
+        "id": "intent_50",
+        "query": "我之前点赞的歌",
+        "expected_intent": "recommend_by_favorites",
+        "category": "favorites_liked",
+        "rule": "功能性: 查看点赞历史",
+        "description": "点赞历史查询"
+    },
+    {
+        "id": "intent_51",
+        "query": "纯音乐，没有人声的那种",
+        "expected_intent": "graph_search",
+        "category": "instrumental",
+        "rule": "规则0(最高优先级): 纯音乐→graph_search+language=Instrumental",
+        "description": "纯音乐硬约束，即使有描述性语言也走 graph"
+    },
+    {
+        "id": "intent_52",
+        "query": "安静地看书，想要轻柔舒缓的纯音乐作为背景",
+        "expected_intent": "graph_search",
+        "category": "instrumental_with_scene",
+        "rule": "规则0(最高优先级): 包含'纯音乐'→一律graph_search",
+        "description": "纯音乐即使伴随场景词和描述词也走 graph"
+    },
+    {
+        "id": "intent_53",
+        "query": "适合学习的钢琴纯音乐",
+        "expected_intent": "graph_search",
+        "category": "instrumental_study",
+        "rule": "规则0: '纯音乐'硬约束覆盖场景词'学习'",
+        "description": "纯音乐最高优先级"
+    },
+    {
+        "id": "intent_54",
+        "query": "深夜开长途，高速公路空旷无人，路灯一盏盏向后飞去",
+        "expected_intent": "hybrid_search",
+        "category": "cinematic_driving",
+        "rule": "规则1+规则3: 场景词'开长途'(开车)+画面感描述",
+        "description": "场景+电影般的画面描述"
+    },
+    {
+        "id": "intent_55",
+        "query": "傍晚一个人自驾，车窗开着，路过田野和村庄",
+        "expected_intent": "hybrid_search",
+        "category": "rural_driving",
+        "rule": "规则1: 场景词'自驾'(开车)+画面感描述",
+        "description": "自驾场景+乡村画面"
+    }
+]

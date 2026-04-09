@@ -1,0 +1,42 @@
+[project]
+name = "soultuner-agent"
+version = "3.0.0"
+description = "Multi-modal Music Recommendation Agent — Hybrid RAG × Knowledge Graph × Long-term Memory"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+# 逐步推进：先只检查核心模块
+files = ["agent/", "retrieval/", "tools/", "api/", "schemas/"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "E501",  # line too long (暂时忽略，渐进修复)
+    "E741",  # ambiguous variable name
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # unused imports in __init__ are ok
+"tests/*" = ["F401", "F841"]  # test files: allow unused imports/vars
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "unit: Unit tests (no external services required)",
+    "integration: Integration tests (require Neo4j/GraphZep)",
+    "eval: Evaluation tests (require LLM API)",
+]
