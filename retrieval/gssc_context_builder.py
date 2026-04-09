@@ -328,5 +328,68 @@ async def build_context(
             f"[GSSC] {src.name}: 按行截断 {src.estimated_tokens} → "
             f"{estimate_tokens(truncated)} tokens (预算: {budget})"
         )
-    
+
+    # ---- Token Tracking Report（结构化追踪日志） ----
+    # 用于性能分析和面试展示：压缩前 vs 压缩后的 Token 对比
+    _track_token_savings(
+        before={
+            "graphzep_facts": estimate_tokens(graphzep_facts),
+            "chat_history": estimate_tokens(chat_history),
+            "retrieval_context": estimate_tokens(retrieval_context),
+        },
+        after={
+            "graphzep_facts": estimate_tokens(result.get("graphzep_facts", "")),
+            "chat_history": estimate_tokens(result.get("chat_history", "")),
+            "retrieval_context": estimate_tokens(result.get("retrieval_context", "")),
+        },
+        budget=total_budget,
+    )
+
     return result
+
+
+def _track_token_savings(
+    before: Dict[str, int],
+    after: Dict[str, int],
+    budget: int,
+) -> None:
+    """
+    结构化 Token 消耗追踪日志
+
+    输出格式（每次 GSSC 调用记录一次）：
+    ┌─────────────────────────────────────────────────┐
+    │ [GSSC Token Report]                             │
+    │ Source            Before    After    Saved       │
+    │ graphzep_facts       120      120       0 (0%)  │
+    │ chat_history        2400      350   2050 (85%)  │
+    │ retrieval_context    800      600    200 (25%)  │
+    │ ─────────────────────────────────────────       │
+    │ TOTAL              3320     1070   2250 (68%)   │
+    │ Budget: 3000                                    │
+    └─────────────────────────────────────────────────┘
+    """
+    total_before = sum(before.values())
+    total_after = sum(after.values())
+    total_saved = total_before - total_after
+
+    if total_saved <= 0:
+        return  # 没有压缩发生，不输出报告
+
+    lines = ["[GSSC Token Report]"]
+    lines.append(f"  {'Source':<22s} {'Before':>7s} {'After':>7s} {'Saved':>10s}")
+    lines.append(f"  {'─' * 50}")
+
+    for key in ["graphzep_facts", "chat_history", "retrieval_context"]:
+        b = before.get(key, 0)
+        a = after.get(key, 0)
+        saved = b - a
+        pct = f"({saved * 100 // max(b, 1)}%)" if b > 0 else ""
+        lines.append(f"  {key:<22s} {b:>7d} {a:>7d} {saved:>6d} {pct}")
+
+    lines.append(f"  {'─' * 50}")
+    pct_total = f"({total_saved * 100 // max(total_before, 1)}%)"
+    lines.append(f"  {'TOTAL':<22s} {total_before:>7d} {total_after:>7d} {total_saved:>6d} {pct_total}")
+    lines.append(f"  Budget: {budget}")
+
+    logger.info("\n".join(lines))
+

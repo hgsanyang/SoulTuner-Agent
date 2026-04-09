@@ -79,6 +79,12 @@ class MusicRecommendationAgent:
             config = {
                 "recursion_limit": 50
             }
+            # MemorySaver Checkpoint: 传入 thread_id 实现对话状态持久化
+            if getattr(self.graph, 'checkpointer', None):
+                import uuid
+                thread_id = config.get("configurable", {}).get("thread_id", str(uuid.uuid4()))
+                config["configurable"] = {"thread_id": thread_id}
+                logger.info(f"[Checkpoint] thread_id={thread_id}")
             result = await self.app.ainvoke(initial_state, config=config)
             
             logger.info("音乐推荐完成")

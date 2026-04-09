@@ -8,6 +8,14 @@ from typing import Dict, Any
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
 
+# MemorySaver: 内存级 Checkpoint，支持对话状态持久化
+# 生产环境可替换为 SqliteSaver / PostgresSaver
+try:
+    from langgraph.checkpoint.memory import MemorySaver
+    _CHECKPOINTER_AVAILABLE = True
+except ImportError:
+    _CHECKPOINTER_AVAILABLE = False
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -71,9 +79,18 @@ def set_intent_llm(new_llm):
 
 
 class MusicRecommendationGraph:
-    """音乐推荐工作流图"""
+    """音乐推荐工作流图
     
-    def __init__(self):
+    支持 LangGraph MemorySaver Checkpoint：
+    - 编译时注入 checkpointer，每次 ainvoke 传入 thread_id
+    - 同一 thread_id 的对话共享状态（chat_history 自动累积）
+    - 内存级实现，重启进程后状态丢失
+    - 生产环境可替换为 SqliteSaver / PostgresSaver 实现持久化
+    """
+    
+    def __init__(self, enable_checkpoint: bool = True):
+        self.enable_checkpoint = enable_checkpoint and _CHECKPOINTER_AVAILABLE
+        self.checkpointer = MemorySaver() if self.enable_checkpoint else None
         self.workflow = self._build_graph()
     
     def get_app(self) -> CompiledStateGraph:
@@ -1607,9 +1624,13 @@ class MusicRecommendationGraph:
         workflow.add_edge("general_chat", "persist_to_graphzep")
         workflow.add_edge("persist_to_graphzep", END)
         
-        # 编译图
-        app = workflow.compile()
-        logger.info("音乐推荐工作流图构建完成")
+        # 编译图（注入 checkpointer 实现状态持久化）
+        if self.checkpointer:
+            app = workflow.compile(checkpointer=self.checkpointer)
+            logger.info("音乐推荐工作流图构建完成 (✅ MemorySaver Checkpoint 已启用)")
+        else:
+            app = workflow.compile()
+            logger.info("音乐推荐工作流图构建完成 (⚠️ 无 Checkpoint，每次对话独立)")
         
         return app
 
