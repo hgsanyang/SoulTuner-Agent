@@ -36,16 +36,38 @@ app.include_router(user_profile_router)
 
 @app.on_event("startup")
 async def startup_event():
-    """在服务器启动时预加载 M2D-CLAP 跨模态模型"""
-    logger.info("🚀 正在预加载 M2D-CLAP 跨模态检索模型到内存...")
+    """在服务器启动时预加载关键组件，避免首次请求冷启动延迟"""
+    import time as _t
+    _t0 = _t.time()
+    logger.info("🚀 开始预加载关键组件...")
+    
+    # 1. 预加载 M2D-CLAP 跨模态模型
     try:
         from retrieval.audio_embedder import get_m2d2_model
-        import asyncio
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, get_m2d2_model)
-        logger.info("✅ M2D-CLAP 模型预加载完成!")
+        logger.info(f"  ✅ M2D-CLAP 模型预加载完成 ({_t.time()-_t0:.1f}s)")
     except Exception as e:
-        logger.error(f"❌ M2D-CLAP 模型预加载失败: {e}")
+        logger.error(f"  ❌ M2D-CLAP 模型预加载失败: {e}")
+    
+    # 2. 预初始化 Agent 实例（编译 LangGraph 工作流 + MemorySaver）
+    try:
+        _agent_inst = get_agent()
+        logger.info(f"  ✅ Agent 实例预初始化完成 ({_t.time()-_t0:.1f}s)")
+    except Exception as e:
+        logger.error(f"  ❌ Agent 预初始化失败: {e}")
+    
+    # 3. 预热 Neo4j 连接池（首次查询建立 TCP 连接 + Bolt 握手）
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        neo4j = get_neo4j_client()
+        if neo4j and neo4j.driver:
+            await loop.run_in_executor(None, lambda: neo4j.execute_query("RETURN 1 AS warmup", {}))
+            logger.info(f"  ✅ Neo4j 连接预热完成 ({_t.time()-_t0:.1f}s)")
+    except Exception as e:
+        logger.warning(f"  ⚠️ Neo4j 预热失败（不影响启动）: {e}")
+    
+    logger.info(f"🏁 预加载完成，总耗时 {_t.time()-_t0:.1f}s")
 
 # 配置CORS
 app.add_middleware(
@@ -66,9 +88,10 @@ app.add_middleware(
 )
 
 # 挂载静态音频/封面/歌词文件目录
-# 音频实际存放在 data/processed_audio/audio/(非 data/raw_audio)
+# Docker 内为 /app/data，本地开发为 Windows 路径
 from fastapi.staticfiles import StaticFiles
-PROCESSED_AUDIO_ROOT = Path(r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio")
+_DATA_ROOT = Path(os.environ.get("MUSIC_DATA_ROOT", r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data"))
+PROCESSED_AUDIO_ROOT = _DATA_ROOT / "processed_audio"
 audio_dir = PROCESSED_AUDIO_ROOT / "audio"
 if audio_dir.exists():
     app.mount("/static/audio", StaticFiles(directory=str(audio_dir)), name="audio")
@@ -89,7 +112,7 @@ else:
     logger.warning(f"歌词目录不存在,无法提供静态歌词挂载: {lyrics_dir}")
 
 # MTG 数据集音频：使用显式路由（避免 StaticFiles 挂载顺序问题）
-MTG_AUDIO_DIR = Path(r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\mtg_sample\audio")
+MTG_AUDIO_DIR = _DATA_ROOT / "mtg_sample" / "audio"
 
 from fastapi.responses import FileResponse
 
@@ -103,7 +126,7 @@ async def serve_mtg_audio(filename: str):
 
 
 # 联网获取的音频/封面/歌词(独立目录 data/online_acquired/)
-ONLINE_AUDIO_ROOT = Path(r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\online_acquired")
+ONLINE_AUDIO_ROOT = _DATA_ROOT / "online_acquired"
 online_audio_dir = ONLINE_AUDIO_ROOT / "audio"
 online_audio_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static/online_audio", StaticFiles(directory=str(online_audio_dir)), name="online_audio")
@@ -656,6 +679,15 @@ async def update_settings_endpoint(request: SettingsUpdateRequest):
             logger.warning(f"[Settings] LLM 切换失败: {e}")
 
     logger.info(f"[Settings] 已更新配置: {updated_fields}")
+
+    # 持久化到 JSON 文件，重启后自动恢复
+    try:
+        from config.settings import save_user_settings
+        save_user_settings(settings, updated_fields)
+        logger.info(f"[Settings] 已持久化到 user_settings.json")
+    except Exception as e:
+        logger.warning(f"[Settings] 持久化失败: {e}")
+
     return {"success": True, "updated": updated_fields}
 
 
@@ -670,6 +702,14 @@ async def reset_settings_endpoint():
     # 重新实例化 settings（拾取 .env / 环境变量中的默认值）
     fresh = GlobalSettings()
     settings_module.settings = fresh
+
+    # 清除持久化文件
+    try:
+        from config.settings import clear_user_settings
+        clear_user_settings()
+        logger.info("[Settings] 已清除 user_settings.json")
+    except Exception as e:
+        logger.warning(f"[Settings] 清除持久化文件失败: {e}")
 
     # 返回新的完整设置给前端
     return {

@@ -41,6 +41,7 @@ ENV/
 *.key
 *.pem
 config/setting.local.json
+config/user_settings.json
 
 # ================================================================
 # Logs & Debug Output

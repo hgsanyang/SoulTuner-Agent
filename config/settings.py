@@ -260,5 +260,71 @@ class GlobalSettings(BaseSettings):
         extra = "ignore"  # 忽略无法匹配的环境变量
 
 
+# ---- 用户设置持久化（JSON 文件） ----
+import json as _json
+
+_USER_SETTINGS_FILE = Path(__file__).parent / "user_settings.json"
+
+def _load_user_overrides(s: GlobalSettings) -> list[str]:
+    """启动时从 user_settings.json 加载用户上次保存的设置覆盖"""
+    if not _USER_SETTINGS_FILE.exists():
+        return []
+    try:
+        with open(_USER_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            overrides = _json.load(f)
+        applied = []
+        for key, val in overrides.items():
+            if hasattr(s, key):
+                setattr(s, key, val)
+                applied.append(key)
+        return applied
+    except Exception:
+        return []
+
+def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
+    """将指定字段（或全部非敏感字段）持久化到 JSON 文件"""
+    # 可持久化的字段白名单（排除 API key 等敏感信息）
+    _PERSISTABLE = {
+        "llm_default_provider", "llm_default_model",
+        "intent_llm_provider", "intent_llm_model",
+        "hyde_llm_provider", "hyde_llm_model",
+        "finetuned_model_path", "llm_timeout", "llm_temperature",
+        "audio_data_dir", "mtg_audio_dir", "online_acquired_dir",
+        "graph_search_limit", "semantic_search_limit",
+        "hybrid_retrieval_limit", "web_search_max_results",
+        "dual_anchor_weight_semantic", "dual_anchor_weight_acoustic",
+        "graph_affinity_enabled", "graph_affinity_weight", "graph_affinity_max_hops",
+        "max_songs_per_artist", "mmr_lambda",
+        "memory_retain_rounds", "default_user_id",
+    }
+    # 读取已有文件
+    existing = {}
+    if _USER_SETTINGS_FILE.exists():
+        try:
+            with open(_USER_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                existing = _json.load(f)
+        except Exception:
+            pass
+    # 合并更新
+    fields_to_save = keys if keys else list(_PERSISTABLE)
+    for key in fields_to_save:
+        if key in _PERSISTABLE and hasattr(s, key):
+            existing[key] = getattr(s, key)
+    # 写入
+    with open(_USER_SETTINGS_FILE, "w", encoding="utf-8") as f:
+        _json.dump(existing, f, indent=2, ensure_ascii=False)
+
+def clear_user_settings():
+    """删除持久化文件（还原默认时调用）"""
+    if _USER_SETTINGS_FILE.exists():
+        _USER_SETTINGS_FILE.unlink()
+
+
 # 暴露单例给全量代码使用
 settings = GlobalSettings()
+
+# 启动时自动加载用户上次保存的设置
+_applied = _load_user_overrides(settings)
+if _applied:
+    import logging as _logging
+    _logging.getLogger(__name__).info(f"[Settings] 从 user_settings.json 恢复了 {len(_applied)} 项设置: {_applied}")
