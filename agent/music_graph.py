@@ -91,6 +91,9 @@ class MusicRecommendationGraph:
     def __init__(self, enable_checkpoint: bool = True):
         self.enable_checkpoint = enable_checkpoint and _CHECKPOINTER_AVAILABLE
         self.checkpointer = MemorySaver() if self.enable_checkpoint else None
+        # 并发安全的流式队列注册表：{request_id: asyncio.Queue}
+        # 每个请求创建独立的 queue，避免并发请求间的数据交叉污染
+        self._explanation_queues: dict = {}
         self.workflow = self._build_graph()
     
     def get_app(self) -> CompiledStateGraph:
@@ -103,7 +106,8 @@ class MusicRecommendationGraph:
         使用 with_structured_output 直接输出类型安全的 MusicQueryPlan 对象，
         彻底消除手动正则 + json.loads 的脆弱解析。
         """
-        logger.info("--- [步骤 1] 统一意图分析与检索规划 (Structured Output) ---")
+        import time as _time
+        _t0 = _time.time()
         
         user_input = state.get("input", "")
         chat_history = state.get("chat_history", [])
@@ -116,6 +120,9 @@ class MusicRecommendationGraph:
             # ✅ with_structured_output：让模型直接输出 MusicQueryPlan Pydantic 对象
             # 底层自动处理 json_schema 约束，无需任何正则或 json.loads
             _intent_llm_instance = get_intent_llm()
+            _intent_model_name = getattr(_intent_llm_instance, 'model_name', '?')
+            _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or '?').lower()
+            logger.info(f"--- [步骤 1] 统一意图分析与检索规划 (Structured Output) | 🤖 {_intent_provider} / {_intent_model_name} ---")
             
             # ✅ 根据 provider 类型选择提示词模板和 structured output 方法：
             # 本地小模型（sglang/vllm/ollama）→ 正交化 6 示例的 LOCAL_PLANNER_PROMPT
@@ -274,6 +281,7 @@ class MusicRecommendationGraph:
                 f"web={plan.retrieval_plan.use_web_search}"
             )
             logger.info(f"决策理由: {plan.reasoning}")
+            logger.info(f"[⏱ 意图分析] 耗时 {_time.time()-_t0:.1f}s")
             
             # ============================================================
             # 【升级】将 intent_type 和 graphzep_facts 注入 retrieval_plan
@@ -329,6 +337,8 @@ class MusicRecommendationGraph:
         """
         节点2a: 搜索歌曲
         """
+        import time as _time
+        _t0 = _time.time()
         logger.info("--- [步骤 2a] 搜索歌曲 ---")
         
         parameters = state.get("intent_parameters", {})
@@ -352,7 +362,7 @@ class MusicRecommendationGraph:
             else:
                 search_results = []
             
-            logger.info(f"搜索到 {len(search_results)} 首歌曲")
+            logger.info(f"搜索到 {len(search_results)} 首歌曲, 耗时 {_time.time()-_t0:.1f}s")
 
             # ══ 本地未命中检测：graph_search 有实体但结果不精确时，降级联网 ══
             # Case 1: 完全无结果
@@ -805,7 +815,10 @@ class MusicRecommendationGraph:
         节点2c: 通用聊天
         处理一般性的音乐话题聊天
         """
-        logger.info("--- [步骤 2c] 通用音乐聊天 ---")
+        _main_llm = get_llm()
+        _main_model_name = getattr(_main_llm, 'model_name', '?')
+        _main_provider = (settings.llm_default_provider or '?').lower()
+        logger.info(f"--- [步骤 2c] 通用音乐聊天 | 🤖 {_main_provider} / {_main_model_name} ---")
         
         user_message = state.get("input", "")
         chat_history = state.get("chat_history", [])
@@ -858,7 +871,12 @@ class MusicRecommendationGraph:
         节点3: 生成推荐解释
         为搜索结果或推荐结果生成友好的解释文本
         """
-        logger.info("--- [步骤 3] 生成推荐解释 ---")
+        import time as _time
+        _t0 = _time.time()
+        _main_llm = get_llm()
+        _main_model_name = getattr(_main_llm, 'model_name', '?')
+        _main_provider = (settings.llm_default_provider or '?').lower()
+        logger.info(f"--- [步骤 3] 生成推荐解释 | 🤖 {_main_provider} / {_main_model_name} ---")
         
         # 兼容处理 ToolOutput 对象或列表
         raw_recommendations = state.get("recommendations", [])
@@ -933,7 +951,9 @@ class MusicRecommendationGraph:
             )
             
             # 流式生成推荐解释：通过 astream 逐 chunk 送入队列
-            explanation_queue = state.get("_explanation_queue")
+            # 并发安全：通过 request_id 从注册表中取出当前请求专属的队列
+            _req_id = state.get("metadata", {}).get("request_id", "")
+            explanation_queue = self._explanation_queues.get(_req_id) if _req_id else None
             
             # ★ 先把歌曲数据推入队列，让前端立刻渲染歌曲卡片
             if explanation_queue and recommendations:
@@ -970,7 +990,7 @@ class MusicRecommendationGraph:
             # 构建完整的最终回复
             final_response = explanation
             
-            logger.info("成功生成推荐解释")
+            logger.info(f"成功生成推荐解释, 耗时 {_time.time()-_t0:.1f}s")
             
             # 偏好提取已解耦为独立节点 extract_preferences_node
             
@@ -982,6 +1002,15 @@ class MusicRecommendationGraph:
             
         except Exception as e:
             logger.error(f"生成解释失败: {str(e)}")
+            
+            # 确保队列收到终止信号，防止前端消费者永久阻塞
+            _req_id = state.get("metadata", {}).get("request_id", "")
+            _err_queue = self._explanation_queues.get(_req_id) if _req_id else None
+            if _err_queue:
+                try:
+                    await _err_queue.put(None)
+                except Exception:
+                    pass
             
             # 生成简单的备用回复
             songs_list = "\n".join([
@@ -1278,15 +1307,24 @@ class MusicRecommendationGraph:
         Stage 1（粗召回）：search_facts(max_facts=20) — 语义广撒网
         Stage 2（精排序）：get_memory(chat_history) — 结合对话上下文精排，取 top 5
         
-        降级策略：Stage 2 失败 → 退回 Stage 1 结果；Stage 1 也失败 → 返回空
+        降级策略：
+        - 整体 8s 硬超时 → 直接返回空记忆（避免阻塞推荐主流程）
+        - Stage 2 失败 → 退回 Stage 1 结果
+        - Stage 1 也失败 → 返回空
         """
+        import time as _time
+        _t0 = _time.time()
         logger.info("--- [GraphZep] 双阶段记忆召回 ---")
         
-        user_input = state.get("input", "")
-        group_id = state.get("graphzep_group_id", "music-agent-memory")
-        chat_history = state.get("chat_history", [])
+        # ★ 整体硬超时：GraphZep 服务可能因 LLM 调用而阻塞很久（尤其 Docker 环境）
+        # 记忆召回是锦上添花功能，不能因此阻塞推荐主流程
+        _GRAPHZEP_TOTAL_TIMEOUT = 8  # 秒
         
-        try:
+        async def _do_recall() -> Dict[str, Any]:
+            user_input = state.get("input", "")
+            group_id = state.get("graphzep_group_id", "music-agent-memory")
+            chat_history = state.get("chat_history", [])
+            
             from services.graphzep_client import get_graphzep_client
             client = get_graphzep_client()
             
@@ -1310,7 +1348,7 @@ class MusicRecommendationGraph:
                 max_facts=20,
                 search_type=search_type,
             )
-            logger.info(f"[GraphZep] Stage 1 粗召回: {len(coarse_facts)}chars")
+            logger.info(f"[GraphZep] Stage 1 粗召回: {len(coarse_facts)}chars ({_time.time()-_t0:.1f}s)")
             
             # ---- Stage 2: 精排序（结合最近对话做上下文感知排序） ----
             fine_facts = coarse_facts  # 默认退回 Stage 1
@@ -1338,7 +1376,7 @@ class MusicRecommendationGraph:
                     group_id=group_id,
                     max_facts=5,
                 )
-                logger.info(f"[GraphZep] Stage 2 精排序: {len(fine_facts)}chars")
+                logger.info(f"[GraphZep] Stage 2 精排序: {len(fine_facts)}chars ({_time.time()-_t0:.1f}s)")
             except Exception as stage2_err:
                 logger.warning(f"[GraphZep] Stage 2 失败，退回 Stage 1: {stage2_err}")
             
@@ -1356,7 +1394,19 @@ class MusicRecommendationGraph:
                 return {"graphzep_facts": coarse_facts}
             else:
                 return {"graphzep_facts": "暂无用户长期记忆"}
-            
+        
+        try:
+            result = await asyncio.wait_for(_do_recall(), timeout=_GRAPHZEP_TOTAL_TIMEOUT)
+            _elapsed = _time.time() - _t0
+            logger.info(f"[GraphZep] ✅ 记忆召回完成, 总耗时 {_elapsed:.1f}s")
+            return result
+        except asyncio.TimeoutError:
+            _elapsed = _time.time() - _t0
+            logger.warning(
+                f"[GraphZep] ⚠️ 记忆召回超时 ({_elapsed:.1f}s > {_GRAPHZEP_TOTAL_TIMEOUT}s)，"
+                f"降级为空记忆以保证推荐流程不阻塞"
+            )
+            return {"graphzep_facts": "暂无用户长期记忆"}
         except Exception as e:
             logger.warning(f"[GraphZep] 记忆召回失败（降级为空）: {e}")
             return {"graphzep_facts": "暂无用户长期记忆"}

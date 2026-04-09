@@ -127,9 +127,15 @@ class MusicRecommendationAgent:
             dict 事件: {"type": "thinking"|"response"|"songs"|"complete"|"error", ...}
         """
         import asyncio
+        import time as _time
+        import uuid as _uuid
+        
+        # 为本次请求生成唯一 ID，用于隔离并发请求的流式队列
+        _request_id = str(_uuid.uuid4())
         
         try:
-            logger.info(f"开始处理音乐推荐请求(流式): {query}")
+            logger.info(f"开始处理音乐推荐请求(流式): {query} [req={_request_id[:8]}]")
+            _stream_start = _time.time()
             
             # 构建对话历史
             formatted_history: List[BaseMessage] = []
@@ -142,8 +148,10 @@ class MusicRecommendationAgent:
                     elif role == "assistant":
                         formatted_history.append(AIMessage(content=content))
             
-            # 创建共享队列：generate_explanation 节点会往这里推 chunk
+            # 创建本次请求专属的队列，并注册到 graph 的队列表中
+            # generate_explanation 节点通过 state.metadata.request_id 找到对应的队列
             explanation_queue = asyncio.Queue()
+            self.graph._explanation_queues[_request_id] = explanation_queue
             
             initial_state: MusicAgentState = {
                 "input": query,
@@ -160,11 +168,15 @@ class MusicRecommendationAgent:
                 "playlist": None,
                 "step_count": 0,
                 "error_log": [],
-                "metadata": {},
-                "_explanation_queue": explanation_queue,
+                "metadata": {"request_id": _request_id},
             }
             
             config = {"recursion_limit": 50}
+            # MemorySaver Checkpoint: 传入 thread_id 实现对话状态持久化
+            if getattr(self.graph, 'checkpointer', None):
+                thread_id = _request_id  # 复用 request_id 作为 thread_id
+                config["configurable"] = {"thread_id": thread_id}
+                logger.info(f"[Checkpoint] stream thread_id={thread_id[:8]}")
             
             # 后台任务运行 LangGraph
             result_holder = {}
@@ -189,11 +201,16 @@ class MusicRecommendationAgent:
             # 从队列读取流式解释文本（歌曲数据也会通过队列提前到达）
             accumulated_text = ""
             songs_already_sent = False
+            # Docker 环境冷启动可能需要较长时间（GraphZep + LLM + 检索 + 精排串行叠加）
+            # 180s 给予充足的首次请求余量，热缓存时通常 20-40s 内即可收到首 chunk
+            _STREAM_TIMEOUT = 180
             while True:
                 try:
-                    chunk = await asyncio.wait_for(explanation_queue.get(), timeout=90)
+                    chunk = await asyncio.wait_for(explanation_queue.get(), timeout=_STREAM_TIMEOUT)
                 except asyncio.TimeoutError:
-                    yield {"type": "error", "error": "推荐生成超时，请重试"}
+                    _elapsed = _time.time() - _stream_start
+                    logger.error(f"流式推荐超时: 已等待 {_elapsed:.1f}s (timeout={_STREAM_TIMEOUT}s) [req={_request_id[:8]}]")
+                    yield {"type": "error", "error": f"推荐生成超时({_elapsed:.0f}s)，请重试"}
                     graph_task.cancel()
                     return
                 
@@ -240,11 +257,14 @@ class MusicRecommendationAgent:
                     yield {"type": "recommendations_complete"}
             
             yield {"type": "complete", "success": True}
-            logger.info("流式音乐推荐完成")
+            logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")
             
         except Exception as e:
-            logger.error(f"流式推荐失败: {str(e)}", exc_info=True)
+            logger.error(f"流式推荐失败: {str(e)} [req={_request_id[:8]}]", exc_info=True)
             yield {"type": "error", "error": str(e)}
+        finally:
+            # 清理本次请求的队列，防止内存泄漏
+            self.graph._explanation_queues.pop(_request_id, None)
     
     def get_status(self) -> Dict[str, Any]:
         """获取智能体状态信息"""
