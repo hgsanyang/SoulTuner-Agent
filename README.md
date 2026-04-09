@@ -15,6 +15,10 @@
   <img src="https://img.shields.io/badge/Next.js_14-Frontend-black?logo=next.js" alt="Next.js" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker" alt="Docker" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
+  <br/>
+  <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
+  <img src="https://img.shields.io/badge/tests-51_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
 <p align="center">
@@ -228,6 +232,46 @@ stateDiagram-v2
 
 用户搜索 → 发现新歌 → 一键"加入本地" → 下载音频/封面/歌词 → LLM 标签提取 + 双模型向量编码 → Neo4j 入库 → 下次检索可命中
 
+### 工程质量
+
+| 维度 | 说明 |
+|------|------|
+| **CI/CD** | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
+| **单元测试** | 51 tests / 5 模块（key 标准化、Token 预算、标签映射、合并去重、Schema 校验）|
+| **意图评测** | 55 条手工标注覆盖全部 7 种意图类型，批量测试准确率 **98.2%**（54/55） |
+| **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比） |
+| **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres） |
+| **代码规范** | Ruff 静态检查 + pyproject.toml 统一配置 |
+
+<details>
+<summary>意图分类评测详情</summary>
+
+```
+评测日期: 2026-04-09
+模型: DeepSeek-V3.2 (SiliconFlow)
+测试集: 55 条手工标注 (tests/eval/intent_test_queries.json)
+
+Intent Type          Correct   Total   Accuracy
+────────────────────────────────────────────────
+graph_search              15      15     100.0%
+hybrid_search             19      20      95.0%
+vector_search              6       6     100.0%
+web_search                 4       4     100.0%
+general_chat               4       4     100.0%
+acquire_music              3       3     100.0%
+recommend_by_favorites     3       3     100.0%
+────────────────────────────────────────────────
+TOTAL                     54      55      98.2%
+平均延迟: 11.55s/query（含意图分类 + 实体提取 + 标签推断 + HyDE 声学描述生成，单次 LLM 调用）
+```
+
+运行评测：
+```bash
+python -m tests.eval.evaluate_intent --provider siliconflow
+```
+
+</details>
+
 ---
 
 ## 📊 Neo4j 知识图谱
@@ -411,8 +455,20 @@ docker compose -f docker-compose.searxng.yml up -d  # :8888
 │   └── components/Navigation/  # 导航、侧边栏
 │
 ├── graphzep_service/           # GraphZep 微服务
+├── tests/                      # 测试与评测
+│   ├── unit/                   # 单元测试 (51 tests, pytest)
+│   │   ├── test_normalize_key.py
+│   │   ├── test_gssc_token_budget.py
+│   │   ├── test_tag_expansion.py
+│   │   ├── test_merge_dedup.py
+│   │   └── test_schema_validation.py
+│   └── eval/                   # 意图分类评测
+│       ├── intent_test_queries.json  # 55 条标注数据
+│       └── evaluate_intent.py        # 评测脚本
+├── .github/workflows/ci.yml    # GitHub Actions CI
 ├── docker-compose.yml          # Docker 全栈编排
 ├── Dockerfile                  # 后端镜像
+├── pyproject.toml              # 项目配置 (mypy + ruff + pytest)
 ├── .env.example                # 环境变量模板
 ├── startup_all.py              # 本地一键启动器
 └── requirements.txt            # Python 依赖

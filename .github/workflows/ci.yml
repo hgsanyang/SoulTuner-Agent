@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest pydantic pydantic-settings python-dotenv
+
+      - name: Ruff Lint Check
+        run: |
+          ruff check tests/ schemas/ --output-format=github
+
+      - name: Run Unit Tests
+        run: |
+          python -m pytest tests/unit/ -v --tb=short
