@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest pydantic pydantic-settings python-dotenv
+          pip install ruff pytest pydantic pydantic-settings python-dotenv langchain-core
 
       - name: Ruff Lint Check
         run: |
