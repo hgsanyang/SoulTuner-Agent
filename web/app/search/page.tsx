@@ -1,5 +1,8 @@
 'use client';
 
+// 此页面使用 useSearchParams，不能静态预渲染
+export const dynamic = 'force-dynamic';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';

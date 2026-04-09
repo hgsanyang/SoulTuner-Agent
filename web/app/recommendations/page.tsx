@@ -1,5 +1,8 @@
 'use client';
 
+// 此页面使用 useSearchParams，不能静态预渲染
+export const dynamic = 'force-dynamic';
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
@@ -400,6 +403,28 @@ export default function RecommendationsPage() {
               <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
             推荐卡片
+          </button>
+        )}
+        {/* 返回对话按钮（在卡片视图且有历史消息时显示） */}
+        {hasMessages && showWelcome && (
+          <button
+            onClick={() => setShowWelcome(false)}
+            title="返回对话记录"
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.4rem',
+              padding: '0.35rem 0.8rem', borderRadius: '2rem',
+              backgroundColor: 'rgba(29, 185, 84, 0.1)',
+              border: '1px solid rgba(29, 185, 84, 0.25)',
+              color: 'rgba(29, 185, 84, 0.85)', fontSize: '0.82rem',
+              cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(29, 185, 84, 0.2)'; e.currentTarget.style.color = '#fff'; }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(29, 185, 84, 0.1)'; e.currentTarget.style.color = 'rgba(29, 185, 84, 0.85)'; }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            返回对话
           </button>
         )}
         {/* 新建聊天按钮 */}

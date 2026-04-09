@@ -132,7 +132,7 @@ export default function DislikesPage() {
                     </div>
                     <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>没有屏蔽的歌曲</h3>
                     <p style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        在推荐结果中点击"不喜欢"按钮，歌曲将被添加到此列表并从后续推荐中排除。
+                        在推荐结果中点击「不喜欢」按钮，歌曲将被添加到此列表并从后续推荐中排除。
                     </p>
                 </div>
             ) : (
