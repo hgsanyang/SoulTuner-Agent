@@ -64,7 +64,7 @@ def _start_subprocess(name: str, cmd: list[str], cwd: str | Path, env=None):
             creationflags=creation_flags,
         )
         _processes.append((name, proc))
-        print(f"  ✅ {name} 已启动 (PID: {proc.pid})")
+        print(f"  ✅ {name} 已启动 | 进程ID(PID): {proc.pid}")
         return proc
     except FileNotFoundError:
         print(f"  ⚠️ {name} 启动失败: 命令未找到 ({cmd[0]})")
@@ -91,7 +91,7 @@ def _get_project_python() -> str:
 
 def start_api():
     """启动后端 FastAPI 服务"""
-    _banner("启动后端 API 服务 (port 8501)")
+    _banner("启动后端 API 服务 → http://localhost:8501")
     os.chdir(str(PROJECT_ROOT))
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))

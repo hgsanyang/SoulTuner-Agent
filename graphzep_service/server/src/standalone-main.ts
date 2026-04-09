@@ -352,7 +352,7 @@ app.post('/get-memory', zValidator('json', GetMemoryRequestSchema), async (c) =>
       searchType: 'hybrid',
     });
 
-    const facts: FactResult[] = zepResults.map(result => {
+    const facts: FactResult[] = zepResults.map((result: any) => {
       const mem = result.memory;
       // 优先返回提取的 facts
       if (mem.facts && mem.facts.length > 0) {
