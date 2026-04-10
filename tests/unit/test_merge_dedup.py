@@ -3,8 +3,8 @@
 
 验证检索管线 Step 2 的核心行为：
 - 两路结果正确合并
-- 双引擎命中标记
-- 去重逻辑
+- 双引擎命中标记 (cross-engine hit)
+- 去重逻辑 (normalize_key based dedup)
 
 注意：直接复制核心纯函数进行测试，避免导入 hybrid_retrieval
 （它会拉起 langgraph/langchain 整个依赖链）。
