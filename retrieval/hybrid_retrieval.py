@@ -156,8 +156,11 @@ class MusicHybridRetrieval:
         """
         logger.info(f"[Retrieval] 开始处理请求: {query}")
 
-        # 过召回策略: 各子引擎多召回 50%，精排后再截断到 limit
-        engine_limit = max(limit, int(limit * 1.5))
+        from config.settings import settings as _s
+        # 各引擎 limit 从 settings 读取（不再用 1.5x 乘数，粗排阶段负责漏斗）
+        _graph_limit = _s.graph_search_limit
+        _vector_limit = _s.semantic_search_limit
+        _mixed_limit = _s.mixed_retrieval_limit
         
         # 1. 确定检索策略：优先用预计算计划，否则安全默认（双引擎）
         if precomputed_plan:
@@ -341,13 +344,13 @@ class MusicHybridRetrieval:
             if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
                 graph_query_dict["tags"] = [query]
             search_term = json.dumps(graph_query_dict, ensure_ascii=False)
-            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": search_term, "limit": engine_limit}))
+            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": search_term, "limit": _graph_limit}))
             local_tasks.append(asyncio.sleep(0))  # 占位 vector
         elif use_vector and not use_graph:
             local_tasks.append(asyncio.sleep(0))  # 占位 graph
             search_term = vector_desc if vector_desc else query
             local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                "query": search_term, "limit": engine_limit,
+                "query": search_term, "limit": _vector_limit,
                 "language_filter": language_filter or "",
                 "region_filter": region_filter or "",
             }))
@@ -360,10 +363,10 @@ class MusicHybridRetrieval:
             graph_term = json.dumps(graph_query_dict, ensure_ascii=False)
             vector_term = vector_desc if vector_desc else query
             
-            logger.info(f"[Hybrid] 混合检索：向子引擎传递 engine_limit={engine_limit} (final_limit={limit})")
-            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": engine_limit}))
+            logger.info(f"[Hybrid] 混合检索：各子引擎 mixed_limit={_mixed_limit} (final_limit={limit})")
+            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": _mixed_limit}))
             local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                "query": vector_term, "limit": engine_limit,
+                "query": vector_term, "limit": _mixed_limit,
                 "language_filter": language_filter or "",
                 "region_filter": region_filter or "",
             }))
@@ -669,6 +672,149 @@ class MusicHybridRetrieval:
 
         except Exception as e:
             logger.warning(f"[DualAnchor] 双锚精排异常（降级保持原排序）: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            return candidates
+    # ================================================================
+    # 三锚归一化精排（替代双锚，语义+声学+个性化三维融合）
+    # ================================================================
+    @staticmethod
+    def _tri_anchor_rerank(
+        candidates: List[dict],
+        query_text: str,
+    ) -> List[dict]:
+        """
+        三锚归一化精排 = 语义相关性 + 声学风格 + 个性化偏好
+
+        所有分数归一化到 [0, 1] 后加权融合：
+        final_score = α×semantic + β×acoustic + γ×personalize
+        
+        - semantic:   M2D-CLAP cosine(song_emb, query_text_emb) → (x+1)/2
+        - acoustic:   OMAR-RQ cosine(song_emb, centroid) → (x+1)/2
+        - personalize: graph_affinity (已在 Step 4 计算) → MinMax 归一化
+        
+        权重从 settings 读取，自动归一化使 α+β+γ=1。
+        """
+        if not candidates:
+            return candidates
+
+        from config.settings import settings as _s
+        w_sem = _s.tri_anchor_w_semantic
+        w_aco = _s.tri_anchor_w_acoustic
+        w_per = _s.tri_anchor_w_personal
+
+        # 自动归一化权重
+        w_total = w_sem + w_aco + w_per
+        if w_total > 0:
+            w_sem, w_aco, w_per = w_sem / w_total, w_aco / w_total, w_per / w_total
+        else:
+            w_sem, w_aco, w_per = 0.45, 0.30, 0.25
+
+        try:
+            import numpy as np
+            from retrieval.neo4j_client import get_neo4j_client
+            from retrieval.audio_embedder import encode_text_to_embedding
+
+            neo4j = get_neo4j_client()
+            if not neo4j or not neo4j.driver:
+                logger.warning("[TriAnchor] Neo4j 不可用，跳过三锚精排")
+                return candidates
+
+            # ── 语义锚：query → text embedding ──
+            logger.info(f"[TriAnchor] 编码 query text embedding...")
+            query_emb = np.array(encode_text_to_embedding(query_text))
+
+            # ── 批量获取候选歌曲的 M2D + OMAR embedding ──
+            titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
+            emb_cypher = """
+            UNWIND $titles AS t
+            MATCH (s:Song {title: t})
+            RETURN s.title AS title,
+                   s.m2d2_embedding AS m2d_emb,
+                   s.omar_embedding AS omar_emb
+            """
+            emb_rows = neo4j.execute_query(emb_cypher, {"titles": titles})
+
+            m2d_map, omar_map = {}, {}
+            for row in (emb_rows or []):
+                t = row.get("title", "")
+                if row.get("m2d_emb"):
+                    m2d_map[t] = np.array(row["m2d_emb"])
+                if row.get("omar_emb"):
+                    omar_map[t] = np.array(row["omar_emb"])
+
+            logger.info(
+                f"[TriAnchor] embedding 命中: M2D={len(m2d_map)}/{len(titles)}, "
+                f"OMAR={len(omar_map)}/{len(titles)}"
+            )
+
+            # ── 声学锚：OMAR 质心 ──
+            omar_centroid = None
+            if omar_map:
+                omar_centroid = np.mean(list(omar_map.values()), axis=0)
+
+            def _cosine(a, b):
+                dot = np.dot(a, b)
+                norm = np.linalg.norm(a) * np.linalg.norm(b)
+                return float(dot / norm) if norm > 0 else 0.0
+
+            def _normalize_cosine(score: float) -> float:
+                """cosine [-1, 1] → [0, 1]"""
+                return (score + 1.0) / 2.0
+
+            # ── 收集 personalize 原始值用于 MinMax 归一化 ──
+            raw_personalize = [c.get("_graph_affinity", 0.0) for c in candidates]
+            p_min = min(raw_personalize) if raw_personalize else 0
+            p_max = max(raw_personalize) if raw_personalize else 0
+            p_range = p_max - p_min if p_max > p_min else 1.0
+
+            # ── 三锚融合评分 ──
+            for c in candidates:
+                title = c.get("song", {}).get("title", "")
+
+                # 维度 1: 语义分（归一化到 [0,1]）
+                m2d_emb = m2d_map.get(title)
+                if m2d_emb is not None:
+                    raw_semantic = _cosine(m2d_emb, query_emb)
+                    semantic = _normalize_cosine(raw_semantic)
+                else:
+                    semantic = 0.5  # 无 embedding 时给中位分
+
+                # 维度 2: 声学分（归一化到 [0,1]）
+                omar_emb = omar_map.get(title)
+                if omar_emb is not None and omar_centroid is not None:
+                    raw_acoustic = _cosine(omar_emb, omar_centroid)
+                    acoustic = _normalize_cosine(raw_acoustic)
+                else:
+                    acoustic = 0.5
+
+                # 维度 3: 个性化分（MinMax 归一化到 [0,1]）
+                raw_p = c.get("_graph_affinity", 0.0)
+                personalize = (raw_p - p_min) / p_range if p_range > 0 else 0.5
+
+                # 动态权重（缺 OMAR 时重分配声学权重）
+                if omar_emb is None or omar_centroid is None:
+                    _w_sem = w_sem / (w_sem + w_per) if (w_sem + w_per) > 0 else 0.6
+                    _w_per = w_per / (w_sem + w_per) if (w_sem + w_per) > 0 else 0.4
+                    final = _w_sem * semantic + _w_per * personalize
+                else:
+                    final = w_sem * semantic + w_aco * acoustic + w_per * personalize
+
+                c["similarity_score"] = round(final, 6)
+                c["_semantic_score"] = round(semantic, 4)
+                c["_acoustic_score"] = round(acoustic, 4)
+                c["_personal_score"] = round(personalize, 4)
+
+            candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
+
+            logger.info(
+                f"[TriAnchor] 三锚精排完成 (sem={w_sem:.2f}, aco={w_aco:.2f}, per={w_per:.2f}) | "
+                f"Top3: {[(c['song']['title'], round(c['similarity_score'], 4)) for c in candidates[:3]]}"
+            )
+            return candidates
+
+        except Exception as e:
+            logger.warning(f"[TriAnchor] 三锚精排异常（降级保持原排序）: {e}")
             import traceback
             logger.debug(traceback.format_exc())
             return candidates
@@ -1044,27 +1190,86 @@ class MusicHybridRetrieval:
             logger.info(f"[ArtistDiversity] 指定歌手豁免: {exempt_artists}")
         logger.info(f"[ArtistDiversity] 初筛完成 (max={max_per_artist}/artist)，剩余 {len(final_list)} 首，艺术家分布: {dict(artist_count)}")
 
-        # ---- Step 4: Graph Affinity（图距离 + Jaccard 偏好 → 个性化微调）----
+        # ---- Step 4: Graph Affinity 粗排 + Thompson Sampling 探索槽 ----
         cand_tag_map = {}
         if _settings.graph_affinity_enabled and final_list:
+            total_before = len(final_list)
             final_list, cand_tag_map = self._compute_graph_affinity(final_list)
-            # 将亲和力分数融入排序分（微调）:
-            # final_score = (1 - α) × current_score + α × graph_affinity
-            affinity_weight = _settings.graph_affinity_weight
-            for item in final_list:
-                base = item.get("similarity_score", 0)
-                affinity = item.get("_graph_affinity", 0)
-                item["similarity_score"] = (1 - affinity_weight) * base + affinity_weight * affinity
-            final_list.sort(key=lambda x: x["similarity_score"], reverse=True)
+
+            # ── Phase A: 按 graph_affinity 排序并截断（粗排）──
+            final_list.sort(key=lambda x: x.get("_graph_affinity", 0), reverse=True)
+
+            coarse_cut = max(int(total_before * _settings.coarse_cut_ratio), 10)
+            coarse_cut = min(coarse_cut, len(final_list))  # 不能超过实际数量
+
+            main_candidates = final_list[:coarse_cut]
+            tail_candidates = final_list[coarse_cut:]
+
+            # ── Phase B: Thompson Sampling 探索槽 ──
+            # 从尾部捞回冷门歌，用 TS 采样决定哪些冷门歌有机会进入精排
+            import random
+            import math
+            n_explore = max(int(coarse_cut * _settings.exploration_ratio), 1)
+
+            explore_picks = []
+            if tail_candidates:
+                try:
+                    import numpy as np
+                    from retrieval.neo4j_client import get_neo4j_client
+                    neo4j = get_neo4j_client()
+
+                    # 批量读取尾部歌曲的 TS 参数 (ts_alpha, ts_beta)
+                    tail_titles = [c.get("song", {}).get("title", "") for c in tail_candidates]
+                    ts_query = """
+                    UNWIND $titles AS t
+                    MATCH (s:Song {title: t})
+                    RETURN s.title AS title,
+                           coalesce(s.ts_alpha, 1) AS alpha,
+                           coalesce(s.ts_beta, 1) AS beta
+                    """
+                    ts_rows = neo4j.execute_query(ts_query, {"titles": tail_titles}) if neo4j and neo4j.driver else []
+                    ts_map = {r["title"]: (r["alpha"], r["beta"]) for r in (ts_rows or [])}
+
+                    # TS 采样：为尾部每首歌采样一个分数
+                    ts_scores = []
+                    for c in tail_candidates:
+                        title = c.get("song", {}).get("title", "")
+                        alpha, beta = ts_map.get(title, (1, 1))
+                        ts_score = float(np.random.beta(alpha, beta))
+                        c["_ts_score"] = round(ts_score, 4)
+                        ts_scores.append(ts_score)
+
+                    # 按 TS 采样分数排序，取 Top N 作为探索槽
+                    tail_with_scores = sorted(
+                        zip(tail_candidates, ts_scores),
+                        key=lambda x: x[1], reverse=True
+                    )
+                    explore_picks = [item for item, _ in tail_with_scores[:n_explore]]
+                except Exception as e:
+                    logger.warning(f"[TS] Thompson Sampling 失败，降级随机探索: {e}")
+                    random.shuffle(tail_candidates)
+                    explore_picks = tail_candidates[:n_explore]
+
+            for ep in explore_picks:
+                ep["_is_exploration"] = True
+                reason = ep.get("reason", "")
+                if "🆕" not in reason:
+                    ep["reason"] = reason + " 🆕探索发现"
+
+            main_candidates.extend(explore_picks)
+            final_list = main_candidates
+
+            n_explore_actual = sum(1 for x in final_list if x.get("_is_exploration"))
             logger.info(
-                f"[GraphAffinity] 亲和力加权后 Top3: "
-                f"{[(r['song']['title'], round(r['similarity_score'], 4)) for r in final_list[:3]]}"
+                f"[CoarseRank] 粗排: {total_before} → {len(final_list)} 首 "
+                f"(主力={len(final_list) - n_explore_actual}, 探索槽={n_explore_actual}, "
+                f"cut_ratio={_settings.coarse_cut_ratio}, explore_ratio={_settings.exploration_ratio})"
             )
 
-        # ---- Step 5: 双锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚）----
+        # ---- Step 5: 三锚归一化精排（语义 + 声学 + 个性化）----
         query_text = getattr(self, '_current_query', '') or ''
         if query_text and final_list:
-            final_list = self._dual_anchor_rerank(final_list, query_text)
+            final_list = self._tri_anchor_rerank(final_list, query_text)
 
         # ---- Step 5.5: Cross-Encoder 精排（可选，默认关闭）----
         if _settings.reranker_enabled and final_list:

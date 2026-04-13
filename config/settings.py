@@ -80,6 +80,39 @@ class GlobalSettings(BaseSettings):
         description="HyDE 声学描述生成专用模型名（空则复用主模型）",
     )
 
+    # --- 上下文压缩专用 LLM（GSSC Compressor）---
+    # ★ 用于多轮对话时压缩过长的历史记录，建议用快速稳定的模型（如 DeepSeek-V3.2）
+    compress_llm_provider: str = Field(
+        default="",
+        validation_alias="COMPRESS_LLM_PROVIDER",
+        description="上下文压缩专用 LLM 提供商（空则复用主模型）",
+    )
+    compress_llm_model: str = Field(
+        default="",
+        validation_alias="COMPRESS_LLM_MODEL",
+        description="上下文压缩专用模型名（空则复用主模型）",
+    )
+
+    # --- 解释生成专用 LLM（generate_explanation 节点）---
+    # ★ 负责生成推荐理由和最终呈现给用户的解释文本（流式输出）
+    # ★ 建议使用表达能力强的模型（如 DeepSeek-V3.2 / Qwen3.5-35B）
+    explain_llm_provider: str = Field(
+        default="",
+        validation_alias="EXPLAIN_LLM_PROVIDER",
+        description="解释生成专用 LLM 提供商（空则复用主模型）",
+    )
+    explain_llm_model: str = Field(
+        default="",
+        validation_alias="EXPLAIN_LLM_MODEL",
+        description="解释生成专用模型名（空则复用主模型）",
+    )
+
+    # --- 上下文窗口预算 ---
+    context_total_budget: int = Field(
+        default=8000,
+        description="GSSC 上下文总 Token 预算（不含 system prompt），越大保留越多历史，但增加 LLM 成本",
+    )
+
     finetuned_model_path: str = Field(
         default="",
         validation_alias="FINETUNED_MODEL_PATH",
@@ -136,16 +169,20 @@ class GlobalSettings(BaseSettings):
     # 6. 检索 & 推荐参数（★ 核心调参区）
     # ================================================================
     semantic_search_limit: int = Field(
-        default=15,
-        description="语义向量搜索默认返回条数（Neo4j KNN）",
+        default=24,
+        description="仅向量检索时的返回条数（Neo4j KNN）",
     )
     graph_search_limit: int = Field(
-        default=15,
-        description="GraphRAG 图谱搜索默认返回条数",
+        default=24,
+        description="仅图谱检索时的返回条数（GraphRAG）",
+    )
+    mixed_retrieval_limit: int = Field(
+        default=24,
+        description="混合检索时每个引擎各返回的条数（双引擎时，各自返回此数量）",
     )
     hybrid_retrieval_limit: int = Field(
         default=15,
-        description="混合检索合并后最终返回条数（传给 LLM 推荐解释）",
+        description="FinalCut 最终输出条数（传给 LLM 推荐解释）",
     )
     web_search_max_results: int = Field(
         default=5,
@@ -165,31 +202,39 @@ class GlobalSettings(BaseSettings):
     )
 
     # ================================================================
-    # 6b. 精排管线参数（双锚精排 + 图距离 + 多样性）
+    # 6b. 精排管线参数（粗排 + 三锚精排 + 探索 + 多样性）
     # ================================================================
 
-    # --- 双锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚）---
-    dual_anchor_weight_semantic: float = Field(
-        default=0.6,
-        description="双锚精排中 M2D-CLAP 语义锚（text embedding cosine）的权重",
-    )
-    dual_anchor_weight_acoustic: float = Field(
-        default=0.4,
-        description="双锚精排中 OMAR-RQ 声学锚（centroid cosine）的权重",
-    )
-
-    # --- Graph Affinity（图距离 + 用户画像 Jaccard）---
+    # --- 粗排 & 探索（Graph Affinity + Thompson Sampling）---
     graph_affinity_enabled: bool = Field(
         default=True,
-        description="是否启用 Neo4j 图距离亲和力 + 用户画像 Jaccard 加权",
-    )
-    graph_affinity_weight: float = Field(
-        default=0.15,
-        description="Graph Affinity 分数在精排前微调排序中的权重",
+        description="是否启用 Graph Affinity 粗排（图距离+Jaccard 筛选）+ TS 探索槽",
     )
     graph_affinity_max_hops: int = Field(
         default=4,
         description="图距离计算最大跳数",
+    )
+    coarse_cut_ratio: float = Field(
+        default=0.65,
+        description="粗排保留比例（如 0.65 = 保留 65% 的候选歌曲）",
+    )
+    exploration_ratio: float = Field(
+        default=0.15,
+        description="小众歌曲曝光度（从尾部按此比例捞回冷门歌进入精排）",
+    )
+
+    # --- 三锚精排权重（语义 + 声学 + 个性化，自动归一化）---
+    tri_anchor_w_semantic: float = Field(
+        default=0.45,
+        description="三锚精排: M2D-CLAP 语义相关性权重",
+    )
+    tri_anchor_w_acoustic: float = Field(
+        default=0.30,
+        description="三锚精排: OMAR-RQ 声学风格一致性权重",
+    )
+    tri_anchor_w_personal: float = Field(
+        default=0.25,
+        description="三锚精排: 个性化偏好（图距离+Jaccard）权重",
     )
 
     # --- Artist 多样性 & MMR ---
@@ -243,7 +288,7 @@ class GlobalSettings(BaseSettings):
     # 7. Agent 内存与上下文
     # ================================================================
     memory_retain_rounds: int = Field(default=5, description="上下文管理器保留的最近聊天轮数")
-    max_context_tokens: int = Field(default=4000, description="允许的最大 Token 数")
+    max_context_tokens: int = Field(default=8000, description="允许的最大 Token 数")
     default_user_id: str = Field(default="local_admin", description="默认用户 ID（单用户模式）")
 
     # ================================================================
@@ -288,12 +333,15 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
         "llm_default_provider", "llm_default_model",
         "intent_llm_provider", "intent_llm_model",
         "hyde_llm_provider", "hyde_llm_model",
+        "compress_llm_provider", "compress_llm_model",
+        "context_total_budget",
         "finetuned_model_path", "llm_timeout", "llm_temperature",
         "audio_data_dir", "mtg_audio_dir", "online_acquired_dir",
         "graph_search_limit", "semantic_search_limit",
-        "hybrid_retrieval_limit", "web_search_max_results",
-        "dual_anchor_weight_semantic", "dual_anchor_weight_acoustic",
-        "graph_affinity_enabled", "graph_affinity_weight", "graph_affinity_max_hops",
+        "mixed_retrieval_limit", "hybrid_retrieval_limit", "web_search_max_results",
+        "graph_affinity_enabled", "graph_affinity_max_hops",
+        "coarse_cut_ratio", "exploration_ratio",
+        "tri_anchor_w_semantic", "tri_anchor_w_acoustic", "tri_anchor_w_personal",
         "max_songs_per_artist", "mmr_lambda",
         "memory_retain_rounds", "default_user_id",
     }

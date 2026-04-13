@@ -17,7 +17,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -67,6 +67,14 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"  ⚠️ Neo4j 预热失败（不影响启动）: {e}")
     
+    # 4. 异步预热 KV Prefix Cache（后台执行，不阻塞服务就绪）
+    try:
+        _agent_inst = get_agent()
+        asyncio.create_task(_agent_inst.graph.warmup_kv_cache())
+        logger.info(f"  🔥 KV Cache 预热已启动（后台运行）")
+    except Exception as e:
+        logger.warning(f"  ⚠️ KV Cache 预热启动失败: {e}")
+    
     logger.info(f"🏁 预加载完成，总耗时 {_t.time()-_t0:.1f}s")
 
 # 配置CORS
@@ -90,23 +98,43 @@ app.add_middleware(
 # 挂载静态音频/封面/歌词文件目录
 # Docker 内为 /app/data，本地开发为 Windows 路径
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.cors import CORSMiddleware as _StarletteCORS
+
+# StaticFiles 是独立的 ASGI sub-app，主 app 的 CORSMiddleware 不覆盖它。
+# 必须单独包裹，否则 <audio> 和 fetch(lyrics) 会被浏览器 CORS 拦截。
+_CORS_ORIGINS = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:3003", "http://127.0.0.1:3003",
+    "http://localhost:31000", "http://127.0.0.1:31000",
+]
+
+def _cors_static(directory: str) -> CORSMiddleware:
+    """给 StaticFiles 包一层 CORS，让 <audio> / fetch 跨域正常工作"""
+    static_app = StaticFiles(directory=directory)
+    return _StarletteCORS(
+        static_app,
+        allow_origins=_CORS_ORIGINS,
+        allow_methods=["GET", "HEAD", "OPTIONS"],
+        allow_headers=["*"],
+    )
+
 _DATA_ROOT = Path(os.environ.get("MUSIC_DATA_ROOT", r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data"))
 PROCESSED_AUDIO_ROOT = _DATA_ROOT / "processed_audio"
 audio_dir = PROCESSED_AUDIO_ROOT / "audio"
 if audio_dir.exists():
-    app.mount("/static/audio", StaticFiles(directory=str(audio_dir)), name="audio")
+    app.mount("/static/audio", _cors_static(str(audio_dir)), name="audio")
     logger.info(f"✅ 音频静态文件挂载成功: {audio_dir}")
 else:
     logger.warning(f"音频目录不存在,无法提供静态音频挂载: {audio_dir}")
 cover_dir = PROCESSED_AUDIO_ROOT / "covers"
 if cover_dir.exists():
-    app.mount("/static/covers", StaticFiles(directory=str(cover_dir)), name="covers")
+    app.mount("/static/covers", _cors_static(str(cover_dir)), name="covers")
     logger.info(f"✅ 封面静态文件挂载成功: {cover_dir}")
 else:
     logger.warning(f"封面目录不存在,无法提供静态封面挂载: {cover_dir}")
 lyrics_dir = PROCESSED_AUDIO_ROOT / "lyrics"
 if lyrics_dir.exists():
-    app.mount("/static/lyrics", StaticFiles(directory=str(lyrics_dir)), name="lyrics")
+    app.mount("/static/lyrics", _cors_static(str(lyrics_dir)), name="lyrics")
     logger.info(f"✅ 歌词静态文件挂载成功: {lyrics_dir}")
 else:
     logger.warning(f"歌词目录不存在,无法提供静态歌词挂载: {lyrics_dir}")
@@ -129,15 +157,15 @@ async def serve_mtg_audio(filename: str):
 ONLINE_AUDIO_ROOT = _DATA_ROOT / "online_acquired"
 online_audio_dir = ONLINE_AUDIO_ROOT / "audio"
 online_audio_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/static/online_audio", StaticFiles(directory=str(online_audio_dir)), name="online_audio")
+app.mount("/static/online_audio", _cors_static(str(online_audio_dir)), name="online_audio")
 logger.info(f"✅ 联网音频静态文件挂载: {online_audio_dir}")
 online_cover_dir = ONLINE_AUDIO_ROOT / "covers"
 online_cover_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/static/online_covers", StaticFiles(directory=str(online_cover_dir)), name="online_covers")
+app.mount("/static/online_covers", _cors_static(str(online_cover_dir)), name="online_covers")
 logger.info(f"✅ 联网封面静态文件挂载: {online_cover_dir}")
 online_lyrics_dir = ONLINE_AUDIO_ROOT / "lyrics"
 online_lyrics_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/static/online_lyrics", StaticFiles(directory=str(online_lyrics_dir)), name="online_lyrics")
+app.mount("/static/online_lyrics", _cors_static(str(online_lyrics_dir)), name="online_lyrics")
 logger.info(f"✅ 联网歌词静态文件挂载: {online_lyrics_dir}")
 
 # 全局Agent实例
@@ -239,25 +267,44 @@ async def stream_recommendations(
     mood: Optional[str] = None,
     user_preferences: Optional[Dict[str, Any]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
-    llm_provider: str = "siliconflow",
     web_search_enabled: bool = True,
+    is_disconnected=None,
 ) -> AsyncGenerator[str, None]:
     """
     流式生成推荐结果 (真流式：推荐解释逐 chunk 推送)
     
+    Args:
+        is_disconnected: 可选的异步回调，检测客户端是否已断开连接。
+                         由 FastAPI 端点通过 request.is_disconnected 注入。
     Yields:
         SSE格式的数据块
     """
     try:
         agent = get_agent()
         
-        # 根据前端传入的 provider 动态切换 LLM
+        # 根据 settings 配置初始化 LLM（provider/model 统一由设置面板管理）
         try:
-            from llms.multi_llm import get_chat_model
-            from agent.music_graph import set_llm
-            new_llm = get_chat_model(provider=llm_provider)
+            from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
+            from agent.music_graph import set_llm, set_intent_llm, set_explain_llm
+            from config.settings import settings as _req_settings
+            
+            _provider = _req_settings.llm_default_provider or "siliconflow"
+            _model = _req_settings.llm_default_model
+            
+            new_llm = get_chat_model(provider=_provider, model_name=_model)
             set_llm(new_llm)
-            logger.info(f"切换 LLM provider 到 {llm_provider}")
+            
+            # 同步切换意图分析 LLM（如果没有独立配置，跟随主模型）
+            if not _req_settings.intent_llm_model:
+                new_intent = get_intent_chat_model()
+                set_intent_llm(new_intent)
+            
+            # 同步切换解释生成 LLM（如果没有独立配置，跟随主模型）
+            if not _req_settings.explain_llm_model:
+                new_explain = get_explain_chat_model()
+                set_explain_llm(new_explain)
+            
+            logger.info(f"LLM 初始化: {_provider} / {_model}")
         except Exception as e:
             logger.warning(f"切换 LLM 失败,使用默认配置: {e}")
 
@@ -279,6 +326,21 @@ async def stream_recommendations(
             chat_history=chat_history,
             user_preferences=user_preferences
         ):
+            # ★ 检测客户端是否已断开（用户点击了"停止生成"）
+            if is_disconnected:
+                try:
+                    disconnected = await is_disconnected()
+                except Exception:
+                    disconnected = False
+                if disconnected:
+                    logger.info("🛑 [SSE] 检测到客户端断开连接，停止推送并取消后台任务")
+                    # 取消 agent 内部的 graph_task
+                    _internal_task = getattr(agent, '_current_graph_task', None)
+                    if _internal_task and not _internal_task.done():
+                        _internal_task.cancel()
+                        logger.info("🛑 [SSE] 后台 graph_task 已取消")
+                    return
+
             event_type = event.get("type")
             
             if event_type == "thinking":
@@ -308,6 +370,8 @@ async def stream_recommendations(
             elif event_type == "error":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         
+    except asyncio.CancelledError:
+        logger.info("🛑 [SSE] 流式推荐被取消")
     except Exception as e:
         logger.error(f"流式推荐失败: {str(e)}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
@@ -405,11 +469,12 @@ async def health():
 
 
 @app.post("/api/recommendations/stream")
-async def get_stream_recommendations(request: RecommendationRequest):
+async def get_stream_recommendations(request: RecommendationRequest, raw_request: Request):
     """
     流式获取音乐推荐
     
-    SSE流式接口,会逐步发送分析进度和结果
+    SSE流式接口,会逐步发送分析进度和结果。
+    注入 raw_request.is_disconnected 以支持客户端断开时取消后台任务。
     """
     return StreamingResponse(
         stream_recommendations(
@@ -418,8 +483,8 @@ async def get_stream_recommendations(request: RecommendationRequest):
             mood=request.mood,
             user_preferences=request.user_preferences,
             chat_history=request.chat_history,
-            llm_provider=request.llm_provider,
-            web_search_enabled=request.web_search_enabled
+            web_search_enabled=request.web_search_enabled,
+            is_disconnected=raw_request.is_disconnected,
         ),
         media_type="text/event-stream",
         headers={
@@ -593,6 +658,9 @@ async def get_settings_endpoint():
         "intent_llm_model": settings.intent_llm_model,
         "hyde_llm_provider": settings.hyde_llm_provider,
         "hyde_llm_model": settings.hyde_llm_model,
+        "compress_llm_provider": settings.compress_llm_provider,
+        "compress_llm_model": settings.compress_llm_model,
+        "context_total_budget": settings.context_total_budget,
         "finetuned_model_path": settings.finetuned_model_path,
         "llm_timeout": settings.llm_timeout,
         # 路径配置
@@ -602,15 +670,18 @@ async def get_settings_endpoint():
         # 检索参数
         "graph_search_limit": settings.graph_search_limit,
         "semantic_search_limit": settings.semantic_search_limit,
+        "mixed_retrieval_limit": settings.mixed_retrieval_limit,
         "hybrid_retrieval_limit": settings.hybrid_retrieval_limit,
         "web_search_max_results": settings.web_search_max_results,
-        # 双锚精排参数
-        "dual_anchor_weight_semantic": settings.dual_anchor_weight_semantic,
-        "dual_anchor_weight_acoustic": settings.dual_anchor_weight_acoustic,
-        # 图距离参数
+        # 粗排 & 探索
         "graph_affinity_enabled": settings.graph_affinity_enabled,
-        "graph_affinity_weight": settings.graph_affinity_weight,
         "graph_affinity_max_hops": settings.graph_affinity_max_hops,
+        "coarse_cut_ratio": settings.coarse_cut_ratio,
+        "exploration_ratio": settings.exploration_ratio,
+        # 三锚精排权重
+        "tri_anchor_w_semantic": settings.tri_anchor_w_semantic,
+        "tri_anchor_w_acoustic": settings.tri_anchor_w_acoustic,
+        "tri_anchor_w_personal": settings.tri_anchor_w_personal,
         # 多样性参数
         "max_songs_per_artist": settings.max_songs_per_artist,
         "mmr_lambda": settings.mmr_lambda,
@@ -629,6 +700,11 @@ class SettingsUpdateRequest(BaseModel):
     intent_llm_model: str | None = None
     hyde_llm_provider: str | None = None
     hyde_llm_model: str | None = None
+    compress_llm_provider: str | None = None
+    compress_llm_model: str | None = None
+    explain_llm_provider: str | None = None
+    explain_llm_model: str | None = None
+    context_total_budget: int | None = None
     finetuned_model_path: str | None = None
     llm_timeout: int | None = None
     audio_data_dir: str | None = None
@@ -636,13 +712,16 @@ class SettingsUpdateRequest(BaseModel):
     online_acquired_dir: str | None = None
     graph_search_limit: int | None = None
     semantic_search_limit: int | None = None
+    mixed_retrieval_limit: int | None = None
     hybrid_retrieval_limit: int | None = None
     web_search_max_results: int | None = None
-    dual_anchor_weight_semantic: float | None = None
-    dual_anchor_weight_acoustic: float | None = None
     graph_affinity_enabled: bool | None = None
-    graph_affinity_weight: float | None = None
     graph_affinity_max_hops: int | None = None
+    coarse_cut_ratio: float | None = None
+    exploration_ratio: float | None = None
+    tri_anchor_w_semantic: float | None = None
+    tri_anchor_w_acoustic: float | None = None
+    tri_anchor_w_personal: float | None = None
     max_songs_per_artist: int | None = None
     mmr_lambda: float | None = None
     memory_retain_rounds: int | None = None
@@ -672,11 +751,43 @@ async def update_settings_endpoint(request: SettingsUpdateRequest):
             from llms.multi_llm import get_chat_model
             from agent.music_graph import set_llm
             provider = update_data.get("llm_default_provider", settings.llm_default_provider)
-            new_llm = get_chat_model(provider=provider)
+            model = update_data.get("llm_default_model", settings.llm_default_model)
+            new_llm = get_chat_model(provider=provider, model_name=model)
             set_llm(new_llm)
-            logger.info(f"[Settings] LLM 热切换至 {provider}")
+            logger.info(f"[Settings] LLM 热切换至 {provider} / {model}")
         except Exception as e:
             logger.warning(f"[Settings] LLM 切换失败: {e}")
+
+    # 如果切换了意图分析 LLM（或主模型变更且意图使用主模型），热切换意图模型
+    _intent_changed = ("intent_llm_provider" in update_data or "intent_llm_model" in update_data
+                       or "llm_default_provider" in update_data or "llm_default_model" in update_data)
+    if _intent_changed:
+        try:
+            from llms.multi_llm import get_intent_chat_model
+            from agent.music_graph import set_intent_llm
+            new_intent_llm = get_intent_chat_model()
+            set_intent_llm(new_intent_llm)
+            _intent_model = settings.intent_llm_model or settings.llm_default_model
+            logger.info(f"[Settings] 意图分析 LLM 热切换至 {_intent_model}")
+        except Exception as e:
+            logger.warning(f"[Settings] 意图分析 LLM 切换失败: {e}")
+
+    # 如果切换了解释生成 LLM，或主模型变更且解释复用主模型，热切换
+    _explain_needs_update = ("explain_llm_provider" in update_data or "explain_llm_model" in update_data)
+    if not _explain_needs_update and ("llm_default_provider" in update_data or "llm_default_model" in update_data):
+        # 解释模型没有单独配置 → 复用主模型 → 主模型变了就要跟着更新
+        if not settings.explain_llm_model:
+            _explain_needs_update = True
+    if _explain_needs_update:
+        try:
+            from llms.multi_llm import get_explain_chat_model
+            from agent.music_graph import set_explain_llm
+            new_explain_llm = get_explain_chat_model()
+            set_explain_llm(new_explain_llm)
+            _explain_model = settings.explain_llm_model or settings.llm_default_model
+            logger.info(f"[Settings] 解释生成 LLM 热切换至 {_explain_model}")
+        except Exception as e:
+            logger.warning(f"[Settings] 解释生成 LLM 切换失败: {e}")
 
     logger.info(f"[Settings] 已更新配置: {updated_fields}")
 
@@ -721,6 +832,11 @@ async def reset_settings_endpoint():
             "intent_llm_model": fresh.intent_llm_model,
             "hyde_llm_provider": fresh.hyde_llm_provider,
             "hyde_llm_model": fresh.hyde_llm_model,
+            "compress_llm_provider": fresh.compress_llm_provider,
+            "compress_llm_model": fresh.compress_llm_model,
+            "explain_llm_provider": fresh.explain_llm_provider,
+            "explain_llm_model": fresh.explain_llm_model,
+            "context_total_budget": fresh.context_total_budget,
             "finetuned_model_path": fresh.finetuned_model_path,
             "llm_timeout": fresh.llm_timeout,
             "audio_data_dir": fresh.audio_data_dir,
@@ -728,13 +844,16 @@ async def reset_settings_endpoint():
             "online_acquired_dir": fresh.online_acquired_dir,
             "graph_search_limit": fresh.graph_search_limit,
             "semantic_search_limit": fresh.semantic_search_limit,
+            "mixed_retrieval_limit": fresh.mixed_retrieval_limit,
             "hybrid_retrieval_limit": fresh.hybrid_retrieval_limit,
             "web_search_max_results": fresh.web_search_max_results,
-            "dual_anchor_weight_semantic": fresh.dual_anchor_weight_semantic,
-            "dual_anchor_weight_acoustic": fresh.dual_anchor_weight_acoustic,
             "graph_affinity_enabled": fresh.graph_affinity_enabled,
-            "graph_affinity_weight": fresh.graph_affinity_weight,
             "graph_affinity_max_hops": fresh.graph_affinity_max_hops,
+            "coarse_cut_ratio": fresh.coarse_cut_ratio,
+            "exploration_ratio": fresh.exploration_ratio,
+            "tri_anchor_w_semantic": fresh.tri_anchor_w_semantic,
+            "tri_anchor_w_acoustic": fresh.tri_anchor_w_acoustic,
+            "tri_anchor_w_personal": fresh.tri_anchor_w_personal,
             "max_songs_per_artist": fresh.max_songs_per_artist,
             "mmr_lambda": fresh.mmr_lambda,
             "memory_retain_rounds": fresh.memory_retain_rounds,
@@ -901,6 +1020,150 @@ async def remove_dislike(song_title: str, artist: str, user_id: str = "local_adm
         return {"success": True}
     except Exception as e:
         logger.error(f"撤销不喜欢失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ================================================================
+# 歌曲完整删除 API（图谱 + 文件系统）
+# ================================================================
+
+@app.delete("/api/songs")
+async def delete_song_completely(song_title: str, artist: str):
+    """
+    从系统中彻底删除一首歌，包括：
+    1. Neo4j 图谱中的 Song 节点及所有关联边（保留 Artist 节点）
+    2. 文件系统中的音频、封面、歌词、元数据文件
+
+    ⚠️ 此操作不可逆！
+    """
+    deleted_files = []
+    errors = []
+
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        client = get_neo4j_client()
+
+        # ── Step 1: 从 Neo4j 查询 Song 节点的文件路径信息 ──
+        query_info = """
+        MATCH (s:Song {title: $title})
+        WHERE s.artist = $artist
+              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
+        RETURN s.music_id AS music_id,
+               s.audio_url AS audio_url,
+               s.cover_url AS cover_url,
+               s.lrc_url AS lrc_url,
+               s.dataset AS dataset
+        LIMIT 1
+        """
+        info_result = client.execute_query(query_info, {"title": song_title, "artist": artist})
+
+        if not info_result:
+            raise HTTPException(status_code=404, detail=f"歌曲未找到: 《{song_title}》 - {artist}")
+
+        song_info = info_result[0]
+        music_id = song_info.get("music_id", "")
+        audio_url = song_info.get("audio_url", "")
+        cover_url = song_info.get("cover_url", "")
+        lrc_url = song_info.get("lrc_url", "")
+        dataset = song_info.get("dataset", "personal")
+
+        logger.info(f"🗑️ 开始删除歌曲: 《{song_title}》 - {artist} (music_id={music_id}, dataset={dataset})")
+
+        # ── Step 2: 从 Neo4j 删除 Song 节点及所有关联边 ──
+        # DETACH DELETE 会自动删除所有关联的边（PERFORMED_BY, HAS_MOOD 等）
+        # Artist 节点本身不会被删除（只删除边）
+        delete_query = """
+        MATCH (s:Song {title: $title})
+        WHERE s.artist = $artist
+              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
+        DETACH DELETE s
+        RETURN count(s) AS deleted_count
+        """
+        del_result = client.execute_query(delete_query, {"title": song_title, "artist": artist})
+        deleted_count = del_result[0].get("deleted_count", 0) if del_result else 0
+
+        if deleted_count == 0:
+            raise HTTPException(status_code=404, detail=f"歌曲删除失败: 图谱中未找到匹配节点")
+
+        logger.info(f"  ✅ Neo4j: 已删除 {deleted_count} 个 Song 节点及其关联边")
+
+        # ── Step 3: 清理孤立的标签节点（不清理 Artist） ──
+        orphan_labels = ["Mood", "Theme", "Scenario", "Genre", "Language", "Region"]
+        for label in orphan_labels:
+            try:
+                client.execute_query(f"MATCH (n:{label}) WHERE NOT (n)--() DELETE n")
+            except Exception:
+                pass
+
+        # ── Step 4: 删除文件系统中的关联文件 ──
+        def try_delete_file(file_path: Path, desc: str):
+            """尝试删除文件，记录结果"""
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                    deleted_files.append(str(file_path))
+                    logger.info(f"  🗑️ 已删除{desc}: {file_path}")
+                except Exception as e:
+                    errors.append(f"删除{desc}失败: {e}")
+                    logger.warning(f"  ⚠️ 删除{desc}失败: {file_path} - {e}")
+
+        # 根据 URL 路径推断文件系统位置
+        def resolve_static_path(url: str) -> Path | None:
+            """将 /static/xxx/yyy 格式的 URL 映射回文件系统路径"""
+            if not url:
+                return None
+            # /static/audio/xxx.flac → processed_audio/audio/xxx.flac
+            if url.startswith("/static/audio/"):
+                return PROCESSED_AUDIO_ROOT / "audio" / url.replace("/static/audio/", "")
+            if url.startswith("/static/covers/"):
+                return PROCESSED_AUDIO_ROOT / "covers" / url.replace("/static/covers/", "")
+            if url.startswith("/static/lyrics/"):
+                return PROCESSED_AUDIO_ROOT / "lyrics" / url.replace("/static/lyrics/", "")
+            # 联网获取的音频
+            if url.startswith("/static/online_audio/"):
+                return ONLINE_AUDIO_ROOT / "audio" / url.replace("/static/online_audio/", "")
+            if url.startswith("/static/online_covers/"):
+                return ONLINE_AUDIO_ROOT / "covers" / url.replace("/static/online_covers/", "")
+            return None
+
+        # 删除音频文件
+        audio_path = resolve_static_path(audio_url)
+        if audio_path:
+            try_delete_file(audio_path, "音频文件")
+            # 同时尝试删除对应的元数据文件
+            basename = audio_path.stem  # 不含扩展名
+            meta_path = PROCESSED_AUDIO_ROOT / "metadata" / f"{basename}_meta.json"
+            try_delete_file(meta_path, "元数据文件")
+
+        # 删除封面文件
+        cover_path = resolve_static_path(cover_url)
+        if cover_path:
+            try_delete_file(cover_path, "封面文件")
+
+        # 删除歌词文件
+        lrc_path = resolve_static_path(lrc_url)
+        if lrc_path:
+            try_delete_file(lrc_path, "歌词文件")
+
+        # 联网获取的歌曲额外检查（可能有歌词在 online_acquired/lyrics/）
+        if dataset == "online":
+            online_lrc = ONLINE_AUDIO_ROOT / "lyrics" / f"{music_id}.lrc"
+            try_delete_file(online_lrc, "联网歌词文件")
+
+        logger.info(f"🗑️ 歌曲删除完成: 《{song_title}》 - {artist}, 删除了 {len(deleted_files)} 个文件")
+
+        return {
+            "success": True,
+            "message": f"《{song_title}》已从系统中彻底删除",
+            "deleted_graph_nodes": deleted_count,
+            "deleted_files": deleted_files,
+            "errors": errors if errors else None,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"歌曲删除失败: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
