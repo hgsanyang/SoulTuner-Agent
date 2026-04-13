@@ -265,6 +265,7 @@ Avg. Latency: 11.55s/query (Includes classification + NER + extraction + HyDE ge
 ```
 
 Run evaluations:
+
 ```bash
 python -m tests.eval.evaluate_intent --provider siliconflow
 ```
@@ -322,12 +323,14 @@ Deployment takes 3 steps: **① Preparation** → **② Select Deployment Method
 **1.1 Music Data**: Place MP3 files in the `data/processed_audio/audio/` directory (Customizable via `.env`).
 
 **1.2 Environment Variables**:
+
 ```bash
 cp .env.example .env
 # Edit .env: Fill in SiliconFlow_API_KEY and NEO4J_PASSWORD at minimum
 ```
 
 **1.3 Model Weights Download** (Required once, takes ~**2.4 GB**):
+
 ```bash
 # Set up Python env (Required later for Data Ingestion)
 conda create -n music_agent python=3.11 && conda activate music_agent
@@ -474,10 +477,12 @@ python data/pipeline/ingest_to_neo4j.py --update-embeddings
 Hardware-accelerated deployment workflow for 8GB VRAM cards (e.g., RTX 4070), providing local reasoning via Qwen3-4B logic bounds in intent determination.
 
 1. **Terminal A (WSL)**: Ignite inference engine.
+
    ```bash
    wsl
    bash /path/to/SoulTuner-Agent/scripts/start_sglang.sh
    ```
+
 2. **Terminal B (Windows)**: Swap UI Config parameters.
    - Boot up `python startup_all.py`
    - Access UI Settings ⚙️ → **Main Provider** → Select `sglang` → Save.

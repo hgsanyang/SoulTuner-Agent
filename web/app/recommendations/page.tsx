@@ -24,13 +24,7 @@ export interface ChatMessage {
 }
 
 // 可选模型配置
-const MODEL_OPTIONS = [
-  { provider: 'siliconflow', label: 'SiliconFlow', icon: '⚡' },
-  { provider: 'volcengine', label: '豆包 (字节)', icon: '🔥' },
-  { provider: 'dashscope', label: '通义千问', icon: '🔮' },
-  { provider: 'google', label: 'Gemini', icon: '✨' },
-  { provider: 'deepseek', label: 'DeepSeek', icon: '🧠' },
-];
+// 模型选择已统一由设置面板（SettingsPanel）管理，不再在聊天页快捷切换
 
 const STORAGE_KEY = 'music_chat_history';
 
@@ -47,13 +41,7 @@ export default function RecommendationsPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const songListRef = useRef<HTMLDivElement>(null);
 
-  // 模型切换和联网开关状态（持久化到 localStorage，切换页面后不丢失）
-  const [selectedProvider, setSelectedProvider] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('music_selected_provider') || 'siliconflow';
-    }
-    return 'siliconflow';
-  });
+  // 联网搜索开关状态（持久化到 localStorage）
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('music_web_search_enabled');
@@ -61,19 +49,15 @@ export default function RecommendationsPage() {
     }
     return true;
   });
-  const [showModelMenu, setShowModelMenu] = useState(false);
 
-  // 持久化模型选择
-  useEffect(() => {
-    localStorage.setItem('music_selected_provider', selectedProvider);
-  }, [selectedProvider]);
+
 
   // 持久化联网搜索开关
   useEffect(() => {
     localStorage.setItem('music_web_search_enabled', String(webSearchEnabled));
   }, [webSearchEnabled]);
 
-  const selectedModel = MODEL_OPTIONS.find(m => m.provider === selectedProvider) || MODEL_OPTIONS[0];
+
 
   // ── 持久化：从 localStorage 加载聊天记录 ──
   useEffect(() => {
@@ -122,7 +106,6 @@ export default function RecommendationsPage() {
   }, [latestAssistantWithSongs?.id, allSongs.length]);
 
   const handleSubmit = useCallback(async (value: string) => {
-    setShowModelMenu(false);
 
     const newMessageId = Date.now().toString();
     const userMsgId = `user-${newMessageId}`;
@@ -151,7 +134,6 @@ export default function RecommendationsPage() {
       {
         query: value,
         chatHistory: chatHistorySnapshot,
-        llmProvider: selectedProvider,
         webSearchEnabled,
       },
       (event: SSEEvent) => {
@@ -203,7 +185,7 @@ export default function RecommendationsPage() {
 
     cancelRef.current = cancel;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, selectedProvider, webSearchEnabled]);
+  }, [messages, webSearchEnabled]);
 
   /** 中止当前搜索，立即允许新搜索 */
   const handleAbort = useCallback(() => {
@@ -294,67 +276,6 @@ export default function RecommendationsPage() {
       marginBottom: '0.75rem', // Added explicit margin-bottom here to separate from input
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-        {/* 模型切换按钮 */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowModelMenu(prev => !prev)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              padding: '0.35rem 0.8rem',
-              borderRadius: '2rem',
-              backgroundColor: showModelMenu ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.06)',
-              border: `1px solid ${showModelMenu ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)'}`,
-              color: '#fff', fontSize: '0.82rem', fontWeight: 500,
-              cursor: 'pointer', transition: 'all 0.15s', whiteSpace: 'nowrap',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)')}
-            onMouseLeave={e => !showModelMenu && (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
-          >
-            <span>{selectedModel.icon}</span>
-            <span>{selectedModel.label}</span>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ opacity: 0.6, transform: showModelMenu ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-
-          {/* 模型下拉菜单 */}
-          {showModelMenu && (
-            <div style={{
-              position: 'absolute', bottom: 'calc(100% + 8px)', left: 0,
-              backgroundColor: 'rgba(20,20,20,0.97)',
-              border: '1px solid rgba(255,255,255,0.12)',
-              borderRadius: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-              minWidth: '180px', zIndex: 200, overflow: 'hidden', backdropFilter: 'blur(16px)',
-            }}>
-              <div style={{ padding: '0.5rem 0.8rem', fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', borderBottom: '1px solid rgba(255,255,255,0.06)', fontWeight: 600, letterSpacing: '0.06em' }}>
-                选择模型
-              </div>
-              {MODEL_OPTIONS.map(m => (
-                <button key={m.provider}
-                  onClick={() => { setSelectedProvider(m.provider); setShowModelMenu(false); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.6rem',
-                    width: '100%', padding: '0.6rem 0.8rem',
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    color: m.provider === selectedProvider ? theme.colors.primary.accent : '#fff',
-                    fontSize: '0.88rem', textAlign: 'left', transition: 'background-color 0.15s',
-                    fontWeight: m.provider === selectedProvider ? 600 : 400,
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.07)')}
-                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-                >
-                  <span style={{ fontSize: '1rem' }}>{m.icon}</span>
-                  <span>{m.label}</span>
-                  {m.provider === selectedProvider && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ marginLeft: 'auto' }}>
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
 
         {/* 联网搜索开关 */}
         <button

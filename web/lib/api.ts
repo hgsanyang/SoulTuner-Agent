@@ -14,7 +14,7 @@ export interface JourneyRequest {
     duration?: number;
     user_preferences?: Record<string, any>;
     context?: Record<string, any>;
-    llm_provider?: string;  // 模型提供商，和推荐页保持一致
+    llm_provider?: string;  // 已弃用：模型提供商统一由后端 settings 管理
 }
 
 export type MoodTransitionInput = { time: number; mood: string; intensity: number };
@@ -73,7 +73,6 @@ export function streamRecommendations(
                 body: JSON.stringify({
                     query: params.query,
                     chat_history: params.chatHistory || [],
-                    llm_provider: params.llmProvider || 'siliconflow',
                     web_search_enabled: params.webSearchEnabled !== false,  // 默认 true
                 }),
                 signal: controller.signal,
@@ -224,6 +223,27 @@ export async function removeDislike(songTitle: string, artist: string): Promise<
     } catch (err) {
         console.warn('[API] removeDislike 失败:', err);
         return false;
+    }
+}
+
+// ---- 从本地曲库彻底删除一首歌（图谱 + 音频 + 封面 + 歌词 + 元数据）----
+export async function deleteSongFromLibrary(
+    songTitle: string,
+    artist: string,
+): Promise<{ success: boolean; message: string; deleted_files?: string[] }> {
+    try {
+        const resp = await fetch(
+            `http://localhost:8501/api/songs?song_title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(artist)}`,
+            { method: 'DELETE' },
+        );
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: '删除失败' }));
+            throw new Error(err.detail || `删除失败: ${resp.status}`);
+        }
+        return resp.json();
+    } catch (err: any) {
+        console.error('[API] deleteSongFromLibrary 失败:', err);
+        return { success: false, message: err.message || '删除失败' };
     }
 }
 

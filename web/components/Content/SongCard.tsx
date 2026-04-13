@@ -3,7 +3,7 @@
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
-import { sendUserEvent, acquireSong } from '@/lib/api';
+import { sendUserEvent, acquireSong, deleteSongFromLibrary } from '@/lib/api';
 import { useState } from 'react';
 
 interface SongCardProps {
@@ -26,6 +26,8 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [acquireState, setAcquireState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteState, setDeleteState] = useState<'idle' | 'loading'>('idle');
 
   const handleAcquire = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -82,6 +84,27 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
     onRemove?.();
   };
 
+  const handleDeleteFromLibrary = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (deleteState === 'loading') return;
+    setDeleteState('loading');
+    try {
+      const result = await deleteSongFromLibrary(title, artist);
+      if (result.success) {
+        showToast(`🗑️ 《${title}》已从本地曲库彻底删除`);
+        setShowDeleteConfirm(false);
+        // 从当前列表中移除
+        onRemove?.();
+      } else {
+        showToast(`❌ 删除失败: ${result.message}`);
+      }
+    } catch (err: any) {
+      showToast(`❌ 删除失败: ${err.message || '未知错误'}`);
+    } finally {
+      setDeleteState('idle');
+    }
+  };
+
   return (
     <div
       style={{
@@ -95,7 +118,7 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
         position: 'relative',
       }}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => { setIsHovered(false); setShowFolderPicker(false); }}
+      onMouseLeave={() => { setIsHovered(false); setShowFolderPicker(false); setShowDeleteConfirm(false); }}
     >
       {/* 主行：封面 + 歌曲信息 + 操作按钮（同行） */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
@@ -219,6 +242,76 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,100,100,0.8)" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
           )}
+          {/* 从本地曲库彻底删除按钮 */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={e => { e.stopPropagation(); setShowDeleteConfirm(prev => !prev); }}
+              title="从本地曲库彻底删除"
+              style={actionBtnStyle(showDeleteConfirm ? '#ff4444' : undefined)}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,60,60,0.2)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={showDeleteConfirm ? '#ff4444' : 'rgba(255,120,120,0.5)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
+            {showDeleteConfirm && (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{
+                  position: 'absolute', right: 0, bottom: 'calc(100% + 8px)',
+                  backgroundColor: 'rgba(30,10,10,0.97)',
+                  border: '1px solid rgba(255,80,80,0.35)',
+                  borderRadius: '10px',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+                  padding: '0.75rem 1rem',
+                  minWidth: '200px',
+                  zIndex: 300,
+                  backdropFilter: 'blur(16px)',
+                }}
+              >
+                <p style={{ margin: '0 0 0.6rem', fontSize: '0.82rem', color: '#ff8888', fontWeight: 600 }}>
+                  ⚠️ 彻底删除这首歌？
+                </p>
+                <p style={{ margin: '0 0 0.75rem', fontSize: '0.75rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.5 }}>
+                  将从图谱、音频、封面、歌词中<br/>完全移除，此操作不可逆！
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); setShowDeleteConfirm(false); }}
+                    style={{
+                      padding: '0.35rem 0.8rem', fontSize: '0.78rem',
+                      backgroundColor: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      borderRadius: '6px', color: 'rgba(255,255,255,0.7)',
+                      cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)')}
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)')}
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleDeleteFromLibrary}
+                    disabled={deleteState === 'loading'}
+                    style={{
+                      padding: '0.35rem 0.8rem', fontSize: '0.78rem',
+                      backgroundColor: deleteState === 'loading' ? 'rgba(255,80,80,0.3)' : 'rgba(255,60,60,0.25)',
+                      border: '1px solid rgba(255,80,80,0.45)',
+                      borderRadius: '6px', color: '#ff6666', fontWeight: 600,
+                      cursor: deleteState === 'loading' ? 'wait' : 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => deleteState !== 'loading' && (e.currentTarget.style.backgroundColor = 'rgba(255,60,60,0.4)')}
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,60,60,0.25)')}
+                  >
+                    {deleteState === 'loading' ? '删除中...' : '确认删除'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

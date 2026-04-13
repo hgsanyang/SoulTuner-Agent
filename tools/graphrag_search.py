@@ -785,11 +785,27 @@ def graphrag_search(query: str, limit: int = 5) -> str:
                 raw_name = record.get("raw_name", "") or ""
                 track_name = record.get("title") or record.get("track_name", "Unknown")
                 audio_url = record.get("audio_url", "") or ""
-                preview_url = f"{BASE_API_URL}{audio_url}" if audio_url else None
+                if audio_url:
+                    from urllib.parse import quote
+                    # 对路径中的文件名部分做 URL 编码（保留 / 分隔符）
+                    _encoded_audio = "/".join(quote(seg, safe="") for seg in audio_url.split("/"))
+                    preview_url = f"{BASE_API_URL}{_encoded_audio}"
+                else:
+                    preview_url = None
                 cover_url = record.get("cover_url", "") or ""
-                cover_url = f"{BASE_API_URL}{cover_url}" if cover_url else None
+                if cover_url:
+                    from urllib.parse import quote
+                    _encoded_cover = "/".join(quote(seg, safe="") for seg in cover_url.split("/"))
+                    cover_url = f"{BASE_API_URL}{_encoded_cover}"
+                else:
+                    cover_url = None
                 lrc_url = record.get("lrc_url", "") or ""
-                lrc_url = f"{BASE_API_URL}{lrc_url}" if lrc_url else None
+                if lrc_url:
+                    from urllib.parse import quote
+                    _encoded_lrc = "/".join(quote(seg, safe="") for seg in lrc_url.split("/"))
+                    lrc_url = f"{BASE_API_URL}{_encoded_lrc}"
+                else:
+                    lrc_url = None
                 # 图谱匹配置信度评分（标题 + 歌手综合评分）
                 graph_score = 0.85
                 artist_name = record.get("artist", "").lower()
