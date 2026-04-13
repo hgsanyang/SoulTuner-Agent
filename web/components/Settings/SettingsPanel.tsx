@@ -11,11 +11,29 @@ const LLM_PROVIDERS = [
   { value: 'siliconflow', label: 'SiliconFlow (API)', defaultModel: 'deepseek-ai/DeepSeek-V3.2' },
   { value: 'volcengine', label: '火山引擎 / 豆包 (字节跳动)', defaultModel: 'ep-20260405142751-x4jm6' },
   { value: 'dashscope', label: '通义千问 DashScope (API)', defaultModel: 'qwen-plus' },
-  { value: 'google', label: 'Google Gemini (API)', defaultModel: 'gemini-2.5-flash' },
+  { value: 'google', label: 'Google Gemini (API)', defaultModel: 'gemini-3-flash-preview' },
+  { value: 'deepseek', label: 'DeepSeek (API)', defaultModel: 'deepseek-chat' },
   { value: 'sglang', label: 'SGLang (本地推荐)', defaultModel: 'local-planner-qwen3-4b-fp8' },
   { value: 'ollama', label: 'Ollama (本地)', defaultModel: 'qwen2.5:7b' },
   { value: 'vllm', label: 'vLLM (本地微调)', defaultModel: '' },
 ];
+
+// ---- 每个 Provider 的常用模型预设列表 ----
+const MODEL_PRESETS: Record<string, string[]> = {
+  siliconflow: [
+    'deepseek-ai/DeepSeek-V3.2',
+    'Qwen/Qwen3.5-35B-A3B',
+    'THUDM/GLM-4-32B-0414',
+    'Pro/Qwen/Qwen2.5-7B-Instruct',
+  ],
+  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+  dashscope: ['deepseek-v3.2', 'deepseek-v3', 'qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen3.5-flash'],
+  google: ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+  volcengine: ['ep-20260405142751-x4jm6'],
+  sglang: ['local-planner-qwen3-4b-fp8'],
+  ollama: ['qwen2.5:7b', 'qwen2.5:3b', 'llama3.1:8b'],
+  vllm: ['Qwen/Qwen2.5-7B-Instruct'],
+};
 
 // ---- 标签页定义 ----
 type TabKey = 'models' | 'retrieval' | 'paths' | 'memory';
@@ -42,6 +60,13 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [saveMessage, setSaveMessage] = useState('');
+  // 部署模式: 'api' = 意图+HyDE共用一个API模型, 'local' = 分别配置意图/HyDE模型
+  const [deployMode, setDeployMode] = useState<'api' | 'local'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('soultuner_deploy_mode') as 'api' | 'local') || 'api';
+    }
+    return 'api';
+  });
 
   // ★ 快照：记录上次从后端拿到的干净数据
   const snapshotRef = useRef<Settings>({});
@@ -232,22 +257,187 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     </div>
   );
 
+  // ---- 复合控件：Provider 选择 + 模型预设下拉 ----
+  const renderModelPicker = (
+    providerKey: string, modelKey: string,
+    providerLabel: string, modelLabel: string,
+    allowReuse = false,
+  ) => {
+    const currentProvider = String(settings[providerKey] || '');
+    const presets = MODEL_PRESETS[currentProvider] || [];
+    const currentModel = String(settings[modelKey] || '');
+    const isCustom = currentModel !== '' && !presets.includes(currentModel);
+
+    return (
+      <div style={{ marginBottom: '1rem' }}>
+        {/* Provider 选择 */}
+        <div style={fieldGroup}>
+          <label style={labelStyle}>{providerLabel}</label>
+          <select
+            style={selectStyle}
+            value={currentProvider}
+            onChange={e => {
+              updateField(providerKey, e.target.value);
+              // 自动填入新 provider 的默认模型
+              const newPresets = MODEL_PRESETS[e.target.value];
+              if (newPresets && newPresets.length > 0) {
+                updateField(modelKey, newPresets[0]);
+              } else {
+                const p = LLM_PROVIDERS.find(p => p.value === e.target.value);
+                if (p) updateField(modelKey, p.defaultModel);
+              }
+            }}
+          >
+            {allowReuse && <option value="">-- 复用主模型 --</option>}
+            {LLM_PROVIDERS.map(p => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
+        </div>
+        {/* 模型选择：有预设时显示下拉，否则显示输入框 */}
+        {(!allowReuse || currentProvider) && (
+          <div style={fieldGroup}>
+            <label style={labelStyle}>{modelLabel}</label>
+            {presets.length > 0 ? (
+              <select
+                style={selectStyle}
+                value={isCustom ? '__custom__' : currentModel}
+                onChange={e => {
+                  if (e.target.value === '__custom__') {
+                    updateField(modelKey, '');
+                  } else {
+                    updateField(modelKey, e.target.value);
+                  }
+                }}
+              >
+                {presets.map(m => <option key={m} value={m}>{m}</option>)}
+                <option value="__custom__">✏️ 自定义...</option>
+              </select>
+            ) : (
+              <input
+                style={inputStyle}
+                value={currentModel}
+                placeholder={LLM_PROVIDERS.find(p => p.value === currentProvider)?.defaultModel || '输入模型名'}
+                onChange={e => updateField(modelKey, e.target.value)}
+              />
+            )}
+            {/* 自定义输入框（仅当选择了"自定义"时显示） */}
+            {presets.length > 0 && isCustom && (
+              <input
+                style={{ ...inputStyle, marginTop: '0.4rem' }}
+                value={currentModel}
+                placeholder="输入自定义模型名"
+                onChange={e => updateField(modelKey, e.target.value)}
+                autoFocus
+              />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ---- 部署模式切换按钮样式 ----
+  const modeButtonStyle = (active: boolean): React.CSSProperties => ({
+    flex: 1,
+    padding: '0.55rem 0.8rem',
+    fontSize: '0.82rem',
+    fontWeight: active ? 700 : 400,
+    color: active ? '#fff' : theme.colors.text.secondary,
+    backgroundColor: active ? theme.colors.primary.accent : 'rgba(255,255,255,0.04)',
+    border: `1px solid ${active ? theme.colors.primary.accent : theme.colors.border.default}`,
+    borderRadius: theme.borderRadius.sm,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    textAlign: 'center' as const,
+  });
+
+  const sectionTitleStyle: React.CSSProperties = {
+    fontSize: '0.8rem',
+    color: theme.colors.text.muted,
+    fontWeight: 600,
+    letterSpacing: '0.05em',
+    padding: '0.6rem 0.8rem',
+    margin: '1rem 0 0.6rem',
+    background: 'rgba(255,255,255,0.03)',
+    borderRadius: theme.borderRadius.sm,
+    borderLeft: `3px solid ${theme.colors.primary.accent}`,
+  };
+
   // ---- 标签页内容 ----
   const renderModelsTab = () => (
     <>
       <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🤖 LLM 模型配置</h4>
-      {renderSelect('llm_default_provider', '主 LLM 提供商', LLM_PROVIDERS.map(p => ({ value: p.value, label: p.label })))}
-      {renderInput('llm_default_model', '主 LLM 模型名', LLM_PROVIDERS.find(p => p.value === settings.llm_default_provider)?.defaultModel)}
 
-      <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>专用模型（可选，空则复用主模型）</span>
+      {/* ═══ 部署模式切换 ═══ */}
+      <div style={{ marginBottom: '1.2rem' }}>
+        <label style={{ ...labelStyle, marginBottom: '0.5rem' }}>部署模式</label>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            style={modeButtonStyle(deployMode === 'api')}
+            onClick={() => {
+              setDeployMode('api');
+              localStorage.setItem('soultuner_deploy_mode', 'api');
+              // API 模式下清空单独的 intent/hyde provider（复用主模型）
+              updateField('intent_llm_provider', '');
+              updateField('intent_llm_model', '');
+              updateField('hyde_llm_provider', '');
+              updateField('hyde_llm_model', '');
+            }}
+          >
+            ☁️ API 部署
+            <div style={{ fontSize: '0.7rem', fontWeight: 400, opacity: 0.7, marginTop: '2px' }}>
+              意图分析 + HyDE 共用一个模型
+            </div>
+          </button>
+          <button
+            style={modeButtonStyle(deployMode === 'local')}
+            onClick={() => {
+              setDeployMode('local');
+              localStorage.setItem('soultuner_deploy_mode', 'local');
+            }}
+          >
+            💻 本地部署
+            <div style={{ fontSize: '0.7rem', fontWeight: 400, opacity: 0.7, marginTop: '2px' }}>
+              分别配置意图分析 / HyDE 模型
+            </div>
+          </button>
+        </div>
       </div>
-      {renderSelect('intent_llm_provider', '意图分析 LLM', [{ value: '', label: '-- 复用主模型 --' }, ...LLM_PROVIDERS.map(p => ({ value: p.value, label: p.label }))])}
-      {renderInput('intent_llm_model', '意图分析模型名', '如: qwen3.5-4b-soultuner')}
-      {renderSelect('hyde_llm_provider', 'HyDE 描述 LLM', [{ value: '', label: '-- 复用主模型 --' }, ...LLM_PROVIDERS.map(p => ({ value: p.value, label: p.label }))])}
-      {renderInput('hyde_llm_model', 'HyDE 描述模型名', '')}
-      {renderInput('intent_model_path', '意图分析微调模型路径', '/path/to/intent-sft-model')}
-      {renderInput('hyde_model_path', 'HyDE 描述微调模型路径', '/path/to/hyde-grpo-model')}
+
+      {/* ═══ API 模式：只配一个模型 ═══ */}
+      {deployMode === 'api' && (
+        <>
+          <div style={sectionTitleStyle}>☁️ 推荐模型（意图分析 + HyDE 共用）</div>
+          {renderModelPicker('llm_default_provider', 'llm_default_model', '提供商', '模型')}
+        </>
+      )}
+
+      {/* ═══ 本地模式：分开配置 ═══ */}
+      {deployMode === 'local' && (
+        <>
+          <div style={sectionTitleStyle}>🧠 意图分析模型</div>
+          {renderModelPicker('intent_llm_provider', 'intent_llm_model', '提供商', '模型')}
+          {renderInput('intent_model_path', '微调模型路径（可选）', '/path/to/intent-sft-model')}
+
+          <div style={sectionTitleStyle}>📝 HyDE 描述模型</div>
+          {renderModelPicker('hyde_llm_provider', 'hyde_llm_model', '提供商', '模型')}
+          {renderInput('hyde_model_path', '微调模型路径（可选）', '/path/to/hyde-grpo-model')}
+        </>
+      )}
+
+      {/* ═══ 解释生成模型（通用，两种模式都可独立配置）═══ */}
+      <div style={sectionTitleStyle}>💬 解释生成模型（通用）</div>
+      <div style={{ fontSize: '0.73rem', color: theme.colors.text.muted, marginBottom: '0.6rem', lineHeight: 1.5 }}>
+        负责生成推荐理由和最终解释文本（流式输出给用户），建议使用表达能力强的模型
+      </div>
+      {renderModelPicker('explain_llm_provider', 'explain_llm_model', '提供商', '模型', true)}
+
+      {/* ═══ 上下文压缩（通用设置）═══ */}
+      <div style={sectionTitleStyle}>🗜️ 上下文压缩（通用）</div>
+      {renderModelPicker('compress_llm_provider', 'compress_llm_model', '提供商', '模型', true)}
+
+      {/* ═══ 超时 ═══ */}
       {renderSlider('llm_timeout', 'LLM 超时', 10, 120, 5, '秒')}
     </>
   );
@@ -255,29 +445,53 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const renderRetrievalTab = () => (
     <>
       <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🔍 检索 & 排序参数</h4>
-      {renderSlider('graph_search_limit', '图谱检索数量', 3, 30, 1)}
-      {renderSlider('semantic_search_limit', '向量检索数量', 3, 30, 1)}
-      {renderSlider('hybrid_retrieval_limit', '歌单输出数量', 3, 30, 1)}
+
+      {/* ═══ 检索数量 ═══ */}
+      {renderSlider('graph_search_limit', '图谱检索数量（仅图谱模式）', 3, 30, 1)}
+      {renderSlider('semantic_search_limit', '向量检索数量（仅向量模式）', 3, 30, 1)}
+      {renderSlider('mixed_retrieval_limit', '混合检索数量（每引擎各返回）', 3, 30, 1)}
+      {renderSlider('hybrid_retrieval_limit', '歌单输出数量（最终展示）', 3, 30, 1)}
       {renderSlider('web_search_max_results', '联网搜索数量', 1, 10, 1)}
 
+      {/* ═══ 粗排 & 探索 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>RRF 加权融合</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>粗排 & 探索（Graph Affinity + Thompson Sampling）</span>
       </div>
-      {renderSlider('rrf_weight_vector', '向量检索权重', 0, 1, 0.05)}
-      <div style={{ fontSize: '0.75rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        图谱权重自动计算为 {(1 - Number(settings.rrf_weight_vector || 0.7)).toFixed(2)}
-      </div>
-
-      <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>Neo4j 图距离加权</span>
-      </div>
-      {renderToggle('graph_affinity_enabled', '启用图距离加权')}
+      {renderToggle('graph_affinity_enabled', '启用图距离粗排 + TS 探索')}
       {settings.graph_affinity_enabled && (
         <>
-          {renderSlider('graph_affinity_weight', '亲和力权重', 0, 0.5, 0.05)}
+          {renderSlider('coarse_cut_ratio', '粗排保留比例', 0.3, 1, 0.05)}
+          <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
+            例: 0.65 = 保留 65% 候选歌曲进入精排，其余淘汰
+          </div>
+          {renderSlider('exploration_ratio', '小众歌曲曝光度', 0, 0.5, 0.05)}
+          <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
+            从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）
+          </div>
           {renderSlider('graph_affinity_max_hops', '最大跳数', 2, 8, 1)}
         </>
       )}
+
+      {/* ═══ 三锚精排权重 ═══ */}
+      <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>三锚精排权重（语义 + 声学 + 个性化）</span>
+      </div>
+      {renderSlider('tri_anchor_w_semantic', '语义相关性（M2D-CLAP）', 0, 1, 0.05)}
+      {renderSlider('tri_anchor_w_acoustic', '声学风格（OMAR-RQ）', 0, 1, 0.05)}
+      {renderSlider('tri_anchor_w_personal', '个性化偏好（图距离+Jaccard）', 0, 1, 0.05)}
+      <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
+        权重会自动归一化，无需手动凑和为 1
+      </div>
+
+      {/* ═══ 多样性 ═══ */}
+      <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>多样性控制</span>
+      </div>
+      {renderSlider('max_songs_per_artist', '每歌手最多曲数', 1, 5, 1)}
+      {renderSlider('mmr_lambda', 'MMR 相关性偏好', 0.3, 1, 0.05)}
+      <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
+        越高越偏向相关性，越低越偏向多样性
+      </div>
     </>
   );
 
@@ -295,6 +509,10 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     <>
       <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🧠 记忆 & 上下文</h4>
       {renderSlider('memory_retain_rounds', '上下文保留轮数', 1, 20, 1, '轮')}
+      {renderSlider('context_total_budget', '上下文窗口预算', 2000, 16000, 500, ' tokens')}
+      <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
+        越大保留越多历史对话，但增加 LLM 调用成本和延迟
+      </div>
       {renderInput('default_user_id', '用户 ID', 'local_admin')}
     </>
   );
