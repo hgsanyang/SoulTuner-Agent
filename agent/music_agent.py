@@ -194,6 +194,7 @@ class MusicRecommendationAgent:
                         pass
             
             graph_task = asyncio.create_task(_run_graph())
+            self._current_graph_task = graph_task  # 暴露给 server.py 断连取消用
             
             # 发送思考状态
             yield {"type": "thinking", "message": "正在理解你的音乐偏好..."}
@@ -259,12 +260,16 @@ class MusicRecommendationAgent:
             yield {"type": "complete", "success": True}
             logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")
             
+        except asyncio.CancelledError:
+            logger.info(f"🛑 流式推荐被取消 [req={_request_id[:8]}]")
+            yield {"type": "error", "error": "推荐已被用户取消"}
         except Exception as e:
             logger.error(f"流式推荐失败: {str(e)} [req={_request_id[:8]}]", exc_info=True)
             yield {"type": "error", "error": str(e)}
         finally:
             # 清理本次请求的队列，防止内存泄漏
             self.graph._explanation_queues.pop(_request_id, None)
+            self._current_graph_task = None  # 清理 task 引用
     
     def get_status(self) -> Dict[str, Any]:
         """获取智能体状态信息"""

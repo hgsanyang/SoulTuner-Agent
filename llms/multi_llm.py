@@ -226,7 +226,7 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
     base_url = _get_env_val(config.get("base_url_env", ""), config.get("default_base_url"))
     
     # 策略 1：如果是 SiliconFlow 或本地 OpenAI 兼容服务 (Ollama, vLLM, SGLang)，为了保证绝对稳定，直接使用 LangChain 原生 ChatOpenAI 包装
-    if provider in ["siliconflow", "volcengine", "ollama", "vllm", "sglang"]:
+    if provider in ["siliconflow", "volcengine", "dashscope", "ollama", "vllm", "sglang"]:
         from langchain_openai import ChatOpenAI
         target_model = model_name or config["default_model"]
         # 读取超时配置（优先用参数，其次用 settings，默认 80s）
@@ -238,16 +238,31 @@ def get_chat_model(provider: str = "siliconflow", model_name: Optional[str] = No
                 _timeout = 80
         # max_tokens 优先使用调用方显式传入的值，否则默认 4000
         _max_tokens = max_tokens if max_tokens is not None else 4000
-        # ── SGLang + Qwen3：通过 extra_body 硬关闭 Thinking Mode ──
-        # Qwen3 默认启用 thinking mode，会在输出 JSON 前生成数百个推理 token（在 RTX 4070 约 30-60s）。
-        # chat_template_kwargs.enable_thinking=False 直接在 Jinja2 chat template 层面跳过 <think> 推理链。
+        # ── Qwen3 系列模型：关闭 Thinking Mode 以大幅加速 ──
+        # Qwen3 默认启用 thinking mode，会在输出 JSON 前生成数百个推理 token。
+        # 对于意图分类这种简单任务，thinking 完全不需要，关闭后可减少 5-10s 延迟。
+        # 适用于所有 provider（sglang / siliconflow / volcengine 等）
         _model_kwargs = {}
-        if provider == "sglang":
-            _model_kwargs = {
-                "extra_body": {
-                    "chat_template_kwargs": {"enable_thinking": False}
+        _is_qwen3 = any(kw in target_model.lower() for kw in ["qwen3", "qwen-3", "qwen2.5"])
+        if _is_qwen3 or provider == "sglang":
+            if provider == "sglang":
+                # SGLang 本地部署用 chat_template_kwargs 嵌套格式
+                _model_kwargs = {
+                    "extra_body": {
+                        "chat_template_kwargs": {"enable_thinking": False}
+                    }
                 }
-            }
+            else:
+                # SiliconFlow / volcengine 等云端 API 用平铺格式
+                _model_kwargs = {
+                    "extra_body": {
+                        "enable_thinking": False
+                    }
+                }
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                f"[LLM] 检测到 Qwen3 系模型({target_model})，已关闭 Thinking Mode (provider={provider})"
+            )
         return ChatOpenAI(
             api_key=api_key or "fake-key",
             base_url=base_url,
@@ -310,16 +325,16 @@ def siliconflow_llm(temperature: float = 0.7):
 def get_intent_chat_model():
     """获取意图分析专用 LLM 实例（从 settings 读取配置）
     
-    可通过环境变量 INTENT_LLM_PROVIDER / INTENT_LLM_MODEL 配置。
-    典型用法：配置一个更小更快的模型专门做意图分类，减少延迟。
+    优先级：intent_llm_* → llm_default_*（主模型）→ provider 硬编码默认
+    API 模式下 intent_llm_* 为空，会自动复用主模型配置。
     
     max_tokens 锁定 1024：意图分析输出为结构化 JSON（MusicQueryPlan），
-    典型输出约 200-400 tokens，1024 提供充足安全余量，同时避免
-    与本地模型的 context-length（如 8192）冲突。
+    典型输出约 200-400 tokens，1024 提供充足安全余量。
     """
     try:
         provider = settings.intent_llm_provider or settings.llm_default_provider
-        model_name = settings.intent_llm_model or None  # 空字符串转 None，用 provider 默认模型
+        # 空字符串视为未配置，依次 fallback：intent专用 → 主模型 → 留 None 给 provider 默认
+        model_name = settings.intent_llm_model or settings.llm_default_model or None
         return get_chat_model(provider=provider, model_name=model_name, temperature=0.3, max_tokens=1024)
     except Exception:
         # 回退到默认配置
@@ -334,6 +349,37 @@ def gemini_llm(model_name: Optional[str] = None, temperature: float = 1.0):
       - gemini-1.5-pro          (长上下文处理能力强)
     """
     return get_chat_model(provider="google", model_name=model_name, temperature=temperature)
+
+
+def get_compress_chat_model():
+    """获取上下文压缩专用 LLM 实例（从 settings 读取配置）
+    
+    用于 GSSC 压缩器在多轮对话时压缩过长历史记录。
+    建议使用快速稳定的模型（如 DeepSeek-V3.2），避免使用 Thinking 模型。
+    
+    如果未配置，回退到主 LLM。
+    """
+    try:
+        provider = settings.compress_llm_provider or settings.llm_default_provider
+        model_name = settings.compress_llm_model or None
+        return get_chat_model(provider=provider, model_name=model_name, temperature=0.3, max_tokens=2048)
+    except Exception:
+        return get_chat_model(provider="siliconflow", temperature=0.3, max_tokens=2048)
+
+def get_explain_chat_model():
+    """获取解释生成专用 LLM 实例（从 settings 读取配置）
+
+    用于 generate_explanation 节点流式生成推荐理由和解释文本。
+    建议使用表达能力强的模型（如 DeepSeek-V3.2 / Qwen3.5-35B）。
+
+    如果未配置，回退到主 LLM。
+    """
+    try:
+        provider = settings.explain_llm_provider or settings.llm_default_provider
+        model_name = settings.explain_llm_model or settings.llm_default_model or None
+        return get_chat_model(provider=provider, model_name=model_name, temperature=0.7)
+    except Exception:
+        return get_chat_model(provider="siliconflow", temperature=0.7)
 
 def ollama_llm(model_name: Optional[str] = None, temperature: float = 0.6):
     """便捷包装函数：快速获取本地 Ollama 模型实例"""

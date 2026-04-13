@@ -156,12 +156,12 @@ async def _llm_compress_chat_history(chat_history: str) -> str:
     使用意图分析专用的小模型（如 Qwen3-4B），成本低、速度快。
     """
     try:
-        from llms.multi_llm import get_intent_chat_model
+        from llms.multi_llm import get_compress_chat_model
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import StrOutputParser
         from llms.prompts import CONTEXT_COMPRESSOR_PROMPT
         
-        llm = get_intent_chat_model()
+        llm = get_compress_chat_model()
         chain = (
             ChatPromptTemplate.from_template(CONTEXT_COMPRESSOR_PROMPT)
             | llm
@@ -194,7 +194,7 @@ async def build_context(
     chat_history: str = "",
     retrieval_context: str = "",
     user_input: str = "",
-    total_budget: int = 3000,
+    total_budget: int = 0,
 ) -> Dict[str, str]:
     """
     GSSC 四阶段上下文构建（V2 异步版）
@@ -214,6 +214,14 @@ async def build_context(
         dict: {"graphzep_facts": ..., "chat_history": ..., "retrieval_context": ...}
               各字段已按优先级截断到预算内
     """
+    # ---- 读取预算配置 ----
+    if total_budget <= 0:
+        try:
+            from config.settings import settings
+            total_budget = settings.context_total_budget
+        except Exception:
+            total_budget = 8000
+    
     # ---- Stage 1: Gather（收集所有上下文源） ----
     sources = []
     
@@ -305,21 +313,15 @@ async def build_context(
                 )
                 continue
             
+            # ★★ 缓存未命中：不再同步调用 LLM 压缩（会阻塞意图识别 15-80s）
+            # 直接 fall through 到按行截断兜底
+            # 预压缩将在本轮结束后由 pre_compress_and_cache 异步执行，
+            # 下次请求就能命中缓存
             logger.info(
                 f"[GSSC] chat_history ({src.estimated_tokens} tokens) 远超预算 "
-                f"({budget} tokens, ×{LLM_COMPRESS_RATIO})，尝试 LLM 压缩"
+                f"({budget} tokens)，预压缩缓存未命中，使用按行截断兜底"
             )
-            compressed = await _llm_compress_chat_history(src.content)
-            if compressed is not None:
-                result[src.name] = compressed
-                # 同步写入缓存（本次压缩结果供下次用，防止下下轮再等待）
-                _compress_cache[user_id] = (compressed, src.estimated_tokens)
-                logger.info(
-                    f"[GSSC] {src.name}: LLM 压缩 {src.estimated_tokens} → "
-                    f"{estimate_tokens(compressed)} tokens (预算: {budget})"
-                )
-                continue
-            # LLM 压缩失败，fall through 到按行截断
+            # fall through 到下面的 truncate_to
         
         # 按行截断兜底（V1 原有逻辑）
         truncated = src.truncate_to(budget)

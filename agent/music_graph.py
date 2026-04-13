@@ -21,7 +21,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger
 from config.settings import settings
-from llms.multi_llm import get_chat_model, get_intent_chat_model
+from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
 from tools.graphrag_search import graphrag_search
@@ -75,6 +75,24 @@ def set_intent_llm(new_llm):
     logger.info(f"[music_graph] 意图分析 LLM 已切换为: {getattr(new_llm, 'model_name', str(new_llm))}")
 
 
+# 解释生成专用 LLM（generate_explanation 节点，负责流式生成推荐理由）
+_explain_llm = None
+
+def get_explain_llm():
+    """获取解释生成专用 LLM 实例（延迟初始化，从 settings 读取配置）"""
+    global _explain_llm
+    if _explain_llm is None:
+        _explain_llm = get_explain_chat_model()
+        logger.info(f"[music_graph] 解释生成 LLM 初始化: {getattr(_explain_llm, 'model_name', str(_explain_llm))}")
+    return _explain_llm
+
+def set_explain_llm(new_llm):
+    """覆盖解释生成 LLM 实例"""
+    global _explain_llm
+    _explain_llm = new_llm
+    logger.info(f"[music_graph] 解释生成 LLM 已切换为: {getattr(new_llm, 'model_name', str(new_llm))}")
+
+
 # _clean_json_from_llm 已被 with_structured_output 替代，不再需要手动正则解析
 
 
@@ -100,6 +118,75 @@ class MusicRecommendationGraph:
         """获取编译后的应用"""
         return self.workflow
     
+    async def warmup_kv_cache(self):
+        """启动时预热 KV Prefix Cache（后台异步执行，不阻塞启动）
+        
+        原理：向 API 发送一个包含完整 system prompt 的轻量请求，
+        让服务商（SiliconFlow/DeepSeek）计算并缓存 system prompt 的 KV 状态。
+        后续真实请求的相同 system prefix 会自动命中缓存，跳过 Prefill 阶段。
+        
+        预期效果：首次用户请求从 8-12s 降低到 2-4s。
+        """
+        import time as _time
+        _t0 = _time.time()
+        try:
+            _intent_llm = get_intent_llm()
+            _provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
+            _local_providers = {"sglang", "vllm", "ollama"}
+            
+            if _provider in _local_providers:
+                logger.info("[Warmup] 本地模型无需预热 KV Cache，跳过")
+                return
+            
+            from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
+            from langchain_core.prompts import ChatPromptTemplate
+            
+            # 用最简单的输入触发一次完整的 system prompt 计算
+            structured_llm = _intent_llm.with_structured_output(MusicQueryPlan, include_raw=True)
+            
+            # DashScope 显式缓存：warmup 时用 content 数组格式创建缓存条目
+            _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
+            if _intent_provider == "dashscope":
+                from langchain_core.messages import SystemMessage
+                _sys_msg = SystemMessage(
+                    content=[{
+                        "type": "text",
+                        "text": UNIFIED_PLANNER_SYSTEM,
+                        "cache_control": {"type": "ephemeral"}
+                    }]
+                )
+                _prompt = ChatPromptTemplate.from_messages([_sys_msg, ("human", UNIFIED_PLANNER_HUMAN)])
+            else:
+                _prompt = ChatPromptTemplate.from_messages([
+                    ("system", UNIFIED_PLANNER_SYSTEM),
+                    ("human", UNIFIED_PLANNER_HUMAN),
+                ])
+            
+            chain = _prompt | structured_llm
+            _raw = await chain.ainvoke({
+                "user_input": "你好",
+                "user_preferences": "无",
+                "chat_history": "",
+                "previous_plan": "",
+            })
+            _elapsed = _time.time() - _t0
+            
+            # 检查缓存状态
+            _raw_msg = _raw.get("raw")
+            _cache_info = ""
+            if _raw_msg and hasattr(_raw_msg, "usage_metadata") and _raw_msg.usage_metadata:
+                _usage = _raw_msg.usage_metadata
+                _hit = (
+                    _usage.get("prompt_cache_hit_tokens", 0)
+                    or _usage.get("cache_read_input_tokens", 0)
+                    or (_usage.get("input_token_details") or {}).get("cache_read", 0)
+                )
+                _cache_info = f" | cache_hit={_hit}"
+            
+            logger.info(f"[Warmup] ✅ KV Cache 预热完成, 耗时 {_elapsed:.1f}s{_cache_info}")
+        except Exception as e:
+            logger.warning(f"[Warmup] ⚠️ KV Cache 预热失败（不影响正常使用）: {e}")
+    
     async def analyze_intent(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点1: 统一意图分析 + 检索规划
@@ -116,6 +203,51 @@ class MusicRecommendationGraph:
             # 格式化对话历史
             context_manager = MusicContextManager()
             history_text = context_manager.format_chat_history(chat_history)
+            
+            # ✅ 【DST】构建上轮检索计划文本，供 Planner 做多轮标签继承
+            # 区分两种继承模式：
+            #   graph/hybrid → 继承离散标签（mood/genre/language...）
+            #   vector       → 继承声学语义（acoustic_query），不继承粗粒度标签
+            _prev_plan = state.get("retrieval_plan")
+            _prev_intent = state.get("intent_type", "")
+            _previous_plan_text = ""
+            if _prev_plan and isinstance(_prev_plan, dict):
+                if _prev_intent == "vector_search":
+                    # ── 上轮是纯向量检索：继承声学语义，避免标签趋同化 ──
+                    _acoustic = _prev_plan.get("vector_acoustic_query", "")
+                    if _acoustic:
+                        _previous_plan_text = (
+                            f"上轮为纯向量检索(vector_search)，声学语义: \"{_acoustic[:150]}\"\n"
+                            f"注意：追问时应使用 hybrid_search（graph筛新标签 + vector继承声学语义），"
+                            f"不要将上轮的情绪降级为粗粒度标签(如mood=悲伤)来做图谱硬筛选"
+                        )
+                        logger.info(f"[DST] 上轮为 vector_search，继承声学语义(前80字): {_acoustic[:80]}")
+                else:
+                    # ── 上轮是图谱/混合检索：继承离散标签 + 声学语义（如有）──
+                    _tag_parts = []
+                    for _tag_key, _tag_label in [
+                        ("graph_mood_filter", "mood"),
+                        ("graph_scenario_filter", "scenario"),
+                        ("graph_genre_filter", "genre"),
+                        ("graph_language_filter", "language"),
+                        ("graph_region_filter", "region"),
+                    ]:
+                        _val = _prev_plan.get(_tag_key)
+                        if _val:
+                            _tag_parts.append(f"{_tag_label}={_val}")
+                    
+                    _parts = []
+                    if _tag_parts:
+                        _parts.append(f"上轮检索策略: {_prev_intent}，标签: {', '.join(_tag_parts)}")
+                    # hybrid_search 时同时继承声学描述，避免追问时丢失氛围上下文
+                    _acoustic = _prev_plan.get("vector_acoustic_query", "")
+                    if _acoustic:
+                        _parts.append(f"上轮声学描述: \"{_acoustic[:150]}\"")
+                        _parts.append("注意：用户追问时应继承上轮的检索策略和声学描述，不可降级为纯 graph_search")
+                    
+                    if _parts:
+                        _previous_plan_text = "\n".join(_parts)
+                        logger.info(f"[DST] 上轮: {_prev_intent}, 标签={_tag_parts}, acoustic={'有' if _acoustic else '无'}")
             
             # ✅ with_structured_output：让模型直接输出 MusicQueryPlan Pydantic 对象
             # 底层自动处理 json_schema 约束，无需任何正则或 json.loads
@@ -146,7 +278,7 @@ class MusicRecommendationGraph:
                     _ctx = await build_context(
                         graphzep_facts=state.get("graphzep_facts", ""),
                         chat_history=history_text,
-                        total_budget=3000,
+                        total_budget=0,
                     )
                     
                     # 渲染提示词模板
@@ -154,6 +286,7 @@ class MusicRecommendationGraph:
                     _messages = _prompt.format_messages(
                         user_input=user_input,
                         chat_history=_ctx["chat_history"],
+                        previous_plan=_previous_plan_text,
                     )
                     
                     # 构造 OpenAI 兼容请求体
@@ -225,51 +358,83 @@ class MusicRecommendationGraph:
                     _ctx = await build_context(
                         graphzep_facts=state.get("graphzep_facts", ""),
                         chat_history=history_text,
-                        total_budget=3000,
+                        total_budget=0,
                     )
                     plan: MusicQueryPlan = await chain.ainvoke({
                         "user_input": user_input,
                         "chat_history": _ctx["chat_history"],
+                        "previous_plan": _previous_plan_text,
                     })
             else:
                 # ── API 大模型路径（SiliconFlow / Volcengine / Gemini / DeepSeek 等）──
                 # ★ 关键优化：拆分 system + human 消息，启用 KV Prefix Cache
-                #   - system 消息 = UNIFIED_PLANNER_SYSTEM（固定规则+示例，~1400 token）
+                #   - system 消息 = UNIFIED_PLANNER_SYSTEM（能力画像+示例，~600 token）
                 #     → 服务商自动缓存，后续请求只需重算 human 部分
-                #   - human 消息  = UNIFIED_PLANNER_HUMAN（动态历史+输入，~100-200 token）
+                #   - human 消息  = UNIFIED_PLANNER_HUMAN（偏好+历史+输入，~100-300 token）
                 #     → 每次都算，但量很小
-                # 预期效果：首次 8-12s（冷启动），后续 2-4s（缓存命中）
+                # 预期效果：首次 6-10s（冷启动），后续 2-4s（缓存命中）
                 from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
                 structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan, include_raw=True)
-                chain = (
-                    ChatPromptTemplate.from_messages([
+                
+                # ★ DashScope 显式缓存：用 content 数组格式 + cache_control
+                #   百炼要求 cache_control 嵌套在 content 数组的 text 对象里
+                #   命中时 input token 仅收 10%，5 分钟有效期（命中后重置）
+                _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
+                if _intent_provider == "dashscope":
+                    from langchain_core.messages import SystemMessage
+                    _sys_msg = SystemMessage(
+                        content=[{
+                            "type": "text",
+                            "text": UNIFIED_PLANNER_SYSTEM,
+                            "cache_control": {"type": "ephemeral"}
+                        }]
+                    )
+                    _prompt = ChatPromptTemplate.from_messages([_sys_msg, ("human", UNIFIED_PLANNER_HUMAN)])
+                else:
+                    _prompt = ChatPromptTemplate.from_messages([
                         ("system", UNIFIED_PLANNER_SYSTEM),
                         ("human", UNIFIED_PLANNER_HUMAN),
                     ])
-                    | structured_llm
-                )
+                
+                chain = _prompt | structured_llm
                 from retrieval.gssc_context_builder import build_context
                 _ctx = await build_context(
                     graphzep_facts=state.get("graphzep_facts", ""),
                     chat_history=history_text,
-                    total_budget=3000,
+                    total_budget=0,
                 )
             
                 _raw_result = await chain.ainvoke({
                     "user_input": user_input,
+                    "user_preferences": state.get("graphzep_facts", "无"),
                     "chat_history": _ctx["chat_history"],
+                    "previous_plan": _previous_plan_text,
                 })
                 plan: MusicQueryPlan = _raw_result["parsed"]
                 
-                # ── Token 消耗追踪 ──
+                # ── Token 消耗追踪 + 缓存命中检测 ──
                 _raw_msg = _raw_result.get("raw")
                 if _raw_msg and hasattr(_raw_msg, "usage_metadata") and _raw_msg.usage_metadata:
                     _usage = _raw_msg.usage_metadata
                     _p = _usage.get("input_tokens", 0)
                     _c = _usage.get("output_tokens", 0)
+                    # 多厂商缓存命中检测：
+                    #   SiliconFlow: prompt_cache_hit_tokens
+                    #   DashScope/百炼: input_token_details.cache_read (LangChain 映射自 prompt_tokens_details.cached_tokens)
+                    _cache_hit = (
+                        _usage.get("prompt_cache_hit_tokens", 0)
+                        or _usage.get("cache_read_input_tokens", 0)
+                        or (_usage.get("input_token_details") or {}).get("cache_read", 0)
+                    )
+                    _cache_miss = _usage.get("prompt_cache_miss_tokens", 0) or (_p - _cache_hit if _cache_hit else 0)
+                    _cache_info = ""
+                    if _cache_hit:
+                        _cache_info = f" | ✅ KV Cache命中={_cache_hit:,}tok, 未命中={_cache_miss:,}tok"
+                    else:
+                        _cache_info = " | ❄️ 冷启动(无缓存命中)"
                     logger.info(
                         f"[Token Report] 意图分析: "
-                        f"prompt={_p:,} + completion={_c:,} = {_p + _c:,} tokens"
+                        f"prompt={_p:,} + completion={_c:,} = {_p + _c:,} tokens{_cache_info}"
                     )
 
             
@@ -354,7 +519,7 @@ class MusicRecommendationGraph:
             
             # 传递上游统一规划的 retrieval_plan，避免二次 LLM 调用
             retrieval_plan = state.get("retrieval_plan")
-            raw_hybrid_result = await retriever.retrieve(search_intent, limit=settings.graph_search_limit, precomputed_plan=retrieval_plan)
+            raw_hybrid_result = await retriever.retrieve(search_intent, limit=settings.hybrid_retrieval_limit, precomputed_plan=retrieval_plan)
             
             # 直接使用标准的 ToolOutput
             if raw_hybrid_result and raw_hybrid_result.success:
@@ -840,7 +1005,7 @@ class MusicRecommendationGraph:
             _ctx = await build_context(
                 graphzep_facts=state.get("graphzep_facts", "暂无用户长期记忆"),
                 chat_history=history_text,
-                total_budget=3000,
+                total_budget=0,
             )
             
             response_content = await chain.ainvoke({
@@ -851,6 +1016,13 @@ class MusicRecommendationGraph:
             
             logger.info("生成聊天回复")
             
+            # ★ 将回复推送到流式队列，否则 music_agent 的 SSE 会永远卡住
+            _req_id = state.get("metadata", {}).get("request_id")
+            _chat_queue = self._explanation_queues.get(_req_id) if _req_id else None
+            if _chat_queue:
+                await _chat_queue.put(response_content)  # 推送完整文本
+                await _chat_queue.put(None)              # 终止信号
+            
             return {
                 "final_response": response_content,
                 "step_count": state.get("step_count", 0) + 1
@@ -858,6 +1030,14 @@ class MusicRecommendationGraph:
             
         except Exception as e:
             logger.error(f"生成聊天回复失败: {str(e)}")
+            # 也要推送终止信号，否则异常时也会卡住
+            _req_id = state.get("metadata", {}).get("request_id")
+            _err_queue = self._explanation_queues.get(_req_id) if _req_id else None
+            if _err_queue:
+                try:
+                    await _err_queue.put(None)
+                except Exception:
+                    pass
             return {
                 "final_response": "抱歉，我现在遇到了一些问题。不过我很乐意和你聊音乐！你可以告诉我你喜欢什么类型的音乐吗？",
                 "step_count": state.get("step_count", 0) + 1,
@@ -873,10 +1053,10 @@ class MusicRecommendationGraph:
         """
         import time as _time
         _t0 = _time.time()
-        _main_llm = get_llm()
-        _main_model_name = getattr(_main_llm, 'model_name', '?')
-        _main_provider = (settings.llm_default_provider or '?').lower()
-        logger.info(f"--- [步骤 3] 生成推荐解释 | 🤖 {_main_provider} / {_main_model_name} ---")
+        _explain = get_explain_llm()
+        _explain_model_name = getattr(_explain, 'model_name', '?')
+        _explain_provider = (settings.explain_llm_provider or settings.llm_default_provider or '?').lower()
+        logger.info(f"--- [步骤 3] 生成推荐解释 | 🤖 {_explain_provider} / {_explain_model_name} ---")
         
         # 兼容处理 ToolOutput 对象或列表
         raw_recommendations = state.get("recommendations", [])
@@ -946,7 +1126,7 @@ class MusicRecommendationGraph:
             # 将原来手动格式化字符串和接收 AIMessage 对象的两步操作合并为优雅的链式调用。
             chain = (
                 ChatPromptTemplate.from_template(MUSIC_RECOMMENDATION_EXPLAINER_PROMPT)
-                | get_llm()
+                | get_explain_llm()
                 | StrOutputParser()
             )
             
