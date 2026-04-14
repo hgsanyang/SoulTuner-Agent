@@ -60,6 +60,49 @@ _TRANSLATION_CACHE = {
     "沉醉": "dreamy, atmospheric, romantic, ambient, slow",
     "丧": "energetic, intense, powerful, fast, heavy",
     "带感": "groovy, rhythmic, energetic, raw, powerful",
+
+    # ── 场景/亚文化词（对齐 M2D-CLAP 训练分布，使用感知描述词汇）──
+    "蹦迪": "high energy dance music, heavy bass drops, fast electronic beat, pumping club",
+    "夜店": "club dance music, heavy bass, electronic, high energy, fast beat",
+    "仙气": "ethereal, floating, dreamy, soft ambient, celestial, gentle",
+    "仙气飘飘": "ethereal, floating, dreamy, soft ambient, celestial, gentle and airy",
+    "赛博朋克": "dark electronic, futuristic synths, heavy bass, industrial, atmospheric",
+    "复古": "retro, vintage, warm analog, classic, old school",
+    "氛围感": "atmospheric, ambient, spacious, dreamy, layered textures",
+    "电影感": "cinematic, orchestral, dramatic, sweeping, emotional strings",
+    "文艺": "indie, acoustic, soft, intimate, folk, gentle vocals",
+    "小清新": "light, fresh, acoustic guitar, bright, cheerful, gentle",
+    "暗黑": "dark, heavy, distorted, aggressive, low and menacing",
+    "空灵": "ethereal, airy, reverberant, floating, delicate, ambient",
+    "炸裂": "explosive, heavy distortion, powerful drums, intense, loud",
+    "上头": "catchy, addictive, repetitive hook, energetic, groovy",
+    "催泪": "tearful, deeply emotional, slow strings, sorrowful, heartbreaking",
+
+    # ── 身体活动/生理状态词 ──
+    "瑜伽": "peaceful, meditative, slow ambient, gentle, flowing, calm",
+    "冥想": "meditative, quiet, ambient drone, still, peaceful, minimal",
+    "散步": "light, gentle, moderate tempo, pleasant, acoustic, easy-going",
+    "跑步": "fast tempo, energetic, driving beat, pumping, high energy",
+    "发呆": "ambient, dreamy, floating, slow, spacious, minimal",
+    "失眠": "quiet, ambient, very slow, gentle, soothing, soft piano",
+    "起床": "bright, uplifting, moderate tempo, cheerful, fresh, acoustic",
+
+    # ── 情绪细粒度扩展 ──
+    "思念": "nostalgic, longing, emotional, slow, warm, bittersweet",
+    "释然": "peaceful, relieved, hopeful, gentle, warm, uplifting",
+    "窒息": "intense, oppressive, heavy, dark, slow, suffocating atmosphere",
+    "炸裂": "explosive, heavy distortion, powerful drums, intense, loud",
+    "躁动": "restless, agitated, fast, distorted, raw, energetic",
+    "迷幻": "psychedelic, swirling, trippy, reverberant, spacious, dreamy",
+    "震撼": "epic, powerful, grand, orchestral, intense, dramatic",
+    "甜美": "sweet, bright, light, cheerful, soft, lovely melody",
+    "苦涩": "bittersweet, melancholic, slow, minor key, emotional, subdued",
+    "孤独": "lonely, solitary, quiet, sparse arrangement, intimate, somber",
+    "愤怒": "angry, aggressive, fast, heavy, distorted, loud, intense",
+    "慵懒": "lazy, laid-back, slow groove, mellow, relaxed, lo-fi",
+    "忧郁": "melancholic, gloomy, dark, slow, minor key, somber",
+    "惆怅": "wistful, melancholic, nostalgic, slow, gentle, bittersweet",
+    "热烈": "passionate, intense, fast, energetic, powerful, bright",
 }
 
 
