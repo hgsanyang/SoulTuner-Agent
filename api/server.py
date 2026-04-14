@@ -225,14 +225,14 @@ class AcquireSongRequest(BaseModel):
 @app.post("/api/acquire-song")
 async def acquire_song_endpoint(request: AcquireSongRequest):
     """
-    按需触发数据飞轮:下载单首歌曲的音频/歌词/封面并入库 Neo4j.
-    前端点击"加入本地"按钮时调用.
+    下载单首歌曲的音频/歌词/封面到本地待入库目录。
+    不再自动入库 Neo4j，需要用户在待入库页面确认后才入库。
     """
     import aiohttp
-    from tools.acquire_music import OnlineMusicAcquirer, _quick_ingest_to_neo4j, _background_flywheel
+    from tools.acquire_music import OnlineMusicAcquirer
 
     query = f"{request.title} {request.artist}"
-    logger.info(f"🎯 [acquire-song] 用户请求加入本地: {query}")
+    logger.info(f"🎯 [acquire-song] 用户请求下载到待入库: {query}")
 
     acquirer = OnlineMusicAcquirer()
     async with aiohttp.ClientSession() as session:
@@ -241,17 +241,11 @@ async def acquire_song_endpoint(request: AcquireSongRequest):
     if not acquired:
         raise HTTPException(status_code=404, detail="未能获取该歌曲的音频资源(可能因版权限制)")
 
-    # 秒级写入 Neo4j
-    await _quick_ingest_to_neo4j(acquired)
-
-    # 启动后台飞轮(歌词标注 + 向量提取)
-    asyncio.create_task(_background_flywheel(acquired))
-
     song = acquired[0]
-    logger.info(f"✅ [acquire-song] 成功入库: {song['title']} - {song['artist']}")
+    logger.info(f"✅ [acquire-song] 已下载到待入库: {song['title']} - {song['artist']}")
     return {
         "success": True,
-        "message": f"已成功将《{song['title']}》加入本地曲库",
+        "message": f"已将《{song['title']}》下载到待入库",
         "song": {
             "title": song["title"],
             "artist": song["artist"],
@@ -661,6 +655,7 @@ async def get_settings_endpoint():
         "compress_llm_provider": settings.compress_llm_provider,
         "compress_llm_model": settings.compress_llm_model,
         "context_total_budget": settings.context_total_budget,
+        "intent_max_tokens": settings.intent_max_tokens,
         "finetuned_model_path": settings.finetuned_model_path,
         "llm_timeout": settings.llm_timeout,
         # 路径配置
@@ -705,6 +700,7 @@ class SettingsUpdateRequest(BaseModel):
     explain_llm_provider: str | None = None
     explain_llm_model: str | None = None
     context_total_budget: int | None = None
+    intent_max_tokens: int | None = None
     finetuned_model_path: str | None = None
     llm_timeout: int | None = None
     audio_data_dir: str | None = None
@@ -758,8 +754,9 @@ async def update_settings_endpoint(request: SettingsUpdateRequest):
         except Exception as e:
             logger.warning(f"[Settings] LLM 切换失败: {e}")
 
-    # 如果切换了意图分析 LLM（或主模型变更且意图使用主模型），热切换意图模型
+    # 如果切换了意图分析 LLM（或主模型变更且意图使用主模型，或 max_tokens 变更），热切换意图模型
     _intent_changed = ("intent_llm_provider" in update_data or "intent_llm_model" in update_data
+                       or "intent_max_tokens" in update_data
                        or "llm_default_provider" in update_data or "llm_default_model" in update_data)
     if _intent_changed:
         try:
@@ -1165,6 +1162,240 @@ async def delete_song_completely(song_title: str, artist: str):
     except Exception as e:
         logger.error(f"歌曲删除失败: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+# ================================================================
+# 待入库 (Pending) 管理 API
+# ================================================================
+
+@app.get("/api/pending-songs")
+async def get_pending_songs():
+    """
+    扫描 data/online_acquired/metadata/ 目录中的 _meta.json，
+    排除已在 Neo4j 中入库的歌曲，返回待入库列表。
+    """
+    import json as _json
+    pending = []
+    meta_dir = ONLINE_AUDIO_ROOT / "metadata"
+    if not meta_dir.exists():
+        return {"success": True, "songs": [], "total": 0}
+
+    # 查询 Neo4j 中已有的 online 歌曲 music_id 集合
+    ingested_ids = set()
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        client = get_neo4j_client()
+        rows = client.execute_query(
+            "MATCH (s:Song) WHERE s.source = 'online' RETURN s.music_id AS mid", {}
+        )
+        ingested_ids = {str(r["mid"]) for r in rows if r.get("mid")}
+    except Exception as e:
+        logger.warning(f"[pending] Neo4j 查询已入库歌曲失败: {e}")
+
+    for meta_file in sorted(meta_dir.glob("*_meta.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                meta = _json.load(f)
+            music_id = str(meta.get("musicId", ""))
+            if music_id in ingested_ids:
+                continue  # 已入库，跳过
+
+            # 推导文件名
+            title = meta.get("musicName", "Unknown")
+            artists = meta.get("artist", [])
+            artist_str = "、".join([a[0] if isinstance(a, list) else str(a) for a in artists]) if artists else "Unknown"
+            fmt = meta.get("format", "mp3")
+            # 安全文件名（与 acquire_music.py 一致）
+            safe_title = "".join(c for c in title if c not in r'\\/:*?"<>|').strip()
+            safe_artist = "".join(c for c in artist_str if c not in r'\\/:*?"<>|').strip()
+            file_basename = f"{safe_title} - {safe_artist}"
+
+            # 检查音频文件是否存在
+            audio_path = ONLINE_AUDIO_ROOT / "audio" / f"{file_basename}.{fmt}"
+            if not audio_path.exists():
+                # 尝试其他格式
+                found = False
+                for ext in ["mp3", "flac", "m4a"]:
+                    alt = ONLINE_AUDIO_ROOT / "audio" / f"{file_basename}.{ext}"
+                    if alt.exists():
+                        fmt = ext
+                        found = True
+                        break
+                if not found:
+                    continue  # 音频文件不存在，跳过
+
+            pending.append({
+                "music_id": music_id,
+                "title": title,
+                "artist": artist_str,
+                "album": meta.get("album", "Unknown"),
+                "duration": meta.get("duration", 0),
+                "format": fmt,
+                "file_basename": file_basename,
+                "audio_url": f"/static/online_audio/{file_basename}.{fmt}",
+                "cover_url": f"/static/online_covers/{file_basename}_cover.jpg",
+                "lrc_url": f"/static/online_lyrics/{file_basename}.lrc",
+                "acquired_at": meta.get("acquired_at", ""),
+            })
+        except Exception as e:
+            logger.warning(f"[pending] 解析元数据失败 {meta_file.name}: {e}")
+
+    return {"success": True, "songs": pending, "total": len(pending)}
+
+
+class PendingIngestItem(BaseModel):
+    file_basename: str
+    ext: str = "mp3"
+    music_id: str = ""
+    title: str = ""
+    artist: str = ""
+    album: str = "Unknown"
+    duration: int = 0
+
+
+class PendingIngestRequest(BaseModel):
+    songs: List[PendingIngestItem]
+
+
+@app.post("/api/pending-songs/ingest")
+async def ingest_pending_songs(request: PendingIngestRequest):
+    """
+    将勾选的待入库歌曲写入 Neo4j 并触发后台飞轮。
+    """
+    from tools.acquire_music import _quick_ingest_to_neo4j, _background_flywheel
+
+    songs_to_ingest = []
+    for item in request.songs:
+        song_data = {
+            "song_id": item.music_id,
+            "title": item.title,
+            "artist": item.artist,
+            "album": item.album,
+            "duration": item.duration,
+            "audio_url": f"/static/online_audio/{item.file_basename}.{item.ext}",
+            "cover_url": f"/static/online_covers/{item.file_basename}_cover.jpg",
+            "lrc_url": f"/static/online_lyrics/{item.file_basename}.lrc",
+            "file_basename": item.file_basename,
+            "ext": item.ext,
+        }
+        songs_to_ingest.append(song_data)
+
+    if not songs_to_ingest:
+        return {"success": False, "message": "没有要入库的歌曲", "ingested": 0}
+
+    # 秒级写入 Neo4j
+    await _quick_ingest_to_neo4j(songs_to_ingest)
+
+    # 后台飞轮（歌词标签 + 向量提取）
+    asyncio.create_task(_background_flywheel(songs_to_ingest))
+
+    logger.info(f"✅ [pending-ingest] 成功入库 {len(songs_to_ingest)} 首歌曲")
+    return {
+        "success": True,
+        "message": f"已成功入库 {len(songs_to_ingest)} 首歌曲",
+        "ingested": len(songs_to_ingest),
+    }
+
+
+class PendingDeleteRequest(BaseModel):
+    file_basename: str
+    ext: str = "mp3"
+
+
+@app.delete("/api/pending-songs")
+async def delete_pending_song(file_basename: str, ext: str = "mp3"):
+    """
+    删除待入库歌曲的所有本地文件（音频、封面、歌词、元数据）。
+    """
+    deleted = []
+    errors = []
+
+    file_paths = [
+        (ONLINE_AUDIO_ROOT / "audio" / f"{file_basename}.{ext}", "音频"),
+        (ONLINE_AUDIO_ROOT / "covers" / f"{file_basename}_cover.jpg", "封面"),
+        (ONLINE_AUDIO_ROOT / "lyrics" / f"{file_basename}.lrc", "歌词"),
+        (ONLINE_AUDIO_ROOT / "metadata" / f"{file_basename}_meta.json", "元数据"),
+    ]
+
+    for fpath, desc in file_paths:
+        if fpath.exists():
+            try:
+                fpath.unlink()
+                deleted.append(str(fpath))
+                logger.info(f"🗑️ [pending-delete] 已删除{desc}: {fpath.name}")
+            except Exception as e:
+                errors.append(f"删除{desc}失败: {e}")
+
+    return {
+        "success": len(errors) == 0,
+        "deleted_files": deleted,
+        "errors": errors if errors else None,
+    }
+
+
+# ================================================================
+# 我的曲库 (Library) API — 查询 Neo4j 图谱中的全部歌曲
+# ================================================================
+
+@app.get("/api/library-songs")
+async def get_library_songs(offset: int = 0, limit: int = 200):
+    """
+    查询 Neo4j 中所有 Song 节点（含 Artist 关联），返回曲库列表。
+    """
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        client = get_neo4j_client()
+        query = """
+        MATCH (s:Song)
+        OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
+        OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+        WITH s, a,
+             collect(DISTINCT m.name) AS moods,
+             collect(DISTINCT t.name) AS themes
+        RETURN s.title AS title,
+               coalesce(a.name, s.artist, 'Unknown') AS artist,
+               s.album AS album,
+               s.audio_url AS audio_url,
+               s.cover_url AS cover_url,
+               s.lrc_url AS lrc_url,
+               s.source AS source,
+               s.music_id AS music_id,
+               s.duration AS duration,
+               s.format AS format,
+               s.vibe AS vibe,
+               moods, themes
+        ORDER BY s.updated_at DESC
+        SKIP $offset LIMIT $limit
+        """
+        results = client.execute_query(query, {"offset": offset, "limit": limit})
+
+        # 获取总数
+        count_result = client.execute_query("MATCH (s:Song) RETURN count(s) AS total", {})
+        total = count_result[0]["total"] if count_result else 0
+
+        songs = []
+        for r in results:
+            songs.append({
+                "title": r.get("title", ""),
+                "artist": r.get("artist", "Unknown"),
+                "album": r.get("album", ""),
+                "audio_url": r.get("audio_url", ""),
+                "cover_url": r.get("cover_url", ""),
+                "lrc_url": r.get("lrc_url", ""),
+                "source": r.get("source", "local"),
+                "music_id": r.get("music_id", ""),
+                "duration": r.get("duration", 0),
+                "format": r.get("format", ""),
+                "vibe": r.get("vibe", ""),
+                "moods": r.get("moods", []),
+                "themes": r.get("themes", []),
+            })
+
+        return {"success": True, "songs": songs, "total": total}
+    except Exception as e:
+        logger.error(f"查询曲库失败: {e}")
+        return {"success": False, "songs": [], "total": 0, "error": str(e)}
 
 
 if __name__ == "__main__":

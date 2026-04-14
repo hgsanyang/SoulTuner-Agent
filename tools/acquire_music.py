@@ -304,15 +304,18 @@ class OnlineMusicAcquirer:
 
 async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
     """
-    秒级快速写入 Neo4j：只写元数据 + audio_url，不提取向量。    使用 MERGE 幂等写入，后续本地入库可覆盖。    """
+    秒级快速写入 Neo4j：只写元数据 + audio_url，不提取向量。
+    使用 MERGE {title, artist} 幂等写入（与 data_flywheel / user_memory 一致），
+    避免因 MERGE key 不同导致重复 Song 节点。
+    """
     try:
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
 
         for song in songs:
             query = """
-            MERGE (s:Song {music_id: $music_id})
-            SET s.title = $title,
+            MERGE (s:Song {title: $title, artist: $artist_name})
+            SET s.music_id = $music_id,
                 s.album = $album,
                 s.duration = $duration,
                 s.format = $format,
@@ -365,9 +368,9 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                 try:
                     tags = await _extract_lyrics_tags(basename, lrc_path)
                     if tags:
-                        # 将标签写入 Neo4j
+                        # 将标签写入 Neo4j（统一用 title+artist 匹配）
                         tag_query = """
-                        MATCH (s:Song {music_id: $music_id})
+                        MATCH (s:Song {title: $title, artist: $artist_name})
                         SET s.vibe = $vibe
 
                         WITH s
@@ -387,7 +390,8 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                         )
                         """
                         client.execute_query(tag_query, {
-                            "music_id": song["song_id"],
+                            "title": song["title"],
+                            "artist_name": song["artist"],
                             "moods": tags.get("moods", []),
                             "themes": tags.get("themes", []),
                             "scenarios": tags.get("scenarios", []),
@@ -403,12 +407,13 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                     embeddings = await _extract_embeddings(audio_path)
                     if embeddings:
                         embed_query = """
-                        MATCH (s:Song {music_id: $music_id})
+                        MATCH (s:Song {title: $title, artist: $artist_name})
                         SET s.m2d2_embedding = $m2d2_embedding,
                             s.omar_embedding = $omar_embedding
                         """
                         client.execute_query(embed_query, {
-                            "music_id": song["song_id"],
+                            "title": song["title"],
+                            "artist_name": song["artist"],
                             "m2d2_embedding": embeddings.get("m2d2_embedding", []),
                             "omar_embedding": embeddings.get("omar_embedding", []),
                         })
@@ -510,7 +515,10 @@ _acquirer = OnlineMusicAcquirer()
 @tool
 async def acquire_online_music(song_queries: list[str]) -> ToolOutput:
     """
-    当用户确认要获取联网搜索推荐的歌曲时调用此工具。    它会自动从网易云等平台下载音频、歌词、封面，存入本地并写入 Neo4j 图谱。    下载完成即可在前端播放。后台会异步进行歌词标签分析和音频向量提取。
+    当用户确认要获取联网搜索推荐的歌曲时调用此工具。
+    它会自动从网易云等平台下载音频、歌词、封面到本地待入库目录。
+    下载完成后歌曲进入「待入库」状态，用户可在前端待入库页面试听、
+    勾选并确认入库到知识图谱。
     Args:
         song_queries: 要获取的歌曲列表，格式为 ["歌名 歌手", "歌名 歌手", ...]
                       例如 ["稻香 周杰伦", "平凡之路 朴树"]
@@ -528,20 +536,16 @@ async def acquire_online_music(song_queries: list[str]) -> ToolOutput:
             error_message="No songs acquired",
         )
 
-    # 秒级写入 Neo4j（元数据 + audio_url）
-    await _quick_ingest_to_neo4j(acquired)
-
-    # 启动后台飞轮（歌词标签 + 向量提取），不阻塞当前响应
-    asyncio.create_task(_background_flywheel(acquired))
+    # ★ 不再自动入库 Neo4j 和触发飞轮
+    # 歌曲仅下载到 data/online_acquired/，用户在前端待入库页面确认后才入库
 
     # 构建返回给前端的 markdown
-    md = f"🎵 **已成功获取 {len(acquired)} 首歌曲并入库！**\n\n"
+    md = f"🎵 **已成功下载 {len(acquired)} 首歌曲到待入库！**\n\n"
     for i, s in enumerate(acquired, 1):
-        md += f"{i}. **{s['title']}** - {s['artist']}\n"
-        md += f"   📀 专辑: {s.get('album', 'Unknown')}\n"
-        md += f"   🔈 已可播放（点击前端播放按钮）\n\n"
+        md += f"{i}. **{s['title']}** — {s['artist']}\n"
+        md += f"   📀 专辑：{s.get('album', 'Unknown')}\n\n"
 
-    md += "\n> 💡 歌词标签和音频特征分析正在后台处理中，完成后自动更新图谱。"
+    md += "\n> 💡 请前往 **音乐库 → 待入库** 页面试听确认，勾选后即可入库到知识图谱。"
 
     return ToolOutput(
         success=True,

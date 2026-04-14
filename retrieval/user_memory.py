@@ -234,12 +234,13 @@ class UserMemoryManager:
             logger.info(f"用户 {user_id} 取消收藏: {song_title}")
     def get_liked_songs(self, user_id: str, limit: int = 20) -> list:
         """
-        查询用户显式正向标记的歌曲（LIKES + SAVES），按时间衰减权重排序。
+        查询用户点赞的歌曲（仅 LIKES），按时间衰减权重排序。
         衰减公式: score = weight / (1 + 0.01 * days_since_action)
         同时排除 DISLIKES 和多次跳过(>=3)的歌曲。
+        注意：SAVES（收藏）由歌单/收藏夹系统单独管理，不在此查询。
         """
         query = """
-        MATCH (u:User {id: $user_id})-[r:LIKES|SAVES]->(s:Song)
+        MATCH (u:User {id: $user_id})-[r:LIKES]->(s:Song)
         OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
@@ -281,7 +282,7 @@ class UserMemoryManager:
                         "moods": r.get("moods", []),
                         "themes": r.get("themes", []),
                     },
-                    "reason": f"你{'点赞' if r.get('rel_type') == 'LIKES' else '收藏'}了这首歌",
+                    "reason": "你点赞了这首歌",
                     "source": "user_favorites",
                     "score": r.get("decayed_score", 0),
                 })

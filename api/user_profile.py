@@ -166,6 +166,14 @@ async def save_user_profile(request: UserProfileRequest):
             except Exception as gz_err:
                 logger.warning(f"[UserProfile] GraphZep 写入失败（不影响主流程）: {gz_err}")
 
+        # ★ 清除精排阶段的偏好缓存，确保下次推荐使用最新画像
+        try:
+            from retrieval.hybrid_retrieval import invalidate_user_pref_cache
+            invalidate_user_pref_cache(request.user_id)
+            logger.info(f"[UserProfile] 已清除偏好缓存: {request.user_id}")
+        except Exception:
+            pass
+
         return {
             "success": True,
             "message": "音乐偏好已保存",

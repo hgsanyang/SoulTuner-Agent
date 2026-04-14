@@ -337,7 +337,12 @@ class MusicHybridRetrieval:
         local_tasks = []
         
         # 根据统一的 use_graph/use_vector 标志分发任务
-        if use_graph and not use_vector:
+        # ★ 纯联网搜索：use_graph=False + use_vector=False → 跳过本地检索
+        if not use_graph and not use_vector:
+            logger.info("[Retrieval] 🌐 纯联网模式：跳过本地 graph/vector 检索")
+            local_tasks.append(asyncio.sleep(0))  # 占位 graph
+            local_tasks.append(asyncio.sleep(0))  # 占位 vector
+        elif use_graph and not use_vector:
             graph_query_dict = {"tags": graph_entities, "genre": genre_filter,
                                 "scenario": scenario_filter, "mood": mood_filter,
                                 "language": language_filter, "region": region_filter}
@@ -412,7 +417,9 @@ class MusicHybridRetrieval:
         web_playable = await _extract_and_fetch_web_songs(web_raw)
         
         # 确定策略名称（用于日志和结果格式化）
-        if use_graph and use_vector:
+        if not use_graph and not use_vector:
+            strategy_name = "web_only"
+        elif use_graph and use_vector:
             strategy_name = "hybrid_balanced"
         elif use_graph:
             strategy_name = "graph_only"
@@ -997,6 +1004,57 @@ class MusicHybridRetrieval:
           7. 最终安全去重 + FinalCut
         """
         from config.settings import settings as _settings
+
+        # ================================================================
+        # 🌐 短路优化：web_only → 跳过全部本地精排管线
+        # 场景：用户请求联网搜索（如"最新Billboard榜单"），本地无结果。
+        #        直接返回联网搜索的资讯 + 可播歌曲，省掉无意义的精排流程。
+        # ================================================================
+        if strategy_name == "web_only":
+            logger.info("[WebOnly] 🌐 纯联网模式：跳过本地精排管线")
+            final_list = []
+
+            # 将联网抓取到的可播歌曲作为主体结果
+            if web_playable:
+                final_list.extend(web_playable)
+                logger.info(f"[WebOnly] 联网抓取到 {len(web_playable)} 首可播歌曲")
+
+            # 插入联网资讯文本（作为第一条供大模型解释用）
+            if web_res and "未能找到相关有效信息" not in web_res:
+                final_list.insert(0, {
+                    "_raw_markdown": web_res,
+                    "song": {"title": "🌐 全网资讯补充", "artist": "互联网最新情报", "genre": "News"},
+                    "reason": "包含通过多源聚合引擎获取的最新的互联网关联资讯，用于补充音乐库之外的信息。",
+                    "similarity_score": WEB_RESULT_PRIORITY_SCORE
+                })
+
+            # 构建 raw_markdown
+            markdown_lines = []
+            if web_res and "未能找到" not in web_res:
+                markdown_lines.append(web_res.strip())
+                markdown_lines.append("")
+            if final_list:
+                markdown_lines.append("**推荐结果**")
+                for idx, item in enumerate(final_list, 1):
+                    song = item.get("song", {})
+                    title = song.get("title", "未知")
+                    if title == "🌐 全网资讯补充":
+                        continue
+                    artist = song.get("artist", "未知")
+                    line = f"{idx}. **{title}** - {artist}"
+                    markdown_lines.append(line)
+            raw_md = "\n".join(markdown_lines).strip()
+
+            logger.info(f"=== 🌐 [WebOnly] 联网检索完毕，共 {len(final_list)} 条结果 ===")
+            for i, item in enumerate(final_list):
+                logger.info(f"  [{i+1}] {item['song']['title']} - {item.get('reason', '')}")
+
+            return ToolOutput(
+                success=len(final_list) > 0,
+                data=final_list,
+                raw_markdown=raw_md,
+                error_message=None if final_list else "联网搜索未找到相关结果",
+            )
 
         # ================================================================
         # 🚀 短路优化：graph_only + 有明确实体 → 跳过全部精排管线

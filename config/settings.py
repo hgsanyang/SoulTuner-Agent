@@ -113,6 +113,12 @@ class GlobalSettings(BaseSettings):
         description="GSSC 上下文总 Token 预算（不含 system prompt），越大保留越多历史，但增加 LLM 成本",
     )
 
+    # --- 意图分析最大输出 Token ---
+    intent_max_tokens: int = Field(
+        default=2048,
+        description="意图分析 LLM 最大输出 Token 数（json_mode 下 ~200 tokens 足够，2048 留足余量）",
+    )
+
     finetuned_model_path: str = Field(
         default="",
         validation_alias="FINETUNED_MODEL_PATH",
@@ -334,6 +340,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
         "intent_llm_provider", "intent_llm_model",
         "hyde_llm_provider", "hyde_llm_model",
         "compress_llm_provider", "compress_llm_model",
+        "intent_max_tokens",
         "context_total_budget",
         "finetuned_model_path", "llm_timeout", "llm_temperature",
         "audio_data_dir", "mtg_audio_dir", "online_acquired_dir",
