@@ -36,10 +36,10 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
     try {
       await acquireSong({ title, artist, song_id, platform });
       setAcquireState('done');
-      showToast('✅ 已成功加入本地曲库');
+      showToast('✅ 已下载到待入库，请前往「待入库」确认入库');
     } catch (err: any) {
       setAcquireState('error');
-      showToast(`❌ ${err.message || '加入本地失败'}`);
+      showToast(`❌ ${err.message || '下载失败'}`);
       setTimeout(() => setAcquireState('idle'), 3000);
     }
   };
@@ -208,7 +208,7 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="1" y1="12" x2="5" y2="12" /><line x1="3" y1="10" x2="3" y2="14" /></svg>
             )}
           </button>
-          <button onClick={handleAcquire} title={acquireState === 'done' ? '已加入本地' : acquireState === 'loading' ? '正在下载...' : '加入本地曲库'} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleAcquire} title={acquireState === 'done' ? '已下载到待入库' : acquireState === 'loading' ? '正在下载...' : '下载到待入库'} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             {acquireState === 'done' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>) : acquireState === 'loading' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f0a500" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>) : (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>)}
           </button>
           <button onClick={handleLike} title={liked ? '取消喜欢' : '添加到喜欢'} style={actionBtnStyle(liked ? '#e91e63' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>

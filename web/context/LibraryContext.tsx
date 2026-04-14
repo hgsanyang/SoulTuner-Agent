@@ -82,6 +82,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     // Then sync from backend (authoritative source)
+    // Backend (Neo4j) is the single source of truth for LIKES/DISLIKES.
+    // On sync, we REPLACE local state with backend data to ensure
+    // unlike/undislike operations are properly reflected after refresh/restart.
     const syncFromBackend = useCallback(async () => {
         setIsSyncing(true);
         try {
@@ -90,49 +93,33 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
                 fetchDislikedSongs(50),
             ]);
 
-            // Merge backend liked songs with local state
-            if (backendLiked.length > 0) {
-                const existingIds = new Set(likedSongs.map(s => s.id));
-                const newSongs: LikedSong[] = [];
-                for (const bl of backendLiked) {
-                    const id = `${bl.song.title}_${bl.song.artist}`;
-                    if (!existingIds.has(id)) {
-                        newSongs.push({
-                            id,
-                            title: bl.song.title,
-                            artist: bl.song.artist,
-                            genre: bl.song.genre,
-                            preview_url: bl.song.audio_url,
-                            coverUrl: bl.song.cover_url,
-                            lrc_url: undefined,
-                            addedAt: Date.now(),
-                        });
-                    }
-                }
-                if (newSongs.length > 0) {
-                    setLikedSongs(prev => {
-                        const ids = new Set(prev.map(s => s.id));
-                        const toAdd = newSongs.filter(s => !ids.has(s.id));
-                        return [...prev, ...toAdd];
-                    });
-                    console.log(`[Sync] 从后端同步了 ${newSongs.length} 首新的喜欢歌曲`);
-                }
-            }
+            // ★ Replace liked songs with backend data (authoritative)
+            // Previously this only appended, causing unliked songs to persist in localStorage
+            const backendLikedSongs: LikedSong[] = backendLiked.map(bl => ({
+                id: `${bl.song.title}_${bl.song.artist}`,
+                title: bl.song.title,
+                artist: bl.song.artist,
+                genre: bl.song.genre,
+                preview_url: bl.song.audio_url,
+                coverUrl: bl.song.cover_url,
+                lrc_url: bl.song.lrc_url,
+                addedAt: Date.now(),
+            }));
+            setLikedSongs(backendLikedSongs);
+            console.log(`[Sync] 后端权威同步: ${backendLikedSongs.length} 首喜欢的歌曲`);
 
-            // Sync disliked songs
-            if (backendDisliked.length > 0) {
-                const newDislikes: DislikedSong[] = backendDisliked.map(d => ({
-                    id: `${d.title}_${d.artist}`,
-                    title: d.title,
-                    artist: d.artist,
-                    coverUrl: d.cover_url,
-                    dislikedAt: d.disliked_at || Date.now(),
-                }));
-                setDislikedSongs(newDislikes);
-                console.log(`[Sync] 从后端同步了 ${newDislikes.length} 首不喜欢的歌曲`);
-            }
+            // ★ Replace disliked songs with backend data (authoritative)
+            const backendDislikedSongs: DislikedSong[] = backendDisliked.map(d => ({
+                id: `${d.title}_${d.artist}`,
+                title: d.title,
+                artist: d.artist,
+                coverUrl: d.cover_url,
+                dislikedAt: d.disliked_at || Date.now(),
+            }));
+            setDislikedSongs(backendDislikedSongs);
+            console.log(`[Sync] 后端权威同步: ${backendDislikedSongs.length} 首不喜欢的歌曲`);
         } catch (err) {
-            console.warn('[Sync] 后端同步失败:', err);
+            console.warn('[Sync] 后端同步失败，保留本地缓存:', err);
         } finally {
             setIsSyncing(false);
         }

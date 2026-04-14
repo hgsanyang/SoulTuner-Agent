@@ -437,8 +437,12 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       <div style={sectionTitleStyle}>🗜️ 上下文压缩（通用）</div>
       {renderModelPicker('compress_llm_provider', 'compress_llm_model', '提供商', '模型', true)}
 
-      {/* ═══ 超时 ═══ */}
+      {/* ═══ 超时 & Token 预算 ═══ */}
       {renderSlider('llm_timeout', 'LLM 超时', 10, 120, 5, '秒')}
+      {renderSlider('intent_max_tokens', '意图分析最大输出 Token', 512, 4096, 256, ' tokens')}
+      <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
+        结构化 JSON 输出预算，某些模型默认 1024 会截断，建议 2048+
+      </div>
     </>
   );
 

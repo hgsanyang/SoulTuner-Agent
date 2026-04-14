@@ -341,3 +341,109 @@ export async function generateMusicCard(params: {
         hashtags: ['#音乐旅程', `#${params.mood || '推荐'}`, `#${params.artist}`],
     };
 }
+
+// ==================================================================
+// 待入库 (Pending) 管理 API
+// ==================================================================
+
+export interface PendingSong {
+    music_id: string;
+    title: string;
+    artist: string;
+    album: string;
+    duration: number;
+    format: string;
+    file_basename: string;
+    audio_url: string;
+    cover_url: string;
+    lrc_url: string;
+    acquired_at: string;
+}
+
+export async function fetchPendingSongs(): Promise<PendingSong[]> {
+    try {
+        const resp = await fetch('http://localhost:8501/api/pending-songs');
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        return data.success ? data.songs : [];
+    } catch (err) {
+        console.warn('[API] fetchPendingSongs 失败:', err);
+        return [];
+    }
+}
+
+export async function ingestPendingSongs(songs: {
+    file_basename: string;
+    ext: string;
+    music_id: string;
+    title: string;
+    artist: string;
+    album: string;
+    duration: number;
+}[]): Promise<{ success: boolean; ingested: number; message: string }> {
+    try {
+        const resp = await fetch('http://localhost:8501/api/pending-songs/ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ songs }),
+        });
+        if (!resp.ok) throw new Error(`入库失败: ${resp.status}`);
+        return resp.json();
+    } catch (err: any) {
+        console.error('[API] ingestPendingSongs 失败:', err);
+        return { success: false, ingested: 0, message: err.message || '入库失败' };
+    }
+}
+
+export async function deletePendingSong(
+    fileBasename: string, ext: string = 'mp3'
+): Promise<{ success: boolean }> {
+    try {
+        const resp = await fetch(
+            `http://localhost:8501/api/pending-songs?file_basename=${encodeURIComponent(fileBasename)}&ext=${encodeURIComponent(ext)}`,
+            { method: 'DELETE' },
+        );
+        if (!resp.ok) return { success: false };
+        return resp.json();
+    } catch (err) {
+        console.warn('[API] deletePendingSong 失败:', err);
+        return { success: false };
+    }
+}
+
+// ==================================================================
+// 我的曲库 (Library) API — 查询 Neo4j 图谱中全部歌曲
+// ==================================================================
+
+export interface LibrarySong {
+    title: string;
+    artist: string;
+    album: string;
+    audio_url: string;
+    cover_url: string;
+    lrc_url: string;
+    source: string;
+    music_id: string;
+    duration: number;
+    format: string;
+    vibe: string;
+    moods: string[];
+    themes: string[];
+}
+
+export async function fetchLibrarySongs(
+    offset: number = 0, limit: number = 200
+): Promise<{ songs: LibrarySong[]; total: number }> {
+    try {
+        const resp = await fetch(
+            `http://localhost:8501/api/library-songs?offset=${offset}&limit=${limit}`
+        );
+        if (!resp.ok) return { songs: [], total: 0 };
+        const data = await resp.json();
+        return data.success ? { songs: data.songs, total: data.total } : { songs: [], total: 0 };
+    } catch (err) {
+        console.warn('[API] fetchLibrarySongs 失败:', err);
+        return { songs: [], total: 0 };
+    }
+}
+

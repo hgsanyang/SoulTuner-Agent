@@ -33,7 +33,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 - 🧠 **Understands you better the more you use it** — Every like, save, skip, and conversation silently builds your personalized music profile, making the next recommendation more accurate over time.
 - 🌐 **Local library not enough? Real-time web search fallback** — Automatically searches the web for the latest music info when the local library falls short.
 - 🗺️ **Immersive Music Journey** — Describe a story or scenario, and the AI will orchestrate a complete music journey with emotional arcs.
-- ♻️ **Discover and Ingest** — Found a good song in the recommendations? Download it with one click to trigger automatic acoustic analysis and database ingestion, making it retrievable next time.
+- ♻️ **Discover → Stage → Ingest** — Found a good song? It downloads to a "Pending" staging area first. Preview, then confirm ingestion with automatic acoustic analysis.
 
 > 📖 For full features and interaction details, please refer to [Feature_Walkthrough.md](Feature_Walkthrough.md)
 >
@@ -45,15 +45,16 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 | Feature | Description |
 |---|---|
-| 🔀 **Hybrid RAG** | Concurrent GraphRAG + Semantic Search, weighted RRF fusion ranking |
-| 🎵 **Dual Audio Embeddings**| M2D-CLAP cross-modal semantics × 0.7 + OMAR-RQ acoustic features × 0.3 |
+| 🔀 **Hybrid RAG** | Concurrent GraphRAG + Semantic Search, equal-merge dedup + tri-anchor normalized reranking |
+| 🎵 **Dual Audio Embeddings**| M2D-CLAP cross-modal semantics + OMAR-RQ acoustic features, tri-anchor normalized fusion (weights adjustable) |
 | 🧠 **Long-term Memory** | GraphZep dual-stage recall, retaining user preferences across sessions |
-| 📊 **Graph Affinity** | Neo4j Graph distance + User profile preference Jaccard dual personalized ranking |
-| 🤖 **Smart Intent Recognition** | 7-class intent classification, supporting both API LLMs + local Qwen3-4B dual modes |
+| 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
+| 🤖 **Smart Intent Recognition** | 7-class intent + DST multi-turn tag inheritance, supporting both API LLMs + local Qwen3-4B |
 | 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j + GraphZep dual write |
 | 🌐 **Web Search Fallback** | SearxNG federated search + LLM summarization when the local library is insufficient |
 | 🎼 **Music Journey** | LLM Story → Emotion breakdown → Step-by-step retrieval, real-time SSE streaming |
-| ♻️ **Data Flywheel** | 1-Click ingestion: Search → Discover → Download → Tag extraction → Vector encoding → Neo4j |
+| ♻️ **Data Flywheel** | Download → Stage → Preview → Confirm Ingest → Tag extraction → Vector encoding → Neo4j |
+| 📋 **Library Mgmt** | Pending staging area + My Library full-graph management (search/play/delete) |
 | 📡 **SSE Streaming** | Real-time frontend rendering: thinking process → song cards → recommendation reasons |
 | 🐳 **Docker Deployment** | `docker compose up` one-click full-stack startup |
 
@@ -118,9 +119,11 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 │                            ▼                                        │
 │              Merge & Dedup (Equal Merge & Deduplication)             │
 │                            ▼                                        │
-│              Graph Affinity (Graph Distance + Profile Jaccard)       │
+│              Coarse Rank (Graph Affinity cutoff)                     │
 │                            ▼                                        │
-│              Dual-Anchor Rerank (M2D-CLAP + OMAR-RQ)               │
+│              Thompson Sampling (cold-start exploration slots)        │
+│                            ▼                                        │
+│              Tri-Anchor Rerank (Semantic+Acoustic+Personal norm.)    │
 │                            ▼                                        │
 │              MMR Multi-dim Diversity (λ=0.7)                       │
 └─────────────────────────────────────────────────────────────────────┘
@@ -143,7 +146,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 | **LLMs** | DeepSeek-V3.2 / Gemini / Doubao / Qwen (API) + Qwen3-4B (SGLang Local) |
 | **Long-term Memory**| GraphZep temporal memory (Dual-stage recall) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
-| **Ranking Algorithm**| Dual-Anchor Rerank (cosine) + Graph Affinity (shortestPath + Jaccard) + MMR |
+| **Ranking Algorithm**| Tri-Anchor Normalized Rerank (Semantic+Acoustic+Personal) + Graph Affinity Coarse Rank + Thompson Sampling + MMR |
 | **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
 | **Containerization** | Docker Compose (Neo4j + GraphZep + Backend + Frontend) |
 
@@ -156,7 +159,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 ### RAG Hybrid Retrieval Pipeline
 
 ```text
-User Query → Planner (LLM)
+User Query → Planner (LLM) + DST multi-turn tag inheritance
                ↓  intent_type + retrieval_plan
     ┌──────────┼──────────┐
     ▼          ▼          ▼
@@ -170,9 +173,9 @@ User Query → Planner (LLM)
                ▼
    Step 3: Artist Diversity Filter       ← ≤ N songs per artist (Exception for specific queries)
                ▼
-   Step 4: Graph Affinity                ← Graph distance + Jaccard preference scoring
+   Step 4: Coarse Rank + TS Explore      ← Graph Affinity sort → keep 65% → tail Thompson Sampling rescue
                ▼
-   Step 5: Dual-anchor Reranking         ← M2D-CLAP Semantic Anchor + OMAR-RQ Acoustic Anchor
+   Step 5: Tri-Anchor Normalized Rerank  ← Semantic(M2D-CLAP) + Acoustic(OMAR-RQ) + Personal(Graph Affinity MinMax)
                ▼
    Step 6: MMR Multi-dim Diversity       ← Relies on genre + mood + theme + scenario
                ▼
@@ -182,8 +185,10 @@ User Query → Planner (LLM)
 **Key Design Decisions**:
 
 - **GraphRAG**: 5-dimensional tag filtering (genre / scenario / mood / language / region), over 200 EN/ZH alias mapping algorithms.
-- **Dual Vector Models**: M2D-CLAP cross-modal semantics + OMAR-RQ acoustics, three-stage fusion pipeline.
-- **Dual-Anchor Reranking**: M2D-CLAP semantic anchor (query text → cosine) + OMAR-RQ acoustic anchor (candidate centroid → cosine), merged via weighted scores.
+- **Dual Vector Models**: M2D-CLAP cross-modal semantics + OMAR-RQ acoustics, tri-anchor normalized reranking fusion.
+- **Coarse Rank + Thompson Sampling**: Graph Affinity scored cutoff (`coarse_cut_ratio=65%`), tail candidates rescued via TS sampling (`Beta(α,β)` distribution) for exploration-exploitation balance.
+- **Tri-Anchor Normalized Reranking**: Semantic anchor `(cosine+1)/2` (M2D-CLAP) + Acoustic anchor `(cosine+1)/2` (OMAR-RQ centroid) + Personal anchor `MinMax` (Graph Affinity), all normalized to [0,1] then weighted fusion (frontend-tunable, auto-normalized so α+β+γ=1).
+- **DST Multi-turn Tag Inheritance**: Planner preserves previous `retrieval_plan` state (genre/mood/language/acoustic semantics) across turns, automatically augmenting new constraints on follow-up queries (e.g., prev=Pop → follow-up "sadder" → keep Pop + add Sad).
 - **MMR Jaccard**: Re-ranking using the `{genre, mood, theme, scenario}` multidimensional tags for candidate diversity.
 
 ### Agent Workflow
@@ -229,7 +234,9 @@ The frontend profile panel saves preferences (genre/mood/scenario/language), sim
 
 ### Data Flywheel
 
-User search → Discover new song → "Add to Local" (1-Click) → Download audio/cover/lyrics → LLM label extraction + Dual vector encoding → Neo4j ingestion → Discoverable next time.
+User search → Discover new song → Download to "Pending" staging area → Frontend preview & playback → Select and confirm ingestion → LLM label extraction + Dual vector encoding → Neo4j ingestion → Discoverable next time.
+
+> 💡 Songs acquired from the web no longer auto-ingest. Users manage ingested songs from the "My Library" page (search/play/delete).
 
 ### Engineering Quality
 
@@ -504,7 +511,7 @@ Hardware-accelerated deployment workflow for 8GB VRAM cards (e.g., RTX 4070), pr
 ├── config/settings.py          # Global Pydantic configs (Runtime patchable)
 │
 ├── retrieval/                  # Engine abstractions
-│   ├── hybrid_retrieval.py     # Multi-path Fusion + RRF + Graph Affinity + MMR
+│   ├── hybrid_retrieval.py     # Multi-path Fusion + Coarse Rank(Graph Affinity+TS) + Tri-Anchor Rerank + MMR
 │   ├── gssc_context_builder.py # GSSC pipeline (Budgeting + Abstract Context mapping)
 │   ├── audio_embedder.py       # M2D-CLAP mappings
 │   ├── neo4j_client.py         # Node connectivity definitions
@@ -515,7 +522,7 @@ Hardware-accelerated deployment workflow for 8GB VRAM cards (e.g., RTX 4070), pr
 │   ├── graphrag_search.py      # Neo4j Cypher definitions
 │   ├── semantic_search.py      # M2D-CLAP + OMAR Vector implementations
 │   ├── web_search_aggregator.py# SearxNG + Tavily routers
-│   └── acquire_music.py        # Flywheel downloader tools
+│   └── acquire_music.py        # Flywheel tools (download to staging + on-demand ingest)
 │
 ├── llms/                       # LLMs
 │   ├── prompts.py              # LLM Prompts
@@ -528,6 +535,7 @@ Hardware-accelerated deployment workflow for 8GB VRAM cards (e.g., RTX 4070), pr
 │   ├── components/Settings/    # ⚙️ Settings interface
 │   ├── components/Profile/     # 👤 User Profile interface
 │   └── components/Navigation/  # Nav layout views
+│   └── app/library/            # Library pages (Pending / My Library / Likes / Collections)
 │
 ├── graphzep_service/           # Micro node for GraphZep
 ├── tests/                      # Testing & Eval

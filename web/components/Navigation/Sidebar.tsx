@@ -60,6 +60,28 @@ const navGroups: NavGroup[] = [
     subtitle: '你的专属收藏',
     items: [
       {
+        href: '/library/pending',
+        label: '待入库',
+        description: '新获取待确认',
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        ),
+      },
+      {
+        href: '/library/my-library',
+        label: '我的曲库',
+        description: '图谱歌曲管理',
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+          </svg>
+        ),
+      },
+      {
         href: '/library/likes',
         label: '我的喜欢',
         description: '已赞歌曲',
