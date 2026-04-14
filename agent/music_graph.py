@@ -3,6 +3,8 @@
 """
 
 import asyncio
+import os
+from datetime import date
 from typing import Dict, Any
 
 from langgraph.graph import StateGraph, END
@@ -118,6 +120,58 @@ class MusicRecommendationGraph:
         """获取编译后的应用"""
         return self.workflow
     
+    def _load_user_profile_for_prompt(self, user_id: str = "local_admin") -> str:
+        """
+        从 Neo4j User 节点加载用户主动设置的画像偏好，格式化为简洁文本。
+        纯 Cypher 查询 + 字符串拼接，零 LLM 调用，耗时约 10ms。
+        """
+        try:
+            from retrieval.neo4j_client import get_neo4j_client
+            import json as _json
+            client = get_neo4j_client()
+            if not client or not client.driver:
+                return ""
+            result = client.execute_query("""
+            MATCH (u:User {id: $uid})
+            RETURN u.preferred_genres AS genres,
+                   u.preferred_moods AS moods,
+                   u.preferred_scenarios AS scenarios,
+                   u.preferred_languages AS languages,
+                   u.profile_free_text AS free_text
+            """, {"uid": user_id})
+            
+            if not result or not result[0]:
+                return ""
+            
+            row = result[0]
+            parts = []
+            for field, label in [
+                ("genres", "偏好流派"),
+                ("moods", "情绪偏向"),
+                ("scenarios", "常听场景"),
+                ("languages", "语言偏好"),
+            ]:
+                raw = row.get(field)
+                if raw:
+                    try:
+                        values = _json.loads(raw)
+                        if values:
+                            parts.append(f"{label}: {', '.join(values)}")
+                    except (ValueError, TypeError):
+                        pass
+            
+            free_text = row.get("free_text") or ""
+            if free_text.strip():
+                parts.append(f"自述: {free_text.strip()}")
+            
+            profile_text = "；".join(parts) if parts else ""
+            if profile_text:
+                logger.info(f"[UserProfile] 画像加载成功: {profile_text[:80]}")
+            return profile_text
+        except Exception as e:
+            logger.warning(f"[UserProfile] 画像加载失败: {e}")
+            return ""
+    
     async def warmup_kv_cache(self):
         """启动时预热 KV Prefix Cache（后台异步执行，不阻塞启动）
         
@@ -142,7 +196,18 @@ class MusicRecommendationGraph:
             from langchain_core.prompts import ChatPromptTemplate
             
             # 用最简单的输入触发一次完整的 system prompt 计算
-            structured_llm = _intent_llm.with_structured_output(MusicQueryPlan, include_raw=True)
+            _warmup_model_name = getattr(_intent_llm, 'model_name', '') or ''
+            _is_qwen3_warmup = any(kw in _warmup_model_name.lower() for kw in ['qwen3', 'qwen-3'])
+            _is_dashscope_warmup = _provider == 'dashscope'
+            _bound_llm = _intent_llm
+            if _is_qwen3_warmup or _is_dashscope_warmup:
+                _bound_llm = _intent_llm.bind(
+                    extra_body={"enable_thinking": False},
+                    response_format={"type": "json_object"},
+                )
+                structured_llm = _bound_llm.with_structured_output(MusicQueryPlan, include_raw=True, method="json_mode")
+            else:
+                structured_llm = _bound_llm.with_structured_output(MusicQueryPlan, include_raw=True)
             
             # DashScope 显式缓存：warmup 时用 content 数组格式创建缓存条目
             _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
@@ -168,6 +233,7 @@ class MusicRecommendationGraph:
                 "user_preferences": "无",
                 "chat_history": "",
                 "previous_plan": "",
+                "current_date": str(date.today()),
             })
             _elapsed = _time.time() - _t0
             
@@ -256,6 +322,16 @@ class MusicRecommendationGraph:
             _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or '?').lower()
             logger.info(f"--- [步骤 1] 统一意图分析与检索规划 (Structured Output) | 🤖 {_intent_provider} / {_intent_model_name} ---")
             
+            # ── 统一构建用户偏好上下文（用户画像 + GraphZep 长期记忆）──
+            _profile_text = self._load_user_profile_for_prompt()
+            _graphzep = state.get("graphzep_facts", "")
+            _pref_parts = []
+            if _profile_text:
+                _pref_parts.append(f"【用户画像】{_profile_text}")
+            if _graphzep and _graphzep != "暂无用户长期记忆":
+                _pref_parts.append(f"【长期记忆】{_graphzep}")
+            _combined_preferences = "\n".join(_pref_parts) if _pref_parts else "无"
+            
             # ✅ 根据 provider 类型选择提示词模板和 structured output 方法：
             # 本地小模型（sglang/vllm/ollama）→ 正交化 6 示例的 LOCAL_PLANNER_PROMPT
             #   + method='json_mode'（SGLang 不支持 function_calling 的 tools 参数，会返回 400）
@@ -285,8 +361,10 @@ class MusicRecommendationGraph:
                     _prompt = ChatPromptTemplate.from_template(_planner_prompt)
                     _messages = _prompt.format_messages(
                         user_input=user_input,
+                        user_preferences=_combined_preferences,
                         chat_history=_ctx["chat_history"],
                         previous_plan=_previous_plan_text,
+                        current_date=str(date.today()),
                     )
                     
                     # 构造 OpenAI 兼容请求体
@@ -305,7 +383,7 @@ class MusicRecommendationGraph:
                     _request_body = {
                         "model": _intent_llm_instance.model_name,
                         "messages": _api_messages,
-                        "max_tokens": 1024,
+                        "max_tokens": 4096,
                         "temperature": _intent_llm_instance.temperature,
                         "response_format": {"type": "json_object"},
                         "chat_template_kwargs": {"enable_thinking": False},
@@ -362,8 +440,10 @@ class MusicRecommendationGraph:
                     )
                     plan: MusicQueryPlan = await chain.ainvoke({
                         "user_input": user_input,
+                        "user_preferences": _combined_preferences,
                         "chat_history": _ctx["chat_history"],
                         "previous_plan": _previous_plan_text,
+                        "current_date": str(date.today()),
                     })
             else:
                 # ── API 大模型路径（SiliconFlow / Volcengine / Gemini / DeepSeek 等）──
@@ -374,68 +454,133 @@ class MusicRecommendationGraph:
                 #     → 每次都算，但量很小
                 # 预期效果：首次 6-10s（冷启动），后续 2-4s（缓存命中）
                 from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
-                structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan, include_raw=True)
                 
-                # ★ DashScope 显式缓存：用 content 数组格式 + cache_control
-                #   百炼要求 cache_control 嵌套在 content 数组的 text 对象里
-                #   命中时 input token 仅收 10%，5 分钟有效期（命中后重置）
-                _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
-                if _intent_provider == "dashscope":
-                    from langchain_core.messages import SystemMessage
-                    _sys_msg = SystemMessage(
-                        content=[{
-                            "type": "text",
-                            "text": UNIFIED_PLANNER_SYSTEM,
-                            "cache_control": {"type": "ephemeral"}
-                        }]
-                    )
-                    _prompt = ChatPromptTemplate.from_messages([_sys_msg, ("human", UNIFIED_PLANNER_HUMAN)])
-                else:
-                    _prompt = ChatPromptTemplate.from_messages([
-                        ("system", UNIFIED_PLANNER_SYSTEM),
-                        ("human", UNIFIED_PLANNER_HUMAN),
-                    ])
+                # ★★★ 根源性修复 v3：DashScope/Qwen3 完全绕过 LangChain ChatOpenAI ★★★
+                # 测试验证结论（3 轮排查）：
+                #   1. with_structured_output (function_calling): 2048+ tokens → JSON 截断
+                #   2. with_structured_output (json_mode): 6570 reasoning tokens → Parsed=None
+                #   3. ChatOpenAI.ainvoke (json_mode): ChatOpenAI 检测 finish_reason=length 直接抛异常，
+                #      根本无法到达手动 parse 环节
+                # 解决：用 httpx 直接调 DashScope OpenAI 兼容 API，100% 控制请求体和响应处理。
+                # 直接 API 测试验证：enable_thinking=False + json_object → 仅 13 tokens
+                _is_qwen3 = any(kw in (_intent_model_name or '').lower() for kw in ['qwen3', 'qwen-3'])
+                _is_dashscope = (settings.intent_llm_provider or settings.llm_default_provider or '').lower() == 'dashscope'
                 
-                chain = _prompt | structured_llm
                 from retrieval.gssc_context_builder import build_context
                 _ctx = await build_context(
                     graphzep_facts=state.get("graphzep_facts", ""),
                     chat_history=history_text,
                     total_budget=0,
                 )
-            
-                _raw_result = await chain.ainvoke({
-                    "user_input": user_input,
-                    "user_preferences": state.get("graphzep_facts", "无"),
-                    "chat_history": _ctx["chat_history"],
-                    "previous_plan": _previous_plan_text,
-                })
-                plan: MusicQueryPlan = _raw_result["parsed"]
                 
-                # ── Token 消耗追踪 + 缓存命中检测 ──
-                _raw_msg = _raw_result.get("raw")
-                if _raw_msg and hasattr(_raw_msg, "usage_metadata") and _raw_msg.usage_metadata:
-                    _usage = _raw_msg.usage_metadata
-                    _p = _usage.get("input_tokens", 0)
-                    _c = _usage.get("output_tokens", 0)
-                    # 多厂商缓存命中检测：
-                    #   SiliconFlow: prompt_cache_hit_tokens
-                    #   DashScope/百炼: input_token_details.cache_read (LangChain 映射自 prompt_tokens_details.cached_tokens)
-                    _cache_hit = (
-                        _usage.get("prompt_cache_hit_tokens", 0)
-                        or _usage.get("cache_read_input_tokens", 0)
-                        or (_usage.get("input_token_details") or {}).get("cache_read", 0)
+                if _is_qwen3 or _is_dashscope:
+                    # ── DashScope/Qwen3 路径：httpx 直接调 API ──
+                    import httpx
+                    import json as _json
+                    logger.info("[Intent] DashScope/Qwen3: httpx 直接调 API（完全绕过 LangChain）")
+                    
+                    _schema_str = _json.dumps(MusicQueryPlan.model_json_schema(), ensure_ascii=False)
+                    _enhanced_system = f"{UNIFIED_PLANNER_SYSTEM}\n\n请严格按以下 JSON Schema 输出，只输出 JSON：\n{_schema_str}"
+                    
+                    # 渲染 human prompt
+                    _human_text = UNIFIED_PLANNER_HUMAN.format(
+                        user_input=user_input,
+                        user_preferences=_combined_preferences,
+                        chat_history=_ctx["chat_history"],
+                        previous_plan=_previous_plan_text,
+                        current_date=str(date.today()),
                     )
-                    _cache_miss = _usage.get("prompt_cache_miss_tokens", 0) or (_p - _cache_hit if _cache_hit else 0)
-                    _cache_info = ""
-                    if _cache_hit:
-                        _cache_info = f" | ✅ KV Cache命中={_cache_hit:,}tok, 未命中={_cache_miss:,}tok"
-                    else:
-                        _cache_info = " | ❄️ 冷启动(无缓存命中)"
-                    logger.info(
-                        f"[Token Report] 意图分析: "
-                        f"prompt={_p:,} + completion={_c:,} = {_p + _c:,} tokens{_cache_info}"
-                    )
+                    
+                    _api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+                    _api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+                    _model = _intent_model_name or "qwen3.5-flash"
+                    
+                    _request_body = {
+                        "model": _model,
+                        "messages": [
+                            {"role": "system", "content": [
+                                {"type": "text", "text": _enhanced_system, "cache_control": {"type": "ephemeral"}}
+                            ]},
+                            {"role": "user", "content": _human_text},
+                        ],
+                        "temperature": 0.3,
+                        "max_tokens": 4096,
+                        "enable_thinking": False,
+                        "response_format": {"type": "json_object"},
+                    }
+                    
+                    async with httpx.AsyncClient(timeout=60) as _http:
+                        _resp = await _http.post(
+                            _api_url,
+                            json=_request_body,
+                            headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
+                        )
+                        _resp.raise_for_status()
+                        _resp_data = _resp.json()
+                    
+                    _raw_content = _resp_data["choices"][0]["message"]["content"]
+                    _finish_reason = _resp_data["choices"][0].get("finish_reason", "")
+                    if _finish_reason == "length":
+                        logger.warning("[Intent] ⚠️ LLM 输出被 max_tokens 截断 (finish_reason=length)，JSON 可能不完整")
+                    _usage_data = _resp_data.get("usage", {})
+                    _p = _usage_data.get("prompt_tokens", 0)
+                    _c = _usage_data.get("completion_tokens", 0)
+                    _cached = (_usage_data.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+                    _cache_info = f" | ✅ Cache={_cached:,}tok" if _cached else " | ❄️ 冷启动"
+                    logger.info(f"[Token Report] 意图分析: prompt={_p:,} + completion={_c:,} = {_p+_c:,} tokens{_cache_info}")
+                    
+                    # 清理可能残留的 <think> 标签
+                    _raw_json = _raw_content.strip()
+                    if "<think>" in _raw_json:
+                        _think_end = _raw_json.find("</think>")
+                        if _think_end > 0:
+                            _raw_json = _raw_json[_think_end + 8:].strip()
+                    if "```json" in _raw_json:
+                        _raw_json = _raw_json.split("```json")[-1].split("```")[0].strip()
+                    
+                    plan = MusicQueryPlan.model_validate_json(_raw_json)
+                
+                else:
+                    # ── 其他厂商（SiliconFlow / OpenAI / DeepSeek 等）：保持 with_structured_output ──
+                    structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan, include_raw=True)
+                    
+                    _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
+                    _prompt = ChatPromptTemplate.from_messages([
+                        ("system", UNIFIED_PLANNER_SYSTEM),
+                        ("human", UNIFIED_PLANNER_HUMAN),
+                    ])
+                    
+                    chain = _prompt | structured_llm
+                    _raw_result = await chain.ainvoke({
+                        "user_input": user_input,
+                        "user_preferences": _combined_preferences,
+                        "chat_history": _ctx["chat_history"],
+                        "previous_plan": _previous_plan_text,
+                        "current_date": str(date.today()),
+                    })
+                    plan: MusicQueryPlan = _raw_result["parsed"]
+                    
+                    # Token 追踪
+                    _raw_msg = _raw_result.get("raw")
+                    if _raw_msg and hasattr(_raw_msg, "usage_metadata") and _raw_msg.usage_metadata:
+                        _usage = _raw_msg.usage_metadata
+                        _p = _usage.get("input_tokens", 0)
+                        _c = _usage.get("output_tokens", 0)
+                        _cache_hit = (
+                            _usage.get("prompt_cache_hit_tokens", 0)
+                            or _usage.get("cache_read_input_tokens", 0)
+                            or (_usage.get("input_token_details") or {}).get("cache_read", 0)
+                        )
+                        _cache_miss = _usage.get("prompt_cache_miss_tokens", 0) or (_p - _cache_hit if _cache_hit else 0)
+                        _cache_info = ""
+                        if _cache_hit:
+                            _cache_info = f" | ✅ KV Cache命中={_cache_hit:,}tok, 未命中={_cache_miss:,}tok"
+                        else:
+                            _cache_info = " | ❄️ 冷启动(无缓存命中)"
+                        logger.info(
+                            f"[Token Report] 意图分析: "
+                            f"prompt={_p:,} + completion={_c:,} = {_p + _c:,} tokens{_cache_info}"
+                        )
 
             
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
@@ -456,6 +601,7 @@ class MusicRecommendationGraph:
             retrieval_plan_dict = plan.retrieval_plan.model_dump()
             retrieval_plan_dict["_intent_type"] = plan.intent_type
             retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
+            retrieval_plan_dict["_user_profile"] = _profile_text  # 画像文本供 HyDE 参考
             
             return {
                 "intent_type": plan.intent_type,
@@ -717,10 +863,10 @@ class MusicRecommendationGraph:
 
     async def acquire_online_music_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
-        节点：用户确认后，自动下载音频/歌词/封面并入库 Neo4j。
-        触发条件：LLM 识别到用户确认「好的，帮我下载/获取这些歌」。
+        节点：下载音频/歌词/封面到本地待入库目录。
+        不写入 Neo4j，用户需在前端待入库页面确认后才入库。
         """
-        logger.info("--- [步骤] 联网获取并入库音乐（自动数据飞轮）---")
+        logger.info("--- [步骤] 联网获取音乐（下载到待入库）---")
 
         parameters = state.get("intent_parameters", {})
         # song_queries 从 parameters 中取，LLM 应该填入类似 ["歌名 歌手", ...]
@@ -801,7 +947,7 @@ class MusicRecommendationGraph:
                 # genre 可能是 "Pop/Indie/Driving" 格式
                 tags.update(t.strip() for t in genre.replace(",", "/").split("/") if t.strip())
 
-        # 2. 从 Neo4j 用户画像补充
+        # 2. 从 Neo4j 用户画像补充（行为推导的偏好）
         try:
             from retrieval.user_memory import UserMemoryManager
             mem = UserMemoryManager()
@@ -814,7 +960,29 @@ class MusicRecommendationGraph:
                 if mood_tendency:
                     tags.update(m.strip() for m in mood_tendency.replace(",", "，").split("，") if m.strip())
         except Exception as e:
-            logger.warning(f"[Favorites] 加载用户画像失败: {e}")
+            logger.warning(f"[Favorites] 加载行为画像失败: {e}")
+
+        # 2b. 从用户画像面板的显式设置补充（preferred_genres / preferred_moods）
+        try:
+            from retrieval.neo4j_client import get_neo4j_client
+            import json as _json
+            _client = get_neo4j_client()
+            if _client and _client.driver:
+                _profile_row = _client.execute_query(
+                    "MATCH (u:User {id: $uid}) RETURN u.preferred_genres AS pg, u.preferred_moods AS pm",
+                    {"uid": "local_admin"}
+                )
+                if _profile_row and _profile_row[0]:
+                    for field in ["pg", "pm"]:
+                        raw = _profile_row[0].get(field)
+                        if raw:
+                            try:
+                                parsed = _json.loads(raw)
+                                tags.update(t.strip() for t in parsed if t and t.strip())
+                            except (ValueError, TypeError):
+                                pass
+        except Exception as e:
+            logger.warning(f"[Favorites] 加载画像标签失败: {e}")
 
         # 3. 从 GraphZep 记忆提取场景/情绪关键词
         if graphzep_facts and graphzep_facts != "暂无用户长期记忆":

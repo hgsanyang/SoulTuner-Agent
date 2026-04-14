@@ -328,17 +328,19 @@ def get_intent_chat_model():
     优先级：intent_llm_* → llm_default_*（主模型）→ provider 硬编码默认
     API 模式下 intent_llm_* 为空，会自动复用主模型配置。
     
-    max_tokens 锁定 1024：意图分析输出为结构化 JSON（MusicQueryPlan），
-    典型输出约 200-400 tokens，1024 提供充足安全余量。
+    max_tokens 从 settings.intent_max_tokens 读取（默认 2048）。
+    意图分析输出为结构化 JSON（MusicQueryPlan），含 DST 多轮标签继承，
+    某些模型（如 qwen3.5-flash）在 1024 时会被截断，需要更大的预算。
     """
     try:
         provider = settings.intent_llm_provider or settings.llm_default_provider
         # 空字符串视为未配置，依次 fallback：intent专用 → 主模型 → 留 None 给 provider 默认
         model_name = settings.intent_llm_model or settings.llm_default_model or None
-        return get_chat_model(provider=provider, model_name=model_name, temperature=0.3, max_tokens=1024)
+        _max_tokens = getattr(settings, 'intent_max_tokens', 2048)
+        return get_chat_model(provider=provider, model_name=model_name, temperature=0.3, max_tokens=_max_tokens)
     except Exception:
         # 回退到默认配置
-        return get_chat_model(provider="siliconflow", temperature=0.3, max_tokens=1024)
+        return get_chat_model(provider="siliconflow", temperature=0.3, max_tokens=2048)
 
 def gemini_llm(model_name: Optional[str] = None, temperature: float = 1.0):
     """便捷包装函数：快速获取 Google Gemini 模型实例
