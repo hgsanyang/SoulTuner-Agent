@@ -41,12 +41,18 @@ async def startup_event():
     _t0 = _t.time()
     logger.info("🚀 开始预加载关键组件...")
     
-    # 1. 预加载 M2D-CLAP 跨模态模型
+    # 1. 预加载 M2D-CLAP 跨模态模型（音频骨干 + 文本编码器）
     try:
-        from retrieval.audio_embedder import get_m2d2_model
+        from retrieval.audio_embedder import get_m2d2_model, encode_text_to_embedding
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, get_m2d2_model)
-        logger.info(f"  ✅ M2D-CLAP 模型预加载完成 ({_t.time()-_t0:.1f}s)")
+        logger.info(f"  ✅ M2D-CLAP 音频骨干预加载完成 ({_t.time()-_t0:.1f}s)")
+        # ★ 关键：预热文本编码器（GTE-base / BERT-base）
+        # 文本编码器是懒加载的（首次 encode_clap_text 才创建），
+        # 包含 AutoModel.from_pretrained() 初始化，首次耗时 ~60-70s。
+        # 在启动时预热，避免首次用户请求等待。
+        await loop.run_in_executor(None, lambda: encode_text_to_embedding("warmup"))
+        logger.info(f"  ✅ M2D-CLAP 文本编码器预热完成 ({_t.time()-_t0:.1f}s)")
     except Exception as e:
         logger.error(f"  ❌ M2D-CLAP 模型预加载失败: {e}")
     
@@ -64,6 +70,30 @@ async def startup_event():
         if neo4j and neo4j.driver:
             await loop.run_in_executor(None, lambda: neo4j.execute_query("RETURN 1 AS warmup", {}))
             logger.info(f"  ✅ Neo4j 连接预热完成 ({_t.time()-_t0:.1f}s)")
+            
+            # ★ Thompson Sampling 时间衰减：每次重启服务，ts_beta 衰减 20%
+            # 这样长时间没被推荐的歌自然"恢复"，避免被永久封杀
+            # 同时确保所有 Song 节点都有 ts_alpha/ts_beta 属性
+            ts_decay_query = """
+            MATCH (s:Song)
+            SET s.ts_alpha = coalesce(s.ts_alpha, 1),
+                s.ts_beta  = CASE 
+                    WHEN s.ts_beta IS NOT NULL AND s.ts_beta > 1 
+                    THEN s.ts_beta * 0.8 
+                    ELSE 1 
+                END
+            RETURN count(s) AS total,
+                   avg(s.ts_beta) AS avg_beta
+            """
+            ts_result = await loop.run_in_executor(
+                None, lambda: neo4j.execute_query(ts_decay_query, {})
+            )
+            if ts_result:
+                r = ts_result[0]
+                logger.info(
+                    f"  ✅ TS 时间衰减完成: {r['total']} 首歌, "
+                    f"avg(beta)={r['avg_beta']:.2f} ({_t.time()-_t0:.1f}s)"
+                )
     except Exception as e:
         logger.warning(f"  ⚠️ Neo4j 预热失败（不影响启动）: {e}")
     

@@ -101,6 +101,13 @@ def get_m2d2_model():
     return _M2D2_MODEL, None
 
 
+# ---- 文本 Embedding 缓存（避免同一文本重复编码）----
+# semantic_search 和 tri_anchor_rerank 可能编码相同或不同的文本，
+# 加一层轻量缓存兜底：命中时跳过 ~100ms 的 M2D-CLAP 推理。
+_TEXT_EMB_CACHE: Dict[str, List[float]] = {}
+_TEXT_EMB_CACHE_MAX = 16  # 最多缓存 16 条（覆盖单次请求 + 少量历史）
+
+
 def encode_text_to_embedding(text: str) -> List[float]:
     """
     【V2 升级】将自然语言文本编码为向量（用于在 Neo4j 中执行原生向量检索）
@@ -108,7 +115,15 @@ def encode_text_to_embedding(text: str) -> List[float]:
     这是 HyDE 流程的核心节点：
     用户查询 → LLM 虚拟乐评 → 本函数 → query_vector → Neo4j vector.queryNodes
     
-    使用 M2D-CLAP 内置的文本编码器（GTE/BERT-based）。    """
+    使用 M2D-CLAP 内置的文本编码器（GTE/BERT-based）。
+    
+    内置 LRU 缓存：相同文本不重复编码，节省 ~100ms/次。
+    """
+    # 缓存命中 → 直接返回
+    if text in _TEXT_EMB_CACHE:
+        logger.info(f"[M2D-CLAP] 文本 embedding 缓存命中: '{text[:50]}...'")
+        return _TEXT_EMB_CACHE[text]
+
     model, _ = get_m2d2_model()
     device = next(model.parameters()).device
     
@@ -117,7 +132,13 @@ def encode_text_to_embedding(text: str) -> List[float]:
         text_features = model.encode_clap_text([text])
         embedding = text_features.cpu().numpy().flatten().tolist()
     
+    # 写入缓存（超限时淘汰最早的条目）
+    if len(_TEXT_EMB_CACHE) >= _TEXT_EMB_CACHE_MAX:
+        _TEXT_EMB_CACHE.pop(next(iter(_TEXT_EMB_CACHE)))
+    _TEXT_EMB_CACHE[text] = embedding
+    
     return embedding
+
 
 
 def encode_audio_to_embedding(audio_array: np.ndarray, sample_rate: int = 16000) -> List[float]:
