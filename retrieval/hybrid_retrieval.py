@@ -430,6 +430,9 @@ class MusicHybridRetrieval:
         
         # 保存当前 query 供 _format_results 中的 Cross-Encoder 精排使用
         self._current_query = query
+        # 保存 HyDE 声学描述供三锚精排的语义锚使用（与 M2D-CLAP 训练分布对齐）
+        # 如果有 HyDE 描述则用它，否则回退到原始 query
+        self._current_hyde_text = vector_desc if vector_desc else query
         # 保存当前 language_filter 供 _format_results 中的 Instrumental 后过滤使用
         self._current_language_filter = language_filter
         
@@ -921,15 +924,27 @@ class MusicHybridRetrieval:
             for c in candidates:
                 title = c.get("song", {}).get("title", "")
                 dist = distance_map.get(title, -1)
-                if dist > 0:
-                    c["_graph_affinity"] = 1.0 / (1.0 + dist)
+                if dist == 1:
+                    # 直接交互过的歌（LIKES/LISTENED_TO, 1 hop）
+                    # 轻度降权：语义/声学高度匹配时仍可翻盘
+                    c["_graph_affinity"] = -0.2
+                    c["_affinity_reason"] = "已知歌曲(轻度降权)"
+                elif dist > 1:
+                    # 间接关联（共享标签/类似偏好的新歌）→ 加权
+                    # dist=2 为最佳发现候选（加分最高），距离越远加分越少
+                    c["_graph_affinity"] = 1.0 / (dist - 1)  # dist=2→1.0, dist=3→0.5, dist=4→0.33
+                    c["_affinity_reason"] = f"发现候选({dist}hop)"
                 else:
+                    # 无图谱关联 → 中性
                     c["_graph_affinity"] = 0.0
+                    c["_affinity_reason"] = "无关联"
 
-            affinity_hits = sum(1 for c in candidates if c["_graph_affinity"] > 0)
+            known_cnt = sum(1 for c in candidates if c.get("_graph_affinity", 0) < 0)
+            discovery_cnt = sum(1 for c in candidates if c.get("_graph_affinity", 0) > 0)
             logger.info(
                 f"[GraphAffinity] 合并查询完成（1 次 Neo4j）: "
-                f"图距离 {affinity_hits}/{len(candidates)} 首有亲和关系"
+                f"已知歌曲(降权)={known_cnt}, 发现候选(加分)={discovery_cnt}, "
+                f"无关联={len(candidates) - known_cnt - discovery_cnt}"
             )
         except Exception as e:
             logger.warning(f"[GraphAffinity] 合并查询失败（降级为不加权）: {e}")
@@ -1325,9 +1340,15 @@ class MusicHybridRetrieval:
             )
 
         # ---- Step 5: 三锚归一化精排（语义 + 声学 + 个性化）----
-        query_text = getattr(self, '_current_query', '') or ''
-        if query_text and final_list:
-            final_list = self._tri_anchor_rerank(final_list, query_text)
+        # ★ 语义锚使用 HyDE 声学描述（而非原始中文 query）
+        # 原因：M2D-CLAP 在英文声学描述上的对齐质量远高于中文情绪词，
+        #       HyDE 存在的意义就是弥合用户自然语言与模型训练分布的 gap。
+        #       同时，semantic_search 已经编码过相同的 HyDE 文本，
+        #       embedding 缓存会命中，节省 ~100ms 重复推理。
+        hyde_text = getattr(self, '_current_hyde_text', '') or ''
+        rerank_query = hyde_text if hyde_text else (getattr(self, '_current_query', '') or '')
+        if rerank_query and final_list:
+            final_list = self._tri_anchor_rerank(final_list, rerank_query)
 
         # ---- Step 5.5: Cross-Encoder 精排（可选，默认关闭）----
         if _settings.reranker_enabled and final_list:
@@ -1467,6 +1488,43 @@ class MusicHybridRetrieval:
         raw_markdown = "\n".join(markdown_lines).strip()
         if not raw_markdown:
             raw_markdown = "抱歉，没有找到合适的音乐推荐。"
+
+        # ---- Step 8: 异步更新 Thompson Sampling 曝光衰减 ----
+        # 每推荐一次，ts_beta += 1.0，使该歌在未来探索槽中的采样分数自然降低
+        # Beta(alpha, beta) 中 beta 越大，采样值越倾向于低值
+        recommended_titles = [
+            item.get("song", {}).get("title", "")
+            for item in final_list
+            if item.get("song", {}).get("title") and item.get("song", {}).get("title") != "🌐 全网资讯补充"
+        ]
+        if recommended_titles:
+            try:
+                import asyncio
+                async def _update_ts_exposure(titles):
+                    try:
+                        from retrieval.neo4j_client import get_neo4j_client
+                        neo4j = get_neo4j_client()
+                        if neo4j and neo4j.driver:
+                            ts_update_query = """
+                            UNWIND $titles AS t
+                            MATCH (s:Song {title: t})
+                            SET s.ts_beta = coalesce(s.ts_beta, 1) + 0.3
+                            """
+                            neo4j.execute_query(ts_update_query, {"titles": titles})
+                            logger.info(f"[TS] 曝光衰减更新: {len(titles)} 首歌 ts_beta += 0.3")
+                    except Exception as e:
+                        logger.warning(f"[TS] 曝光衰减更新失败（不影响推荐）: {e}")
+
+                # fire-and-forget: 异步更新，不阻塞返回
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_update_ts_exposure(recommended_titles))
+                except RuntimeError:
+                    # 如果没有运行中的事件循环，同步执行
+                    import threading
+                    threading.Thread(target=lambda: asyncio.run(_update_ts_exposure(recommended_titles)), daemon=True).start()
+            except Exception:
+                pass  # TS 更新失败不影响主流程
 
         return ToolOutput(
             success=len(final_list) > 0,
