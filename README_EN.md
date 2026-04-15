@@ -62,7 +62,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 ## 🖼️ Feature Preview
 
-📺 [**Demo Video**](https://www.bilibili.com/video/BV1ZzSDBaEhj/) — Full feature demonstration (Bilibili)
+📺 [**Demo Video**](https://www.bilibili.com/video/BV11dQLBDEeF/) — Full feature demonstration (Bilibili)
 
 ### 🏠 Home · 💬 Chat · 🎵 Recommend · 🎧 Player · 🗺️ Journey
 
