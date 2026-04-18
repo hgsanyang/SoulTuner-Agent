@@ -53,7 +53,7 @@ class UserMemoryManager:
         // 选择最佳匹配
         WITH coalesce(s1, s2, s3) AS existing
         WITH existing WHERE existing IS NOT NULL
-        RETURN id(existing) AS song_id
+        RETURN elementId(existing) AS song_id
         LIMIT 1
         """
         result = self.neo4j_client.execute_query(query, {"title": song_title, "artist": artist})
@@ -69,7 +69,7 @@ class UserMemoryManager:
                 # 关联到已有 Song 节点
                 query = """
                 MATCH (u:User {id: $user_id})
-                MATCH (s:Song) WHERE id(s) = $song_id
+                MATCH (s:Song) WHERE elementId(s) = $song_id
                 MERGE (u)-[r:LIKES]->(s)
                 ON CREATE SET r.created_at = timestamp(), r.weight = 1.0
                 ON MATCH SET r.weight = r.weight + 0.1
@@ -98,7 +98,7 @@ class UserMemoryManager:
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
-                MATCH (s:Song) WHERE id(s) = $song_id
+                MATCH (s:Song) WHERE elementId(s) = $song_id
                 MERGE (u)-[r:LISTENED_TO]->(s)
                 ON CREATE SET r.play_count = 1, r.total_duration = $duration, r.last_played = timestamp()
                 ON MATCH SET r.play_count = r.play_count + 1, r.total_duration = r.total_duration + $duration, r.last_played = timestamp()
@@ -126,7 +126,7 @@ class UserMemoryManager:
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
-                MATCH (s:Song) WHERE id(s) = $song_id
+                MATCH (s:Song) WHERE elementId(s) = $song_id
                 MERGE (u)-[r:SAVES]->(s)
                 ON CREATE SET r.created_at = timestamp(), r.weight = 0.8
                 ON MATCH SET r.weight = r.weight + 0.1
@@ -166,7 +166,7 @@ class UserMemoryManager:
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
-                MATCH (s:Song) WHERE id(s) = $song_id
+                MATCH (s:Song) WHERE elementId(s) = $song_id
                 MERGE (u)-[r:DISLIKES]->(s)
                 ON CREATE SET r.created_at = timestamp(), r.weight = 1.0
                 """
@@ -192,7 +192,7 @@ class UserMemoryManager:
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
-                MATCH (s:Song) WHERE id(s) = $song_id
+                MATCH (s:Song) WHERE elementId(s) = $song_id
                 MERGE (u)-[r:SKIPPED]->(s)
                 ON CREATE SET r.skip_count = 1, r.first_skipped = timestamp(), r.last_skipped = timestamp()
                 ON MATCH SET r.skip_count = r.skip_count + 1, r.last_skipped = timestamp()
@@ -244,6 +244,7 @@ class UserMemoryManager:
         OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+        OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
         // 排除明确不喜欢的歌
         WHERE NOT EXISTS {
             MATCH (u)-[:DISLIKES]->(s)
@@ -251,6 +252,7 @@ class UserMemoryManager:
         WITH s, a, r, type(r) AS rel_type,
              collect(DISTINCT m.name) AS moods,
              collect(DISTINCT t.name) AS themes,
+             collect(DISTINCT g.name) AS genres,
              CASE WHEN r.created_at IS NOT NULL
                THEN r.weight / (1.0 + 0.01 *
                  duration.inDays(datetime({epochMillis: r.created_at}), datetime()).days)
@@ -262,7 +264,7 @@ class UserMemoryManager:
                s.audio_url AS audio_url, s.cover_url AS cover_url,
                s.lrc_url AS lrc_url, s.album AS album,
                moods, themes, rel_type, decayed_score,
-               s.genre AS genre
+               CASE WHEN size(genres) > 0 THEN genres[0] ELSE '' END AS genre
         """
         if not self.neo4j_client:
             return []
@@ -278,7 +280,7 @@ class UserMemoryManager:
                         "cover_url": r.get("cover_url", ""),
                         "lrc_url": r.get("lrc_url", ""),
                         "album": r.get("album", ""),
-                        "genre": r.get("genre", ""),
+                        "genre": r.get("genre") or "",
                         "moods": r.get("moods", []),
                         "themes": r.get("themes", []),
                     },

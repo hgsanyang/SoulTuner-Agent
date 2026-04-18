@@ -160,10 +160,10 @@ class ProfileSynthesizer:
             ORDER BY like_count DESC
             WITH u, collect(DISTINCT {artist: liked_artist, likes: like_count})[..5] AS top_artists
 
-            // 最喜欢的流派
-            OPTIONAL MATCH (u)-[:LIKES]->(s2:Song)
-            WHERE s2.genre IS NOT NULL AND s2.genre <> '' AND s2.genre <> 'Unknown'
-            WITH u, top_artists, s2.genre AS genre, count(*) AS genre_count
+            // 最喜欢的流派（通过 BELONGS_TO_GENRE 关系获取）
+            OPTIONAL MATCH (u)-[:LIKES]->(s2:Song)-[:BELONGS_TO_GENRE]->(g:Genre)
+            WHERE g.name IS NOT NULL AND g.name <> ''
+            WITH u, top_artists, g.name AS genre, count(*) AS genre_count
             ORDER BY genre_count DESC
             WITH u, top_artists, collect(DISTINCT {genre: genre, count: genre_count})[..5] AS top_genres
 
