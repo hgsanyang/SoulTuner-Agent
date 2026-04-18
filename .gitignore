@@ -200,5 +200,13 @@ Technical_Report.md
 _*.py
 _*.txt
 
-diff.txt
+# ================================================================
+# 集成测试（依赖外部服务，不上传到 CI）
+# ================================================================
+tests/test_profile_synthesizer.py
+tests/test_event_consistency.py
 
+# 评测结果文件（运行时生成）
+tests/eval/results/
+
+diff.txt
