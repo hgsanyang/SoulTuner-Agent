@@ -122,9 +122,21 @@ class MusicRecommendationGraph:
     
     def _load_user_profile_for_prompt(self, user_id: str = "local_admin") -> str:
         """
-        从 Neo4j User 节点加载用户主动设置的画像偏好，格式化为简洁文本。
-        纯 Cypher 查询 + 字符串拼接，零 LLM 调用，耗时约 10ms。
+        从动态画像 / Neo4j User 节点加载用户画像，格式化为简洁文本。
+        优先级：动态画像（Profile Synthesizer）> 静态标签（用户手动设置）
         """
+        # ① 优先尝试从 Profile Synthesizer 缓存获取动态画像
+        try:
+            from services.profile_synthesizer import get_profile_synthesizer
+            synth = get_profile_synthesizer(user_id)
+            portrait_text = synth.get_portrait_for_prompt()
+            if portrait_text:
+                logger.info(f"[UserProfile] 动态画像加载成功: {portrait_text[:80]}")
+                return portrait_text
+        except Exception as e:
+            logger.warning(f"[UserProfile] 动态画像加载失败，退回静态标签: {e}")
+        
+        # ② Fallback：从 Neo4j 读取用户手动设置的静态偷好标签
         try:
             from retrieval.neo4j_client import get_neo4j_client
             import json as _json
@@ -166,7 +178,7 @@ class MusicRecommendationGraph:
             
             profile_text = "；".join(parts) if parts else ""
             if profile_text:
-                logger.info(f"[UserProfile] 画像加载成功: {profile_text[:80]}")
+                logger.info(f"[UserProfile] 静态标签加载成功: {profile_text[:80]}")
             return profile_text
         except Exception as e:
             logger.warning(f"[UserProfile] 画像加载失败: {e}")
@@ -1940,6 +1952,16 @@ class MusicRecommendationGraph:
             
         except Exception as e:
             logger.warning(f"[GraphZep] 持久化投递失败（不影响用户）: {e}")
+        
+        # ★ Profile Synthesizer: 对话计数 + 自动触发画像刷新
+        try:
+            from services.profile_synthesizer import get_profile_synthesizer, trigger_portrait_refresh
+            synth = get_profile_synthesizer()
+            if synth.increment_conversation():
+                logger.info("[ProfileSynth] 达到刷新阈值，后台异步刷新用户画像...")
+                asyncio.create_task(trigger_portrait_refresh())
+        except Exception as synth_err:
+            logger.warning(f"[ProfileSynth] 画像刷新触发失败（不影响主流程）: {synth_err}")
         
         return {}
 

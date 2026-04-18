@@ -34,6 +34,10 @@ app = FastAPI(title="Music Recommendation API", version="1.0.0")
 from api.user_profile import router as user_profile_router
 app.include_router(user_profile_router)
 
+# 注册动态用户画像路由（Profile Synthesizer）
+from api.user_portrait import router as user_portrait_router
+app.include_router(user_portrait_router)
+
 @app.on_event("startup")
 async def startup_event():
     """在服务器启动时预加载关键组件，避免首次请求冷启动延迟"""
@@ -97,7 +101,19 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"  ⚠️ Neo4j 预热失败（不影响启动）: {e}")
     
-    # 4. 异步预热 KV Prefix Cache（后台执行，不阻塞服务就绪）
+    # 4. 加载用户画像缓存（从 Neo4j 读取上次保存的画像）
+    try:
+        from services.profile_synthesizer import get_profile_synthesizer
+        synth = get_profile_synthesizer()
+        portrait = await synth.load_portrait()
+        if portrait:
+            logger.info(f"  ✅ 用户画像已加载 | confidence={portrait.confidence} ({_t.time()-_t0:.1f}s)")
+        else:
+            logger.info(f"  ℹ️ 未找到历史画像，将在对话后自动生成")
+    except Exception as e:
+        logger.warning(f"  ⚠️ 用户画像加载失败（不影响启动）: {e}")
+    
+    # 5. 异步预热 KV Prefix Cache（后台执行，不阻塞服务就绪）
     try:
         _agent_inst = get_agent()
         asyncio.create_task(_agent_inst.graph.warmup_kv_cache())

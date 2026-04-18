@@ -174,6 +174,16 @@ async def save_user_profile(request: UserProfileRequest):
         except Exception:
             pass
 
+        # ★ 用户主动设置偏好后，立即触发画像刷新
+        # 用户声明的偏好权重最高，应尽快更新到动态画像中
+        try:
+            from services.profile_synthesizer import trigger_portrait_refresh
+            import asyncio
+            asyncio.create_task(trigger_portrait_refresh(request.user_id))
+            logger.info(f"[UserProfile] 已触发画像刷新（用户主动设置偏好）")
+        except Exception as e:
+            logger.warning(f"[UserProfile] 画像刷新触发失败: {e}")
+
         return {
             "success": True,
             "message": "音乐偏好已保存",
