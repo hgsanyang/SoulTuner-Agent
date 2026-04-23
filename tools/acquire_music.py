@@ -234,7 +234,7 @@ class OnlineMusicAcquirer:
     async def _get_play_url(
         self, song_id: str, session: aiohttp.ClientSession
     ) -> Optional[str]:
-        """获取音频播放/下载链接"""
+        """获取音频播放/下载链接（含 30s 试听检测）"""
         url = f"{self.api_base}/song/url?id={song_id}&level=exhigh"
         async with session.get(url, timeout=settings.netease_api_timeout) as resp:
             if resp.status != 200:
@@ -242,6 +242,13 @@ class OnlineMusicAcquirer:
             data = await resp.json()
             for item in data.get("data", []):
                 if item.get("url"):
+                    # 检测 30s 试听片段
+                    trial_info = item.get("freeTrialInfo")
+                    if trial_info is not None:
+                        logger.warning(
+                            f"⚠️ 歌曲 {song_id} 为试听版 "
+                            f"(freeTrialInfo: {trial_info.get('start',0)}-{trial_info.get('end',30)}s)"
+                        )
                     return item["url"]
         return None
 
@@ -305,34 +312,71 @@ class OnlineMusicAcquirer:
 async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
     """
     秒级快速写入 Neo4j：只写元数据 + audio_url，不提取向量。
-    使用 MERGE {title, artist} 幂等写入（与 data_flywheel / user_memory 一致），
-    避免因 MERGE key 不同导致重复 Song 节点。
+    
+    去重策略（修复与初始数据集的兼容性）：
+    1. 先通过 title + PERFORMED_BY->Artist.name 查找已有节点（兼容无 s.artist 属性的旧数据）
+    2. 如果找到则 SET 更新属性
+    3. 如果没有则通过 MERGE {title, artist} 创建新节点
     """
     try:
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
 
         for song in songs:
-            query = """
-            MERGE (s:Song {title: $title, artist: $artist_name})
-            SET s.music_id = $music_id,
-                s.album = $album,
-                s.duration = $duration,
-                s.format = $format,
-                s.audio_url = $audio_url,
-                s.cover_url = $cover_url,
-                s.lrc_url = $lrc_url,
-                s.source = 'online',
-                s.acquired_at = $acquired_at,
-                s.updated_at = timestamp()
+            title = song["title"]
+            artist = song["artist"]
+            
+            # ── 第一步：检查是否已存在（通过关系匹配，兼容初始数据集） ──
+            existing = client.execute_query(
+                """MATCH (s:Song)-[:PERFORMED_BY]->(a:Artist)
+                WHERE s.title = $title AND a.name = $artist
+                RETURN elementId(s) AS eid LIMIT 1""",
+                {"title": title, "artist": artist}
+            )
+            
+            if existing:
+                # ── 已存在：更新属性（不创建新节点） ──
+                query = """
+                MATCH (s:Song)-[:PERFORMED_BY]->(a:Artist)
+                WHERE s.title = $title AND a.name = $artist_name
+                WITH s LIMIT 1
+                SET s.music_id = $music_id,
+                    s.artist = $artist_name,
+                    s.album = $album,
+                    s.duration = $duration,
+                    s.format = $format,
+                    s.audio_url = $audio_url,
+                    s.cover_url = $cover_url,
+                    s.lrc_url = $lrc_url,
+                    s.source = 'online',
+                    s.acquired_at = $acquired_at,
+                    s.updated_at = timestamp()
+                """
+                logger.info(f"🔄 Neo4j 更新已有歌曲: {title} - {artist}")
+            else:
+                # ── 不存在：创建新节点 ──
+                query = """
+                MERGE (s:Song {title: $title, artist: $artist_name})
+                SET s.music_id = $music_id,
+                    s.album = $album,
+                    s.duration = $duration,
+                    s.format = $format,
+                    s.audio_url = $audio_url,
+                    s.cover_url = $cover_url,
+                    s.lrc_url = $lrc_url,
+                    s.source = 'online',
+                    s.acquired_at = $acquired_at,
+                    s.updated_at = timestamp()
 
-            MERGE (a:Artist {name: $artist_name})
-            MERGE (s)-[:PERFORMED_BY]->(a)
-            """
+                MERGE (a:Artist {name: $artist_name})
+                MERGE (s)-[:PERFORMED_BY]->(a)
+                """
+                logger.info(f"✅ Neo4j 秒级入库: {title} - {artist}")
+            
             params = {
                 "music_id": song["song_id"],
-                "title": song["title"],
-                "artist_name": song["artist"],
+                "title": title,
+                "artist_name": artist,
                 "album": song.get("album", "Unknown"),
                 "duration": song.get("duration", 0),
                 "format": song.get("ext", "mp3"),
@@ -342,7 +386,6 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 "acquired_at": datetime.now().isoformat(),
             }
             client.execute_query(query, params)
-            logger.info(f"✅ Neo4j 秒级入库: {song['title']} - {song['artist']}")
 
     except Exception as e:
         logger.error(f"Neo4j 快速入库失败: {e}")
