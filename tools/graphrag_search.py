@@ -672,9 +672,45 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         #   (Song)-[:IN_REGION]->(Region)
         # ============================================================
         cypher_query = "MATCH (s:Song)-[:PERFORMED_BY]->(a:Artist)\n"
-        # ──「tag 条件」：实体名（歌手/歌名）精确匹配──
+        # ── 解析 typed entity 字段 ──
+        artist_tags = intent.get("artist_tags", []) if isinstance(intent, dict) else []
+        song_tags = intent.get("song_tags", []) if isinstance(intent, dict) else []
+        # 清洗 typed tags（与 tags 一致的过滤逻辑）
+        artist_tags = [t for t in artist_tags if isinstance(t, str) and t.strip()]
+        song_tags = [t for t in song_tags if isinstance(t, str) and t.strip()]
+
         tag_conditions = []
-        if tags:
+        cypher_params_extra = {}  # typed entity 参数（artist_0, song_0 等）
+        if artist_tags or song_tags:
+            # ★ Typed 模式：LLM 已区分歌手/歌名 → 精确 AND/OR 组合
+            # 效果: (a.name matches artist1 OR a.name matches artist2)
+            #   AND (s.title matches song1 OR s.title matches song2)
+            where_groups = []
+            cypher_params_extra = {}
+
+            if artist_tags:
+                artist_conds = []
+                for i, at in enumerate(artist_tags):
+                    key = f"artist_{i}"
+                    artist_conds.append(f"toLower(a.name) CONTAINS toLower(${key})")
+                    cypher_params_extra[key] = at
+                where_groups.append(f"({' OR '.join(artist_conds)})")
+
+            if song_tags:
+                song_conds = []
+                for i, st in enumerate(song_tags):
+                    key = f"song_{i}"
+                    song_conds.append(f"toLower(s.title) CONTAINS toLower(${key})")
+                    cypher_params_extra[key] = st
+                where_groups.append(f"({' OR '.join(song_conds)})")
+
+            cypher_query += f"WHERE {' AND '.join(where_groups)}\n"
+            logger.info(
+                f"GraphRAG typed 实体匹配: artists={artist_tags}, songs={song_tags} "
+                f"→ {' AND '.join(where_groups)}"
+            )
+        elif tags:
+            # ★ Fallback 模式：旧版 tags（扁平列表），用 OR 避免翻译名导致全部失败
             if len(tags) == 1 and len(tags[0]) > 20:
                 logger.warning(f"检测到 tags 是一个长句子 '{tags[0]}'，短路图谱检索。")
                 return json.dumps([])
@@ -683,7 +719,9 @@ def graphrag_search(query: str, limit: int = 5) -> str:
                     f"(toLower(s.title) CONTAINS toLower($tags[{i}]) "
                     f"OR toLower(a.name) CONTAINS toLower($tags[{i}]))"
                 )
-            cypher_query += f"WHERE {' AND '.join(tag_conditions)}\n"
+            cypher_query += f"WHERE {' OR '.join(tag_conditions)}\n"
+            cypher_params_extra = {}
+            logger.info(f"GraphRAG fallback tag 匹配 (OR): {tags}")
         elif not genre_aliases and not scenario_aliases and not mood_aliases and not language_normalized and not region_normalized:
             logger.warning("GraphRAG 参数全空（tags/genre/scenario/mood/language/region），避免盲捞。")
             return json.dumps([])
@@ -733,7 +771,19 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         #   2 = 标题包含 tag（宽泛匹配）
         #   3 = 仅歌手名匹配（如 tag='痛仰', artist='痛仰乐队'）
         #   4 = 其他
-        if tags:
+        if artist_tags or song_tags:
+            # Typed 模式 ORDER BY：优先 song_tags 精确匹配，然后 artist_tags 精确匹配
+            order_parts = []
+            if song_tags:
+                exact_song = " OR ".join([f"toLower(s.title) = toLower($song_{i})" for i in range(len(song_tags))])
+                starts_song = " OR ".join([f"toLower(s.title) STARTS WITH toLower($song_{i})" for i in range(len(song_tags))])
+                contains_song = " OR ".join([f"toLower(s.title) CONTAINS toLower($song_{i})" for i in range(len(song_tags))])
+                order_parts.append(f"CASE WHEN {exact_song} THEN 0 WHEN {starts_song} THEN 1 WHEN {contains_song} THEN 2 ELSE 5 END")
+            if artist_tags:
+                exact_artist = " OR ".join([f"toLower(a.name) = toLower($artist_{i})" for i in range(len(artist_tags))])
+                order_parts.append(f"CASE WHEN {exact_artist} THEN 0 ELSE 3 END")
+            order_clause = f"ORDER BY {', '.join(order_parts)} ASC" if order_parts else "ORDER BY s.title ASC"
+        elif tags:
             # 标题精确匹配（tag 就是完整歌名）
             title_exact_conds = " OR ".join(
                 [f"toLower(s.title) = toLower($tags[{i}])" for i in range(len(tags))]
@@ -777,7 +827,11 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         LIMIT $limit
         """
         logger.info(f"Agent 触发执行图谱精准 Cypher: {cypher_query}")
-        results = client.execute_query(cypher_query, {"tags": tags, "limit": limit})
+        # 合并 typed entity 参数到查询参数
+        query_params = {"tags": tags, "limit": limit}
+        if cypher_params_extra:
+            query_params.update(cypher_params_extra)
+        results = client.execute_query(cypher_query, query_params)
         structured_results = []
         if results:
             BASE_API_URL = settings.api_base_url

@@ -163,12 +163,16 @@ class MusicHybridRetrieval:
         _mixed_limit = _s.mixed_retrieval_limit
         
         # 1. 确定检索策略：优先用预计算计划，否则安全默认（双引擎）
+        graph_artist_entities = []
+        graph_song_entities = []
         if precomputed_plan:
             logger.info("[Retrieval] 使用上游预计算的检索计划")
             use_graph = precomputed_plan.get("use_graph", False)
             use_vector = precomputed_plan.get("use_vector", False)
             use_web = precomputed_plan.get("use_web_search", False)
             graph_entities = precomputed_plan.get("graph_entities", [])
+            graph_artist_entities = precomputed_plan.get("graph_artist_entities", [])
+            graph_song_entities = precomputed_plan.get("graph_song_entities", [])
             genre_filter = precomputed_plan.get("graph_genre_filter")
             scenario_filter = precomputed_plan.get("graph_scenario_filter")
             mood_filter = precomputed_plan.get("graph_mood_filter")
@@ -343,7 +347,8 @@ class MusicHybridRetrieval:
             local_tasks.append(asyncio.sleep(0))  # 占位 graph
             local_tasks.append(asyncio.sleep(0))  # 占位 vector
         elif use_graph and not use_vector:
-            graph_query_dict = {"tags": graph_entities, "genre": genre_filter,
+            graph_query_dict = {"tags": graph_entities, "artist_tags": graph_artist_entities, "song_tags": graph_song_entities,
+                                "genre": genre_filter,
                                 "scenario": scenario_filter, "mood": mood_filter,
                                 "language": language_filter, "region": region_filter}
             if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
@@ -360,7 +365,8 @@ class MusicHybridRetrieval:
                 "region_filter": region_filter or "",
             }))
         else:
-            graph_query_dict = {"tags": graph_entities, "genre": genre_filter,
+            graph_query_dict = {"tags": graph_entities, "artist_tags": graph_artist_entities, "song_tags": graph_song_entities,
+                                "genre": genre_filter,
                                 "scenario": scenario_filter, "mood": mood_filter,
                                 "language": language_filter, "region": region_filter}
             if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:

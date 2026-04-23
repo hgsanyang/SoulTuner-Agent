@@ -13,7 +13,9 @@ class RetrievalPlan(BaseModel):
     """检索执行计划：由确定性规则自动填充，LLM 不再填写"""
 
     use_graph: bool = Field(default=False, description="是否启用知识图谱检索")
-    graph_entities: List[str] = Field(default_factory=list, description="提取出的实体词列表，含别名/外文名")
+    graph_entities: List[str] = Field(default_factory=list, description="提取出的实体词列表，含别名/外文名（向后兼容）")
+    graph_artist_entities: List[str] = Field(default_factory=list, description="歌手名实体（含中英文别名），匹配 Artist.name")
+    graph_song_entities: List[str] = Field(default_factory=list, description="歌曲名实体（含中英文别名），匹配 Song.title")
     graph_genre_filter: Optional[str] = Field(default=None, description="流派过滤")
     graph_scenario_filter: Optional[str] = Field(default=None, description="场景过滤")
     graph_mood_filter: Optional[str] = Field(default=None, description="情绪过滤")
