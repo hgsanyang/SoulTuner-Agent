@@ -208,7 +208,7 @@ stateDiagram-v2
 
     search_songs --> web_fallback: 本地库未命中时自动降级
     search_songs --> explain_results: 命中时直接进入解释
-    web_fallback --> explain_results: 网易云 API 实时搜索
+    web_fallback --> explain_results: 在线音乐 API 实时搜索
     acquire_music --> explain_results
     gen_recommendations --> explain_results
 
@@ -222,7 +222,7 @@ stateDiagram-v2
 
 > 意图识别支持 API 大模型（DeepSeek-V3.2 等）和本地 Qwen3-4B（SGLang 部署）双模式。本地模式下 HyDE 声学描述由独立模块生成。
 
-> `web_search` 意图现在直接路由到 `web_fallback` 节点（网易云 API 实时搜索），不再经过 HybridRetrieval。支持中文原文优先、多级查询词提取和 30s 试听版本检测。
+> `web_search` 意图现在直接路由到 `web_fallback` 节点（在线音乐 API 实时搜索），不再经过 HybridRetrieval。支持中文原文优先、多级查询词提取和 30s 试听版本检测。
 
 > 偏好提取为独立 LangGraph 节点 `extract_preferences`，闲聊意图自动跳过。
 
@@ -621,7 +621,7 @@ python data/pipeline/ingest_to_neo4j.py --update-embeddings
 5. D'Amico, E. et al. (Spotify, 2025). *Deploying Semantic ID-based Generative Retrieval for Large-Scale Podcast Discovery at Spotify.*
 6. Penha, G. et al. (2025). *Semantic IDs for Joint Generative Search and Recommendation.* (RecSys 2025 LBR)
 7. Palumbo, E. et al. (2025). *Text2Tracks: Prompt-based Music Recommendation via Generative Retrieval.*
-8. Xu, S. et al. (NetEase Cloud Music, 2025). *Climber: Toward Efficient Scaling Laws for Large Recommendation Models.*
+8. Xu, S. et al. (2025). *Climber: Toward Efficient Scaling Laws for Large Recommendation Models.*
 9. Wang, S. et al. (2025). *Knowledge Graph Retrieval-Augmented Generation for LLM-based Recommendation.* (ACL 2025)
 
 ---

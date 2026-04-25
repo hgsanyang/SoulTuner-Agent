@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `ncm_pipeline.py` | 从网易云下载音频/封面/歌词 |
+| `ncm_pipeline.py` | 从在线音乐平台下载音频/封面/歌词 |
 | `lyrics_analyzer.py` | LLM 歌词分析 → 自动生成 genre/mood/scenario 标签 |
 | `ingest_to_neo4j.py` | 批量入库 Neo4j（元数据 + 歌词标签 + 双模型向量编码） |
 | `ingest_tags_to_neo4j.py` | 仅写入标签到已有 Song 节点（增量标签补充） |

@@ -9,7 +9,7 @@
 |------|------|----------|
 | `ingest_to_neo4j.py` | 批量将本地音频目录入库 Neo4j | 初始化知识图谱时运行一次 |
 | `ingest_tags_to_neo4j.py` | 批量导入标签数据到 Neo4j | 补充标签时运行 |
-| `ncm_pipeline.py` | 网易云歌单爬取 + 下载 | 扩充本地曲库时运行 |
+| `ncm_pipeline.py` | 在线歌单爬取 + 下载 | 扩充本地曲库时运行 |
 | `mtg_adapter.py` | MTG-Jamendo 数据集适配 | 导入 MTG 数据集时运行一次 |
 | `lyrics_analyzer.py` | 歌词情感/主题分析 | 歌词标注时运行 |
 | `neo4j_schema_v2.py` | V2 图谱 Schema 迁移 | Schema 升级时运行一次 |
