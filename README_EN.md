@@ -62,7 +62,14 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 ## 🖼️ Feature Preview
 
-📺 [**Demo Video**](https://www.bilibili.com/video/BV11dQLBDEeF/) — Full feature demonstration (Bilibili)
+<div align="center">
+<h3>🎬 Want a quick look at everything SoulTuner can do?</h3>
+<p>
+  <a href="https://www.bilibili.com/video/BV11dQLBDEeF/">
+    <img src="https://img.shields.io/badge/▶_Demo_Video_—_Click_here_to_watch_|_bilibili.com/video/BV11dQLBDEeF-00A1D6?style=for-the-badge&logo=bilibili&logoColor=white&labelColor=FB7299" alt="Demo Video" />
+  </a>
+</p>
+</div>
 
 ### 🏠 Home · 💬 Chat · 🎵 Recommend · 🎧 Player · 🗺️ Journey
 
