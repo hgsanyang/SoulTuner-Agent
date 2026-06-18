@@ -9,7 +9,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from schemas.query_plan import MusicQueryPlan, RetrievalPlan
+from schemas.query_plan import HardConstraints, IntentHints, MusicQueryPlan, RetrievalPlan, SoftIntent
 
 
 class TestRetrievalPlan:
@@ -34,6 +34,62 @@ class TestRetrievalPlan:
         assert plan.use_graph is True
         assert "周杰伦" in plan.graph_entities
         assert plan.graph_genre_filter == "流行"
+
+    def test_layered_fields_populate_legacy_fields(self):
+        """新分层表示应自动补齐旧检索字段"""
+        plan = RetrievalPlan(
+            use_graph=True,
+            hard_constraints=HardConstraints(
+                artist_entities=["mol-74"],
+                song_entities=["赤い頬"],
+                language="Japanese",
+                region="Japan",
+            ),
+            hints=IntentHints(genres=["indie"], mood="平静", scenario="学习"),
+        )
+        assert plan.graph_artist_entities == ["mol-74"]
+        assert plan.graph_song_entities == ["赤い頬"]
+        assert plan.graph_entities == ["mol-74", "赤い頬"]
+        assert plan.graph_language_filter == "Japanese"
+        assert plan.graph_region_filter == "Japan"
+        assert plan.graph_genre_filter == "indie"
+        assert plan.graph_mood_filter == "平静"
+        assert plan.graph_scenario_filter == "学习"
+
+    def test_legacy_fields_populate_layered_fields(self):
+        """旧字段应自动补齐新分层对象，保证历史 prompt 兼容"""
+        plan = RetrievalPlan(
+            use_graph=True,
+            graph_artist_entities=["周杰伦"],
+            graph_song_entities=["晴天"],
+            graph_language_filter="Chinese",
+            graph_region_filter="Taiwan",
+            graph_genre_filter="pop",
+            graph_mood_filter="浪漫",
+            graph_scenario_filter="开车",
+        )
+        assert plan.hard_constraints.artist_entities == ["周杰伦"]
+        assert plan.hard_constraints.song_entities == ["晴天"]
+        assert plan.hard_constraints.language == "Chinese"
+        assert plan.hard_constraints.region == "Taiwan"
+        assert plan.hints.genres == ["pop"]
+        assert plan.hints.mood == "浪漫"
+        assert plan.hints.scenario == "开车"
+
+    def test_soft_intent_roundtrip(self):
+        """软意图自由文本不应被枚举槽位吞掉"""
+        plan = RetrievalPlan(
+            use_vector=True,
+            soft_intent=SoftIntent(
+                goal="从 emo 里走出来",
+                trajectory="低落到释然",
+                avoid=["太吵", "过度鸡血"],
+                vibe="安静、低动态、但逐渐变亮",
+            ),
+        )
+        assert plan.soft_intent.goal == "从 emo 里走出来"
+        assert plan.soft_intent.trajectory == "低落到释然"
+        assert "太吵" in plan.soft_intent.avoid
 
 
 class TestMusicQueryPlan:
