@@ -167,17 +167,31 @@ class MusicHybridRetrieval:
         graph_song_entities = []
         if precomputed_plan:
             logger.info("[Retrieval] 使用上游预计算的检索计划")
+            hard_constraints = precomputed_plan.get("hard_constraints") or {}
+            soft_intent = precomputed_plan.get("soft_intent") or {}
+            hints = precomputed_plan.get("hints") or {}
             use_graph = precomputed_plan.get("use_graph", False)
             use_vector = precomputed_plan.get("use_vector", False)
             use_web = precomputed_plan.get("use_web_search", False)
             graph_entities = precomputed_plan.get("graph_entities", [])
-            graph_artist_entities = precomputed_plan.get("graph_artist_entities", [])
-            graph_song_entities = precomputed_plan.get("graph_song_entities", [])
-            genre_filter = precomputed_plan.get("graph_genre_filter")
-            scenario_filter = precomputed_plan.get("graph_scenario_filter")
-            mood_filter = precomputed_plan.get("graph_mood_filter")
-            language_filter = precomputed_plan.get("graph_language_filter")
-            region_filter = precomputed_plan.get("graph_region_filter")
+            graph_artist_entities = (
+                precomputed_plan.get("graph_artist_entities", [])
+                or hard_constraints.get("artist_entities", [])
+            )
+            graph_song_entities = (
+                precomputed_plan.get("graph_song_entities", [])
+                or hard_constraints.get("song_entities", [])
+            )
+            if not graph_entities:
+                graph_entities = list(dict.fromkeys(graph_artist_entities + graph_song_entities))
+            genre_hints = hints.get("genres") or []
+            genre_filter = precomputed_plan.get("graph_genre_filter") or (genre_hints[0] if genre_hints else None)
+            scenario_filter = precomputed_plan.get("graph_scenario_filter") or hints.get("scenario")
+            mood_filter = precomputed_plan.get("graph_mood_filter") or hints.get("mood")
+            language_filter = precomputed_plan.get("graph_language_filter") or hard_constraints.get("language")
+            region_filter = precomputed_plan.get("graph_region_filter") or hard_constraints.get("region")
+            if hard_constraints.get("instrumental") and not language_filter:
+                language_filter = "Instrumental"
             web_keywords = precomputed_plan.get("web_search_keywords", "")
             need_web_search = use_web
             search_keyword = web_keywords
@@ -189,6 +203,32 @@ class MusicHybridRetrieval:
                 f"mood='{mood_filter}' | language='{language_filter}' | region='{region_filter}' | "
                 f"entities={graph_entities} | query='{query[:50]}'"
             )
+
+            # 用户画像只能影响排序/个性化，不能偷渡成实体查询的硬过滤。
+            if graph_entities and use_graph and not use_vector:
+                try:
+                    from tools.graphrag_search import GENRE_TAG_MAP, MOOD_TAG_MAP, SCENARIO_TAG_MAP
+
+                    def _has_signal(value, signal_map, extras=()):
+                        if not value:
+                            return False
+                        q = query.lower()
+                        v = str(value).lower()
+                        if v and v in q:
+                            return True
+                        return any(str(k).lower() in q for k in list(signal_map.keys()) + list(extras))
+
+                    if genre_filter and not _has_signal(genre_filter, GENRE_TAG_MAP, ("摇滚", "流行", "民谣", "电子", "爵士")):
+                        logger.info(f"[Retrieval] 实体查询清理未显式流派 hint: {genre_filter}")
+                        genre_filter = None
+                    if mood_filter and not _has_signal(mood_filter, MOOD_TAG_MAP, ("情歌", "伤感", "抒情")):
+                        logger.info(f"[Retrieval] 实体查询清理未显式情绪 hint: {mood_filter}")
+                        mood_filter = None
+                    if scenario_filter and not _has_signal(scenario_filter, SCENARIO_TAG_MAP):
+                        logger.info(f"[Retrieval] 实体查询清理未显式场景 hint: {scenario_filter}")
+                        scenario_filter = None
+                except ImportError:
+                    pass
 
             # ── 确定性兜底：纯音乐/器乐关键词 → 强制 language=Instrumental + graph-only ──
             # 即使 LLM 判了 hybrid_search 且未填 language_filter，这里也会自动修正
@@ -250,14 +290,25 @@ class MusicHybridRetrieval:
                     vector_desc = vector_acoustic_query
                     logger.info(f"[HyDE] API 模式：使用 LLM 内联声学描述 ({len(vector_desc.split())} words)")
                 else:
-                    graphzep_for_hyde = precomputed_plan.get("_graphzep_facts", "")
-                    intent_type = precomputed_plan.get("_intent_type", "")
-                    logger.info("[HyDE] 本地模式：调用独立 HyDE 模块生成声学描述")
-                    vector_desc = self._generate_hyde_description(
-                        query=query,
-                        graphzep_facts=graphzep_for_hyde,
-                        intent_type=intent_type,
-                    )
+                    soft_parts = [
+                        soft_intent.get("goal", ""),
+                        soft_intent.get("trajectory", ""),
+                        soft_intent.get("vibe", ""),
+                        "avoid: " + ", ".join(soft_intent.get("avoid", [])) if soft_intent.get("avoid") else "",
+                    ]
+                    soft_text = "; ".join(part for part in soft_parts if part)
+                    if soft_text:
+                        vector_desc = soft_text
+                        logger.info(f"[HyDE] 使用分层 soft_intent 作为声学查询 ({len(vector_desc)} chars)")
+                    if not vector_desc:
+                        graphzep_for_hyde = precomputed_plan.get("_graphzep_facts", "")
+                        intent_type = precomputed_plan.get("_intent_type", "")
+                        logger.info("[HyDE] 本地模式：调用独立 HyDE 模块生成声学描述")
+                        vector_desc = self._generate_hyde_description(
+                            query=query,
+                            graphzep_facts=graphzep_for_hyde,
+                            intent_type=intent_type,
+                        )
         else:
             # 安全默认：同时启用图谱和向量检索
             logger.info("[Retrieval] 无预计算计划，使用默认双引擎检索")
@@ -464,6 +515,15 @@ class MusicHybridRetrieval:
     @staticmethod
     def _parse_engine_results(res_str: str, engine_name: str) -> List[dict]:
         """将引擎原始 JSON 字符串解析为标准化的歌曲列表，保留原始排名。"""
+        def _clean_list(value):
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [x for x in value if x]
+            if isinstance(value, str):
+                return [value] if value and value != "Unknown" else []
+            return []
+
         if not res_str:
             return []
         try:
@@ -512,6 +572,12 @@ class MusicHybridRetrieval:
                     "artist": artist,
                     "album": item.get("album", "未知"),
                     "genre": genre,
+                    "genres": _clean_list(item.get("genres")),
+                    "moods": _clean_list(item.get("moods")),
+                    "themes": _clean_list(item.get("themes")),
+                    "scenarios": _clean_list(item.get("scenarios")),
+                    "language": item.get("language", "Unknown"),
+                    "region": item.get("region", "Unknown"),
                     "preview_url": item.get("preview_url", None),
                     "cover_url": item.get("cover_url", None),
                     "lrc_url": item.get("lrc_url", None),
@@ -528,7 +594,7 @@ class MusicHybridRetrieval:
         平等合并两路检索结果（替代旧版加权 RRF）。
 
         两路候选不再有权重偏差，公平进入后续精排管线。
-        双路命中的歌曲打上交叉标记，但不额外加分（由双锚精排统一评分）。
+        双路命中的歌曲打上交叉标记，但不额外加分（由三锚精排统一评分）。
         """
         song_data: Dict[str, dict] = {}   # key → 歌曲元数据
         key_engines: Dict[str, List[str]] = {}  # key → 命中引擎列表
@@ -564,7 +630,7 @@ class MusicHybridRetrieval:
                 "_both_engines": both_hit,
             })
 
-        # 按原始分数降序（仅作初始排序，后续由双锚精排重排）
+        # 按原始分数降序（仅作初始排序，后续由三锚精排重排）
         merged.sort(key=lambda x: x["similarity_score"], reverse=True)
         both_count = sum(1 for m in merged if m["_both_engines"])
         logger.info(
@@ -573,124 +639,6 @@ class MusicHybridRetrieval:
         )
         return merged
 
-    @staticmethod
-    def _dual_anchor_rerank(
-        candidates: List[dict],
-        query_text: str,
-        w_semantic: float = None,
-        w_acoustic: float = None,
-    ) -> List[dict]:
-        """
-        双锚精排：M2D-CLAP 语义锚 + OMAR-RQ 声学锚。
-
-        - 语义锚：用户查询文本 → M2D-CLAP text embedding → cosine(song_m2d, query_text_emb)
-        - 声学锚：所有候选歌曲的 OMAR embedding → 质心 → cosine(song_omar, centroid)
-
-        最终分数 = w_semantic × semantic_score + w_acoustic × acoustic_score
-
-        当候选歌曲缺少 OMAR embedding 时，自动退回纯语义排序。
-        """
-        if not candidates:
-            return candidates
-
-        from config.settings import settings as _s
-        if w_semantic is None:
-            w_semantic = _s.dual_anchor_weight_semantic
-        if w_acoustic is None:
-            w_acoustic = _s.dual_anchor_weight_acoustic
-
-        try:
-            import numpy as np
-            from retrieval.neo4j_client import get_neo4j_client
-            from retrieval.audio_embedder import encode_text_to_embedding
-
-            neo4j = get_neo4j_client()
-            if not neo4j or not neo4j.driver:
-                logger.warning("[DualAnchor] Neo4j 不可用，跳过双锚精排")
-                return candidates
-
-            # ── 语义锚：query → text embedding ──
-            logger.info(f"[DualAnchor] 编码 query text embedding...")
-            query_emb = np.array(encode_text_to_embedding(query_text))
-
-            # ── 批量获取候选歌曲的 M2D + OMAR embedding ──
-            titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
-            emb_cypher = """
-            UNWIND $titles AS t
-            MATCH (s:Song {title: t})
-            RETURN s.title AS title,
-                   s.m2d2_embedding AS m2d_emb,
-                   s.omar_embedding AS omar_emb
-            """
-            emb_rows = neo4j.execute_query(emb_cypher, {"titles": titles})
-
-            m2d_map = {}   # title → np.array
-            omar_map = {}  # title → np.array
-            for row in (emb_rows or []):
-                t = row.get("title", "")
-                if row.get("m2d_emb"):
-                    m2d_map[t] = np.array(row["m2d_emb"])
-                if row.get("omar_emb"):
-                    omar_map[t] = np.array(row["omar_emb"])
-
-            logger.info(
-                f"[DualAnchor] embedding 命中: M2D={len(m2d_map)}/{len(titles)}, "
-                f"OMAR={len(omar_map)}/{len(titles)}"
-            )
-
-            # ── 声学锚：OMAR 质心 ──
-            omar_centroid = None
-            if omar_map:
-                omar_vectors = list(omar_map.values())
-                omar_centroid = np.mean(omar_vectors, axis=0)
-                logger.info(f"[DualAnchor] OMAR 质心已计算 (基于 {len(omar_vectors)} 首)")
-
-            # ── 计算双锚分数 ──
-            def _cosine(a, b):
-                dot = np.dot(a, b)
-                norm = np.linalg.norm(a) * np.linalg.norm(b)
-                return float(dot / norm) if norm > 0 else 0.0
-
-            for c in candidates:
-                title = c.get("song", {}).get("title", "")
-
-                # 语义分：song 的 M2D embedding vs query text embedding
-                m2d_emb = m2d_map.get(title)
-                if m2d_emb is not None:
-                    semantic_score = _cosine(m2d_emb, query_emb)
-                else:
-                    semantic_score = c.get("similarity_score", 0.5)  # fallback
-
-                # 声学分：song 的 OMAR embedding vs OMAR 质心
-                omar_emb = omar_map.get(title)
-                if omar_emb is not None and omar_centroid is not None:
-                    acoustic_score = _cosine(omar_emb, omar_centroid)
-                else:
-                    acoustic_score = 0.0  # 无 OMAR 数据时不贡献
-
-                # 动态权重：如果没有 OMAR 数据，将声学权重转移给语义
-                if omar_emb is None or omar_centroid is None:
-                    final_score = semantic_score
-                else:
-                    final_score = w_semantic * semantic_score + w_acoustic * acoustic_score
-
-                c["similarity_score"] = final_score
-                c["_semantic_score"] = round(semantic_score, 4)
-                c["_acoustic_score"] = round(acoustic_score, 4)
-
-            # 按双锚分数重排
-            candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
-            logger.info(
-                f"[DualAnchor] 双锚精排完成 (w_sem={w_semantic}, w_aco={w_acoustic}) | "
-                f"Top3: {[(c['song']['title'], round(c['similarity_score'], 4)) for c in candidates[:3]]}"
-            )
-            return candidates
-
-        except Exception as e:
-            logger.warning(f"[DualAnchor] 双锚精排异常（降级保持原排序）: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
-            return candidates
     # ================================================================
     # 三锚归一化精排（替代双锚，语义+声学+个性化三维融合）
     # ================================================================
@@ -1020,7 +968,7 @@ class MusicHybridRetrieval:
           2. 平等合并去重（替代旧版加权 RRF）
           3. Artist 多样性初筛（每个歌手最多 N 首）
           4. Graph Affinity（图距离 + Jaccard 偏好 → 个性化微调）→ 产出 cand_tag_map
-          5. 双锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚 → 核心排序）
+          5. 三锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚 → 核心排序）
           6. MMR 多维多样性重排（genre + mood + theme + scenario）
           7. 最终安全去重 + FinalCut
         """
@@ -1079,7 +1027,7 @@ class MusicHybridRetrieval:
 
         # ================================================================
         # 🚀 短路优化：graph_only + 有明确实体 → 跳过全部精排管线
-        # 场景：用户搜索指定歌曲（如"痛仰乐队 西湖"），无需双锚精排、
+        # 场景：用户搜索指定歌曲（如"痛仰乐队 西湖"），无需三锚精排、
         #        Graph Affinity、MMR 多样性重排等，直接返回图谱结果。
         # 节省：~300-600ms（跳过 M2D-CLAP 编码 + OMAR 质心 + Neo4j 图距离查询）
         # ================================================================

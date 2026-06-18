@@ -1,18 +1,51 @@
 """
-统一查询计划模型（V3 简化版）
+统一查询计划模型（V3）
 =============================
-5 类检索策略型意图 + 确定性标签提取。
-LLM 只负责判断意图类型，标签提取由确定性规则完成。
+5 类检索策略型意图 + 2 类功能性意图。
+意图类型、实体、五维标签、声学描述(HyDE) 均由 LLM 在一次 structured_output 调用中产出
+（见 agent/music_graph.py:analyze_intent）。下游检索按本计划执行。
 """
 
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+class HardConstraints(BaseModel):
+    """必须精确满足的硬约束，适合进入 Cypher 过滤。"""
+
+    artist_entities: List[str] = Field(default_factory=list, description="歌手/乐队实体及别名")
+    song_entities: List[str] = Field(default_factory=list, description="歌曲/专辑实体及别名")
+    language: Optional[str] = Field(default=None, description="语言硬约束，如 Chinese/English/Japanese/Instrumental")
+    region: Optional[str] = Field(default=None, description="地区硬约束，如 Mainland China/Japan/Western")
+    instrumental: bool = Field(default=False, description="是否明确要求纯音乐/器乐/无人声")
+
+
+class SoftIntent(BaseModel):
+    """无法被固定词表完整表达的软意图，优先映射到连续声学空间。"""
+
+    goal: str = Field(default="", description="用户想通过音乐达成的目标，如从 emo 里走出来")
+    trajectory: str = Field(default="", description="期望的情绪/能量变化路径")
+    avoid: List[str] = Field(default_factory=list, description="需要避开的主观体验或声学特征")
+    vibe: str = Field(default="", description="自由文本氛围/画面感/声学质感")
+
+
+class IntentHints(BaseModel):
+    """可选提示，不再作为必须命中的硬槽位。"""
+
+    genres: List[str] = Field(default_factory=list, description="流派提示，可用于图谱粗筛")
+    mood: Optional[str] = Field(default=None, description="情绪提示")
+    scenario: Optional[str] = Field(default=None, description="场景提示")
 
 
 class RetrievalPlan(BaseModel):
-    """检索执行计划：由确定性规则自动填充，LLM 不再填写"""
+    """检索执行计划：分层表达硬约束、软意图与可选提示，并保留旧字段兼容。"""
 
     use_graph: bool = Field(default=False, description="是否启用知识图谱检索")
+    hard_constraints: HardConstraints = Field(default_factory=HardConstraints, description="实体/语言/地区/纯音乐等硬约束")
+    soft_intent: SoftIntent = Field(default_factory=SoftIntent, description="自由文本软意图，供向量检索和 HyDE 使用")
+    hints: IntentHints = Field(default_factory=IntentHints, description="可选标签提示，不能替代软意图")
+
+    # 旧字段保留给现有检索链路、评测和本地小模型使用。
     graph_entities: List[str] = Field(default_factory=list, description="提取出的实体词列表，含别名/外文名（向后兼容）")
     graph_artist_entities: List[str] = Field(default_factory=list, description="歌手名实体（含中英文别名），匹配 Artist.name")
     graph_song_entities: List[str] = Field(default_factory=list, description="歌曲名实体（含中英文别名），匹配 Song.title")
@@ -27,6 +60,52 @@ class RetrievalPlan(BaseModel):
 
     use_web_search: bool = Field(default=False, description="是否启用联网搜索")
     web_search_keywords: str = Field(default="", description="搜索关键词")
+
+    @model_validator(mode="after")
+    def sync_layered_and_legacy_fields(self) -> "RetrievalPlan":
+        """让新旧表示互相补齐，避免一次性重写整个检索栈。"""
+        hard = self.hard_constraints
+        hints = self.hints
+
+        if hard.artist_entities and not self.graph_artist_entities:
+            self.graph_artist_entities = list(hard.artist_entities)
+        if hard.song_entities and not self.graph_song_entities:
+            self.graph_song_entities = list(hard.song_entities)
+        if not hard.artist_entities and self.graph_artist_entities:
+            hard.artist_entities = list(self.graph_artist_entities)
+        if not hard.song_entities and self.graph_song_entities:
+            hard.song_entities = list(self.graph_song_entities)
+
+        if not self.graph_entities:
+            self.graph_entities = list(dict.fromkeys(self.graph_artist_entities + self.graph_song_entities))
+
+        if hard.language and not self.graph_language_filter:
+            self.graph_language_filter = hard.language
+        if hard.region and not self.graph_region_filter:
+            self.graph_region_filter = hard.region
+        if hard.instrumental and not self.graph_language_filter:
+            self.graph_language_filter = "Instrumental"
+        if not hard.language and self.graph_language_filter:
+            hard.language = self.graph_language_filter
+        if not hard.region and self.graph_region_filter:
+            hard.region = self.graph_region_filter
+        if self.graph_language_filter == "Instrumental":
+            hard.instrumental = True
+
+        if hints.genres and not self.graph_genre_filter:
+            self.graph_genre_filter = hints.genres[0]
+        if hints.mood and not self.graph_mood_filter:
+            self.graph_mood_filter = hints.mood
+        if hints.scenario and not self.graph_scenario_filter:
+            self.graph_scenario_filter = hints.scenario
+        if not hints.genres and self.graph_genre_filter:
+            hints.genres = [self.graph_genre_filter]
+        if not hints.mood and self.graph_mood_filter:
+            hints.mood = self.graph_mood_filter
+        if not hints.scenario and self.graph_scenario_filter:
+            hints.scenario = self.graph_scenario_filter
+
+        return self
 
 
 class MusicQueryPlan(BaseModel):
@@ -44,8 +123,8 @@ class MusicQueryPlan(BaseModel):
       - acquire_music: 确认下载
       - recommend_by_favorites: 查用户收藏
 
-    LLM 只负责选择意图类型 + 提取实体名。
-    标签（genre/mood/scenario/language/region）由确定性规则自动提取。
+    LLM 一次性输出：意图类型 + 实体名 + 五维标签(genre/mood/scenario/language/region)
+    + 声学描述(HyDE)。本模型即该结构化输出的 schema。
     """
 
     intent_type: Literal[

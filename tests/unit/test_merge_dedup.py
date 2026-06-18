@@ -33,6 +33,15 @@ BASELINE_SIMILARITY_SCORE = 0.85
 
 def _parse_engine_results(res_str: str, engine_name: str) -> List[dict]:
     """将引擎原始 JSON 字符串解析为标准化的歌曲列表"""
+    def _clean_list(value):
+        if not value:
+            return []
+        if isinstance(value, list):
+            return [x for x in value if x]
+        if isinstance(value, str):
+            return [value] if value and value != "Unknown" else []
+        return []
+
     if not res_str:
         return []
     try:
@@ -66,7 +75,14 @@ def _parse_engine_results(res_str: str, engine_name: str) -> List[dict]:
             "key": key, "rank": rank, "raw_score": raw_score,
             "engine": engine_name,
             "song": {"title": title, "artist": artist, "album": item.get("album", "未知"),
-                     "genre": genre, "preview_url": None, "cover_url": None, "lrc_url": None},
+                     "genre": genre,
+                     "genres": _clean_list(item.get("genres")),
+                     "moods": _clean_list(item.get("moods")),
+                     "themes": _clean_list(item.get("themes")),
+                     "scenarios": _clean_list(item.get("scenarios")),
+                     "language": item.get("language", "Unknown"),
+                     "region": item.get("region", "Unknown"),
+                     "preview_url": None, "cover_url": None, "lrc_url": None},
         })
     return results
 
@@ -189,3 +205,23 @@ class TestParseEngineResults:
         ])
         results = _parse_engine_results(data, "test")
         assert len(results) == 1
+
+    def test_preserves_multidimensional_tags(self):
+        data = json.dumps([{
+            "title": "A Different Age",
+            "artist": "Current Joys",
+            "genre": "Indie/Melancholy/Late Night",
+            "genres": ["Indie", "Rock"],
+            "moods": ["Melancholy"],
+            "themes": ["Youth"],
+            "scenarios": ["Late Night"],
+            "language": "English",
+            "region": "United States",
+        }])
+        song = _parse_engine_results(data, "test")[0]["song"]
+        assert song["language"] == "English"
+        assert song["region"] == "United States"
+        assert song["genres"] == ["Indie", "Rock"]
+        assert song["moods"] == ["Melancholy"]
+        assert song["themes"] == ["Youth"]
+        assert song["scenarios"] == ["Late Night"]

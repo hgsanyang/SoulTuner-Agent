@@ -14,7 +14,8 @@ services:
       - "7474:7474"       # Neo4j Browser (http://localhost:7474)
       - "7687:7687"       # Bolt 协议
     environment:
-      NEO4J_AUTH: neo4j/12345678
+      # ★ 口令从 .env 读取（NEO4J_PASSWORD）。首次部署请在 .env 设置强口令；下方默认仅为本地开发兜底。
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-changeme_dev_only}
       NEO4J_ACCEPT_LICENSE_AGREEMENT: "eval"   # Enterprise 评估许可证（非商业免费）
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_server_memory_heap_initial__size: 512m
@@ -44,7 +45,7 @@ services:
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: "12345678"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"
       OPENAI_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
       OPENAI_API_KEY: ${SiliconFlow_API_KEY}
       MODEL_NAME: ${GRAPHZEP_MODEL_NAME:-deepseek-ai/DeepSeek-V3.2}
@@ -71,7 +72,7 @@ services:
     environment:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
-      NEO4J_PASSWORD: "12345678"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"
       GRAPHZEP_BASE_URL: http://graphzep:3100
       SILICONFLOW_API_KEY: ${SiliconFlow_API_KEY}
       SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}

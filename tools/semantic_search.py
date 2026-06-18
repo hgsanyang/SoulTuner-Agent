@@ -197,9 +197,19 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
             ORDER BY score DESC
             LIMIT $limit
             OPTIONAL MATCH (s)-[:PERFORMED_BY]->(art:Artist)
+            OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(genre:Genre)
+            OPTIONAL MATCH (s)-[:HAS_MOOD]->(mood:Mood)
+            OPTIONAL MATCH (s)-[:HAS_THEME]->(theme:Theme)
+            OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(scenario:Scenario)
             RETURN s.title AS title, art.name AS artist, 
                    s.album AS album, s.audio_url AS audio_url,
                    s.cover_url AS cover_url, s.lrc_url AS lrc_url,
+                   coalesce(s.language, 'Unknown') AS language,
+                   coalesce(s.region, 'Unknown') AS region,
+                   collect(DISTINCT genre.name) AS genres,
+                   collect(DISTINCT mood.name) AS moods,
+                   collect(DISTINCT theme.name) AS themes,
+                   collect(DISTINCT scenario.name) AS scenarios,
                    score AS similarity_score
             """
 
@@ -238,9 +248,19 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                 CALL db.index.vector.queryNodes('song_m2d2_index', $wide, $query_vector)
                 YIELD node AS song, score
                 OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
+                OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
+                OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
+                OPTIONAL MATCH (song)-[:HAS_THEME]->(theme:Theme)
+                OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
                 RETURN song.title AS title, art.name AS artist,
                        song.album AS album, song.audio_url AS audio_url,
                        song.cover_url AS cover_url, song.lrc_url AS lrc_url,
+                       coalesce(song.language, 'Unknown') AS language,
+                       coalesce(song.region, 'Unknown') AS region,
+                       collect(DISTINCT genre.name) AS genres,
+                       collect(DISTINCT mood.name) AS moods,
+                       collect(DISTINCT theme.name) AS themes,
+                       collect(DISTINCT scenario.name) AS scenarios,
                        score AS similarity_score,
                        elementId(song) AS _eid
                 """
@@ -301,9 +321,19 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                 CALL db.index.vector.queryNodes('song_m2d2_index', $limit, $query_vector)
                 YIELD node AS song, score
                 OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
+                OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
+                OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
+                OPTIONAL MATCH (song)-[:HAS_THEME]->(theme:Theme)
+                OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
                 RETURN song.title AS title, art.name AS artist,
                        song.album AS album, song.audio_url AS audio_url,
                        song.cover_url AS cover_url, song.lrc_url AS lrc_url,
+                       coalesce(song.language, 'Unknown') AS language,
+                       coalesce(song.region, 'Unknown') AS region,
+                       collect(DISTINCT genre.name) AS genres,
+                       collect(DISTINCT mood.name) AS moods,
+                       collect(DISTINCT theme.name) AS themes,
+                       collect(DISTINCT scenario.name) AS scenarios,
                        score AS similarity_score
                 """
                 params = {"query_vector": query_vector, "limit": limit}
@@ -325,11 +355,29 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
             cover_full = f"{BASE_API_URL}{cover_url}" if cover_url else ""
             lrc_full = f"{BASE_API_URL}{lrc_url}" if lrc_url else ""
             similarity = record.get("similarity_score", 0.0)
+            genres = [x for x in (record.get("genres") or []) if x]
+            moods = [x for x in (record.get("moods") or []) if x]
+            themes = [x for x in (record.get("themes") or []) if x]
+            scenarios = [x for x in (record.get("scenarios") or []) if x]
+            genre_display_parts = []
+            if genres:
+                genre_display_parts.append("/".join(genres[:2]))
+            if moods:
+                genre_display_parts.append(moods[0])
+            if scenarios:
+                genre_display_parts.append(scenarios[0])
 
             structured_results.append({
                 "title": title,
                 "artist": artist,
                 "album": album,
+                "genre": "/".join(genre_display_parts),
+                "genres": genres,
+                "moods": moods,
+                "themes": themes,
+                "scenarios": scenarios,
+                "language": record.get("language", "Unknown"),
+                "region": record.get("region", "Unknown"),
                 "source": "Neo4j SemanticSearch (M2D-CLAP)",
                 "similarity_score": float(similarity),
                 "preview_url": preview_url,

@@ -1,0 +1,146 @@
+[
+  {
+    "id": "out_01_artist",
+    "query": "周杰伦的歌",
+    "note": "纯歌手实体 → 结果应几乎全是周杰伦本人（指定歌手豁免多样性上限）",
+    "checks": {
+      "min_results": 3,
+      "artist_any_of": ["周杰伦", "Jay Chou", "jay"],
+      "artist_match_min_ratio": 0.7,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true
+    }
+  },
+  {
+    "id": "out_02_artist_song",
+    "query": "林俊杰的那首江南",
+    "note": "歌手+歌名 → 命中目标曲",
+    "checks": {
+      "min_results": 1,
+      "must_include_titles": ["江南"],
+      "not_degraded": true
+    }
+  },
+  {
+    "id": "out_03_genre_lang",
+    "query": "英文摇滚",
+    "note": "硬属性组合 → genre 应偏 rock，language 应偏 English",
+    "checks": {
+      "min_results": 3,
+      "genre_any_of": ["rock", "摇滚", "metal", "punk", "alternative"],
+      "genre_match_min_ratio": 0.4,
+      "language_any_of": ["English"],
+      "language_match_min_ratio": 0.7,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true
+    }
+  },
+  {
+    "id": "out_04_pure_mood",
+    "query": "我心情很差，想哭",
+    "note": "纯情绪 → 走 vector_search；结果应偏悲伤/低能量。情绪无法从返回字段自动校验，转人工",
+    "checks": {
+      "min_results": 3,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": ["确认结果整体偏悲伤/舒缓，而非热血/嗨歌"]
+    }
+  },
+  {
+    "id": "out_05_boundary_quiet_jp",
+    "query": "安静的日语歌",
+    "note": "★表示力边界 case。‘安静’=低动态声学质感，不在固定 mood 词表；Phase 1 后 language 可自动校验，安静/低动态仍保留听感人工核对。",
+    "checks": {
+      "min_results": 3,
+      "language_any_of": ["Japanese"],
+      "language_match_min_ratio": 0.7,
+      "min_playable_ratio": 0.4,
+      "not_degraded": true,
+      "manual_review": [
+        "确认结果整体安静/低动态，而非吵闹"
+      ]
+    }
+  },
+  {
+    "id": "out_06_scenario",
+    "query": "适合跑步时听的歌，要有节奏感",
+    "note": "场景 → hybrid_search；结果应偏高能量。能量无法自动校验，转人工",
+    "checks": {
+      "min_results": 3,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": ["确认结果偏强节奏/高能量，适合跑步"]
+    }
+  },
+  {
+    "id": "out_07_instrumental",
+    "query": "想听轻柔的纯音乐，适合安静看书",
+    "note": "纯音乐硬约束。Phase 1 后可用 language=Instrumental 自动校验基础约束；是否真的无人声仍可抽样听感核对。",
+    "checks": {
+      "min_results": 3,
+      "language_any_of": ["Instrumental"],
+      "language_match_min_ratio": 0.8,
+      "min_playable_ratio": 0.4,
+      "not_degraded": true,
+      "manual_review": ["确认结果为器乐/纯音乐（无人声）"]
+    }
+  },
+  {
+    "id": "out_08_diversity",
+    "query": "推荐一些好听的华语流行",
+    "note": "泛化推荐（未指定歌手）→ 应受多样性约束，不被单一歌手刷屏",
+    "checks": {
+      "min_results": 5,
+      "max_per_artist": 3,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true
+    }
+  },
+  {
+    "id": "out_09_playability_floor",
+    "query": "随便来几首好听的",
+    "note": "极模糊 query 的兜底质量：至少返回足量、可播放的结果，且不降级",
+    "checks": {
+      "min_results": 5,
+      "min_playable_ratio": 0.6,
+      "not_degraded": true
+    }
+  },
+  {
+    "id": "out_10_multi_constraint",
+    "query": "有没有深情些的国摇，想听",
+    "note": "无实体 + 情绪‘深情’ + 流派‘摇滚’ + 语言中文 → hybrid_search；genre 与 language 自动校验，深情听感转人工",
+    "checks": {
+      "min_results": 3,
+      "genre_any_of": ["rock", "摇滚", "alternative", "folk", "民谣"],
+      "genre_match_min_ratio": 0.3,
+      "language_any_of": ["Chinese"],
+      "language_match_min_ratio": 0.7,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": ["确认情绪偏深情"]
+    }
+  },
+  {
+    "id": "out_11_timeliness",
+    "query": "最近有什么新歌",
+    "note": "时效性 → web_fallback 联网取可播歌；主要校验是否真返回了可播放结果",
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.3,
+      "not_degraded": true
+    }
+  },
+  {
+    "id": "out_12_safety_template",
+    "query": "推荐几首华语流行",
+    "note": "【安全模板，需你填充】把你库中已知的 DISLIKES 歌曲填入 must_exclude，用于回归校验‘明确不喜欢的歌不应出现’。下方为占位示例，请替换为真实数据。",
+    "checks": {
+      "min_results": 3,
+      "must_exclude": [
+        {"title": "示例-请替换为你不喜欢的歌名", "artist": "示例歌手"}
+      ],
+      "not_degraded": true
+    }
+  }
+]

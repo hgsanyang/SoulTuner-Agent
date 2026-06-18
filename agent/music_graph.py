@@ -624,15 +624,34 @@ class MusicRecommendationGraph:
             }
             
         except Exception as e:
-            logger.error(f"意图分析失败: {str(e)}")
+            # 【可观测降级】意图分析失败时，不再静默退化为 general_chat。
+            # 原因：(1) 用户多数是来"求歌"的，退闲聊=答非所问；
+            #       (2) 若失败本就源于 LLM 不可用，general_chat 仍需调 LLM 生成闲聊 → 二次失败。
+            # 改为保守的纯向量检索：用原始输入直接作声学查询(M2D-CLAP 可编码)，
+            # 该路径不依赖 LLM，至少能返回语义相近的音乐；并打 _intent_degraded 标记供监控/离线评测统计真实失败率。
+            import traceback as _tb
+            logger.error(f"意图分析失败，降级为保守 vector_search: {e}\n{_tb.format_exc()}")
+            _fallback_plan = {
+                "use_graph": False,
+                "graph_entities": [], "graph_artist_entities": [], "graph_song_entities": [],
+                "graph_genre_filter": None, "graph_scenario_filter": None,
+                "graph_mood_filter": None, "graph_language_filter": None, "graph_region_filter": None,
+                "use_vector": True,
+                "vector_acoustic_query": user_input,
+                "use_web_search": False, "web_search_keywords": "",
+                "_intent_type": "vector_search",
+                "_graphzep_facts": state.get("graphzep_facts", ""),
+                "_user_profile": "",
+                "_intent_degraded": True,
+            }
             return {
-                "intent_type": "general_chat",
-                "intent_parameters": {},
+                "intent_type": "vector_search",
+                "intent_parameters": {"query": user_input, "entities": []},
                 "intent_context": user_input,
-                "retrieval_plan": None,
+                "retrieval_plan": _fallback_plan,
                 "step_count": state.get("step_count", 0) + 1,
                 "error_log": state.get("error_log", []) + [
-                    {"node": "analyze_intent", "error": str(e)}
+                    {"node": "analyze_intent", "error": str(e), "degraded_to": "vector_search"}
                 ]
             }
     
