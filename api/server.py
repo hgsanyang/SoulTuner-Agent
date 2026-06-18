@@ -44,6 +44,10 @@ async def startup_event():
     import time as _t
     _t0 = _t.time()
     logger.info("🚀 开始预加载关键组件...")
+    if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
+        get_agent()
+        logger.info("🧪 Mock 模式：跳过模型、Neo4j、GraphZep 与 KV Cache 预热")
+        return
     
     # 1. 预加载 M2D-CLAP 跨模态模型（音频骨干 + 文本编码器）
     try:
@@ -131,8 +135,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3003",   # Frontend (Next.js)
         "http://127.0.0.1:3003",
-        "http://localhost:8350",   # GraphZep Server
-        "http://127.0.0.1:8350",
+        "http://localhost:3100",   # GraphZep Server
+        "http://127.0.0.1:3100",
         "http://localhost:31000",
         "http://127.0.0.1:31000"
     ],
@@ -1306,9 +1310,10 @@ class PendingIngestRequest(BaseModel):
 @app.post("/api/pending-songs/ingest")
 async def ingest_pending_songs(request: PendingIngestRequest):
     """
-    将勾选的待入库歌曲写入 Neo4j 并触发后台飞轮。
+    秒级写入歌曲元数据，并将耗时的歌词/向量增强交给独立 Worker。
     """
     from tools.acquire_music import _quick_ingest_to_neo4j, _background_flywheel
+    from services.ingest_queue import enqueue_songs
 
     songs_to_ingest = []
     for item in request.songs:
@@ -1332,14 +1337,25 @@ async def ingest_pending_songs(request: PendingIngestRequest):
     # 秒级写入 Neo4j
     await _quick_ingest_to_neo4j(songs_to_ingest)
 
-    # 后台飞轮（歌词标签 + 向量提取）
-    asyncio.create_task(_background_flywheel(songs_to_ingest))
+    inline_ingest = os.getenv("MUSIC_INLINE_INGEST_ENABLED", "0").lower() in {"1", "true", "yes"}
+    job_id = None
+    if inline_ingest:
+        asyncio.create_task(_background_flywheel(songs_to_ingest))
+    else:
+        job_id = enqueue_songs(songs_to_ingest)
 
-    logger.info(f"✅ [pending-ingest] 成功入库 {len(songs_to_ingest)} 首歌曲")
+    logger.info(
+        "✅ [pending-ingest] 元数据入库 %s 首，增强模式=%s job=%s",
+        len(songs_to_ingest),
+        "inline" if inline_ingest else "worker",
+        job_id or "-",
+    )
     return {
         "success": True,
-        "message": f"已成功入库 {len(songs_to_ingest)} 首歌曲",
+        "message": f"已写入 {len(songs_to_ingest)} 首歌曲，音频特征将在后台补齐",
         "ingested": len(songs_to_ingest),
+        "enrichment": "inline" if inline_ingest else "queued",
+        "job_id": job_id,
     }
 
 

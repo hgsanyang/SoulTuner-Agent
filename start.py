@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import argparse
 from pathlib import Path
 
 
@@ -30,6 +31,15 @@ def _start_api() -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser(description="SoulTuner backend")
+    parser.add_argument("--mode", default="api", choices=["api"])
+    parser.add_argument("--mock", action="store_true", help="Run without LLM, Neo4j or embedding models")
+    args = parser.parse_args(argv)
+    if args.mock:
+        os.environ["MUSIC_MOCK_MODE"] = "1"
     _ensure_project_root_on_path()
     _start_api()
 

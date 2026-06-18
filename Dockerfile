@@ -40,6 +40,8 @@ COPY retrieval/ ./retrieval/
 COPY schemas/ ./schemas/
 COPY services/ ./services/
 COPY tools/ ./tools/
+COPY scripts/ ./scripts/
+COPY data/pipeline/ ./data/pipeline/
 
 # 数据目录（运行时通过 volume 挂载实际数据）
 RUN mkdir -p /app/data

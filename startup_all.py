@@ -106,7 +106,7 @@ def start_api():
 
 def start_web():
     """启动前端 dev server"""
-    _banner("启动前端 Web 服务 (port 3000)")
+    _banner("启动前端 Web 服务 (port 3003)")
     if not WEB_DIR.exists():
         print(f"  ⚠️ 前端目录不存在: {WEB_DIR}")
         return None
@@ -132,7 +132,7 @@ def start_searxng():
 
 def start_graphzep():
     """启动 GraphZep 记忆服务"""
-    _banner("启动 GraphZep 记忆服务 (port 8350)")
+    _banner("启动 GraphZep 记忆服务 (port 3100)")
     if not GRAPHZEP_DIR.exists():
         print(f"  ⚠️ GraphZep 目录不存在: {GRAPHZEP_DIR}")
         return None
@@ -266,7 +266,7 @@ def main():
     print("  🖥️  前端:        http://localhost:3003  (Next.js)")
     print("  🔧  API:         http://localhost:8501  (后端)")
     print("  🔍  SearxNG:     http://localhost:8888  (联网搜索)")
-    print("  🧠  GraphZep:    http://localhost:8350  (记忆服务)")
+    print("  🧠  GraphZep:    http://localhost:3100  (记忆服务)")
     print()
     print("  按 Ctrl+C 关闭所有服务")
     print()

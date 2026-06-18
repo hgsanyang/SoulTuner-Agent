@@ -27,7 +27,7 @@ const MODEL_PRESETS: Record<string, string[]> = {
     'Pro/Qwen/Qwen2.5-7B-Instruct',
   ],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  dashscope: ['deepseek-v3.2', 'deepseek-v3', 'qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen3.5-flash'],
+  dashscope: ['qwen3.6-flash', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.5-flash', 'deepseek-v3.2'],
   google: ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   volcengine: ['ep-20260405142751-x4jm6'],
   sglang: ['local-planner-qwen3-4b-fp8'],

@@ -73,7 +73,10 @@ def line(ok: bool, label: str, detail: str = "", fix: str = ""):
 def check_python():
     section("Python / Conda 环境")
     prefix = os.environ.get("CONDA_PREFIX", "")
-    env_name = Path(prefix).name if prefix else "(未检测到 conda)"
+    executable_path = Path(sys.executable)
+    env_name = Path(prefix).name if prefix else (
+        executable_path.parent.name if "envs" in executable_path.parts else "(未检测到 conda)"
+    )
     is_music = env_name == "music_agent"
     line(is_music, f"conda 环境: {env_name}", f"python={sys.executable}",
          "请先 `conda activate music_agent`（项目依赖装在此环境）")
@@ -140,14 +143,13 @@ def check_services():
     be = _http("http://127.0.0.1:8501/health")
     line(be == 200, "后端 API :8501 /health", f"HTTP {be or '无响应'}",
          "`conda activate music_agent && python start.py --mode api`（或 docker 的 soultuner-backend）")
-    # GraphZep（注意：compose=3100，settings 默认=8350，存在端口不一致，两个都探）
-    gz3100, gz8350 = _http("http://127.0.0.1:3100/healthcheck"), _http("http://127.0.0.1:8350/healthcheck")
-    line(gz3100 == 200 or gz8350 == 200, "GraphZep 记忆服务",
-         f":3100→{gz3100 or 'x'} / :8350→{gz8350 or 'x'}",
-         "可选服务（挂了不影响核心推荐）。注意 compose 用 3100、settings 默认 8350，建议统一")
+    gz3100 = _http("http://127.0.0.1:3100/healthcheck")
+    line(gz3100 == 200, "GraphZep 记忆服务 :3100",
+         f"HTTP {gz3100 or '无响应'}",
+         "可选服务（挂了不影响核心推荐）。Standard/Full 模式会启动它")
     # Frontend
-    fe = _tcp("127.0.0.1", 3003) or _tcp("127.0.0.1", 3000)
-    line(fe, "前端 :3003/:3000", fix="`cd web && npm run dev`（可选，只跑后端/评测时不需要）")
+    fe = _tcp("127.0.0.1", 3003)
+    line(fe, "前端 :3003", fix="`cd web && npm run dev`（可选，只跑后端/评测时不需要）")
     # 可选
     line(_tcp("127.0.0.1", 8888), "SearxNG :8888（可选-联网搜索）",
          fix="可选：`docker compose -f docker-compose.searxng.yml up -d`") or None

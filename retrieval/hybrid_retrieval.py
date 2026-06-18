@@ -155,6 +155,10 @@ class MusicHybridRetrieval:
                               如果提供，则使用预计算计划；否则默认启用图谱+向量双引擎。
         """
         logger.info(f"[Retrieval] 开始处理请求: {query}")
+        if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
+            from retrieval.mock_retrieval import mock_retrieve
+            logger.info("[Retrieval] MUSIC_MOCK_MODE enabled")
+            return mock_retrieve(query, limit)
 
         from config.settings import settings as _s
         # 各引擎 limit 从 settings 读取（不再用 1.5x 乘数，粗排阶段负责漏斗）
@@ -348,7 +352,11 @@ class MusicHybridRetrieval:
                     songs: List[WebSongTarget] = Field(description="从文字中提取出的推荐歌曲列表，最多3首")
                     
                 structured_llm = self.llm_client.with_structured_output(WebSongExtraction)
-                prompt = f"请从以下全网搜索的资讯文本中，提取出最具代表性的最多3首歌曲名称和歌手。如果没有明确提到新歌，请返回空列表。\n\n资讯文本:\n{web_text}"
+                prompt = (
+                    "请从以下全网搜索资讯中提取最多3首代表性歌曲及歌手，"
+                    "并严格返回符合 schema 的 JSON；没有明确歌曲时返回空 songs 列表。"
+                    f"\n\n资讯文本:\n{web_text}"
+                )
                 
                 result = await structured_llm.ainvoke(prompt)
                 if not result or not result.songs:

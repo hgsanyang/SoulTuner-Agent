@@ -342,6 +342,23 @@ erDiagram
 
 ## 🚀 快速开始
 
+Windows 推荐使用统一入口：
+
+```powershell
+.\soultuner.ps1 doctor
+.\soultuner.ps1 up lite       # 无 GPU：Neo4j + API + 前端
+.\soultuner.ps1 up standard   # 加 GraphZep + SearxNG
+.\soultuner.ps1 up full       # 加独立音乐入库 Worker
+```
+
+无外部服务自测：
+
+```powershell
+.\soultuner.ps1 mock
+```
+
+部署档位、端口和在线新歌入库流程见 [DEPLOYMENT_PROFILES.md](DEPLOYMENT_PROFILES.md)。
+
 部署分为三步：**① 前置准备** → **② 选择部署方式启动服务** → **③ 数据导入**。
 
 ---

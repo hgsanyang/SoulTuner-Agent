@@ -37,12 +37,12 @@ class GlobalSettings(BaseSettings):
     # ★ 这里的 default= 就是启动时的实际值，可直接改；前端⚙️ 设置面板可运行时覆盖
     # 可选提供商: siliconflow | dashscope | google | sglang | vllm | ollama
     llm_default_provider: str = Field(
-        default="siliconflow",
+        default="dashscope",
         validation_alias="MAIN_LLM_PROVIDER",
         description="主 LLM 提供商（siliconflow / volcengine / dashscope / google / sglang / vllm / ollama）",
     )
     llm_default_model: str = Field(
-        default="deepseek-ai/DeepSeek-V3.2",
+        default="qwen3.6-flash",
         validation_alias="MODEL_NAME",
         description="主 LLM 模型名称（云端 API 时为模型全名；本地时为 SGLang 部署的模型标识）",
     )
@@ -58,12 +58,12 @@ class GlobalSettings(BaseSettings):
     #   intent_llm_provider = "sglang"
     #   intent_llm_model    = "local-planner-qwen3-4b-fp8"
     intent_llm_provider: str = Field(
-        default="siliconflow",
+        default="dashscope",
         validation_alias="INTENT_LLM_PROVIDER",
         description="意图分析专用 LLM 提供商（siliconflow / sglang 等）",
     )
     intent_llm_model: str = Field(
-        default="deepseek-ai/DeepSeek-V3.2",
+        default="qwen3.7-plus",
         validation_alias="INTENT_LLM_MODEL",
         description="意图分析专用模型名（空则复用主模型）",
     )
@@ -149,10 +149,10 @@ class GlobalSettings(BaseSettings):
         description="后端 API 基地址，前端和工具引用音频/封面地址时使用",
     )
     api_port: int = Field(default=8501, description="后端 API 服务端口")
-    frontend_port: int = Field(default=3000, description="前端 dev server 端口")
+    frontend_port: int = Field(default=3003, description="前端 dev server 端口")
     netease_api_base: str = Field("http://localhost:3000", validation_alias="NETEASE_API_BASE")
     searxng_base_url: str = Field("http://localhost:8888", validation_alias="SEARXNG_BASE_URL")
-    graphzep_base_url: str = Field("http://localhost:8350", validation_alias="GRAPHZEP_BASE_URL")
+    graphzep_base_url: str = Field("http://localhost:3100", validation_alias="GRAPHZEP_BASE_URL")
 
     # ================================================================
     # 5. 路径配置

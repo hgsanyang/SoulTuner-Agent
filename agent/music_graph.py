@@ -23,6 +23,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger
 from config.settings import settings
+from agent.intent import IntentPlanner
 from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
@@ -33,12 +34,7 @@ from tools.acquire_music import acquire_online_music
 from retrieval.hybrid_retrieval import MusicHybridRetrieval
 from retrieval.user_memory import UserMemoryManager
 from retrieval.history import MusicContextManager
-from llms.prompts import (
-    UNIFIED_MUSIC_QUERY_PLANNER_PROMPT,
-    LOCAL_PLANNER_PROMPT,
-    MUSIC_RECOMMENDATION_EXPLAINER_PROMPT,
-    MUSIC_CHAT_RESPONSE_PROMPT
-)
+from llms.prompts import MUSIC_RECOMMENDATION_EXPLAINER_PROMPT, MUSIC_CHAT_RESPONSE_PROMPT
 from schemas.query_plan import MusicQueryPlan, RetrievalPlan
 
 logger = get_logger(__name__)
@@ -50,7 +46,7 @@ def get_llm():
     """获取LLM实例（延迟初始化）"""
     global _llm
     if _llm is None:
-        _llm = get_chat_model("siliconflow")
+        _llm = get_chat_model(settings.llm_default_provider, settings.llm_default_model)
     return _llm
 
 def set_llm(new_llm):
@@ -114,6 +110,7 @@ class MusicRecommendationGraph:
         # 并发安全的流式队列注册表：{request_id: asyncio.Queue}
         # 每个请求创建独立的 queue，避免并发请求间的数据交叉污染
         self._explanation_queues: dict = {}
+        self.intent_planner = IntentPlanner(get_intent_llm)
         self.workflow = self._build_graph()
     
     def get_app(self) -> CompiledStateGraph:
@@ -344,257 +341,13 @@ class MusicRecommendationGraph:
                 _pref_parts.append(f"【长期记忆】{_graphzep}")
             _combined_preferences = "\n".join(_pref_parts) if _pref_parts else "无"
             
-            # ✅ 根据 provider 类型选择提示词模板和 structured output 方法：
-            # 本地小模型（sglang/vllm/ollama）→ 正交化 6 示例的 LOCAL_PLANNER_PROMPT
-            #   + method='json_mode'（SGLang 不支持 function_calling 的 tools 参数，会返回 400）
-            # 云端大模型（API）→ 完整 12 示例的 UNIFIED_MUSIC_QUERY_PLANNER_PROMPT
-            #   + 默认 function_calling 模式
-            _local_providers = {"sglang", "vllm", "ollama"}
-            _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
-            if _intent_provider in _local_providers:
-                _planner_prompt = LOCAL_PLANNER_PROMPT
-                
-                if _intent_provider == "sglang":
-                    # ── SGLang + Qwen3：完全绕过 LangChain ChatOpenAI ──
-                    # LangChain 的 .bind(extra_body=...) 不可靠：首次请求能传 chat_template_kwargs，
-                    # 后续请求会丢失，导致 Qwen3 thinking 模式重新激活（0.1 tok/s vs 10 tok/s）。
-                    # 解决方案：用 httpx 直接构造 HTTP 请求体，完全控制每个字段。
-                    import httpx
-                    import json as _json
-                    
-                    from retrieval.gssc_context_builder import build_context
-                    _ctx = await build_context(
-                        graphzep_facts=state.get("graphzep_facts", ""),
-                        chat_history=history_text,
-                        total_budget=0,
-                    )
-                    
-                    # 渲染提示词模板
-                    _prompt = ChatPromptTemplate.from_template(_planner_prompt)
-                    _messages = _prompt.format_messages(
-                        user_input=user_input,
-                        user_preferences=_combined_preferences,
-                        chat_history=_ctx["chat_history"],
-                        previous_plan=_previous_plan_text,
-                        current_date=str(date.today()),
-                    )
-                    
-                    # 构造 OpenAI 兼容请求体
-                    _api_messages = []
-                    for m in _messages:
-                        _api_messages.append({"role": getattr(m, "type", "user"), "content": m.content})
-                    # LangChain 的 type 是 "human"/"ai"，需要映射
-                    for m in _api_messages:
-                        if m["role"] == "human":
-                            m["role"] = "user"
-                        elif m["role"] == "ai":
-                            m["role"] = "assistant"
-                    
-                    _base_url = str(_intent_llm_instance.openai_api_base).rstrip("/")
-                    _sglang_url = f"{_base_url}/chat/completions"
-                    _request_body = {
-                        "model": _intent_llm_instance.model_name,
-                        "messages": _api_messages,
-                        "max_tokens": 4096,
-                        "temperature": _intent_llm_instance.temperature,
-                        "response_format": {"type": "json_object"},
-                        "chat_template_kwargs": {"enable_thinking": False},
-                    }
-                    
-                    logger.info(f"[SGLang] POST → {_sglang_url} (model={_intent_llm_instance.model_name}, prompt_msgs={len(_api_messages)})")
-                    import time as _time
-                    _t0 = _time.time()
-                    try:
-                        async with httpx.AsyncClient(timeout=60.0) as _client:
-                            _resp = await _client.post(_sglang_url, json=_request_body)
-                    except httpx.TimeoutException as _te:
-                        _elapsed = _time.time() - _t0
-                        raise RuntimeError(f"SGLang 请求超时 ({_elapsed:.1f}s): {_sglang_url}") from _te
-                    except Exception as _he:
-                        _elapsed = _time.time() - _t0
-                        raise RuntimeError(f"SGLang HTTP 错误 ({_elapsed:.1f}s): {type(_he).__name__}: {_he}") from _he
-                    _elapsed = _time.time() - _t0
-                    
-                    if _resp.status_code != 200:
-                        raise RuntimeError(f"SGLang API 返回 {_resp.status_code}: {_resp.text[:300]}")
-                    
-                    _resp_json = _resp.json()
-                    raw_json_str = _resp_json["choices"][0]["message"]["content"]
-                    logger.info(f"[SGLang] 意图分析完成, 耗时 {_elapsed:.1f}s")
-                    
-                    # 手动 Pydantic 解析（兼容 <think>...</think> 残留）
-                    _clean = raw_json_str.strip()
-                    if "<think>" in _clean:
-                        _think_end = _clean.find("</think>")
-                        if _think_end > 0:
-                            _clean = _clean[_think_end + 8:].strip()
-                    if "```json" in _clean:
-                        _clean = _clean.split("```json")[-1].split("```")[0].strip()
-                    elif "```" in _clean:
-                        _clean = _clean.split("```")[1].strip()
-                    
-                    logger.debug(f"[SGLang] 原始 JSON 输出: {_clean[:500]}")
-                    logger.info(f"[SGLang] 原始 JSON 输出 (首100字符): {_clean[:100]}")
-                    plan = MusicQueryPlan.model_validate_json(_clean)
-                    
-                else:
-                    # vLLM / Ollama: 保留 with_structured_output 路径
-                    structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan, method="json_mode")
-                    chain = (
-                        ChatPromptTemplate.from_template(_planner_prompt)
-                        | structured_llm
-                    )
-                    from retrieval.gssc_context_builder import build_context
-                    _ctx = await build_context(
-                        graphzep_facts=state.get("graphzep_facts", ""),
-                        chat_history=history_text,
-                        total_budget=0,
-                    )
-                    plan: MusicQueryPlan = await chain.ainvoke({
-                        "user_input": user_input,
-                        "user_preferences": _combined_preferences,
-                        "chat_history": _ctx["chat_history"],
-                        "previous_plan": _previous_plan_text,
-                        "current_date": str(date.today()),
-                    })
-            else:
-                # ── API 大模型路径（SiliconFlow / Volcengine / Gemini / DeepSeek 等）──
-                # ★ 关键优化：拆分 system + human 消息，启用 KV Prefix Cache
-                #   - system 消息 = UNIFIED_PLANNER_SYSTEM（能力画像+示例，~600 token）
-                #     → 服务商自动缓存，后续请求只需重算 human 部分
-                #   - human 消息  = UNIFIED_PLANNER_HUMAN（偏好+历史+输入，~100-300 token）
-                #     → 每次都算，但量很小
-                # 预期效果：首次 6-10s（冷启动），后续 2-4s（缓存命中）
-                from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
-                
-                # ★★★ 根源性修复 v3：DashScope/Qwen3 完全绕过 LangChain ChatOpenAI ★★★
-                # 测试验证结论（3 轮排查）：
-                #   1. with_structured_output (function_calling): 2048+ tokens → JSON 截断
-                #   2. with_structured_output (json_mode): 6570 reasoning tokens → Parsed=None
-                #   3. ChatOpenAI.ainvoke (json_mode): ChatOpenAI 检测 finish_reason=length 直接抛异常，
-                #      根本无法到达手动 parse 环节
-                # 解决：用 httpx 直接调 DashScope OpenAI 兼容 API，100% 控制请求体和响应处理。
-                # 直接 API 测试验证：enable_thinking=False + json_object → 仅 13 tokens
-                _is_qwen3 = any(kw in (_intent_model_name or '').lower() for kw in ['qwen3', 'qwen-3'])
-                _is_dashscope = (settings.intent_llm_provider or settings.llm_default_provider or '').lower() == 'dashscope'
-                
-                from retrieval.gssc_context_builder import build_context
-                _ctx = await build_context(
-                    graphzep_facts=state.get("graphzep_facts", ""),
-                    chat_history=history_text,
-                    total_budget=0,
-                )
-                
-                if _is_qwen3 or _is_dashscope:
-                    # ── DashScope/Qwen3 路径：httpx 直接调 API ──
-                    import httpx
-                    import json as _json
-                    logger.info("[Intent] DashScope/Qwen3: httpx 直接调 API（完全绕过 LangChain）")
-                    
-                    _schema_str = _json.dumps(MusicQueryPlan.model_json_schema(), ensure_ascii=False)
-                    _enhanced_system = f"{UNIFIED_PLANNER_SYSTEM}\n\n请严格按以下 JSON Schema 输出，只输出 JSON：\n{_schema_str}"
-                    
-                    # 渲染 human prompt
-                    _human_text = UNIFIED_PLANNER_HUMAN.format(
-                        user_input=user_input,
-                        user_preferences=_combined_preferences,
-                        chat_history=_ctx["chat_history"],
-                        previous_plan=_previous_plan_text,
-                        current_date=str(date.today()),
-                    )
-                    
-                    _api_key = os.environ.get("DASHSCOPE_API_KEY", "")
-                    _api_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-                    _model = _intent_model_name or "qwen3.5-flash"
-                    
-                    _request_body = {
-                        "model": _model,
-                        "messages": [
-                            {"role": "system", "content": [
-                                {"type": "text", "text": _enhanced_system, "cache_control": {"type": "ephemeral"}}
-                            ]},
-                            {"role": "user", "content": _human_text},
-                        ],
-                        "temperature": 0.3,
-                        "max_tokens": 4096,
-                        "enable_thinking": False,
-                        "response_format": {"type": "json_object"},
-                    }
-                    
-                    async with httpx.AsyncClient(timeout=60) as _http:
-                        _resp = await _http.post(
-                            _api_url,
-                            json=_request_body,
-                            headers={"Authorization": f"Bearer {_api_key}", "Content-Type": "application/json"},
-                        )
-                        _resp.raise_for_status()
-                        _resp_data = _resp.json()
-                    
-                    _raw_content = _resp_data["choices"][0]["message"]["content"]
-                    _finish_reason = _resp_data["choices"][0].get("finish_reason", "")
-                    if _finish_reason == "length":
-                        logger.warning("[Intent] ⚠️ LLM 输出被 max_tokens 截断 (finish_reason=length)，JSON 可能不完整")
-                    _usage_data = _resp_data.get("usage", {})
-                    _p = _usage_data.get("prompt_tokens", 0)
-                    _c = _usage_data.get("completion_tokens", 0)
-                    _cached = (_usage_data.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
-                    _cache_info = f" | ✅ Cache={_cached:,}tok" if _cached else " | ❄️ 冷启动"
-                    logger.info(f"[Token Report] 意图分析: prompt={_p:,} + completion={_c:,} = {_p+_c:,} tokens{_cache_info}")
-                    
-                    # 清理可能残留的 <think> 标签
-                    _raw_json = _raw_content.strip()
-                    if "<think>" in _raw_json:
-                        _think_end = _raw_json.find("</think>")
-                        if _think_end > 0:
-                            _raw_json = _raw_json[_think_end + 8:].strip()
-                    if "```json" in _raw_json:
-                        _raw_json = _raw_json.split("```json")[-1].split("```")[0].strip()
-                    
-                    plan = MusicQueryPlan.model_validate_json(_raw_json)
-                
-                else:
-                    # ── 其他厂商（SiliconFlow / OpenAI / DeepSeek 等）：保持 with_structured_output ──
-                    structured_llm = _intent_llm_instance.with_structured_output(MusicQueryPlan, include_raw=True)
-                    
-                    _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
-                    _prompt = ChatPromptTemplate.from_messages([
-                        ("system", UNIFIED_PLANNER_SYSTEM),
-                        ("human", UNIFIED_PLANNER_HUMAN),
-                    ])
-                    
-                    chain = _prompt | structured_llm
-                    _raw_result = await chain.ainvoke({
-                        "user_input": user_input,
-                        "user_preferences": _combined_preferences,
-                        "chat_history": _ctx["chat_history"],
-                        "previous_plan": _previous_plan_text,
-                        "current_date": str(date.today()),
-                    })
-                    plan: MusicQueryPlan = _raw_result["parsed"]
-                    
-                    # Token 追踪
-                    _raw_msg = _raw_result.get("raw")
-                    if _raw_msg and hasattr(_raw_msg, "usage_metadata") and _raw_msg.usage_metadata:
-                        _usage = _raw_msg.usage_metadata
-                        _p = _usage.get("input_tokens", 0)
-                        _c = _usage.get("output_tokens", 0)
-                        _cache_hit = (
-                            _usage.get("prompt_cache_hit_tokens", 0)
-                            or _usage.get("cache_read_input_tokens", 0)
-                            or (_usage.get("input_token_details") or {}).get("cache_read", 0)
-                        )
-                        _cache_miss = _usage.get("prompt_cache_miss_tokens", 0) or (_p - _cache_hit if _cache_hit else 0)
-                        _cache_info = ""
-                        if _cache_hit:
-                            _cache_info = f" | ✅ KV Cache命中={_cache_hit:,}tok, 未命中={_cache_miss:,}tok"
-                        else:
-                            _cache_info = " | ❄️ 冷启动(无缓存命中)"
-                        logger.info(
-                            f"[Token Report] 意图分析: "
-                            f"prompt={_p:,} + completion={_c:,} = {_p + _c:,} tokens{_cache_info}"
-                        )
-
-            
+            plan = await self.intent_planner.plan(
+                user_input=user_input,
+                user_preferences=_combined_preferences,
+                chat_history=history_text,
+                previous_plan=_previous_plan_text,
+                graphzep_facts=state.get("graphzep_facts", ""),
+            )
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(
                 f"识别到意图: {plan.intent_type} | "
@@ -1300,11 +1053,7 @@ class MusicRecommendationGraph:
         """
         import time as _time
         _t0 = _time.time()
-        _explain = get_explain_llm()
-        _explain_model_name = getattr(_explain, 'model_name', '?')
-        _explain_provider = (settings.explain_llm_provider or settings.llm_default_provider or '?').lower()
-        logger.info(f"--- [步骤 3] 生成推荐解释 | 🤖 {_explain_provider} / {_explain_model_name} ---")
-        
+
         # 兼容处理 ToolOutput 对象或列表
         raw_recommendations = state.get("recommendations", [])
         recommendations = getattr(raw_recommendations, "data", raw_recommendations)
@@ -1329,6 +1078,24 @@ class MusicRecommendationGraph:
                 "final_response": "抱歉，没有找到符合你要求的音乐。你可以换个方式描述你的需求，或者告诉我你喜欢的歌手和风格？",
                 "step_count": state.get("step_count", 0) + 1
             }
+
+        if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
+            response = "Mock 模式推荐已完成，检索、路由与流式响应链路工作正常。"
+            request_id = state.get("metadata", {}).get("request_id")
+            queue = self._explanation_queues.get(request_id) if request_id else None
+            if queue:
+                await queue.put(response)
+                await queue.put(None)
+            return {
+                "explanation": response,
+                "final_response": response,
+                "step_count": state.get("step_count", 0) + 1,
+            }
+
+        _explain = get_explain_llm()
+        _explain_model_name = getattr(_explain, 'model_name', '?')
+        _explain_provider = (settings.explain_llm_provider or settings.llm_default_provider or '?').lower()
+        logger.info(f"--- [步骤 3] 生成推荐解释 | 🤖 {_explain_provider} / {_explain_model_name} ---")
         
         try:
             memory_manager = UserMemoryManager()
@@ -1739,6 +1506,9 @@ class MusicRecommendationGraph:
         - Stage 2 失败 → 退回 Stage 1 结果
         - Stage 1 也失败 → 返回空
         """
+        if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
+            return {"graphzep_facts": "", "graphzep_group_id": "mock"}
+
         import time as _time
         _t0 = _time.time()
         logger.info("--- [GraphZep] 双阶段记忆召回 ---")

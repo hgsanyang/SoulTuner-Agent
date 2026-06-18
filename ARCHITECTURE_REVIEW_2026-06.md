@@ -254,9 +254,14 @@ acoustic_query     已有的 HyDE                                         # 由 
 - [x] `RetrievalPlan` → 分层意图对象：新增 `hard_constraints` / `soft_intent` / `hints`，并与旧 `graph_*` 字段双向兼容；检索入口优先读取新对象，旧字段兜底。
 - [x] 用尺子验证：改动后 `tests/eval/results/outcome_eval_siliconflow_20260618_235848.json` 仍为 9/12=75.0%；`language_match_min_ratio` 4/4 通过，`out_05` 的“日语歌为主”已自动判定且通过，人工核对项从 6 例降到 5 例。
 
-### Phase 2 — 工程收敛 + 部署降门槛（1–2 周）
-- [ ] 抽 `IntentPlanner`，收敛厂商分叉。
-- [ ] 落 Lite/Standard/Full 三档 Profile；在线服务与入库解耦（在线无 GPU）；上一个公网 Demo。
+### Phase 2 — 工程收敛 + 部署降门槛（进行中，2026-06-19）
+- [x] 抽出 `agent/intent/IntentPlanner`：图节点只负责上下文与状态编排；DashScope、SGLang、本地 structured output 和通用 provider 调用集中到 adapters，JSON 清洗集中到 parsing。
+- [x] 默认模型迁移到 DashScope：Planner=`qwen3.7-plus`，主模型/解释=`qwen3.6-flash`；增加“明确求歌不能落入 general_chat”的确定性护栏。
+- [x] Lite/Standard/Full Compose Profile 与 Windows 统一入口 `soultuner.ps1`；端口统一为前端 3003、API 8501、GraphZep 3100、Neo4j 7474/7687、SearxNG 8888。
+- [x] 在线 API 与音频增强解耦：在线请求秒级写元数据并投递文件队列，Full Profile 的独立 ingest worker 再执行歌词标签与 M2D-CLAP/OMAR 向量提取；backend 不再声明强制 GPU。
+- [x] 增加 `python start.py --mock` / `.\soultuner.ps1 mock`，无需 LLM、Neo4j、GraphZep 或模型权重即可验证 Agent + SSE 主链。
+- [x] 验证：79 个纯逻辑单测通过；mock 健康检查、SSE 歌曲与解释事件通过；DashScope outcome eval 维持 9/12=75.0%，无回退。
+- [ ] 部署公网 Demo，并补齐公开演示环境的监控、限流与成本预算。
 
 ### Phase 3 — 蒸馏飞轮 + 反馈对齐（2–4 周）
 - [ ] 落盘云端 Planner I/O → SFT 本地 Qwen3-4B（意图延迟亚秒级）。

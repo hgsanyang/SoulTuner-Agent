@@ -19,14 +19,17 @@ import uvicorn
 
 def main():
     """主函数"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     print("=" * 60)
     print("🎵 音乐推荐API服务器 - 启动中...")
     print("=" * 60)
     print()
     
     # 检查环境变量
-    if not os.getenv("SILICONFLOW_API_KEY"):
-        print("❌ 警告: 未设置 SILICONFLOW_API_KEY 环境变量")
+    if not (os.getenv("SILICONFLOW_API_KEY") or os.getenv("SiliconFlow_API_KEY") or os.getenv("DASHSCOPE_API_KEY")):
+        print("❌ 警告: 未设置可用的 LLM API Key")
         print("   某些功能可能无法正常工作")
         print()
     
@@ -49,7 +52,7 @@ def main():
             "api.server:app",
             host=host,
             port=port,
-            reload=True,
+            reload=os.getenv("MUSIC_MOCK_MODE", "0").lower() not in {"1", "true", "yes"},
             reload_dirs=[str(project_root)],  # 指定reload的目录
             log_level="info"
         )

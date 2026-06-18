@@ -47,7 +47,7 @@ MODEL_REGISTRY = {
     },
     "dashscope": { # 阿里百炼
         "prefix": "dashscope/",
-        "default_model": "qwen3.5-flash",
+        "default_model": "qwen3.6-flash",
         "api_key_env": "DASHSCOPE_API_KEY",
         "base_url_env": "DASHSCOPE_BASE_URL"
     },
@@ -330,7 +330,7 @@ def get_intent_chat_model():
     
     max_tokens 从 settings.intent_max_tokens 读取（默认 2048）。
     意图分析输出为结构化 JSON（MusicQueryPlan），含 DST 多轮标签继承，
-    某些模型（如 qwen3.5-flash）在 1024 时会被截断，需要更大的预算。
+    某些 Qwen 模型在 1024 tokens 时会被截断，需要更大的预算。
     """
     try:
         provider = settings.intent_llm_provider or settings.llm_default_provider

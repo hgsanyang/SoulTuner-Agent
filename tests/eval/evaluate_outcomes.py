@@ -379,8 +379,12 @@ async def run(provider: str, cases_file: str, limit: int, verbose: bool) -> Dict
 
 
 def main():
+    import sys
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     p = argparse.ArgumentParser(description="SoulTuner 结果导向离线评测（尺子）")
-    p.add_argument("--provider", default="siliconflow")
+    p.add_argument("--provider", default="dashscope")
     p.add_argument("--cases", default=str(Path(__file__).parent / "outcome_test_cases.json"))
     p.add_argument("--limit", type=int, default=15, help="请求的 top-k（仅记录，实际条数由管线 FinalCut 决定）")
     p.add_argument("--quiet", action="store_true")
