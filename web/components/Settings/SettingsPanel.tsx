@@ -10,7 +10,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 const LLM_PROVIDERS = [
   { value: 'siliconflow', label: 'SiliconFlow (API)', defaultModel: 'deepseek-ai/DeepSeek-V3.2' },
   { value: 'volcengine', label: '火山引擎 / 豆包 (字节跳动)', defaultModel: 'ep-20260405142751-x4jm6' },
-  { value: 'dashscope', label: '通义千问 DashScope (API)', defaultModel: 'qwen-plus' },
+  { value: 'dashscope', label: '通义千问 DashScope (API)', defaultModel: 'qwen3.7-plus' },
   { value: 'google', label: 'Google Gemini (API)', defaultModel: 'gemini-3-flash-preview' },
   { value: 'deepseek', label: 'DeepSeek (API)', defaultModel: 'deepseek-chat' },
   { value: 'sglang', label: 'SGLang (本地推荐)', defaultModel: 'local-planner-qwen3-4b-fp8' },
@@ -27,7 +27,7 @@ const MODEL_PRESETS: Record<string, string[]> = {
     'Pro/Qwen/Qwen2.5-7B-Instruct',
   ],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  dashscope: ['qwen3.6-flash', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.5-flash', 'deepseek-v3.2'],
+  dashscope: ['qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'qwen3.5-flash', 'deepseek-v3.2'],
   google: ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'],
   volcengine: ['ep-20260405142751-x4jm6'],
   sglang: ['local-planner-qwen3-4b-fp8'],

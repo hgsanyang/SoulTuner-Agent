@@ -256,11 +256,14 @@ acoustic_query     已有的 HyDE                                         # 由 
 
 ### Phase 2 — 工程收敛 + 部署降门槛（进行中，2026-06-19）
 - [x] 抽出 `agent/intent/IntentPlanner`：图节点只负责上下文与状态编排；DashScope、SGLang、本地 structured output 和通用 provider 调用集中到 adapters，JSON 清洗集中到 parsing。
-- [x] 默认模型迁移到 DashScope：Planner=`qwen3.7-plus`，主模型/解释=`qwen3.6-flash`；增加“明确求歌不能落入 general_chat”的确定性护栏。
+- [x] 默认模型迁移到 DashScope：Planner/主模型/解释统一为已验证可用的 `qwen3.7-plus`；`qwen3.7-flash` 当前 DashScope 返回 `model_not_found`，不作为默认值；增加“明确求歌不能落入 general_chat”的确定性护栏。
 - [x] Lite/Standard/Full Compose Profile 与 Windows 统一入口 `soultuner.ps1`；端口统一为前端 3003、API 8501、GraphZep 3100、Neo4j 7474/7687、SearxNG 8888。
+- [x] `soultuner.ps1` 增加 `netease-start` / `netease-stop` / `netease-status`，把兼容音乐 API `:3000` 纳入日常运维入口。
 - [x] 在线 API 与音频增强解耦：在线请求秒级写元数据并投递文件队列，Full Profile 的独立 ingest worker 再执行歌词标签与 M2D-CLAP/OMAR 向量提取；backend 不再声明强制 GPU。
+- [x] `llms/multi_llm.py` 瘦身为兼容门面，核心逻辑拆到 `llms/registry.py`、`llms/chat_models.py`、`llms/native.py`。
+- [x] 联网音乐 fallback 质量修复：自然语言 query 先规整为 Netease 友好查询；歌手-only 请求按 `artist_entities` 过滤；“最近新歌”直连 Netease `top/song?type=7` 华语新歌榜。
 - [x] 增加 `python start.py --mock` / `.\soultuner.ps1 mock`，无需 LLM、Neo4j、GraphZep 或模型权重即可验证 Agent + SSE 主链。
-- [x] 验证：79 个纯逻辑单测通过；mock 健康检查、SSE 歌曲与解释事件通过；DashScope outcome eval 维持 9/12=75.0%，无回退。
+- [x] 验证：84 个纯逻辑单测通过；mock 健康检查、SSE 歌曲与解释事件通过；DashScope outcome eval 在 NeteaseAPI 启动后提升到 12/12=100.0%，`not_degraded` 12/12。
 - [ ] 部署公网 Demo，并补齐公开演示环境的监控、限流与成本预算。
 
 ### Phase 3 — 蒸馏飞轮 + 反馈对齐（2–4 周）

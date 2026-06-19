@@ -42,7 +42,7 @@ class GlobalSettings(BaseSettings):
         description="主 LLM 提供商（siliconflow / volcengine / dashscope / google / sglang / vllm / ollama）",
     )
     llm_default_model: str = Field(
-        default="qwen3.6-flash",
+        default="qwen3.7-plus",
         validation_alias="MODEL_NAME",
         description="主 LLM 模型名称（云端 API 时为模型全名；本地时为 SGLang 部署的模型标识）",
     )

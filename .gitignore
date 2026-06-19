@@ -50,6 +50,7 @@ config/user_settings.json
 logs/
 output/
 vllm_test*.log
+.codex-*.pid
 
 # ================================================================
 # Databases（本地数据库文件）

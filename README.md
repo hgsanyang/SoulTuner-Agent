@@ -566,7 +566,10 @@ python data/pipeline/ingest_to_neo4j.py --update-embeddings
 │
 ├── llms/                       # LLM 接口 + Prompts
 │   ├── prompts.py              # Planner Prompt + 辅助 Prompt
-│   └── multi_llm.py            # 多提供商 LLM 工厂（SiliconFlow / Volcengine / Gemini / OpenAI）
+│   ├── registry.py             # Provider 注册表 + 环境变量注入
+│   ├── chat_models.py          # LangChain ChatModel 工厂
+│   ├── native.py               # 原生 LiteLLM 字符串调用器
+│   └── multi_llm.py            # 兼容旧 import 的门面
 │
 ├── schemas/                    # Pydantic 数据模型
 │   └── query_plan.py           # MusicQueryPlan + RetrievalPlan

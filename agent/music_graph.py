@@ -24,6 +24,7 @@ from langchain_core.output_parsers import StrOutputParser
 from config.logging_config import get_logger
 from config.settings import settings
 from agent.intent import IntentPlanner
+from agent.netease_query import artist_matches, build_netease_query_plan
 from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
@@ -468,6 +469,8 @@ class MusicRecommendationGraph:
             # Case 2: 有结果但没有精确匹配请求的歌名（如搜"痛仰西湖"返回痛仰的其他歌）
             intent_type = state.get("intent_type", "")
             graph_entities = (retrieval_plan or {}).get("graph_entities", [])
+            graph_artist_entities = (retrieval_plan or {}).get("graph_artist_entities", []) or []
+            graph_song_entities = (retrieval_plan or {}).get("graph_song_entities", []) or []
             need_web_fallback = False
 
             if intent_type == "graph_search" and bool(graph_entities):
@@ -477,7 +480,26 @@ class MusicRecommendationGraph:
                     logger.warning(
                         f"[search_songs] 本地库完全未命中，将降级联网搜索: entities={graph_entities}"
                     )
-                elif len(graph_entities) >= 2:
+                elif graph_artist_entities and not graph_song_entities:
+                    matched_artists = 0
+                    checked_artists = 0
+                    for r in search_results:
+                        song = r.get("song", r) if isinstance(r, dict) else {}
+                        if not isinstance(song, dict):
+                            continue
+                        artist = song.get("artist", "")
+                        if not artist or artist == "互联网最新情报":
+                            continue
+                        checked_artists += 1
+                        if artist_matches(artist, tuple(graph_artist_entities)):
+                            matched_artists += 1
+                    if checked_artists == 0 or matched_artists / max(checked_artists, 1) < 0.7:
+                        need_web_fallback = True
+                        logger.warning(
+                            f"[search_songs] 歌手实体结果命中不足，将降级联网搜索: "
+                            f"artists={graph_artist_entities}, matched={matched_artists}/{checked_artists}"
+                        )
+                elif graph_song_entities:
                     # Case 2: 有多个实体（歌手+歌名），检查返回结果是否精确包含歌名
                     # 实体可能是 ["痛仰乐队", "西湖"] 或 ["周杰伦", "Jay Chou", "稻香"]
                     # 检查 graph 返回的歌名是否与任何 entity 模糊匹配
@@ -493,7 +515,7 @@ class MusicRecommendationGraph:
 
                     # 对每个 entity，看它是否出现在某首歌名中（或者歌名出现在它中）
                     entity_matched_in_title = False
-                    for ent in graph_entities:
+                    for ent in graph_song_entities:
                         ent_lower = ent.lower().strip()
                         if not ent_lower:
                             continue
@@ -552,36 +574,18 @@ class MusicRecommendationGraph:
         logger.info("--- [步骤] 联网搜索（网易云 API）---")
 
         # ── 多级查询词提取（Netease 搜索需要中文原文，不能用英文翻译）──
-        # 优先使用用户原始输入（中文），因为 graph_entities 可能包含英文翻译
         user_input = state.get("input", "")
         fallback_query = state.get("_web_fallback_query", "")
-        
-        # 检测是否包含中文字符
-        import re as _re
-        has_chinese = lambda s: bool(_re.search(r'[\u4e00-\u9fff]', s))
-        
-        if has_chinese(user_input):
-            # 用户原始输入包含中文 → 清理后直接用于 Netease 搜索
-            query = _re.sub(r'^(搜索|查找|找|听|播放|我想听|帮我找)\s*', '', user_input).strip()
-        elif has_chinese(fallback_query):
-            query = fallback_query
-        elif fallback_query:
-            query = fallback_query
-        else:
-            # web_search 意图直达时，从 intent_parameters / retrieval_plan 提取
-            params = state.get("intent_parameters", {})
-            retrieval_plan = state.get("retrieval_plan") or {}
-            graph_entities = retrieval_plan.get("graph_entities", [])
-            web_keywords = retrieval_plan.get("web_search_keywords", "")
-            if graph_entities:
-                query = " ".join(graph_entities[:4])
-            elif web_keywords:
-                query = web_keywords
-            elif params.get("query"):
-                query = params["query"]
-            else:
-                query = user_input
-        logger.info(f"[web_fallback] 查询词: '{query}'")
+        retrieval_plan = state.get("retrieval_plan") or {}
+        params = state.get("intent_parameters", {})
+        netease_plan = build_netease_query_plan(
+            user_input=user_input,
+            fallback_query=fallback_query,
+            retrieval_plan=retrieval_plan,
+            intent_parameters=params,
+        )
+        query = netease_plan.query
+        logger.info(f"[web_fallback] 查询词: '{query}' | mode={netease_plan.mode}")
 
         try:
             import aiohttp
@@ -593,11 +597,33 @@ class MusicRecommendationGraph:
                 # 1) 搜索
                 import re as _re
                 clean_query = _re.sub(r'[《》\[\]【】]', ' ', query).strip()
-                search_url = f"{api_base}/search?keywords={clean_query}&limit=5"
-                async with session.get(search_url, timeout=timeout) as resp:
-                    data = await resp.json()
+                if netease_plan.mode == "new_songs":
+                    search_url = f"{api_base}/top/song?type=7"
+                    async with session.get(search_url, timeout=timeout) as resp:
+                        data = await resp.json()
+                    raw_songs = data.get("data", [])[:20]
+                    songs = [
+                        {
+                            "id": s.get("id"),
+                            "name": s.get("name", "Unknown"),
+                            "artists": s.get("artists") or s.get("ar") or [],
+                            "album": s.get("album") or s.get("al") or {},
+                        }
+                        for s in raw_songs
+                        if s.get("id")
+                    ]
+                else:
+                    search_limit = 20 if netease_plan.artist_terms and not netease_plan.song_terms else 5
+                    search_url = f"{api_base}/search?keywords={clean_query}&limit={search_limit}"
+                    async with session.get(search_url, timeout=timeout) as resp:
+                        data = await resp.json()
+                    songs = data.get("result", {}).get("songs", [])
+                    if netease_plan.artist_terms and not netease_plan.song_terms:
+                        songs = [
+                            s for s in songs
+                            if artist_matches("、".join(a.get("name", "") for a in s.get("artists", [])), netease_plan.artist_terms)
+                        ]
 
-                songs = data.get("result", {}).get("songs", [])
                 if not songs:
                     logger.warning(f"[web_fallback] 联网搜索无结果: {query}")
                     return {"search_results": [], "recommendations": [],

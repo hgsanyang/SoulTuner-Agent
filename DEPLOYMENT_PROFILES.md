@@ -18,6 +18,9 @@ Windows commands:
 .\soultuner.ps1 test
 .\soultuner.ps1 ingest full
 .\soultuner.ps1 mock
+.\soultuner.ps1 netease-status
+.\soultuner.ps1 netease-start
+.\soultuner.ps1 netease-stop
 .\soultuner.ps1 down
 ```
 
@@ -37,3 +40,7 @@ Stable local ports:
 - Neo4j Browser/Bolt: `7474` / `7687`
 - SearxNG: `8888`
 - Compatible music API: `3000` when installed separately
+
+`netease-start` looks for `NeteaseCloudMusicApi/app.js` under the project root,
+`C:\Users\sanyang\sanyangworkspace\tools\NeteaseCloudMusicApi`, then
+`$HOME\NeteaseCloudMusicApi`.
