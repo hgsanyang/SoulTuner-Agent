@@ -118,6 +118,10 @@ class GlobalSettings(BaseSettings):
         default=2048,
         description="意图分析 LLM 最大输出 Token 数（json_mode 下 ~200 tokens 足够，2048 留足余量）",
     )
+    intent_temperature: float = Field(
+        default=0.3,
+        description="意图分析 LLM 温度；离线评测会强制设为 0 以提升可复现性",
+    )
 
     finetuned_model_path: str = Field(
         default="",
@@ -338,6 +342,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
     _PERSISTABLE = {
         "llm_default_provider", "llm_default_model",
         "intent_llm_provider", "intent_llm_model",
+        "intent_temperature",
         "hyde_llm_provider", "hyde_llm_model",
         "compress_llm_provider", "compress_llm_model",
         "intent_max_tokens",
