@@ -5,8 +5,9 @@ GraphZep 微服务 HTTP 客户端
 
 import httpx
 import asyncio
+import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -20,9 +21,50 @@ DEFAULT_GROUP_ID = "music-agent-memory"
 class GraphZepClient:
     """GraphZep HTTP 客户端（单例）"""
 
-    def __init__(self, base_url: str = GRAPHZEP_BASE_URL):
+    def __init__(
+        self,
+        base_url: str = GRAPHZEP_BASE_URL,
+        http_client: Optional[Any] = None,
+        unavailable_ttl_seconds: int = 300,
+    ):
         self.base_url = base_url
-        self._client = httpx.AsyncClient(base_url=base_url, timeout=10.0)
+        self._unavailable_ttl_seconds = unavailable_ttl_seconds
+        self._unavailable_until = 0.0
+        self._offline_warning_logged = False
+        timeout = httpx.Timeout(6.0, connect=1.0)
+        self._client = http_client or httpx.AsyncClient(base_url=base_url, timeout=timeout)
+
+    def _is_temporarily_unavailable(self) -> bool:
+        return time.monotonic() < self._unavailable_until
+
+    def _mark_available(self) -> None:
+        self._unavailable_until = 0.0
+        self._offline_warning_logged = False
+
+    def _mark_unavailable(self, error: Exception) -> None:
+        self._unavailable_until = time.monotonic() + self._unavailable_ttl_seconds
+        if not self._offline_warning_logged:
+            logger.warning(
+                "[GraphZep] 服务暂不可用，%ss 内快速降级为空记忆: %s",
+                self._unavailable_ttl_seconds,
+                error,
+            )
+            self._offline_warning_logged = True
+        else:
+            logger.debug("[GraphZep] 服务仍不可用，继续快速降级: %s", error)
+
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        if self._is_temporarily_unavailable():
+            raise RuntimeError("GraphZep 服务暂不可用（已熔断缓存）")
+
+        try:
+            resp = await self._client.request(method, path, **kwargs)
+            resp.raise_for_status()
+            self._mark_available()
+            return resp
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            self._mark_unavailable(exc)
+            raise RuntimeError("GraphZep 服务暂不可用（请求失败）") from exc
 
     # ---- 写入：将对话/事件送入 GraphZep ----
 
@@ -58,10 +100,12 @@ class GraphZepClient:
             ],
         }
         try:
-            resp = await self._client.post("/messages", json=payload)
-            resp.raise_for_status()
+            await self._request("POST", "/messages", json=payload)
             logger.info(f"[GraphZep] 对话已送入处理队列: group={group_id}")
             return True
+        except RuntimeError as e:
+            logger.debug(f"[GraphZep] 写入跳过（服务暂不可用）: {e}")
+            return False
         except Exception as e:
             logger.warning(f"[GraphZep] 写入失败（不影响主流程）: {e}")
             return False
@@ -90,10 +134,12 @@ class GraphZepClient:
             ],
         }
         try:
-            resp = await self._client.post("/messages", json=payload)
-            resp.raise_for_status()
+            await self._request("POST", "/messages", json=payload)
             logger.info(f"[GraphZep] 行为事件已记录: {event_description[:50]}...")
             return True
+        except RuntimeError as e:
+            logger.debug(f"[GraphZep] 事件写入跳过（服务暂不可用）: {e}")
+            return False
         except Exception as e:
             logger.warning(f"[GraphZep] 事件写入失败: {e}")
             return False
@@ -120,8 +166,7 @@ class GraphZepClient:
             payload["group_ids"] = group_ids
 
         try:
-            resp = await self._client.post("/search", json=payload)
-            resp.raise_for_status()
+            resp = await self._request("POST", "/search", json=payload)
             data = resp.json()
             facts = data.get("facts", [])
             if not facts:
@@ -132,6 +177,8 @@ class GraphZepClient:
                 valid_at = f.get("valid_at", "")
                 lines.append(f"- {fact_text}" + (f" (时间: {valid_at})" if valid_at else ""))
             return "\n".join(lines)
+        except RuntimeError:
+            return "暂无用户长期记忆（GraphZep 服务暂时不可用）"
         except Exception as e:
             logger.warning(f"[GraphZep] 检索失败: {e}")
             return "暂无用户长期记忆（GraphZep 服务不可用）"
@@ -159,13 +206,14 @@ class GraphZepClient:
             ],
         }
         try:
-            resp = await self._client.post("/get-memory", json=payload)
-            resp.raise_for_status()
+            resp = await self._request("POST", "/get-memory", json=payload)
             data = resp.json()
             facts = data.get("facts", [])
             if not facts:
                 return "暂无用户长期记忆"
             return "\n".join(f"- {f['fact']}" for f in facts)
+        except RuntimeError:
+            return "暂无用户长期记忆（GraphZep 服务暂时不可用）"
         except Exception as e:
             logger.warning(f"[GraphZep] 记忆获取失败: {e}")
             return "暂无用户长期记忆（GraphZep 服务不可用）"
@@ -175,7 +223,10 @@ class GraphZepClient:
     async def healthcheck(self) -> bool:
         try:
             resp = await self._client.get("/healthcheck")
-            return resp.status_code == 200
+            ok = resp.status_code == 200
+            if ok:
+                self._mark_available()
+            return ok
         except Exception:
             return False
 

@@ -264,7 +264,15 @@ acoustic_query     已有的 HyDE                                         # 由 
 - [x] 联网音乐 fallback 质量修复：自然语言 query 先规整为 Netease 友好查询；歌手-only 请求按 `artist_entities` 过滤；“最近新歌”直连 Netease `top/song?type=7` 华语新歌榜。
 - [x] 增加 `python start.py --mock` / `.\soultuner.ps1 mock`，无需 LLM、Neo4j、GraphZep 或模型权重即可验证 Agent + SSE 主链。
 - [x] 验证：84 个纯逻辑单测通过；mock 健康检查、SSE 歌曲与解释事件通过；DashScope outcome eval 在 NeteaseAPI 启动后提升到 12/12=100.0%，`not_degraded` 12/12。
+- [x] P0 清噪音补齐：`doctor.py` 报告实际生效模型；`music_agent` 环境已补 pytest；`ChatOpenAI` 的 Qwen `extra_body` 改为显式参数，消除 LangChain warning；GraphZep 客户端增加 5 分钟不可用熔断缓存，服务离线时快速降级为空记忆。
+- [x] 2026-06-19 标准档实测：Docker Neo4j `:7687` 有 1128 个 `Song` 节点；`doctor` 全绿（Neo4j/GraphZep/backend/frontend/SearxNG/NeteaseAPI 均在线）。注意 Compose 内 `soultuner-searxng` 与已有 `music_searxng` 同占 `:8888`，本机当前沿用已运行的 `music_searxng`。
 - [ ] 部署公网 Demo，并补齐公开演示环境的监控、限流与成本预算。
+
+### Phase 2.5 — 评测扩充 + Judge 地基（进行中，2026-06-19）
+- [x] P1 评测扩充地基：`evaluate_outcomes` 支持 `--split smoke/dev/holdout/all`，报告记录 git sha、实际模型、Planner temperature 与关键 config；新增 50 条 dev + 20 条冻结 holdout，覆盖明确实体、语言、软意图、反向约束、多轮上下文、中英混说、时效性与兜底。
+- [x] 2026-06-19 Docker 基线：smoke `11/12 = 91.7%`，dev `44/50 = 88.0%`。失败主要集中在明确歌手/歌名本地缺库或可播放链接不足、以及多轮“保留歌手但换情绪”约束；软意图仍有 35 个 manual_review，说明 P2 judge 是下一块地基。
+- [x] P2 judge 地基：新增 `objective_soft_judge`，只读取歌曲客观字段（genre/genres/moods/scenarios/language/region/instrumental），不读取系统 explanation；当前作为可校准初判器，尚未批量替代 manual_review。
+- [ ] 软意图 judge 校准：先人工标注一小批金标准，再决定哪些 manual_review 可转成 `objective_soft_judge`；低置信度仍保留人工核对。
 
 ### Phase 3 — 蒸馏飞轮 + 反馈对齐（2–4 周）
 - [ ] 落盘云端 Planner I/O → SFT 本地 Qwen3-4B（意图延迟亚秒级）。

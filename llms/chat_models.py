@@ -28,28 +28,24 @@ def _settings_value(name: str, default):
     return getattr(settings, name, default)
 
 
-def _chat_openai_kwargs(provider: str, target_model: str) -> dict:
-    model_kwargs = {}
+def _chat_openai_extra_body(provider: str, target_model: str) -> dict:
+    extra_body = {}
     is_qwen_family = any(kw in target_model.lower() for kw in ["qwen3", "qwen-3", "qwen2.5"])
     if is_qwen_family or provider == "sglang":
         if provider == "sglang":
-            model_kwargs = {
-                "extra_body": {
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
+            extra_body = {
+                "chat_template_kwargs": {"enable_thinking": False},
             }
         else:
-            model_kwargs = {
-                "extra_body": {
-                    "enable_thinking": False,
-                },
+            extra_body = {
+                "enable_thinking": False,
             }
         logger.info(
             "[LLM] 检测到 Qwen3 系模型(%s)，已关闭 Thinking Mode (provider=%s)",
             target_model,
             provider,
         )
-    return model_kwargs
+    return extra_body
 
 
 def get_chat_model(
@@ -72,6 +68,10 @@ def get_chat_model(
         target_model = model_name or config["default_model"]
         request_timeout = timeout if timeout is not None else _settings_value("llm_timeout", 80)
         token_budget = max_tokens if max_tokens is not None else 4000
+        chat_kwargs = {}
+        extra_body = _chat_openai_extra_body(provider_key, target_model)
+        if extra_body:
+            chat_kwargs["extra_body"] = extra_body
         return ChatOpenAI(
             api_key=api_key or "fake-key",
             base_url=base_url,
@@ -79,7 +79,7 @@ def get_chat_model(
             temperature=temperature,
             max_tokens=token_budget,
             request_timeout=request_timeout,
-            model_kwargs=_chat_openai_kwargs(provider_key, target_model),
+            **chat_kwargs,
         )
 
     try:
@@ -117,7 +117,8 @@ def get_intent_chat_model():
         provider = _settings_value("intent_llm_provider", "") or _settings_value("llm_default_provider", "siliconflow")
         model_name = _settings_value("intent_llm_model", "") or _settings_value("llm_default_model", "") or None
         max_tokens = _settings_value("intent_max_tokens", 2048)
-        return get_chat_model(provider=provider, model_name=model_name, temperature=0.3, max_tokens=max_tokens)
+        temperature = _settings_value("intent_temperature", 0.3)
+        return get_chat_model(provider=provider, model_name=model_name, temperature=temperature, max_tokens=max_tokens)
     except Exception:
         return get_chat_model(provider="siliconflow", temperature=0.3, max_tokens=2048)
 

@@ -1,0 +1,316 @@
+[
+  {
+    "id": "dev_artist_01_jay_chou",
+    "category": "explicit_artist",
+    "query": "周杰伦的歌",
+    "checks": {"min_results": 3, "artist_any_of": ["周杰伦", "Jay Chou"], "artist_match_min_ratio": 0.7, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_artist_02_jj_lin",
+    "category": "explicit_artist",
+    "query": "林俊杰的歌",
+    "checks": {"min_results": 3, "artist_any_of": ["林俊杰", "JJ Lin"], "artist_match_min_ratio": 0.7, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_artist_03_taylor",
+    "category": "explicit_artist",
+    "query": "Taylor Swift 的歌",
+    "checks": {"min_results": 3, "artist_any_of": ["Taylor Swift"], "artist_match_min_ratio": 0.7, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_artist_04_eason_cantonese",
+    "category": "explicit_artist",
+    "query": "陈奕迅的粤语歌",
+    "checks": {"min_results": 3, "artist_any_of": ["陈奕迅", "Eason"], "artist_match_min_ratio": 0.5, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.4, "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+  {
+    "id": "dev_artist_05_faye",
+    "category": "explicit_artist",
+    "query": "王菲的歌",
+    "checks": {"min_results": 3, "artist_any_of": ["王菲", "Faye Wong"], "artist_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+
+  {
+    "id": "dev_song_01_jiangnan",
+    "category": "explicit_song",
+    "query": "林俊杰的那首江南",
+    "checks": {"min_results": 1, "must_include_titles": ["江南"], "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_song_02_qingtian",
+    "category": "explicit_song",
+    "query": "周杰伦 晴天",
+    "checks": {"min_results": 1, "must_include_titles": ["晴天"], "artist_any_of": ["周杰伦", "Jay Chou"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_song_03_love_story",
+    "category": "explicit_song",
+    "query": "Taylor Swift Love Story",
+    "checks": {"min_results": 1, "must_include_titles": ["Love Story"], "artist_any_of": ["Taylor Swift"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_song_04_ten_years",
+    "category": "explicit_song",
+    "query": "陈奕迅 十年",
+    "checks": {"min_results": 1, "must_include_titles": ["十年"], "artist_any_of": ["陈奕迅", "Eason"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+  {
+    "id": "dev_song_05_hongdou",
+    "category": "explicit_song",
+    "query": "王菲 红豆",
+    "checks": {"min_results": 1, "must_include_titles": ["红豆"], "artist_any_of": ["王菲", "Faye Wong"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+
+  {
+    "id": "dev_language_01_quiet_japanese",
+    "category": "language_constraint",
+    "query": "安静的日语歌",
+    "checks": {"min_results": 3, "language_any_of": ["Japanese"], "language_match_min_ratio": 0.7, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认结果整体安静/低动态，而非吵闹"]}
+  },
+  {
+    "id": "dev_language_02_korean_female_pop",
+    "category": "language_constraint",
+    "query": "韩语女声流行歌",
+    "checks": {"min_results": 3, "language_any_of": ["Korean"], "language_match_min_ratio": 0.6, "genre_any_of": ["pop", "k-pop"], "genre_match_min_ratio": 0.3, "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+  {
+    "id": "dev_language_03_english_rock",
+    "category": "language_constraint",
+    "query": "英文摇滚",
+    "checks": {"min_results": 3, "language_any_of": ["English"], "language_match_min_ratio": 0.7, "genre_any_of": ["rock", "punk", "metal", "alternative"], "genre_match_min_ratio": 0.4, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_language_04_cantonese_oldies",
+    "category": "language_constraint",
+    "query": "粤语老歌",
+    "checks": {"min_results": 3, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认整体更偏经典/怀旧，而非新歌榜随机结果"]}
+  },
+  {
+    "id": "dev_language_05_soft_instrumental",
+    "category": "language_constraint",
+    "query": "轻柔的纯音乐，适合安静看书",
+    "checks": {"min_results": 3, "language_any_of": ["Instrumental"], "language_match_min_ratio": 0.8, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认结果为器乐/纯音乐且听感轻柔"]}
+  },
+
+  {
+    "id": "dev_mood_01_sad",
+    "category": "soft_mood",
+    "query": "我心情很差，想哭",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认结果整体偏悲伤/舒缓，而非热血/嗨歌"]}
+  },
+  {
+    "id": "dev_mood_02_recover_from_emo",
+    "category": "soft_mood",
+    "query": "想要能让我从 emo 里走出来的歌",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认情绪轨迹是从低落到被托住/逐渐走出来，而非继续下坠"]}
+  },
+  {
+    "id": "dev_mood_03_uplift",
+    "category": "soft_mood",
+    "query": "来几首能让我振作起来的歌",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认整体积极、有恢复能量的感觉"]}
+  },
+  {
+    "id": "dev_mood_04_sleep_calm",
+    "category": "soft_mood",
+    "query": "睡前听的平静一点的歌",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认结果不吵、不强节奏，适合睡前"]}
+  },
+  {
+    "id": "dev_mood_05_ethereal_female",
+    "category": "soft_mood",
+    "query": "空灵一点的女声",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认女声占主导，氛围空灵/通透"]}
+  },
+  {
+    "id": "dev_mood_06_warm_not_sad",
+    "category": "soft_mood",
+    "query": "别太丧，但要温柔一点",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认温柔但不过度悲伤，强否定被尊重"]}
+  },
+  {
+    "id": "dev_mood_07_friday_relief",
+    "category": "soft_mood",
+    "query": "像周五下班终于松一口气那种感觉",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认轻松、舒展、释放压力，而非焦虑或鸡血"]}
+  },
+
+  {
+    "id": "dev_scene_01_running",
+    "category": "scenario",
+    "query": "适合跑步时听的歌，要有节奏感",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认结果偏强节奏/高能量，适合跑步"]}
+  },
+  {
+    "id": "dev_scene_02_night_drive",
+    "category": "scenario",
+    "query": "夜里开车听的歌，不要太吵",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认适合夜间驾驶，稳定、有氛围但不炸"]}
+  },
+  {
+    "id": "dev_scene_03_focus_study",
+    "category": "scenario",
+    "query": "学习时当背景音乐，最好没有人声",
+    "checks": {"min_results": 3, "language_any_of": ["Instrumental"], "language_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认不抢注意力"]}
+  },
+  {
+    "id": "dev_scene_04_cooking",
+    "category": "scenario",
+    "query": "做饭的时候听，轻快一点",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认轻快、日常、不过度激烈"]}
+  },
+  {
+    "id": "dev_scene_05_commute",
+    "category": "scenario",
+    "query": "通勤路上听的歌，别太催眠",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认有一定律动，不会太困"]}
+  },
+  {
+    "id": "dev_scene_06_reading",
+    "category": "scenario",
+    "query": "晚上看书时放的音乐",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认不打扰阅读，音色柔和"]}
+  },
+
+  {
+    "id": "dev_negative_01_not_noisy",
+    "category": "negative_constraint",
+    "query": "想听有劲一点的歌，但不要太吵",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认有能量但不过度嘈杂，强否定被尊重"]}
+  },
+  {
+    "id": "dev_negative_02_not_sad",
+    "category": "negative_constraint",
+    "query": "推荐几首中文歌，不要悲伤的",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认没有明显苦情/悲伤取向"]}
+  },
+  {
+    "id": "dev_negative_03_exclude_artist",
+    "category": "negative_constraint",
+    "query": "推荐华语流行，但不要周杰伦",
+    "checks": {"min_results": 3, "must_exclude": [{"artist": "周杰伦"}], "max_per_artist": 3, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_negative_04_not_english",
+    "category": "negative_constraint",
+    "query": "来点摇滚，但不要英文歌",
+    "checks": {"min_results": 3, "genre_any_of": ["rock", "摇滚", "alternative"], "genre_match_min_ratio": 0.3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认主要不是英文歌"]}
+  },
+  {
+    "id": "dev_negative_05_not_edm",
+    "category": "negative_constraint",
+    "query": "想听夜晚氛围感，但不要电音舞曲",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认没有明显 EDM/舞曲取向"]}
+  },
+  {
+    "id": "dev_negative_06_not_overplayed",
+    "category": "negative_constraint",
+    "query": "给我几首别太烂大街的华语歌",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "max_per_artist": 2, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认不全是超热门老梗歌"]}
+  },
+
+  {
+    "id": "dev_context_01_quieter",
+    "category": "multi_turn_context",
+    "query": "这次换安静一点的中文歌",
+    "chat_history": [{"role": "user", "content": "推荐几首跑步听的歌"}, {"role": "assistant", "content": "给你一些节奏比较强的歌。"}],
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认系统理解“这次”指相对上一轮降能量"]}
+  },
+  {
+    "id": "dev_context_02_more_upbeat",
+    "category": "multi_turn_context",
+    "query": "还是刚才那种日语歌，但更有精神一点",
+    "chat_history": [{"role": "user", "content": "安静的日语歌"}, {"role": "assistant", "content": "推荐了一些日语低动态歌曲。"}],
+    "checks": {"min_results": 3, "language_any_of": ["Japanese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认保留日语约束，同时能量稍微上升"]}
+  },
+  {
+    "id": "dev_context_03_less_sad",
+    "category": "multi_turn_context",
+    "query": "不要刚才那么伤，换一点能把人拉起来的",
+    "chat_history": [{"role": "user", "content": "我心情很差，想哭"}, {"role": "assistant", "content": "推荐了一些悲伤舒缓歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认强否定上一轮悲伤情绪，并转向恢复感"]}
+  },
+  {
+    "id": "dev_context_04_same_artist_different_mood",
+    "category": "multi_turn_context",
+    "query": "还是林俊杰，但别要苦情歌",
+    "chat_history": [{"role": "user", "content": "林俊杰的歌"}, {"role": "assistant", "content": "推荐了一些林俊杰抒情歌。"}],
+    "checks": {"min_results": 2, "artist_any_of": ["林俊杰", "JJ Lin"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认保留歌手，减少苦情取向"]}
+  },
+  {
+    "id": "dev_context_05_more_niche",
+    "category": "multi_turn_context",
+    "query": "刚才那些太大众了，换小众一点",
+    "chat_history": [{"role": "user", "content": "推荐一些好听的华语流行"}, {"role": "assistant", "content": "推荐了几首常见华语流行歌。"}],
+    "checks": {"min_results": 3, "max_per_artist": 2, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认相对上一轮更小众，而非继续热门榜单"]}
+  },
+
+  {
+    "id": "dev_mixed_01_lofi_not_sad",
+    "category": "mixed_language_boundary",
+    "query": "lofi 一点但别太丧",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认 lofi/松弛感成立，同时不过度悲伤"]}
+  },
+  {
+    "id": "dev_mixed_02_citywalk_chinese",
+    "category": "mixed_language_boundary",
+    "query": "citywalk 的感觉，但想听中文歌",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认有城市漫步/轻松移动感"]}
+  },
+  {
+    "id": "dev_mixed_03_chill_not_sleepy",
+    "category": "mixed_language_boundary",
+    "query": "chill but not sleepy",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认 chill 但不困、不拖沓"]}
+  },
+  {
+    "id": "dev_mixed_04_jpop_quiet",
+    "category": "mixed_language_boundary",
+    "query": "J-pop but quiet，不要太 anime opening",
+    "checks": {"min_results": 3, "language_any_of": ["Japanese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认日语/J-pop 约束成立，且不偏热血动漫片头"]}
+  },
+  {
+    "id": "dev_mixed_05_deep_chinese_rock",
+    "category": "mixed_language_boundary",
+    "query": "有没有深情些的国摇，想听",
+    "checks": {"min_results": 3, "genre_any_of": ["rock", "摇滚", "alternative", "folk", "民谣"], "genre_match_min_ratio": 0.3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.7, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认情绪偏深情"]}
+  },
+
+  {
+    "id": "dev_fresh_01_new_songs",
+    "category": "timeliness",
+    "query": "最近有什么新歌",
+    "checks": {"min_results": 1, "min_playable_ratio": 0.3, "not_degraded": true}
+  },
+  {
+    "id": "dev_fresh_02_jay_new",
+    "category": "timeliness",
+    "query": "周杰伦最近出新歌了吗，有能听的吗",
+    "checks": {"min_results": 1, "min_playable_ratio": 0.3, "not_degraded": true, "manual_review": ["确认结果不是把旧歌当作明确新歌事实乱说"]}
+  },
+  {
+    "id": "dev_fresh_03_chinese_new_chart",
+    "category": "timeliness",
+    "query": "华语新歌榜里挑几首能听的",
+    "checks": {"min_results": 1, "min_playable_ratio": 0.3, "not_degraded": true}
+  },
+  {
+    "id": "dev_fresh_04_english_new",
+    "category": "timeliness",
+    "query": "最近的英文新歌推荐",
+    "checks": {"min_results": 1, "min_playable_ratio": 0.3, "not_degraded": true, "manual_review": ["确认英文/新歌两个约束没有完全丢失"]}
+  },
+
+  {
+    "id": "dev_fallback_01_unknown_song",
+    "category": "fallback",
+    "query": "找一首叫做不存在的蓝色土豆月亮的歌",
+    "checks": {"not_degraded": true, "manual_review": ["确认无结果时没有瞎编，并给出可操作替代建议"]}
+  },
+  {
+    "id": "dev_fallback_02_conflicting",
+    "category": "fallback",
+    "query": "我要非常安静但又特别炸裂的睡前蹦迪歌",
+    "checks": {"min_results": 1, "not_degraded": true, "manual_review": ["确认系统能处理自相矛盾意图，最好解释取舍或折中"]}
+  }
+]

@@ -15,6 +15,8 @@
 模型权重缓存。每个 ❌ 都给一句话修复建议。
 """
 
+import importlib.util
+import json
 import os
 import socket
 import sys
@@ -82,10 +84,38 @@ def check_python():
          "请先 `conda activate music_agent`（项目依赖装在此环境）")
     line(sys.version_info >= (3, 10), f"Python {sys.version.split()[0]}",
          fix="建议 Python 3.11（README 指定）")
+    line(importlib.util.find_spec("pytest") is not None, "pytest 可用",
+         fix="当前 Python 环境缺 pytest：`python -m pip install pytest` 或使用包含 pytest 的系统 Python")
 
 
 # .env 解析结果（check_env_file 填充，check_services 复用以探测真实 Neo4j 端口）
 ENV: dict = {}
+USER_SETTINGS: dict = {}
+
+DEFAULT_MODEL_CONFIG = {
+    "llm_default_provider": "dashscope",
+    "llm_default_model": "qwen3.7-plus",
+    "intent_llm_provider": "dashscope",
+    "intent_llm_model": "qwen3.7-plus",
+    "explain_llm_provider": "",
+    "explain_llm_model": "",
+    "compress_llm_provider": "",
+    "compress_llm_model": "",
+    "intent_temperature": 0.3,
+    "llm_timeout": 80,
+    "intent_max_tokens": 2048,
+}
+
+ENV_ALIASES = {
+    "llm_default_provider": "MAIN_LLM_PROVIDER",
+    "llm_default_model": "MODEL_NAME",
+    "intent_llm_provider": "INTENT_LLM_PROVIDER",
+    "intent_llm_model": "INTENT_LLM_MODEL",
+    "explain_llm_provider": "EXPLAIN_LLM_PROVIDER",
+    "explain_llm_model": "EXPLAIN_LLM_MODEL",
+    "compress_llm_provider": "COMPRESS_LLM_PROVIDER",
+    "compress_llm_model": "COMPRESS_LLM_MODEL",
+}
 
 
 def _read_env(env_path: Path) -> dict:
@@ -118,6 +148,56 @@ def check_env_file():
          fix="在 .env 填 NEO4J_PASSWORD（须与 Neo4j 实际口令一致）")
     if vals.get("NEO4J_URI"):
         line(True, f"NEO4J_URI 已填", vals.get("NEO4J_URI"))
+
+    user_settings_path = ROOT / "config" / "user_settings.json"
+    if user_settings_path.exists():
+        try:
+            USER_SETTINGS.update(json.loads(user_settings_path.read_text(encoding="utf-8")))
+            line(True, "user_settings.json 存在", "会覆盖 settings.py/.env 的部分默认值")
+        except Exception:
+            line(False, "user_settings.json 可解析", fix="检查 config/user_settings.json 是否为合法 JSON")
+
+
+def _effective_setting(name: str):
+    if name in USER_SETTINGS:
+        return USER_SETTINGS[name], "user_settings.json"
+    alias = ENV_ALIASES.get(name)
+    if alias and ENV.get(alias):
+        return ENV.get(alias), f".env:{alias}"
+    return DEFAULT_MODEL_CONFIG.get(name), "settings.py default"
+
+
+def check_effective_models():
+    section("实际生效模型（不含密钥）")
+    main_provider, main_provider_src = _effective_setting("llm_default_provider")
+    main_model, main_model_src = _effective_setting("llm_default_model")
+    intent_provider, intent_provider_src = _effective_setting("intent_llm_provider")
+    intent_model, intent_model_src = _effective_setting("intent_llm_model")
+    explain_provider, explain_provider_src = _effective_setting("explain_llm_provider")
+    explain_model, explain_model_src = _effective_setting("explain_llm_model")
+    compress_provider, compress_provider_src = _effective_setting("compress_llm_provider")
+    compress_model, compress_model_src = _effective_setting("compress_llm_model")
+    intent_temp, intent_temp_src = _effective_setting("intent_temperature")
+    intent_tokens, intent_tokens_src = _effective_setting("intent_max_tokens")
+    timeout, timeout_src = _effective_setting("llm_timeout")
+
+    effective_intent_provider = intent_provider or main_provider
+    effective_intent_model = intent_model or main_model
+    effective_explain_provider = explain_provider or main_provider
+    effective_explain_model = explain_model or main_model
+    effective_compress_provider = compress_provider or main_provider
+    effective_compress_model = compress_model or main_model
+
+    line(True, f"主模型: {main_provider} / {main_model}", f"{main_provider_src}, {main_model_src}")
+    line(True, f"Planner: {effective_intent_provider} / {effective_intent_model}",
+         f"{intent_provider_src}, {intent_model_src}")
+    line(True, f"解释模型: {effective_explain_provider} / {effective_explain_model}",
+         f"{explain_provider_src}, {explain_model_src}")
+    line(True, f"压缩模型: {effective_compress_provider} / {effective_compress_model}",
+         f"{compress_provider_src}, {compress_model_src}")
+    line(True, f"Planner temperature: {intent_temp}", str(intent_temp_src))
+    line(True, f"intent_max_tokens: {intent_tokens}", str(intent_tokens_src))
+    line(True, f"llm_timeout: {timeout}", str(timeout_src))
 
 
 def check_services():
@@ -174,6 +254,7 @@ def main():
     try:
         check_python()
         check_env_file()
+        check_effective_models()
         check_services()
         check_models()
     except Exception as e:

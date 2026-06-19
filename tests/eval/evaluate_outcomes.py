@@ -14,14 +14,17 @@
   2. 数据缺失的维度 → 标记 SKIP（而非 FAIL），并单列覆盖率，不自欺。
   3. 语言/情绪/场景标签已在 Phase 1 透传进 song dict，可做自动覆盖；更细的声学质感
      （如"安静低动态"）仍保留 manual_review，不把粗标签伪装成听感结论。
+  4. 评测集分 dev / holdout：dev 用于日常迭代；holdout 冻结，平时不要边看失败边修。
+  5. 评测默认 Planner temperature=0，并在报告中记录 git sha、模型与关键 config。
 
 ⚠️ 运行环境：本脚本会拉起完整 Agent（依赖 langchain/neo4j/M2D-CLAP + 已恢复的图数据）。
    请在完整栈下运行（恢复 docker_dump/neo4j.dump、配好 .env），而非纯净的开发机。
    （编写时未在评审环境执行——该环境缺重依赖；首次运行如报字段不符请按实际返回结构微调。）
 
 运行：
-    python -m tests.eval.evaluate_outcomes
-    python -m tests.eval.evaluate_outcomes --provider siliconflow --limit 15
+    python -m tests.eval.evaluate_outcomes --split smoke
+    python -m tests.eval.evaluate_outcomes --split dev
+    python -m tests.eval.evaluate_outcomes --split holdout
     python -m tests.eval.evaluate_outcomes --cases tests/eval/outcome_test_cases.json
 
 支持的 check（写在 outcome_test_cases.json 的 "checks" 里）：
@@ -36,12 +39,20 @@
     min_playable_ratio: float         有 preview_url 的比例下限（产品级"可播放"信号）
     max_per_artist: int               任一歌手出现次数上限（多样性）
     not_degraded: true                意图分析未触发降级兜底（_intent_degraded / degraded_to）
+    objective_soft_judge: {           软意图客观字段初判；只看 song attrs，不看 explanation
+        positive_any: [str],
+        negative_any: [str],
+        min_positive_ratio: float,
+        max_negative_ratio: float,
+        min_coverage_ratio: float
+    }
     manual_review: [str]              人工核对项（不计入自动通过/失败）
 """
 
 import argparse
 import asyncio
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -52,6 +63,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
+
+EVAL_DIR = Path(__file__).parent
+CASES_DIR = EVAL_DIR / "cases"
+CASE_SPLITS = {
+    "smoke": EVAL_DIR / "outcome_test_cases.json",
+    "dev": CASES_DIR / "outcome_dev.json",
+    "holdout": CASES_DIR / "outcome_holdout.json",
+}
 
 
 # ----------------------------------------------------------------------------
@@ -90,11 +109,98 @@ def _field_values(song: Dict[str, Any], *names: str) -> List[str]:
     return values
 
 
+def _objective_tokens(song: Dict[str, Any]) -> List[str]:
+    """Objective fields only: no generated explanation, no title/artist leakage."""
+    tokens = []
+    for value in _field_values(
+        song,
+        "genre",
+        "genres",
+        "moods",
+        "scenarios",
+        "language",
+        "region",
+        "instrumental",
+        "is_instrumental",
+    ):
+        for part in str(value).replace("/", " ").replace("|", " ").replace(",", " ").replace("，", " ").split():
+            if _norm(part):
+                tokens.append(_norm(part))
+        if _norm(value):
+            tokens.append(_norm(value))
+    return sorted(set(tokens))
+
+
 def _is_degraded(result: Dict[str, Any]) -> bool:
     for e in (result.get("errors") or []):
         if isinstance(e, dict) and e.get("degraded_to"):
             return True
     return False
+
+
+def _load_cases(cases_file: str | None = None, split: str = "smoke") -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if cases_file:
+        path = Path(cases_file)
+        return json.loads(path.read_text(encoding="utf-8")), {
+            "split": "custom",
+            "case_files": [str(path)],
+        }
+    if split == "all":
+        cases: List[Dict[str, Any]] = []
+        files = []
+        for name in ("dev", "holdout"):
+            path = CASE_SPLITS[name]
+            files.append(str(path))
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            for case in loaded:
+                case.setdefault("split", name)
+            cases.extend(loaded)
+        return cases, {"split": "all", "case_files": files}
+    path = CASE_SPLITS[split]
+    cases = json.loads(path.read_text(encoding="utf-8"))
+    for case in cases:
+        case.setdefault("split", split)
+    return cases, {"split": split, "case_files": [str(path)]}
+
+
+def _git_meta() -> Dict[str, Any]:
+    root = Path(__file__).resolve().parent.parent.parent
+
+    def _cmd(args: list[str]) -> str:
+        try:
+            return subprocess.check_output(args, cwd=root, text=True, stderr=subprocess.DEVNULL).strip()
+        except Exception:
+            return ""
+
+    return {
+        "sha": _cmd(["git", "rev-parse", "HEAD"]),
+        "branch": _cmd(["git", "branch", "--show-current"]),
+        "dirty": bool(_cmd(["git", "status", "--porcelain"])),
+    }
+
+
+def _effective_model_config(settings, provider: str, planner_temperature: float) -> Dict[str, Any]:
+    main_provider = settings.llm_default_provider or provider
+    main_model = settings.llm_default_model
+    intent_provider = settings.intent_llm_provider or main_provider
+    intent_model = settings.intent_llm_model or main_model
+    explain_provider = settings.explain_llm_provider or main_provider
+    explain_model = settings.explain_llm_model or main_model
+    compress_provider = settings.compress_llm_provider or main_provider
+    compress_model = settings.compress_llm_model or main_model
+    return {
+        "provider_arg": provider,
+        "main": {"provider": main_provider, "model": main_model},
+        "intent": {
+            "provider": intent_provider,
+            "model": intent_model,
+            "temperature": planner_temperature,
+            "max_tokens": settings.intent_max_tokens,
+        },
+        "explain": {"provider": explain_provider, "model": explain_model},
+        "compress": {"provider": compress_provider, "model": compress_model},
+        "llm_timeout": settings.llm_timeout,
+    }
 
 
 # ----------------------------------------------------------------------------
@@ -222,6 +328,58 @@ def _c_not_degraded(songs, val, result) -> Tuple[str, str]:
     return ("fail" if deg else "pass", "意图分析触发了降级兜底" if deg else "未降级")
 
 
+def _tag_hit(tokens: List[str], wanted: List[str]) -> bool:
+    return any(w and any(w in token or token in w for token in tokens) for w in wanted)
+
+
+def _c_objective_soft_judge(songs, val, result) -> Tuple[str, str]:
+    """Heuristic soft-intent judge over objective song attributes.
+
+    This is intentionally conservative. It should be calibrated against a human
+    gold set before being enabled broadly in dev/holdout cases.
+    """
+    if not isinstance(val, dict):
+        return ("skip", "objective_soft_judge 配置不是对象，跳过")
+    if not songs:
+        return ("fail", "无结果")
+
+    positive = [_norm(x) for x in val.get("positive_any", [])]
+    negative = [_norm(x) for x in val.get("negative_any", [])]
+    min_positive = float(val.get("min_positive_ratio", 0.0))
+    max_negative = float(val.get("max_negative_ratio", 1.0))
+    min_coverage = float(val.get("min_coverage_ratio", 0.5))
+    if not positive and not negative:
+        return ("skip", "未提供 positive_any/negative_any，跳过")
+
+    tokenized = [(s, _objective_tokens(s)) for s in songs]
+    covered = [(s, tokens) for s, tokens in tokenized if tokens]
+    if not covered:
+        return ("skip", "返回歌曲缺少可判定的客观标签字段")
+
+    coverage_ratio = len(covered) / len(songs)
+    pos_hits = sum(1 for _, tokens in covered if _tag_hit(tokens, positive)) if positive else len(covered)
+    neg_hits = sum(1 for _, tokens in covered if _tag_hit(tokens, negative)) if negative else 0
+    pos_ratio = pos_hits / len(covered)
+    neg_ratio = neg_hits / len(covered)
+
+    failures = []
+    if coverage_ratio < min_coverage:
+        failures.append(f"coverage {len(covered)}/{len(songs)} = {coverage_ratio:.0%}，要求 ≥ {min_coverage:.0%}")
+    if positive and pos_ratio < min_positive:
+        failures.append(f"positive {pos_hits}/{len(covered)} = {pos_ratio:.0%}，要求 ≥ {min_positive:.0%}")
+    if negative and neg_ratio > max_negative:
+        failures.append(f"negative {neg_hits}/{len(covered)} = {neg_ratio:.0%}，要求 ≤ {max_negative:.0%}")
+
+    detail = (
+        f"coverage {len(covered)}/{len(songs)} = {coverage_ratio:.0%}; "
+        f"positive {pos_hits}/{len(covered)} = {pos_ratio:.0%}; "
+        f"negative {neg_hits}/{len(covered)} = {neg_ratio:.0%}"
+    )
+    if failures:
+        return ("fail", "; ".join(failures))
+    return ("pass", detail)
+
+
 # 硬 check 名 → 处理器；带 *_ratio 的需要读取整个 checks（因为它们配对取另一个键）
 _HANDLERS = {
     "min_results": _c_min_results,
@@ -230,6 +388,7 @@ _HANDLERS = {
     "min_playable_ratio": _c_min_playable,
     "max_per_artist": _c_max_per_artist,
     "not_degraded": _c_not_degraded,
+    "objective_soft_judge": _c_objective_soft_judge,
 }
 _HANDLERS_WITH_CHECKS = {
     "artist_match_min_ratio": _c_artist_ratio,
@@ -267,7 +426,10 @@ def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
 
     return {
         "id": case.get("id"),
+        "category": case.get("category", "uncategorized"),
+        "split": case.get("split"),
         "query": case.get("query"),
+        "has_chat_history": bool(case.get("chat_history")),
         "intent_type": result.get("intent_type"),
         "num_songs": len(songs),
         "case_status": case_status,
@@ -288,16 +450,32 @@ def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
     }
 
 
-async def run(provider: str, cases_file: str, limit: int, verbose: bool) -> Dict[str, Any]:
+async def run(
+    provider: str,
+    cases_file: str | None,
+    split: str,
+    limit: int,
+    verbose: bool,
+    planner_temperature: float,
+) -> Dict[str, Any]:
     # 延迟导入：让 --help 在无重依赖时也能用
     from config.settings import settings
     settings.intent_llm_provider = provider
     settings.llm_default_provider = provider
+    settings.intent_temperature = planner_temperature
     from agent.music_agent import MusicRecommendationAgent
 
-    cases = json.loads(Path(cases_file).read_text(encoding="utf-8"))
+    cases, case_meta = _load_cases(cases_file=cases_file, split=split)
+    model_meta = _effective_model_config(settings, provider, planner_temperature)
+    git_meta = _git_meta()
     print(f"\n{'='*64}\n结果导向离线评测（Outcome Eval）\n{'='*64}")
-    print(f"Provider: {provider} | Cases: {len(cases)} | top-k: {limit}\n")
+    print(f"Provider: {provider} | Split: {case_meta['split']} | Cases: {len(cases)} | top-k: {limit}")
+    print(
+        "Effective Planner: "
+        f"{model_meta['intent']['provider']} / {model_meta['intent']['model']} "
+        f"(temperature={planner_temperature}, max_tokens={model_meta['intent']['max_tokens']})"
+    )
+    print(f"Git: {git_meta['branch']} @ {git_meta['sha'][:12]} | dirty={git_meta['dirty']}\n")
 
     agent = MusicRecommendationAgent()
     reports = []
@@ -306,7 +484,7 @@ async def run(provider: str, cases_file: str, limit: int, verbose: bool) -> Dict
     for i, case in enumerate(cases, 1):
         query = case["query"]
         try:
-            result = await agent.get_recommendations(query)
+            result = await agent.get_recommendations(query, chat_history=case.get("chat_history"))
         except Exception as e:  # 单 case 失败不应中断整轮
             result = {"recommendations": [], "intent_type": "ERROR",
                       "errors": [{"node": "harness", "error": str(e)}]}
@@ -334,7 +512,11 @@ async def run(provider: str, cases_file: str, limit: int, verbose: bool) -> Dict
 
     # 按 check 类型聚合
     by_check = defaultdict(lambda: {"pass": 0, "fail": 0, "skip": 0})
+    by_category = defaultdict(lambda: {"pass": 0, "fail": 0, "indeterminate": 0, "total": 0})
     for r in reports:
+        cat = r.get("category", "uncategorized")
+        by_category[cat][r["case_status"]] += 1
+        by_category[cat]["total"] += 1
         for o in r["outcomes"]:
             by_check[o["name"]][o["status"]] += 1
 
@@ -348,6 +530,12 @@ async def run(provider: str, cases_file: str, limit: int, verbose: bool) -> Dict
     print(f"  {'-'*44}")
     for name, c in sorted(by_check.items()):
         print(f"  {name:24s} {c['pass']:>6d} {c['fail']:>6d} {c['skip']:>6d}")
+
+    print("\n按场景类别:")
+    print(f"  {'category':28s} {'pass':>6s} {'fail':>6s} {'indet':>6s} {'total':>6s}")
+    print(f"  {'-'*56}")
+    for name, c in sorted(by_category.items()):
+        print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d} {c['total']:>6d}")
 
     failed = [r for r in reports if r["case_status"] == "fail"]
     if failed:
@@ -369,9 +557,12 @@ async def run(provider: str, cases_file: str, limit: int, verbose: bool) -> Dict
     out_file = out_dir / f"outcome_eval_{provider}_{ts}.json"
     report = {
         "provider": provider, "timestamp": ts, "total": n,
+        "case_meta": case_meta,
+        "git": git_meta,
+        "model_config": model_meta,
         "passed": n_pass, "failed": n_fail, "indeterminate": n_indet,
         "decided_pass_rate": round(n_pass / decided, 4) if decided else None,
-        "by_check": dict(by_check), "cases": reports,
+        "by_check": dict(by_check), "by_category": dict(by_category), "cases": reports,
     }
     out_file.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n📄 详细结果: {out_file}")
@@ -385,11 +576,22 @@ def main():
             stream.reconfigure(encoding="utf-8")
     p = argparse.ArgumentParser(description="SoulTuner 结果导向离线评测（尺子）")
     p.add_argument("--provider", default="dashscope")
-    p.add_argument("--cases", default=str(Path(__file__).parent / "outcome_test_cases.json"))
+    p.add_argument("--split", choices=["smoke", "dev", "holdout", "all"], default="smoke",
+                   help="评测切分。holdout 是冻结集，日常迭代不要频繁看详情")
+    p.add_argument("--cases", default=None, help="自定义 cases JSON；传入时覆盖 --split")
     p.add_argument("--limit", type=int, default=15, help="请求的 top-k（仅记录，实际条数由管线 FinalCut 决定）")
+    p.add_argument("--planner-temperature", type=float, default=0.0,
+                   help="评测时 Planner 温度，默认 0 以提升可复现性")
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
-    asyncio.run(run(args.provider, args.cases, args.limit, verbose=not args.quiet))
+    asyncio.run(run(
+        args.provider,
+        args.cases,
+        args.split,
+        args.limit,
+        verbose=not args.quiet,
+        planner_temperature=args.planner_temperature,
+    ))
 
 
 if __name__ == "__main__":

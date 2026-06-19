@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from tests.eval.evaluate_outcomes import _unwrap_songs, _is_degraded, evaluate_case
+from tests.eval.evaluate_outcomes import _unwrap_songs, _is_degraded, _load_cases, evaluate_case
 
 
 def _song(title, artist, genre="", playable=True, **extra):
@@ -165,3 +165,85 @@ def test_manual_review_not_scored():
     rep = evaluate_case(case, _result([_song("A", "x")]))
     assert rep["case_status"] == "pass"
     assert rep["manual_review"] == ["确认是日语", "确认安静"]
+
+
+def test_objective_soft_judge_passes_on_song_attributes_only():
+    case = {"id": "t", "query": "睡前平静一点", "checks": {
+        "objective_soft_judge": {
+            "positive_any": ["peaceful", "sleep", "relaxing"],
+            "negative_any": ["energetic", "party"],
+            "min_positive_ratio": 0.5,
+            "max_negative_ratio": 0.25,
+        }}}
+    songs = [
+        _song("A", "x", moods=["Peaceful"], scenarios=["Sleep"]),
+        _song("B", "y", moods=["Dreamy"], scenarios=["Relaxing"]),
+        _song("C", "z", moods=["Melancholy"], scenarios=["Late Night"]),
+    ]
+    rep = evaluate_case(case, _result(songs))
+    assert rep["case_status"] == "pass", rep["outcomes"]
+
+
+def test_objective_soft_judge_fails_on_negative_tags():
+    case = {"id": "t", "query": "不要太吵", "checks": {
+        "objective_soft_judge": {
+            "positive_any": ["peaceful"],
+            "negative_any": ["energetic", "party"],
+            "min_positive_ratio": 0.2,
+            "max_negative_ratio": 0.25,
+        }}}
+    songs = [
+        _song("A", "x", moods=["Energetic"], scenarios=["Party"]),
+        _song("B", "y", moods=["Energetic"], scenarios=["Workout"]),
+        _song("C", "z", moods=["Peaceful"], scenarios=["Sleep"]),
+    ]
+    rep = evaluate_case(case, _result(songs))
+    assert rep["case_status"] == "fail"
+    assert any(o["name"] == "objective_soft_judge" and o["status"] == "fail" for o in rep["outcomes"])
+
+
+def test_objective_soft_judge_skips_without_objective_fields():
+    case = {"id": "t", "query": "q", "checks": {
+        "objective_soft_judge": {"positive_any": ["peaceful"], "min_positive_ratio": 0.5}}}
+    rep = evaluate_case(case, _result([_song("A", "x"), _song("B", "y")]))
+    assert rep["case_status"] == "indeterminate"
+    assert rep["outcomes"][0]["status"] == "skip"
+
+
+def test_load_cases_split_smoke():
+    cases, meta = _load_cases(split="smoke")
+    assert meta["split"] == "smoke"
+    assert cases
+    assert all("query" in c and "checks" in c for c in cases)
+
+
+def test_load_cases_split_dev_and_holdout():
+    dev, dev_meta = _load_cases(split="dev")
+    holdout, holdout_meta = _load_cases(split="holdout")
+    assert dev_meta["split"] == "dev"
+    assert holdout_meta["split"] == "holdout"
+    assert len(dev) >= 50
+    assert len(holdout) >= 20
+    assert {c.get("category") for c in dev}
+    assert {c.get("category") for c in holdout}
+
+
+def test_load_cases_custom_file(tmp_path):
+    custom = tmp_path / "cases.json"
+    custom.write_text('[{"id":"x","query":"q","checks":{"min_results":1}}]', encoding="utf-8")
+    cases, meta = _load_cases(cases_file=str(custom), split="dev")
+    assert meta["split"] == "custom"
+    assert cases[0]["id"] == "x"
+
+
+def test_evaluate_case_keeps_category_and_history_flag():
+    case = {
+        "id": "ctx",
+        "category": "multi_turn_context",
+        "query": "换安静点",
+        "chat_history": [{"role": "user", "content": "太吵了"}],
+        "checks": {"min_results": 1},
+    }
+    rep = evaluate_case(case, _result([_song("A", "x")]))
+    assert rep["category"] == "multi_turn_context"
+    assert rep["has_chat_history"] is True

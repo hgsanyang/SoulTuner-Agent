@@ -1,0 +1,125 @@
+[
+  {
+    "id": "holdout_artist_01_jay_not_love_song",
+    "category": "explicit_artist",
+    "query": "周杰伦，但不要情歌，想听酷一点的",
+    "checks": {"min_results": 3, "artist_any_of": ["周杰伦", "Jay Chou"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认保留周杰伦约束，同时避开明显苦情/情歌"]}
+  },
+  {
+    "id": "holdout_artist_02_eason_exclude_ten_years",
+    "category": "negative_constraint",
+    "query": "陈奕迅的歌，但不要十年",
+    "checks": {"min_results": 2, "artist_any_of": ["陈奕迅", "Eason"], "artist_match_min_ratio": 0.5, "must_exclude": [{"title": "十年", "artist": "陈奕迅"}], "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+  {
+    "id": "holdout_song_01_qingtian_not_jay",
+    "category": "explicit_song",
+    "query": "想听晴天，但不是周杰伦那首",
+    "checks": {"min_results": 1, "must_include_titles": ["晴天"], "must_exclude": [{"title": "晴天", "artist": "周杰伦"}], "min_playable_ratio": 0.3, "not_degraded": true, "manual_review": ["确认理解同名歌/翻唱边界，而非默认周杰伦"]}
+  },
+  {
+    "id": "holdout_song_02_love_story_original",
+    "category": "explicit_song",
+    "query": "Love Story，最好是 Taylor Swift 原唱，不要翻唱",
+    "checks": {"min_results": 1, "must_include_titles": ["Love Story"], "artist_any_of": ["Taylor Swift"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认不是明显翻唱版本"]}
+  },
+  {
+    "id": "holdout_language_01_japanese_citypop_night",
+    "category": "language_constraint",
+    "query": "日语 city pop，适合晚上一个人走路",
+    "checks": {"min_results": 3, "language_any_of": ["Japanese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认 city pop/夜走氛围，而非普通日语流行"]}
+  },
+  {
+    "id": "holdout_language_02_korean_not_dance",
+    "category": "negative_constraint",
+    "query": "韩语歌，但不要女团舞曲那种",
+    "checks": {"min_results": 3, "language_any_of": ["Korean"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认主要是韩语，同时避开强舞曲/K-pop 打歌感"]}
+  },
+  {
+    "id": "holdout_language_03_instrumental_piano_focus",
+    "category": "language_constraint",
+    "query": "instrumental piano for focus，不要人声",
+    "checks": {"min_results": 3, "language_any_of": ["Instrumental"], "language_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认钢琴/器乐/专注场景成立"]}
+  },
+  {
+    "id": "holdout_language_04_cantonese_not_bitter",
+    "category": "language_constraint",
+    "query": "粤语歌，但不要太苦",
+    "checks": {"min_results": 3, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.4, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认粤语约束成立，情绪不过度苦情"]}
+  },
+  {
+    "id": "holdout_mood_01_anxious_to_stable",
+    "category": "soft_mood",
+    "query": "有点焦虑，想听能慢慢稳下来的歌",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认有情绪轨迹：从焦虑到稳定，而不是单纯悲伤或鸡血"]}
+  },
+  {
+    "id": "holdout_mood_02_not_inspirational",
+    "category": "soft_mood",
+    "query": "别太励志，just a little hopeful",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认是轻微希望感，不是鸡汤/励志燃歌"]}
+  },
+  {
+    "id": "holdout_scene_01_rainy_bus",
+    "category": "scenario",
+    "query": "雨天公交车上听的，窗外那种灰灰的感觉",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认雨天、通勤、灰调氛围"]}
+  },
+  {
+    "id": "holdout_scene_02_gym_not_edm",
+    "category": "negative_constraint",
+    "query": "健身房听，但不要 EDM 土嗨",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认运动能量和不要 EDM 两者兼顾"]}
+  },
+  {
+    "id": "holdout_context_01_same_vibe_chinese",
+    "category": "multi_turn_context",
+    "query": "同样的氛围，但换成中文",
+    "chat_history": [{"role": "user", "content": "推荐几首空灵的英文女声"}, {"role": "assistant", "content": "推荐了一些英文空灵女声。"}],
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认继承空灵氛围，并切换到中文"]}
+  },
+  {
+    "id": "holdout_context_02_less_vocal",
+    "category": "multi_turn_context",
+    "query": "人声再少一点，别打扰我写代码",
+    "chat_history": [{"role": "user", "content": "给我一些适合工作的歌"}, {"role": "assistant", "content": "推荐了一些轻松流行歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认相对上一轮减少人声干扰，适合写代码"]}
+  },
+  {
+    "id": "holdout_context_03_opposite_mood",
+    "category": "multi_turn_context",
+    "query": "反过来，不要治愈，要有一点危险感",
+    "chat_history": [{"role": "user", "content": "给我一些治愈系的歌"}, {"role": "assistant", "content": "推荐了一些温柔治愈歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认理解反向约束，不继续治愈"]}
+  },
+  {
+    "id": "holdout_mixed_01_chinese_indie_no_mandopop",
+    "category": "mixed_language_boundary",
+    "query": "Chinese indie, not mainstream mandopop",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "max_per_artist": 2, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认偏中文独立，不是主流华语流行"]}
+  },
+  {
+    "id": "holdout_mixed_02_emo_but_danceable",
+    "category": "mixed_language_boundary",
+    "query": "有点 emo but still danceable",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认同时保留 emo 情绪和可律动性"]}
+  },
+  {
+    "id": "holdout_timeliness_01_new_but_not_chart",
+    "category": "timeliness",
+    "query": "最近的新歌，但别只给我榜单口水歌",
+    "checks": {"min_results": 1, "min_playable_ratio": 0.3, "not_degraded": true, "manual_review": ["确认新歌约束成立，同时不全是榜单泛结果"]}
+  },
+  {
+    "id": "holdout_fallback_01_contradiction",
+    "category": "fallback",
+    "query": "我要无歌词的说唱，越纯音乐越好",
+    "checks": {"not_degraded": true, "manual_review": ["确认系统识别自相矛盾约束，最好解释取舍而不是瞎推"]}
+  },
+  {
+    "id": "holdout_fallback_02_private_memory_reference",
+    "category": "fallback",
+    "query": "推荐我上个月一直循环但后来又说不喜欢的那首",
+    "checks": {"not_degraded": true, "manual_review": ["确认在缺少可靠记忆时不会编造私人历史；有记忆时应尊重 dislike"]}
+  }
+]
