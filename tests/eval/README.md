@@ -16,6 +16,7 @@ Run:
 python -m tests.eval.evaluate_outcomes --split smoke
 python -m tests.eval.evaluate_outcomes --split dev
 python -m tests.eval.evaluate_outcomes --split holdout
+python -m tests.eval.calibrate_soft_judge --min-accuracy 0.95
 ```
 
 Reports are written to `tests/eval/results/` and include git sha, branch, dirty
@@ -34,6 +35,10 @@ Use it conservatively:
 - Keep low-confidence or underspecified cases in `manual_review`.
 - Prefer it for coarse objective tags such as calm/energetic/sleep/commute, not
   for subtle taste statements such as "like Friday after work".
+- The calibration seed lives in
+  `tests/eval/judge_gold/objective_soft_judge_gold.json`; it covers pass/fail/skip
+  examples and should be extended whenever a new soft-intent pattern is promoted
+  from `manual_review`.
 
 ## Discipline
 

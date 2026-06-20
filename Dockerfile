@@ -3,7 +3,7 @@
 #
 # 包含 M2D-CLAP 跨模态模型运行时依赖，支持：
 #   - 语义向量检索（Semantic Search）
-#   - 双锚精排（Dual-Anchor Rerank）
+#   - 五路召回、RRF 融合与三锚精排
 #   - HyDE 声学描述 → 向量匹配
 #
 # 模型权重通过 volume 挂载宿主机缓存，不打包进镜像

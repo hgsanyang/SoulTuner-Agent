@@ -1,0 +1,353 @@
+[
+  {
+    "id": "gold_sleep_calm_pass",
+    "category": "calm_sleep",
+    "query": "睡前听的平静一点的歌",
+    "judge": {
+      "positive_any": ["peaceful", "sleep", "relaxing", "dreamy", "late night"],
+      "negative_any": ["energetic", "party", "workout", "metal"],
+      "min_positive_ratio": 0.5,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Peaceful"], "scenarios": ["Sleep"]},
+      {"moods": ["Dreamy"], "scenarios": ["Relaxing"]},
+      {"moods": ["Melancholy"], "scenarios": ["Late Night"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_sleep_calm_fail_too_energetic",
+    "category": "calm_sleep",
+    "query": "睡前听的平静一点的歌",
+    "judge": {
+      "positive_any": ["peaceful", "sleep", "relaxing", "dreamy", "late night"],
+      "negative_any": ["energetic", "party", "workout", "metal"],
+      "min_positive_ratio": 0.5,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Energetic"], "scenarios": ["Party"]},
+      {"moods": ["Energetic"], "scenarios": ["Workout"]},
+      {"moods": ["Peaceful"], "scenarios": ["Sleep"]}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_running_pass",
+    "category": "scenario",
+    "query": "适合跑步时听的歌，要有节奏感",
+    "judge": {
+      "positive_any": ["energetic", "workout", "running", "driving", "party"],
+      "negative_any": ["sleep", "relaxing", "peaceful"],
+      "min_positive_ratio": 0.5,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Energetic"], "scenarios": ["Workout"]},
+      {"moods": ["Happy"], "scenarios": ["Running"]},
+      {"moods": ["Energetic"], "scenarios": ["Driving"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_running_fail_sleepy",
+    "category": "scenario",
+    "query": "适合跑步时听的歌，要有节奏感",
+    "judge": {
+      "positive_any": ["energetic", "workout", "running", "driving", "party"],
+      "negative_any": ["sleep", "relaxing", "peaceful"],
+      "min_positive_ratio": 0.5,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Peaceful"], "scenarios": ["Sleep"]},
+      {"moods": ["Dreamy"], "scenarios": ["Relaxing"]},
+      {"moods": ["Lonely"], "scenarios": ["Late Night"]}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_not_sad_pass",
+    "category": "negative_constraint",
+    "query": "推荐几首中文歌，不要悲伤的",
+    "judge": {
+      "negative_any": ["sad", "melancholy", "lonely", "heartbreak", "loss"],
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Happy", "Hopeful"], "language": "Chinese"},
+      {"moods": ["Energetic"], "language": "Chinese"},
+      {"moods": ["Romantic"], "language": "Chinese"}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_not_sad_fail",
+    "category": "negative_constraint",
+    "query": "推荐几首中文歌，不要悲伤的",
+    "judge": {
+      "negative_any": ["sad", "melancholy", "lonely", "heartbreak", "loss"],
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Melancholy"], "themes": ["Heartbreak"], "language": "Chinese"},
+      {"moods": ["Lonely"], "language": "Chinese"},
+      {"moods": ["Happy"], "language": "Chinese"}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_commute_pass",
+    "category": "scenario",
+    "query": "通勤路上听的歌，别太催眠",
+    "judge": {
+      "positive_any": ["commute", "driving", "morning", "energetic", "happy"],
+      "negative_any": ["sleep", "relaxing"],
+      "min_positive_ratio": 0.45,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Happy"], "scenarios": ["Commute"]},
+      {"moods": ["Energetic"], "scenarios": ["Driving"]},
+      {"moods": ["Hopeful"], "scenarios": ["Morning"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_commute_fail_sleepy",
+    "category": "scenario",
+    "query": "通勤路上听的歌，别太催眠",
+    "judge": {
+      "positive_any": ["commute", "driving", "morning", "energetic", "happy"],
+      "negative_any": ["sleep", "relaxing"],
+      "min_positive_ratio": 0.45,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Peaceful"], "scenarios": ["Sleep"]},
+      {"moods": ["Dreamy"], "scenarios": ["Relaxing"]},
+      {"moods": ["Melancholy"], "scenarios": ["Late Night"]}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_instrumental_pass",
+    "category": "instrumental",
+    "query": "学习时当背景音乐，最好没有人声",
+    "judge": {
+      "positive_any": ["instrumental"],
+      "negative_any": ["vocal"],
+      "min_positive_ratio": 0.6,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"language": "Instrumental", "instrumental": true, "scenarios": ["Study"]},
+      {"language": "Instrumental", "instrumental": true, "scenarios": ["Focus"]},
+      {"language": "Instrumental", "instrumental": true, "moods": ["Peaceful"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_instrumental_fail_vocals",
+    "category": "instrumental",
+    "query": "学习时当背景音乐，最好没有人声",
+    "judge": {
+      "positive_any": ["instrumental"],
+      "negative_any": ["vocal"],
+      "min_positive_ratio": 0.6,
+      "max_negative_ratio": 0.25,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"language": "Chinese", "instrumental": false, "moods": ["Happy"]},
+      {"language": "English", "instrumental": false, "moods": ["Dreamy"]},
+      {"language": "Instrumental", "instrumental": true, "moods": ["Peaceful"]}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_uplift_pass",
+    "category": "soft_mood",
+    "query": "来几首能让我振作起来的歌",
+    "judge": {
+      "positive_any": ["energetic", "hopeful", "happy", "driving", "journey"],
+      "negative_any": ["melancholy", "lonely", "sleep"],
+      "min_positive_ratio": 0.45,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Energetic"], "themes": ["Journey"]},
+      {"moods": ["Happy", "Hopeful"], "scenarios": ["Driving"]},
+      {"moods": ["Hopeful"], "scenarios": ["Commute"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_uplift_fail_downcast",
+    "category": "soft_mood",
+    "query": "来几首能让我振作起来的歌",
+    "judge": {
+      "positive_any": ["energetic", "hopeful", "happy", "driving", "journey"],
+      "negative_any": ["melancholy", "lonely", "sleep"],
+      "min_positive_ratio": 0.45,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Melancholy"], "scenarios": ["Late Night"]},
+      {"moods": ["Lonely"], "themes": ["Loss"]},
+      {"moods": ["Peaceful"], "scenarios": ["Sleep"]}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_not_noisy_pass",
+    "category": "negative_constraint",
+    "query": "想听有劲一点的歌，但不要太吵",
+    "judge": {
+      "positive_any": ["energetic", "driving", "happy"],
+      "negative_any": ["metal", "angry", "party"],
+      "min_positive_ratio": 0.4,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"genres": ["Indie"], "moods": ["Energetic"], "scenarios": ["Driving"]},
+      {"genres": ["Pop"], "moods": ["Happy"], "scenarios": ["Commute"]},
+      {"genres": ["Rock"], "moods": ["Hopeful"], "scenarios": ["Journey"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_not_noisy_fail",
+    "category": "negative_constraint",
+    "query": "想听有劲一点的歌，但不要太吵",
+    "judge": {
+      "positive_any": ["energetic", "driving", "happy"],
+      "negative_any": ["metal", "angry", "party"],
+      "min_positive_ratio": 0.4,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"genres": ["Metal"], "moods": ["Angry"], "scenarios": ["Party"]},
+      {"genres": ["Alternative"], "moods": ["Energetic"], "scenarios": ["Party"]},
+      {"genres": ["Metal"], "moods": ["Raw"], "scenarios": ["Workout"]}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_edm_avoid_pass",
+    "category": "negative_constraint",
+    "query": "夜晚氛围感，但不要电音舞曲",
+    "judge": {
+      "positive_any": ["late night", "dreamy", "melancholy"],
+      "negative_any": ["electronic", "edm", "party", "dance"],
+      "min_positive_ratio": 0.4,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"genres": ["Indie"], "moods": ["Dreamy"], "scenarios": ["Late Night"]},
+      {"genres": ["Folk"], "moods": ["Melancholy"], "scenarios": ["Late Night"]},
+      {"genres": ["Rock"], "moods": ["Dreamy"], "scenarios": ["Commute"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_edm_avoid_fail",
+    "category": "negative_constraint",
+    "query": "夜晚氛围感，但不要电音舞曲",
+    "judge": {
+      "positive_any": ["late night", "dreamy", "melancholy"],
+      "negative_any": ["electronic", "edm", "party", "dance"],
+      "min_positive_ratio": 0.4,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"genres": ["Electronic"], "moods": ["Dreamy"], "scenarios": ["Party"]},
+      {"genres": ["EDM"], "moods": ["Energetic"], "scenarios": ["Dance"]},
+      {"genres": ["Electronic"], "moods": ["Melancholy"], "scenarios": ["Late Night"]}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_no_tags_skip",
+    "category": "coverage",
+    "query": "空灵一点的女声",
+    "judge": {
+      "positive_any": ["dreamy", "ethereal"],
+      "min_positive_ratio": 0.5,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"title": "A", "artist": "x"},
+      {"title": "B", "artist": "y"}
+    ],
+    "expected_status": "skip"
+  },
+  {
+    "id": "gold_low_coverage_fail",
+    "category": "coverage",
+    "query": "跑步听的",
+    "judge": {
+      "positive_any": ["energetic", "workout"],
+      "min_positive_ratio": 0.5,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"moods": ["Energetic"], "scenarios": ["Workout"]},
+      {"title": "B", "artist": "y"},
+      {"title": "C", "artist": "z"}
+    ],
+    "expected_status": "fail"
+  },
+  {
+    "id": "gold_chill_not_sleepy_pass",
+    "category": "mixed_language_boundary",
+    "query": "chill but not sleepy",
+    "judge": {
+      "positive_any": ["chill", "dreamy", "peaceful"],
+      "negative_any": ["sleep", "relaxing"],
+      "min_positive_ratio": 0.45,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"genres": ["Indie"], "moods": ["Dreamy"], "scenarios": ["Commute"]},
+      {"genres": ["Chill"], "moods": ["Peaceful"], "scenarios": ["Driving"]},
+      {"genres": ["Pop"], "moods": ["Happy"], "scenarios": ["Morning"]}
+    ],
+    "expected_status": "pass"
+  },
+  {
+    "id": "gold_chill_not_sleepy_fail",
+    "category": "mixed_language_boundary",
+    "query": "chill but not sleepy",
+    "judge": {
+      "positive_any": ["chill", "dreamy", "peaceful"],
+      "negative_any": ["sleep", "relaxing"],
+      "min_positive_ratio": 0.45,
+      "max_negative_ratio": 0.35,
+      "min_coverage_ratio": 0.75
+    },
+    "songs": [
+      {"genres": ["Ambient"], "moods": ["Peaceful"], "scenarios": ["Sleep"]},
+      {"genres": ["Chill"], "moods": ["Dreamy"], "scenarios": ["Relaxing"]},
+      {"genres": ["Folk"], "moods": ["Peaceful"], "scenarios": ["Sleep"]}
+    ],
+    "expected_status": "fail"
+  }
+]

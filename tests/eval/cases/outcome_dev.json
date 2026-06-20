@@ -108,13 +108,13 @@
     "id": "dev_mood_03_uplift",
     "category": "soft_mood",
     "query": "来几首能让我振作起来的歌",
-    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认整体积极、有恢复能量的感觉"]}
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "objective_soft_judge": {"positive_any": ["energetic", "hopeful", "happy", "driving", "journey"], "negative_any": ["melancholy", "lonely", "sleep"], "min_positive_ratio": 0.35, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_mood_04_sleep_calm",
     "category": "soft_mood",
     "query": "睡前听的平静一点的歌",
-    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认结果不吵、不强节奏，适合睡前"]}
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["peaceful", "sleep", "relaxing", "dreamy", "late night"], "negative_any": ["energetic", "party", "workout", "metal"], "min_positive_ratio": 0.45, "max_negative_ratio": 0.3, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_mood_05_ethereal_female",
@@ -139,7 +139,7 @@
     "id": "dev_scene_01_running",
     "category": "scenario",
     "query": "适合跑步时听的歌，要有节奏感",
-    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认结果偏强节奏/高能量，适合跑步"]}
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "objective_soft_judge": {"positive_any": ["energetic", "workout", "running", "driving", "party"], "negative_any": ["sleep", "relaxing", "peaceful"], "min_positive_ratio": 0.4, "max_negative_ratio": 0.3, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_scene_02_night_drive",
@@ -151,7 +151,7 @@
     "id": "dev_scene_03_focus_study",
     "category": "scenario",
     "query": "学习时当背景音乐，最好没有人声",
-    "checks": {"min_results": 3, "language_any_of": ["Instrumental"], "language_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认不抢注意力"]}
+    "checks": {"min_results": 3, "language_any_of": ["Instrumental"], "language_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["instrumental", "study", "focus", "peaceful"], "negative_any": ["party", "energetic", "workout"], "min_positive_ratio": 0.45, "max_negative_ratio": 0.35, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_scene_04_cooking",
@@ -163,7 +163,7 @@
     "id": "dev_scene_05_commute",
     "category": "scenario",
     "query": "通勤路上听的歌，别太催眠",
-    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认有一定律动，不会太困"]}
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "objective_soft_judge": {"positive_any": ["commute", "driving", "morning", "energetic", "happy"], "negative_any": ["sleep", "relaxing"], "min_positive_ratio": 0.35, "max_negative_ratio": 0.35, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_scene_06_reading",
@@ -176,13 +176,13 @@
     "id": "dev_negative_01_not_noisy",
     "category": "negative_constraint",
     "query": "想听有劲一点的歌，但不要太吵",
-    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认有能量但不过度嘈杂，强否定被尊重"]}
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "objective_soft_judge": {"positive_any": ["energetic", "driving", "happy"], "negative_any": ["metal", "angry", "party"], "min_positive_ratio": 0.35, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_negative_02_not_sad",
     "category": "negative_constraint",
     "query": "推荐几首中文歌，不要悲伤的",
-    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.5, "not_degraded": true, "manual_review": ["确认没有明显苦情/悲伤取向"]}
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.5, "not_degraded": true, "objective_soft_judge": {"negative_any": ["sad", "melancholy", "lonely", "heartbreak", "loss"], "max_negative_ratio": 0.35, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_negative_03_exclude_artist",
@@ -200,7 +200,7 @@
     "id": "dev_negative_05_not_edm",
     "category": "negative_constraint",
     "query": "想听夜晚氛围感，但不要电音舞曲",
-    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认没有明显 EDM/舞曲取向"]}
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["late night", "dreamy", "melancholy"], "negative_any": ["electronic", "edm", "party", "dance"], "min_positive_ratio": 0.35, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_negative_06_not_overplayed",
@@ -261,7 +261,7 @@
     "id": "dev_mixed_03_chill_not_sleepy",
     "category": "mixed_language_boundary",
     "query": "chill but not sleepy",
-    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认 chill 但不困、不拖沓"]}
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["chill", "dreamy", "peaceful"], "negative_any": ["sleep", "relaxing"], "min_positive_ratio": 0.35, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.6}}
   },
   {
     "id": "dev_mixed_04_jpop_quiet",

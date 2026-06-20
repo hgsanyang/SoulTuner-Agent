@@ -272,7 +272,15 @@ acoustic_query     已有的 HyDE                                         # 由 
 - [x] P1 评测扩充地基：`evaluate_outcomes` 支持 `--split smoke/dev/holdout/all`，报告记录 git sha、实际模型、Planner temperature 与关键 config；新增 50 条 dev + 20 条冻结 holdout，覆盖明确实体、语言、软意图、反向约束、多轮上下文、中英混说、时效性与兜底。
 - [x] 2026-06-19 Docker 基线：smoke `11/12 = 91.7%`，dev `44/50 = 88.0%`。失败主要集中在明确歌手/歌名本地缺库或可播放链接不足、以及多轮“保留歌手但换情绪”约束；软意图仍有 35 个 manual_review，说明 P2 judge 是下一块地基。
 - [x] P2 judge 地基：新增 `objective_soft_judge`，只读取歌曲客观字段（genre/genres/moods/scenarios/language/region/instrumental），不读取系统 explanation；当前作为可校准初判器，尚未批量替代 manual_review。
-- [ ] 软意图 judge 校准：先人工标注一小批金标准，再决定哪些 manual_review 可转成 `objective_soft_judge`；低置信度仍保留人工核对。
+- [x] 软意图 judge 校准闭环：新增 `tests/eval/judge_gold/objective_soft_judge_gold.json`（20 条 pass/fail/skip 人工 seed）与 `python -m tests.eval.calibrate_soft_judge`，当前 exact accuracy 100.0%、coverage 95.0%；dev 中 9 个粗粒度软意图转为自动 judge，manual_review 从 35 降到 26，holdout 保持冻结不调。
+- [ ] 下一步：扩展人工金标准到 50+ 条，并在校准通过后再接入 M2D-CLAP 文本相似度与 LLM judge；LLM judge 仍只能看 query + 歌曲客观属性，不看 explanation。
+
+### A1 / R1 — 检索层重构（✅ 已完成 2026-06-20）
+- [x] `retrieve()` 直接消费 `hard_constraints / soft_intent / hints`；legacy flat 字段仅保留旧调用兼容。
+- [x] 图谱、稠密、BM25、个性化、冷启动五路始终并发；`intent_type` 只调整各路非零 RRF 权重，不再控制引擎开关。
+- [x] 删除检索入口的关键词清理、纯音乐 graph-only、情绪词升级 hybrid、复合词语言推断等二次改判。
+- [x] 平等合并改为加权 RRF；融合后只有 `hard_constraints + DISLIKES` 可以排除候选，genre/mood/scenario 仅作召回与排序软信号。
+- [x] 验收：改前 dev `35/50 (70%)`、holdout `15/20 (75%)`；改后 dev `38/50 (76%)`、holdout `15/20 (75%)`；单测 `97 passed`。
 
 ### Phase 3 — 蒸馏飞轮 + 反馈对齐（2–4 周）
 - [ ] 落盘云端 Planner I/O → SFT 本地 Qwen3-4B（意图延迟亚秒级）。

@@ -3,12 +3,22 @@ import logging
 import os
 import re
 import asyncio
-import unicodedata
 from typing import List, Dict, Any, Optional
 
-from tools.graphrag_search import graphrag_search
 from tools.semantic_search import semantic_search
 from tools.web_search_aggregator import _federated_search_async
+from retrieval.recall_sources import (
+    cold_start_recall,
+    graph_candidate_recall,
+    lexical_bm25_recall,
+    personalized_recall,
+)
+from retrieval.retrieval_fusion import (
+    apply_hard_filters,
+    normalize_song_key,
+    recall_weights_for_intent,
+    weighted_rrf,
+)
 from retrieval.neo4j_client import get_neo4j_client
 from config.logging_config import get_logger
 from config.settings import settings
@@ -146,13 +156,13 @@ class MusicHybridRetrieval:
 
     async def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
         """
-        主检索入口（异步版本）
+        主检索入口：五路并行召回 → RRF → 硬过滤 → 统一排序。
         
         Args:
             query: 用户查询
             limit: 返回结果数量
             precomputed_plan: 来自上游统一 Prompt 的预计算检索计划（dict 格式的 RetrievalPlan）。
-                              如果提供，则使用预计算计划；否则默认启用图谱+向量双引擎。
+                              layered 字段优先；legacy 字段仅用于历史调用兼容。
         """
         logger.info(f"[Retrieval] 开始处理请求: {query}")
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
@@ -161,364 +171,225 @@ class MusicHybridRetrieval:
             return mock_retrieve(query, limit)
 
         from config.settings import settings as _s
-        # 各引擎 limit 从 settings 读取（不再用 1.5x 乘数，粗排阶段负责漏斗）
-        _graph_limit = _s.graph_search_limit
-        _vector_limit = _s.semantic_search_limit
-        _mixed_limit = _s.mixed_retrieval_limit
-        
-        # 1. 确定检索策略：优先用预计算计划，否则安全默认（双引擎）
-        graph_artist_entities = []
-        graph_song_entities = []
-        if precomputed_plan:
-            logger.info("[Retrieval] 使用上游预计算的检索计划")
-            hard_constraints = precomputed_plan.get("hard_constraints") or {}
-            soft_intent = precomputed_plan.get("soft_intent") or {}
-            hints = precomputed_plan.get("hints") or {}
-            use_graph = precomputed_plan.get("use_graph", False)
-            use_vector = precomputed_plan.get("use_vector", False)
-            use_web = precomputed_plan.get("use_web_search", False)
-            graph_entities = precomputed_plan.get("graph_entities", [])
-            graph_artist_entities = (
-                precomputed_plan.get("graph_artist_entities", [])
-                or hard_constraints.get("artist_entities", [])
-            )
-            graph_song_entities = (
-                precomputed_plan.get("graph_song_entities", [])
-                or hard_constraints.get("song_entities", [])
-            )
-            if not graph_entities:
-                graph_entities = list(dict.fromkeys(graph_artist_entities + graph_song_entities))
-            genre_hints = hints.get("genres") or []
-            genre_filter = precomputed_plan.get("graph_genre_filter") or (genre_hints[0] if genre_hints else None)
-            scenario_filter = precomputed_plan.get("graph_scenario_filter") or hints.get("scenario")
-            mood_filter = precomputed_plan.get("graph_mood_filter") or hints.get("mood")
-            language_filter = precomputed_plan.get("graph_language_filter") or hard_constraints.get("language")
-            region_filter = precomputed_plan.get("graph_region_filter") or hard_constraints.get("region")
-            if hard_constraints.get("instrumental") and not language_filter:
-                language_filter = "Instrumental"
-            web_keywords = precomputed_plan.get("web_search_keywords", "")
-            need_web_search = use_web
-            search_keyword = web_keywords
-            vector_desc = ""
+        recall_limit = max(
+            _s.graph_search_limit,
+            _s.semantic_search_limit,
+            _s.mixed_retrieval_limit,
+            limit,
+        )
 
-            # ── 调试日志：确认过滤字段最终值 ──
-            logger.info(
-                f"[Retrieval] 过滤字段最终值: genre='{genre_filter}' | scenario='{scenario_filter}' | "
-                f"mood='{mood_filter}' | language='{language_filter}' | region='{region_filter}' | "
-                f"entities={graph_entities} | query='{query[:50]}'"
-            )
+        # 1. 直接消费分层计划。legacy 字段只在 layered 字段缺失时补位。
+        plan = precomputed_plan or {}
+        hard_constraints = dict(plan.get("hard_constraints") or {})
+        soft_intent = dict(plan.get("soft_intent") or {})
+        hints = dict(plan.get("hints") or {})
 
-            # 用户画像只能影响排序/个性化，不能偷渡成实体查询的硬过滤。
-            if graph_entities and use_graph and not use_vector:
-                try:
-                    from tools.graphrag_search import GENRE_TAG_MAP, MOOD_TAG_MAP, SCENARIO_TAG_MAP
+        if not hard_constraints:
+            legacy_language = plan.get("graph_language_filter")
+            hard_constraints = {
+                "artist_entities": list(plan.get("graph_artist_entities") or []),
+                "song_entities": list(plan.get("graph_song_entities") or []),
+                "language": legacy_language,
+                "region": plan.get("graph_region_filter"),
+                "instrumental": str(legacy_language or "").casefold() == "instrumental",
+            }
+        if not hints:
+            hints = {
+                "genres": [plan["graph_genre_filter"]] if plan.get("graph_genre_filter") else [],
+                "mood": plan.get("graph_mood_filter"),
+                "scenario": plan.get("graph_scenario_filter"),
+            }
 
-                    def _has_signal(value, signal_map, extras=()):
-                        if not value:
-                            return False
-                        q = query.lower()
-                        v = str(value).lower()
-                        if v and v in q:
-                            return True
-                        return any(str(k).lower() in q for k in list(signal_map.keys()) + list(extras))
+        graph_artist_entities = list(hard_constraints.get("artist_entities") or [])
+        graph_song_entities = list(hard_constraints.get("song_entities") or [])
+        graph_entities = list(dict.fromkeys(graph_artist_entities + graph_song_entities))
+        intent_type = str(plan.get("_intent_type") or "hybrid_search")
+        recall_weights = recall_weights_for_intent(intent_type)
+        need_web_search = bool(plan.get("use_web_search"))
+        search_keyword = str(plan.get("web_search_keywords") or query)
 
-                    if genre_filter and not _has_signal(genre_filter, GENRE_TAG_MAP, ("摇滚", "流行", "民谣", "电子", "爵士")):
-                        logger.info(f"[Retrieval] 实体查询清理未显式流派 hint: {genre_filter}")
-                        genre_filter = None
-                    if mood_filter and not _has_signal(mood_filter, MOOD_TAG_MAP, ("情歌", "伤感", "抒情")):
-                        logger.info(f"[Retrieval] 实体查询清理未显式情绪 hint: {mood_filter}")
-                        mood_filter = None
-                    if scenario_filter and not _has_signal(scenario_filter, SCENARIO_TAG_MAP):
-                        logger.info(f"[Retrieval] 实体查询清理未显式场景 hint: {scenario_filter}")
-                        scenario_filter = None
-                except ImportError:
-                    pass
+        vector_desc = str(plan.get("vector_acoustic_query") or "").strip()
+        if not vector_desc:
+            soft_parts = [
+                soft_intent.get("goal", ""),
+                soft_intent.get("trajectory", ""),
+                soft_intent.get("vibe", ""),
+                "avoid: " + ", ".join(soft_intent.get("avoid", []))
+                if soft_intent.get("avoid")
+                else "",
+                "genres: " + ", ".join(hints.get("genres", []))
+                if hints.get("genres")
+                else "",
+                f"mood: {hints.get('mood')}" if hints.get("mood") else "",
+                f"scenario: {hints.get('scenario')}" if hints.get("scenario") else "",
+            ]
+            vector_desc = "; ".join(str(part) for part in soft_parts if part)
+        if not vector_desc:
+            vector_desc = query
 
-            # ── 确定性兜底：纯音乐/器乐关键词 → 强制 language=Instrumental + graph-only ──
-            # 即使 LLM 判了 hybrid_search 且未填 language_filter，这里也会自动修正
-            _INSTRUMENTAL_KEYWORDS = {"纯音乐", "器乐", "没有人声", "无人声", "无歌词", "instrumental"}
-            _query_lower = query.lower()
-            if not language_filter and any(kw in _query_lower for kw in _INSTRUMENTAL_KEYWORDS):
-                language_filter = "Instrumental"
-                use_graph = True
-                use_vector = False  # 纯音乐是硬约束，向量引擎无法可靠过滤
-                logger.warning(
-                    f"[Retrieval] ⚠️ 确定性兜底触发：检测到纯音乐关键词，"
-                    f"强制设置 language=Instrumental + graph-only 模式"
-                )
+        lexical_query = (
+            " ".join(graph_artist_entities + graph_song_entities)
+            if graph_entities
+            else query
+        )
+        logger.info(
+            "[Retrieval] 分层计划: intent=%s | hard=%s | soft=%s | hints=%s | weights=%s",
+            intent_type,
+            {
+                "artists": graph_artist_entities,
+                "songs": graph_song_entities,
+                "language": hard_constraints.get("language"),
+                "region": hard_constraints.get("region"),
+                "instrumental": bool(hard_constraints.get("instrumental")),
+            },
+            {
+                "goal": bool(soft_intent.get("goal")),
+                "trajectory": bool(soft_intent.get("trajectory")),
+                "avoid": len(soft_intent.get("avoid") or []),
+                "vibe": bool(soft_intent.get("vibe")),
+            },
+            hints,
+            recall_weights,
+        )
 
-            # ── 确定性兜底：情绪词 + 标签（无实体）→ 升级为 hybrid（graph + vector）──
-            # 即使 LLM 判了 graph_search，只要 query 中含有情绪词且有流派/语言标签但无实体，
-            # 应升级为 hybrid 以获得更好的声学匹配。动态从 MOOD_TAG_MAP 获取词表。
-            if use_graph and not use_vector:
-                try:
-                    from tools.graphrag_search import MOOD_TAG_MAP
-                    _mood_signal_words = set(MOOD_TAG_MAP.keys())
-                except ImportError:
-                    _mood_signal_words = {"深情", "悲伤", "伤感", "热血", "燃", "带感", "激情",
-                                          "温柔", "治愈", "孤独", "浪漫", "梦幻", "忧伤", "感动",
-                                          "壮阔", "沉醉", "抒情", "惆怅", "忧郁", "愤怒"}
-                _matched_moods = [m for m in _mood_signal_words if m in query]
-                _has_tag_filter = bool(genre_filter or language_filter or region_filter)
-                _has_no_entity = not graph_entities or all(
-                    e.strip() == "" for e in graph_entities
-                )
-                if _matched_moods and _has_tag_filter and _has_no_entity:
-                    use_vector = True
-                    logger.warning(
-                        f"[Retrieval] ⚠️ 确定性兜底触发：检测到情绪词 {_matched_moods} + "
-                        f"标签过滤（genre={genre_filter}, lang={language_filter}）且无实体，"
-                        f"升级为 hybrid 模式（graph + vector）"
-                    )
-
-            # ── 确定性兜底：从 query 中的复合概念词推断 language/region ──
-            # 例："国摇" 隐含 language=Chinese + genre=rock，但 LLM 可能只填了 genre
-            if not language_filter:
-                try:
-                    from tools.graphrag_search import LANGUAGE_ALIAS_MAP
-                    for word, lang in LANGUAGE_ALIAS_MAP.items():
-                        if len(word) >= 2 and word in query:
-                            language_filter = lang
-                            logger.info(
-                                f"[Retrieval] 确定性推断 language='{language_filter}' "
-                                f"(from '{word}' in query)"
-                            )
-                            break
-                except ImportError:
-                    pass
-
-            # ── HyDE 声学描述：双模式分支 ──
-            if use_vector:
-                vector_acoustic_query = precomputed_plan.get("vector_acoustic_query", "") or ""
-                if vector_acoustic_query:
-                    vector_desc = vector_acoustic_query
-                    logger.info(f"[HyDE] API 模式：使用 LLM 内联声学描述 ({len(vector_desc.split())} words)")
-                else:
-                    soft_parts = [
-                        soft_intent.get("goal", ""),
-                        soft_intent.get("trajectory", ""),
-                        soft_intent.get("vibe", ""),
-                        "avoid: " + ", ".join(soft_intent.get("avoid", [])) if soft_intent.get("avoid") else "",
-                    ]
-                    soft_text = "; ".join(part for part in soft_parts if part)
-                    if soft_text:
-                        vector_desc = soft_text
-                        logger.info(f"[HyDE] 使用分层 soft_intent 作为声学查询 ({len(vector_desc)} chars)")
-                    if not vector_desc:
-                        graphzep_for_hyde = precomputed_plan.get("_graphzep_facts", "")
-                        intent_type = precomputed_plan.get("_intent_type", "")
-                        logger.info("[HyDE] 本地模式：调用独立 HyDE 模块生成声学描述")
-                        vector_desc = self._generate_hyde_description(
-                            query=query,
-                            graphzep_facts=graphzep_for_hyde,
-                            intent_type=intent_type,
-                        )
-        else:
-            # 安全默认：同时启用图谱和向量检索
-            logger.info("[Retrieval] 无预计算计划，使用默认双引擎检索")
-            use_graph = True
-            use_vector = True
-            use_web = False
-            graph_entities = [query]
-            genre_filter = None
-            scenario_filter = None
-            mood_filter = None
-            language_filter = None
-            region_filter = None
-            vector_desc = self._generate_hyde_description(query=query, graphzep_facts="", intent_type="")
-            need_web_search = False
-            search_keyword = ""
-        
-        graph_result = ""
-        vector_result = ""
-        
-        # 2. 根据策略分发执行（直接 await，无需 nest_asyncio）
         loop = asyncio.get_running_loop()
-        
-        # 定义任务包装器：将同步的 LangChain tool.invoke 放到线程池执行
+
         async def run_sync_in_executor(func, *args, **kwargs):
             return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
-            
+
+        # 2. 五路召回永远一起运行；intent_type 只改变 RRF 权重。
+        recall_tasks = {
+            "graph": run_sync_in_executor(
+                graph_candidate_recall,
+                hard_constraints,
+                hints,
+                limit=recall_limit,
+            ),
+            "dense": run_sync_in_executor(
+                semantic_search.invoke,
+                {"query": vector_desc, "limit": recall_limit},
+            ),
+            "lexical": run_sync_in_executor(
+                lexical_bm25_recall,
+                lexical_query,
+                limit=recall_limit,
+            ),
+            "personal": run_sync_in_executor(
+                personalized_recall,
+                GRAPH_AFFINITY_USER_ID,
+                limit=recall_limit,
+            ),
+            "cold": run_sync_in_executor(
+                cold_start_recall,
+                limit=recall_limit,
+            ),
+        }
+        recall_results = await asyncio.gather(*recall_tasks.values(), return_exceptions=True)
+        source_raw: Dict[str, str] = {}
+        for source, result in zip(recall_tasks, recall_results):
+            if isinstance(result, Exception):
+                logger.error("[Recall:%s] 异常: %s: %s", source, type(result).__name__, result)
+                source_raw[source] = ""
+            else:
+                source_raw[source] = result or ""
+                try:
+                    count = len(json.loads(source_raw[source])) if source_raw[source] else 0
+                except (json.JSONDecodeError, TypeError):
+                    count = 0
+                logger.info("[Recall:%s] 返回 %d 条", source, count)
+
         async def _extract_and_fetch_web_songs(web_text: str) -> List[dict]:
             if not web_text or "未能找到" in web_text or not self.llm_client:
                 return []
-                
+
             try:
                 from pydantic import BaseModel, Field
+
                 class WebSongTarget(BaseModel):
                     title: str = Field(description="歌曲名称")
                     artist: str = Field(description="歌手名")
+
                 class WebSongExtraction(BaseModel):
                     songs: List[WebSongTarget] = Field(description="从文字中提取出的推荐歌曲列表，最多3首")
-                    
+
                 structured_llm = self.llm_client.with_structured_output(WebSongExtraction)
                 prompt = (
                     "请从以下全网搜索资讯中提取最多3首代表性歌曲及歌手，"
                     "并严格返回符合 schema 的 JSON；没有明确歌曲时返回空 songs 列表。"
                     f"\n\n资讯文本:\n{web_text}"
                 )
-                
+
                 result = await structured_llm.ainvoke(prompt)
                 if not result or not result.songs:
                     return []
-                    
+
                 from tools.music_fetch_tool import execute_search_online_music
-                
-                tasks = []
-                for s in result.songs[:3]:
-                    q = f"{s.artist} {s.title}"
-                    tasks.append(execute_search_online_music(q))
-                    
+
+                tasks = [
+                    execute_search_online_music(f"{song.artist} {song.title}")
+                    for song in result.songs[:3]
+                ]
                 fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                
+
                 playable_songs = []
-                for i, res in enumerate(fetch_results):
-                    if isinstance(res, Exception):
+                for index, fetched in enumerate(fetch_results):
+                    if isinstance(fetched, Exception):
                         continue
-                    if getattr(res, "success", False) and res.data:
-                        top_hit = res.data[0]
-                        playable_songs.append({
-                            "song": {
-                                "title": top_hit.get("title", result.songs[i].title),
-                                "artist": top_hit.get("artist", result.songs[i].artist),
-                                "preview_url": top_hit.get("play_url") or top_hit.get("preview_url"),
-                                "cover_url": top_hit.get("cover_url"),
-                                "album": top_hit.get("album", "未知"),
-                                "genre": "Web Trends"
-                            },
-                            "reason": "🌐 全网最新发掘",
-                            "similarity_score": 9.5 - (i * 0.1),
-                            "_vector_score": 0.0,
-                            "_graph_score": 0.0
-                        })
+                    if getattr(fetched, "success", False) and fetched.data:
+                        target = result.songs[index]
+                        top_hit = fetched.data[0]
+                        playable_songs.append(
+                            {
+                                "song": {
+                                    "title": top_hit.get("title", target.title),
+                                    "artist": top_hit.get("artist", target.artist),
+                                    "preview_url": top_hit.get("play_url")
+                                    or top_hit.get("preview_url"),
+                                    "cover_url": top_hit.get("cover_url"),
+                                    "album": top_hit.get("album", "未知"),
+                                    "genre": "Web Trends",
+                                },
+                                "reason": "🌐 全网最新发掘",
+                                "similarity_score": 9.5 - (index * 0.1),
+                            }
+                        )
                 return playable_songs
-            except Exception as e:
-                logger.error(f"提取全网歌曲失败: {e}")
+            except Exception as exc:
+                logger.error("提取全网歌曲失败: %s", exc)
                 return []
-        
-        # ── 执行检索（直接内联，不再嵌套 execute_retrieval）──
-        local_tasks = []
-        
-        # 根据统一的 use_graph/use_vector 标志分发任务
-        # ★ 纯联网搜索：use_graph=False + use_vector=False → 跳过本地检索
-        if not use_graph and not use_vector:
-            logger.info("[Retrieval] 🌐 纯联网模式：跳过本地 graph/vector 检索")
-            local_tasks.append(asyncio.sleep(0))  # 占位 graph
-            local_tasks.append(asyncio.sleep(0))  # 占位 vector
-        elif use_graph and not use_vector:
-            graph_query_dict = {"tags": graph_entities, "artist_tags": graph_artist_entities, "song_tags": graph_song_entities,
-                                "genre": genre_filter,
-                                "scenario": scenario_filter, "mood": mood_filter,
-                                "language": language_filter, "region": region_filter}
-            if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
-                graph_query_dict["tags"] = [query]
-            search_term = json.dumps(graph_query_dict, ensure_ascii=False)
-            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": search_term, "limit": _graph_limit}))
-            local_tasks.append(asyncio.sleep(0))  # 占位 vector
-        elif use_vector and not use_graph:
-            local_tasks.append(asyncio.sleep(0))  # 占位 graph
-            search_term = vector_desc if vector_desc else query
-            local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                "query": search_term, "limit": _vector_limit,
-                "language_filter": language_filter or "",
-                "region_filter": region_filter or "",
-            }))
-        else:
-            graph_query_dict = {"tags": graph_entities, "artist_tags": graph_artist_entities, "song_tags": graph_song_entities,
-                                "genre": genre_filter,
-                                "scenario": scenario_filter, "mood": mood_filter,
-                                "language": language_filter, "region": region_filter}
-            if not graph_entities and not genre_filter and not scenario_filter and not mood_filter and not language_filter and not region_filter:
-                graph_query_dict["tags"] = [query]
-            graph_term = json.dumps(graph_query_dict, ensure_ascii=False)
-            vector_term = vector_desc if vector_desc else query
-            
-            logger.info(f"[Hybrid] 混合检索：各子引擎 mixed_limit={_mixed_limit} (final_limit={limit})")
-            local_tasks.append(run_sync_in_executor(graphrag_search.invoke, {"query": graph_term, "limit": _mixed_limit}))
-            local_tasks.append(run_sync_in_executor(semantic_search.invoke, {
-                "query": vector_term, "limit": _mixed_limit,
-                "language_filter": language_filter or "",
-                "region_filter": region_filter or "",
-            }))
-            
-        # 并发执行本地数据库检索
-        local_results = await asyncio.gather(*local_tasks, return_exceptions=True)
-        
-        # ── 诊断日志 ──
-        for idx, label in enumerate(["Graph", "Vector"]):
-            r = local_results[idx] if idx < len(local_results) else None
-            if isinstance(r, Exception):
-                logger.error(f"[诊断] {label} 引擎抛出异常: {type(r).__name__}: {r}")
-            elif r is None or r == "" or r == 0:
-                logger.warning(f"[诊断] {label} 引擎返回空值: repr={repr(r)[:200]}")
-            else:
-                logger.info(f"[诊断] {label} 引擎返回: 长度={len(str(r))}, 前200字符={str(r)[:200]}")
-        
-        graph_raw = local_results[0] if not isinstance(local_results[0], Exception) and local_results[0] else ""
-        vector_raw = local_results[1] if not isinstance(local_results[1], Exception) and local_results[1] else ""
-        
+
+        # 3. 联网只作为显式需求或实体本地零召回后的补充，不参与本地引擎开关。
         web_raw = ""
-        _web_search_globally_enabled = os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0"
-        
-        if _web_search_globally_enabled:
-            if need_web_search and search_keyword:
-                logger.info(f"⚡ 意图明确要求联网: '{search_keyword}'")
+        if os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
+            graph_empty = source_raw.get("graph") in ("", "[]")
+            lexical_empty = source_raw.get("lexical") in ("", "[]")
+            if need_web_search:
+                logger.info("⚡ 意图明确要求联网: '%s'", search_keyword)
                 web_raw = await _federated_search_async(search_keyword)
-            else:
-                graph_empty = not graph_raw or graph_raw == "[]" or "error" in graph_raw.lower()
-                vector_empty = not vector_raw or vector_raw == "[]" or "error" in vector_raw.lower()
-                
-                needs_fallback = False
-                if graph_entities and graph_empty:
-                    needs_fallback = True
-                elif graph_empty and vector_empty:
-                    needs_fallback = True
-                    
-                if needs_fallback:
-                    logger.warning(f"本地数据库未能找到核心实体或结果太少，触发联网保底搜索 (Fallback): '{query}'")
-                    search_kw = search_keyword if search_keyword else query
-                    web_raw = await _federated_search_async(search_kw)
-                    
+            elif graph_entities and graph_empty and lexical_empty:
+                logger.warning("本地实体召回为空，触发联网补充: '%s'", query)
+                web_raw = await _federated_search_async(query)
+
         web_playable = await _extract_and_fetch_web_songs(web_raw)
-        
-        # 确定策略名称（用于日志和结果格式化）
-        if not use_graph and not use_vector:
-            strategy_name = "web_only"
-        elif use_graph and use_vector:
-            strategy_name = "hybrid_balanced"
-        elif use_graph:
-            strategy_name = "graph_only"
-        elif use_vector:
-            strategy_name = "vector_only"
-        else:
-            strategy_name = "hybrid_balanced"
-        
-        # 保存当前 query 供 _format_results 中的 Cross-Encoder 精排使用
         self._current_query = query
-        # 保存 HyDE 声学描述供三锚精排的语义锚使用（与 M2D-CLAP 训练分布对齐）
-        # 如果有 HyDE 描述则用它，否则回退到原始 query
-        self._current_hyde_text = vector_desc if vector_desc else query
-        # 保存当前 language_filter 供 _format_results 中的 Instrumental 后过滤使用
-        self._current_language_filter = language_filter
-        
-        return self._format_results(strategy_name, graph_raw, vector_raw, web_raw, web_playable, graph_entities, final_limit=limit)
+        self._current_hyde_text = vector_desc
+        self._current_hard_constraints = hard_constraints
 
+        return self._format_results(
+            source_raw=source_raw,
+            recall_weights=recall_weights,
+            hard_constraints=hard_constraints,
+            web_res=web_raw,
+            web_playable=web_playable,
+            graph_entities=graph_entities,
+            final_limit=limit,
+        )
 
-    # ================================================================
-    # 【P0 升级】加权 RRF (Reciprocal Rank Fusion) 排序融合
-    # 替代旧版硬编码 v×0.7 + g×0.3 的原始分数加权。
-    # RRF 基于排名（非原始分数）融合，对不同尺度的引擎更公平。
-    # ================================================================
 
     @staticmethod
     def _normalize_key(title: str, artist: str) -> str:
         """生成标准化的去重 key，消除全角/半角、标点、空格差异。"""
-        def _clean(s: str) -> str:
-            s = unicodedata.normalize("NFKC", s)  # 全角→半角
-            s = s.lower().strip()
-            s = re.sub(r"[,，、/\\\s()（）【】\[\]]+", "", s)  # 去掉标点和空格
-            return s
-        return f"{_clean(title)}_{_clean(artist)}"
+        return normalize_song_key(title, artist)
 
     @staticmethod
     def _parse_engine_results(res_str: str, engine_name: str) -> List[dict]:
@@ -594,56 +465,19 @@ class MusicHybridRetrieval:
         return results
 
     @staticmethod
-    def _merge_and_dedup(
-        graph_items: List[dict],
-        vector_items: List[dict],
+    def _fuse_recall_sources(
+        source_items: Dict[str, List[dict]],
+        recall_weights: Dict[str, float],
     ) -> List[dict]:
-        """
-        平等合并两路检索结果（替代旧版加权 RRF）。
-
-        两路候选不再有权重偏差，公平进入后续精排管线。
-        双路命中的歌曲打上交叉标记，但不额外加分（由三锚精排统一评分）。
-        """
-        song_data: Dict[str, dict] = {}   # key → 歌曲元数据
-        key_engines: Dict[str, List[str]] = {}  # key → 命中引擎列表
-
-        for item in graph_items:
-            key = item["key"]
-            if key not in song_data:
-                song_data[key] = item
-                key_engines[key] = []
-            key_engines[key].append("知识图谱(GraphRAG)")
-
-        for item in vector_items:
-            key = item["key"]
-            if key not in song_data:
-                song_data[key] = item
-                key_engines[key] = []
-            if "语义向量(Neo4j Vector)" not in key_engines.get(key, []):
-                key_engines.setdefault(key, []).append("语义向量(Neo4j Vector)")
-
-        # 构建合并列表（初始分数统一用 raw_score，不区分引擎）
-        merged = []
-        for key, item in song_data.items():
-            engines = key_engines.get(key, [])
-            both_hit = len(engines) > 1
-            reason = "引擎检索来源: " + " + ".join(engines)
-            if both_hit:
-                reason += " 🔥双引擎交叉命中"
-
-            merged.append({
-                "song": item["song"],
-                "reason": reason,
-                "similarity_score": item["raw_score"],
-                "_both_engines": both_hit,
-            })
-
-        # 按原始分数降序（仅作初始排序，后续由三锚精排重排）
-        merged.sort(key=lambda x: x["similarity_score"], reverse=True)
-        both_count = sum(1 for m in merged if m["_both_engines"])
+        """Fuse all ranked recall lists with weighted Reciprocal Rank Fusion."""
+        merged = weighted_rrf(source_items, recall_weights)
+        multi_source_count = sum(
+            1 for item in merged if len(item.get("_recall_sources", [])) > 1
+        )
         logger.info(
-            f"[MergeDedup] 平等合并完成: {len(merged)} 首 "
-            f"(双引擎交叉命中: {both_count} 首)"
+            "[RRF] 五路融合完成: %d 首，多路交叉命中=%d",
+            len(merged),
+            multi_source_count,
         )
         return merged
 
@@ -967,13 +801,24 @@ class MusicHybridRetrieval:
 
         return candidates, cand_tag_map
 
-    def _format_results(self, strategy_name: str, graph_res: str, vector_res: str, web_res: str = "", web_playable: List[dict] = None, graph_entities: List[str] = None, final_limit: int = 15) -> ToolOutput:
+    def _format_results(
+        self,
+        *,
+        source_raw: Dict[str, str],
+        recall_weights: Dict[str, float],
+        hard_constraints: Dict[str, Any],
+        web_res: str = "",
+        web_playable: List[dict] = None,
+        graph_entities: List[str] = None,
+        final_limit: int = 15,
+    ) -> ToolOutput:
         """
-        合并各检索引擎的结果 —— 新版精排管线。
+        合并各召回源并执行统一过滤与排序。
 
-        排序管线（V3）:
-          1. 解析各引擎原始 JSON → 标准化列表
-          2. 平等合并去重（替代旧版加权 RRF）
+        排序管线（R1）:
+          1. 解析五路召回结果并保留各路排名
+          2. 加权 RRF 融合
+          3. hard_constraints + DISLIKES 唯一硬过滤
           3. Artist 多样性初筛（每个歌手最多 N 首）
           4. Graph Affinity（图距离 + Jaccard 偏好 → 个性化微调）→ 产出 cand_tag_map
           5. 三锚精排（M2D-CLAP 语义锚 + OMAR-RQ 声学锚 → 核心排序）
@@ -982,218 +827,77 @@ class MusicHybridRetrieval:
         """
         from config.settings import settings as _settings
 
-        # ================================================================
-        # 🌐 短路优化：web_only → 跳过全部本地精排管线
-        # 场景：用户请求联网搜索（如"最新Billboard榜单"），本地无结果。
-        #        直接返回联网搜索的资讯 + 可播歌曲，省掉无意义的精排流程。
-        # ================================================================
-        if strategy_name == "web_only":
-            logger.info("[WebOnly] 🌐 纯联网模式：跳过本地精排管线")
-            final_list = []
-
-            # 将联网抓取到的可播歌曲作为主体结果
-            if web_playable:
-                final_list.extend(web_playable)
-                logger.info(f"[WebOnly] 联网抓取到 {len(web_playable)} 首可播歌曲")
-
-            # 插入联网资讯文本（作为第一条供大模型解释用）
-            if web_res and "未能找到相关有效信息" not in web_res:
-                final_list.insert(0, {
-                    "_raw_markdown": web_res,
-                    "song": {"title": "🌐 全网资讯补充", "artist": "互联网最新情报", "genre": "News"},
-                    "reason": "包含通过多源聚合引擎获取的最新的互联网关联资讯，用于补充音乐库之外的信息。",
-                    "similarity_score": WEB_RESULT_PRIORITY_SCORE
-                })
-
-            # 构建 raw_markdown
-            markdown_lines = []
-            if web_res and "未能找到" not in web_res:
-                markdown_lines.append(web_res.strip())
-                markdown_lines.append("")
-            if final_list:
-                markdown_lines.append("**推荐结果**")
-                for idx, item in enumerate(final_list, 1):
-                    song = item.get("song", {})
-                    title = song.get("title", "未知")
-                    if title == "🌐 全网资讯补充":
-                        continue
-                    artist = song.get("artist", "未知")
-                    line = f"{idx}. **{title}** - {artist}"
-                    markdown_lines.append(line)
-            raw_md = "\n".join(markdown_lines).strip()
-
-            logger.info(f"=== 🌐 [WebOnly] 联网检索完毕，共 {len(final_list)} 条结果 ===")
-            for i, item in enumerate(final_list):
-                logger.info(f"  [{i+1}] {item['song']['title']} - {item.get('reason', '')}")
-
-            return ToolOutput(
-                success=len(final_list) > 0,
-                data=final_list,
-                raw_markdown=raw_md,
-                error_message=None if final_list else "联网搜索未找到相关结果",
-            )
-
-        # ================================================================
-        # 🚀 短路优化：graph_only + 有明确实体 → 跳过全部精排管线
-        # 场景：用户搜索指定歌曲（如"痛仰乐队 西湖"），无需三锚精排、
-        #        Graph Affinity、MMR 多样性重排等，直接返回图谱结果。
-        # 节省：~300-600ms（跳过 M2D-CLAP 编码 + OMAR 质心 + Neo4j 图距离查询）
-        # ================================================================
-        if strategy_name == "graph_only" and graph_entities:
-            graph_items = self._parse_engine_results(graph_res, "知识图谱(GraphRAG)")
-            if graph_items:
-                logger.info(
-                    f"[ShortCircuit] 🚀 graph_only + 实体={graph_entities} → "
-                    f"跳过精排管线，直接返回 {len(graph_items)} 条图谱结果"
-                )
-                fast_list = [{
-                    "song": item["song"],
-                    "reason": "引擎检索来源: 知识图谱(GraphRAG) ⚡精确匹配",
-                    "similarity_score": item["raw_score"],
-                } for item in graph_items]
-
-                # 仅保留 DISLIKES 过滤（安全需要）
-                disliked_titles = self._get_disliked_titles()
-                if disliked_titles:
-                    before = len(fast_list)
-                    fast_list = [
-                        item for item in fast_list
-                        if item.get("song", {}).get("title", "") not in disliked_titles
-                    ]
-                    filtered = before - len(fast_list)
-                    if filtered > 0:
-                        logger.info(f"[ShortCircuit] DISLIKES 过滤掉 {filtered} 首")
-
-                # 安全去重
-                seen = set()
-                deduped = []
-                for item in fast_list:
-                    s = item.get("song", {})
-                    fk = MusicHybridRetrieval._normalize_key(
-                        s.get("title", ""), s.get("artist", "")
-                    )
-                    if fk not in seen:
-                        seen.add(fk)
-                        deduped.append(item)
-                fast_list = deduped
-
-                # FinalCut
-                if final_limit and len(fast_list) > final_limit:
-                    fast_list = fast_list[:final_limit]
-
-                # 构建 raw_markdown
-                md_lines = ["**推荐结果**"]
-                for idx, item in enumerate(fast_list, 1):
-                    song = item.get("song", {})
-                    title = song.get("title", "未知")
-                    artist = song.get("artist", "未知")
-                    genre = song.get("genre", "")
-                    line = f"{idx}. **{title}** - {artist}"
-                    if genre:
-                        line += f" ({genre})"
-                    md_lines.append(line)
-
-                raw_md = "\n".join(md_lines).strip()
-                logger.info(f"=== 🚀 [ShortCircuit] 精确检索完毕，共 {len(fast_list)} 条结果 ===")
-                for i, item in enumerate(fast_list):
-                    logger.info(f"  [{i+1}] {item['song']['title']} - {item['reason']}")
-
-                return ToolOutput(
-                    success=len(fast_list) > 0,
-                    data=fast_list,
-                    raw_markdown=raw_md,
-                    error_message=None if fast_list else "Not found",
-                )
-            # graph_items 为空时，落入下方完整管线（可能触发联网兜底）
-
-        # ---- Step 1: 解析各引擎结果 ----
-        graph_items = self._parse_engine_results(graph_res, "知识图谱(GraphRAG)")
-        vector_items = self._parse_engine_results(vector_res, "语义向量(Neo4j Vector)")
+        # ---- Step 1: 解析各召回源结果 ----
+        source_items = {
+            source: self._parse_engine_results(raw, source)
+            for source, raw in source_raw.items()
+        }
         logger.info(
-            f"[诊断-融合入口] graph_items={len(graph_items)}, vector_items={len(vector_items)} | "
-            f"graph_res长度={len(graph_res)}, vector_res长度={len(vector_res)} | "
-            f"vector_res前100字符={vector_res[:100] if vector_res else '(空)'}"
+            "[FusionInput] %s",
+            {source: len(items) for source, items in source_items.items()},
         )
 
-        # ---- Step 2: 平等合并去重（替代旧版加权 RRF）----
-        if graph_items and vector_items:
-            final_list = self._merge_and_dedup(graph_items, vector_items)
-        elif graph_items:
-            final_list = [{
-                "song": item["song"],
-                "reason": f"引擎检索来源: {item['engine']}",
-                "similarity_score": item["raw_score"],
-            } for item in graph_items]
-        elif vector_items:
-            final_list = [{
-                "song": item["song"],
-                "reason": f"引擎检索来源: {item['engine']}",
-                "similarity_score": item["raw_score"],
-            } for item in vector_items]
-        else:
-            final_list = []
+        # ---- Step 2: 按各路原始排名做加权 RRF ----
+        final_list = self._fuse_recall_sources(source_items, recall_weights)
 
-        # 将从全网转化来的真实可播歌曲加入（去重后）
-        if web_playable:
-            existing_keys = set()
-            for item in final_list:
-                s = item.get("song", {})
-                existing_keys.add(MusicHybridRetrieval._normalize_key(s.get("title", ""), s.get("artist", "")))
-            for wp in web_playable:
-                s = wp.get("song", {})
-                wp_key = MusicHybridRetrieval._normalize_key(s.get("title", ""), s.get("artist", ""))
-                if wp_key not in existing_keys:
-                    final_list.append(wp)
-                    existing_keys.add(wp_key)
-                else:
-                    logger.info(f"[Dedup] web_playable 重复跳过: {s.get('title', '')} - {s.get('artist', '')}")
-
-        # ---- Step 2.5: DISLIKES 过滤（排除用户明确不喜欢的歌曲）----
+        # ---- Step 3: 唯一硬过滤（请求 hard_constraints + DISLIKES）----
         disliked_titles = self._get_disliked_titles()
-        if disliked_titles and final_list:
-            before_count = len(final_list)
-            final_list = [
-                item for item in final_list
-                if item.get("song", {}).get("title", "") not in disliked_titles
-            ]
-            filtered = before_count - len(final_list)
-            if filtered > 0:
-                logger.info(f"[DislikeFilter] 过滤掉 {filtered} 首用户不喜欢的歌曲")
+        before_filter = len(final_list)
+        final_list = apply_hard_filters(
+            final_list,
+            hard_constraints,
+            disliked_titles,
+        )
+        logger.info(
+            "[HardFilter] hard_constraints + DISLIKES: %d → %d",
+            before_filter,
+            len(final_list),
+        )
 
-        # ---- Step 2.6: 语言硬约束后过滤（纯音乐/Instrumental 兜底） ----
-        # 如果 language_filter=Instrumental，但向量引擎仍混入了有人声的歌曲，通过 Neo4j 属性二次过滤
-        _active_lang_filter = getattr(self, '_current_language_filter', None)
-        if _active_lang_filter and _active_lang_filter.lower() == "instrumental" and final_list:
-            try:
-                from retrieval.neo4j_client import get_neo4j_client
-                neo4j = get_neo4j_client()
-                if neo4j and neo4j.driver:
-                    check_titles = [item.get("song", {}).get("title", "") for item in final_list if item.get("song", {}).get("title")]
-                    if check_titles:
-                        lang_query = """
-                        UNWIND $titles AS t
-                        MATCH (s:Song {title: t})
-                        WHERE toLower(s.language) = 'instrumental'
-                        RETURN collect(s.title) AS instrumental_titles
-                        """
-                        result = neo4j.execute_query(lang_query, {"titles": check_titles})
-                        instrumental_set = set(result[0]["instrumental_titles"]) if result and result[0].get("instrumental_titles") else set()
-                        before_count = len(final_list)
-                        final_list = [
-                            item for item in final_list
-                            if item.get("song", {}).get("title", "") in instrumental_set
-                            or item.get("song", {}).get("title", "") == "🌐 全网资讯补充"  # 保留资讯条目
-                        ]
-                        removed = before_count - len(final_list)
-                        if removed > 0:
-                            logger.info(
-                                f"[InstrumentalFilter] 语言硬约束后过滤：移除 {removed} 首非纯音乐歌曲 "
-                                f"（{before_count} → {len(final_list)}）"
-                            )
-            except Exception as e:
-                logger.warning(f"[InstrumentalFilter] 语言后过滤失败（降级不过滤）: {e}")
+        # 联网歌曲也遵守同一硬过滤，再进入后续统一排序。
+        if web_playable:
+            web_items = []
+            for rank, item in enumerate(web_playable):
+                song = item.get("song") or {}
+                web_items.append(
+                    {
+                        "key": self._normalize_key(
+                            song.get("title", ""),
+                            song.get("artist", ""),
+                        ),
+                        "rank": rank,
+                        "raw_score": item.get("similarity_score", 0.0),
+                        "engine": "web",
+                        "song": song,
+                    }
+                )
+            filtered_web = apply_hard_filters(
+                [
+                    {
+                        "song": item["song"],
+                        "reason": "🌐 全网最新发掘",
+                        "similarity_score": item["raw_score"],
+                    }
+                    for item in web_items
+                ],
+                hard_constraints,
+                disliked_titles,
+            )
+            existing_keys = {
+                self._normalize_key(
+                    item.get("song", {}).get("title", ""),
+                    item.get("song", {}).get("artist", ""),
+                )
+                for item in final_list
+            }
+            for item in filtered_web:
+                song = item.get("song", {})
+                key = self._normalize_key(song.get("title", ""), song.get("artist", ""))
+                if key not in existing_keys:
+                    final_list.append(item)
+                    existing_keys.add(key)
 
-        # ---- Step 3: Artist 多样性初筛（提前执行，减轻后续计算负担）----
+        # ---- Step 4: Artist 多样性初筛（提前执行，减轻后续计算负担）----
         max_per_artist = _settings.max_songs_per_artist
         exempt_artists: set = set()
         if graph_entities:
@@ -1317,7 +1021,7 @@ class MusicHybridRetrieval:
             try:
                 from retrieval.cross_encoder_reranker import CrossEncoderReranker
                 reranker = CrossEncoderReranker()
-                rerank_query = query_text or strategy_name
+                rerank_query = getattr(self, "_current_query", "") or "music recommendation"
                 final_list = reranker.rerank(rerank_query, final_list)
             except Exception as e:
                 logger.warning(f"[Reranker] Cross-Encoder 精排异常（降级跳过）: {e}")
