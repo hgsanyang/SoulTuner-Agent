@@ -63,6 +63,10 @@ services:
   backend:
     build: .
     container_name: soultuner-backend
+    # 运行时从项目私有 .env 注入密钥；.env 已被 Git 与 Docker build context 排除。
+    # 使用 env_file 可避免宿主机同名环境变量覆盖项目内的私有配置。
+    env_file:
+      - .env
     depends_on:
       neo4j:
         condition: service_healthy

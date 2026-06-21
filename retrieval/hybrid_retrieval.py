@@ -847,6 +847,10 @@ class MusicHybridRetrieval:
             final_list,
             hard_constraints,
             disliked_titles,
+            # final_limit 是内部过召回数量（通常 30），兜底只保证最小可用结果，
+            # 避免有效过滤结果被过早放宽。
+            limit=min(final_limit or 8, 8),
+            logger=logger,
         )
         logger.info(
             "[HardFilter] hard_constraints + DISLIKES: %d → %d",

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import re
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,45 @@ def artist_matches(artist_text: str, artist_terms: tuple[str, ...]) -> bool:
         if needle and (needle in haystack or haystack in needle):
             return True
     return False
+
+
+def parse_play_url_payload(payload: dict[str, Any] | None) -> tuple[dict[str, str], dict[str, bool]]:
+    """Extract playable URLs and trial flags from a Netease song/url response."""
+    play_urls: dict[str, str] = {}
+    trial_flags: dict[str, bool] = {}
+    for item in (payload or {}).get("data", []):
+        song_id = str(item.get("id", ""))
+        play_url = item.get("url")
+        if not song_id or not play_url:
+            continue
+        play_urls[song_id] = play_url
+        trial_flags[song_id] = item.get("freeTrialInfo") is not None
+    return play_urls, trial_flags
+
+
+async def fetch_json_with_retry(
+    session: Any,
+    url: str,
+    *,
+    timeout: Any,
+    attempts: int = 2,
+    retry_delay: float = 0.25,
+    on_retry: Callable[[int, Exception], None] | None = None,
+) -> dict[str, Any]:
+    """Fetch JSON with a bounded retry for transient proxy/network failures."""
+    attempts = max(1, int(attempts))
+    for attempt in range(1, attempts + 1):
+        try:
+            async with session.get(url, timeout=timeout) as response:
+                return await response.json()
+        except Exception as exc:
+            if attempt >= attempts:
+                raise
+            if on_retry is not None:
+                on_retry(attempt, exc)
+            if retry_delay > 0:
+                await asyncio.sleep(retry_delay)
+    return {}
 
 
 def clean_natural_query(text: str) -> str:

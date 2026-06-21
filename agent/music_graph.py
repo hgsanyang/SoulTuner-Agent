@@ -24,7 +24,12 @@ from langchain_core.output_parsers import StrOutputParser
 from config.logging_config import get_logger
 from config.settings import settings
 from agent.intent import IntentPlanner
-from agent.netease_query import artist_matches, build_netease_query_plan
+from agent.netease_query import (
+    artist_matches,
+    build_netease_query_plan,
+    fetch_json_with_retry,
+    parse_play_url_payload,
+)
 from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
@@ -591,16 +596,28 @@ class MusicRecommendationGraph:
             import aiohttp
             from config.settings import settings as _cfg
             api_base = _cfg.netease_api_base
-            timeout = aiohttp.ClientTimeout(total=10)
+            timeout = aiohttp.ClientTimeout(total=max(15, _cfg.netease_api_timeout))
 
             async with aiohttp.ClientSession() as session:
+                def _log_search_retry(attempt: int, exc: Exception) -> None:
+                    logger.warning(
+                        "[web_fallback] 搜索请求第 %d 次失败，将重试: %s",
+                        attempt,
+                        type(exc).__name__,
+                    )
+
                 # 1) 搜索
                 import re as _re
                 clean_query = _re.sub(r'[《》\[\]【】]', ' ', query).strip()
                 if netease_plan.mode == "new_songs":
                     search_url = f"{api_base}/top/song?type=7"
-                    async with session.get(search_url, timeout=timeout) as resp:
-                        data = await resp.json()
+                    data = await fetch_json_with_retry(
+                        session,
+                        search_url,
+                        timeout=timeout,
+                        attempts=2,
+                        on_retry=_log_search_retry,
+                    )
                     raw_songs = data.get("data", [])[:20]
                     songs = [
                         {
@@ -615,8 +632,13 @@ class MusicRecommendationGraph:
                 else:
                     search_limit = 20 if netease_plan.artist_terms and not netease_plan.song_terms else 5
                     search_url = f"{api_base}/search?keywords={clean_query}&limit={search_limit}"
-                    async with session.get(search_url, timeout=timeout) as resp:
-                        data = await resp.json()
+                    data = await fetch_json_with_retry(
+                        session,
+                        search_url,
+                        timeout=timeout,
+                        attempts=2,
+                        on_retry=_log_search_retry,
+                    )
                     songs = data.get("result", {}).get("songs", [])
                     if netease_plan.artist_terms and not netease_plan.song_terms:
                         songs = [
@@ -644,24 +666,44 @@ class MusicRecommendationGraph:
                 except Exception:
                     pass  # 详情获取失败不影响主流程
 
-                # 3) 批量获取播放链接（检测 freeTrialInfo 30s 试听）
-                play_url_map = {}     # sid → url
-                trial_info_map = {}   # sid → bool (是否为 30s 试听)
+                # 3) 批量获取播放链接；缺失项并发单曲重试，抵御代理的瞬时空响应。
+                play_url_map = {}
+                trial_info_map = {}
                 try:
                     url_api = f"{api_base}/song/url?id={','.join(song_ids)}&level=exhigh"
                     async with session.get(url_api, timeout=timeout) as uresp:
                         udata = await uresp.json()
-                    for item in udata.get("data", []):
-                        sid = str(item.get("id", ""))
-                        if item.get("url"):
-                            play_url_map[sid] = item["url"]
-                            # 检测 30s 试听：freeTrialInfo 不为 null 表示试听版
-                            is_trial = item.get("freeTrialInfo") is not None
-                            trial_info_map[sid] = is_trial
-                            if is_trial:
-                                logger.warning(f"[web_fallback] 歌曲 {sid} 为 30s 试听版")
-                except Exception:
-                    pass
+                    play_url_map, trial_info_map = parse_play_url_payload(udata)
+                except Exception as exc:
+                    logger.warning("[web_fallback] 批量播放链接获取失败，将尝试单曲补偿: %s", type(exc).__name__)
+
+                missing_ids = [sid for sid in song_ids if sid not in play_url_map]
+                if missing_ids:
+                    logger.info("[web_fallback] %d 个播放链接缺失，启动单曲并发补偿", len(missing_ids))
+
+                    async def _fetch_single_play_url(song_id: str):
+                        single_url = f"{api_base}/song/url?id={song_id}&level=exhigh"
+                        async with session.get(single_url, timeout=timeout) as single_resp:
+                            return await single_resp.json()
+
+                    single_payloads = await asyncio.gather(
+                        *(_fetch_single_play_url(sid) for sid in missing_ids),
+                        return_exceptions=True,
+                    )
+                    failed_retries = 0
+                    for payload in single_payloads:
+                        if isinstance(payload, Exception):
+                            failed_retries += 1
+                            continue
+                        retry_urls, retry_trials = parse_play_url_payload(payload)
+                        play_url_map.update(retry_urls)
+                        trial_info_map.update(retry_trials)
+                    if failed_retries:
+                        logger.warning("[web_fallback] %d 个单曲播放链接补偿请求失败", failed_retries)
+
+                for sid, is_trial in trial_info_map.items():
+                    if is_trial:
+                        logger.warning(f"[web_fallback] 歌曲 {sid} 为 30s 试听版")
 
                 # 4) 组装结果 —— 必须包含 preview_url (前端播放用) + cover_url
                 results = []

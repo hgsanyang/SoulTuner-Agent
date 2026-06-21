@@ -44,3 +44,7 @@ Stable local ports:
 `netease-start` looks for `NeteaseCloudMusicApi/app.js` under the project root,
 `C:\Users\sanyang\sanyangworkspace\tools\NeteaseCloudMusicApi`, then
 `$HOME\NeteaseCloudMusicApi`.
+
+The backend reads the project `.env` only at container runtime through Compose.
+The file is excluded from both Git and the Docker build context, so secrets are
+not copied into image layers; recreate the backend after changing private values.

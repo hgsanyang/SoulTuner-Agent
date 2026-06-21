@@ -168,13 +168,79 @@ def test_source_weight_can_change_fused_order_without_disabling_a_source():
     assert vector_order[0]["song"]["title"] == "Dense First"
 
 
-def test_unknown_language_does_not_pass_an_explicit_language_constraint():
+def test_unknown_language_and_region_do_not_conflict_with_hard_constraints():
     candidates = weighted_rrf(
-        {"dense": [_item("Unknown", "A", language="Unknown")]},
+        {
+            "dense": [
+                _item("Unknown Labels", "A", language="Unknown", region=None),
+                _item("English Song", "B", language="English", region="Western"),
+            ]
+        },
         recall_weights_for_intent("vector_search"),
     )
 
-    assert apply_hard_filters(candidates, {"language": "Japanese"}) == []
+    filtered = apply_hard_filters(candidates, {"language": "Japanese", "region": "Japan"})
+
+    assert [(item["song"]["title"], item["song"]["artist"]) for item in filtered] == [
+        ("Unknown Labels", "A")
+    ]
+
+
+def test_hard_filter_falls_back_to_safety_filtered_rrf_top_k_when_too_sparse():
+    candidates = weighted_rrf(
+        {
+            "dense": [
+                _item("Unknown First", "A", rank=0, language="Unknown", region=None),
+                _item("Unknown Second", "B", rank=1, language=None, region=None),
+                _item("Blocked", "C", rank=2, language="Unknown", region=None),
+                _item("English Conflict", "D", rank=3, language="English", region="Western"),
+            ]
+        },
+        recall_weights_for_intent("vector_search"),
+    )
+
+    class Logger:
+        def __init__(self):
+            self.messages = []
+
+        def warning(self, message, *args):
+            self.messages.append(message % args)
+
+    logger = Logger()
+    filtered = apply_hard_filters(
+        candidates,
+        {"language": "Japanese", "region": "Japan"},
+        disliked_titles={"Blocked"},
+        limit=3,
+        logger=logger,
+    )
+
+    assert [item["song"]["title"] for item in filtered] == [
+        "Unknown First",
+        "Unknown Second",
+        "English Conflict",
+    ]
+    assert logger.messages
+    assert logger.messages[0].startswith("[HardFilterFallback]")
+
+
+def test_hard_filter_keeps_strict_language_matches_ahead_of_unknown_labels():
+    candidates = weighted_rrf(
+        {
+            "dense": [
+                _item("Unknown First", "A", rank=0, language="Unknown", region=None),
+                _item("Cantonese Song", "B", rank=1, language="Cantonese", region="Hong Kong"),
+            ]
+        },
+        recall_weights_for_intent("vector_search"),
+    )
+
+    filtered = apply_hard_filters(candidates, {"language": "Cantonese"}, limit=8)
+
+    assert [item["song"]["title"] for item in filtered] == [
+        "Cantonese Song",
+        "Unknown First",
+    ]
 
 
 def test_entity_alias_matching_is_case_and_spacing_insensitive():

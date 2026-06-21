@@ -157,12 +157,25 @@ def _language_matches(song: Mapping[str, Any], language: str) -> bool:
     return bool(actual and actual == expected)
 
 
+def _has_known_label(value: Any) -> bool:
+    normalized = normalize_text(value)
+    return bool(normalized and normalized not in {"unknown", "none", "null", "na", "n/a", "未知", "未标注"})
+
+
 def apply_hard_filters(
     candidates: List[dict],
     hard_constraints: Mapping[str, Any] | None,
     disliked_titles: Iterable[str] = (),
+    *,
+    limit: int | None = None,
+    logger: Any | None = None,
 ) -> List[dict]:
-    """Apply the only exclusion stage: request hard constraints plus safety."""
+    """Apply the only exclusion stage: request hard constraints plus safety.
+
+    DISLIKES, explicit entities, and instrumental requests stay strict. Sparse
+    language/region metadata is only relaxed when strict language/region filtering
+    would empty the result set.
+    """
     hard = dict(hard_constraints or {})
     artist_entities = list(hard.get("artist_entities") or [])
     song_entities = list(hard.get("song_entities") or [])
@@ -171,24 +184,78 @@ def apply_hard_filters(
     instrumental = bool(hard.get("instrumental"))
     disliked = {normalize_text(title) for title in disliked_titles if normalize_text(title)}
 
-    filtered = []
+    safety_filtered = []
     for item in candidates:
+        song = item.get("song") or {}
+        if normalize_text(song.get("title", "")) not in disliked:
+            safety_filtered.append(item)
+
+    entity_filtered = []
+    for item in safety_filtered:
         song = item.get("song") or {}
         title = song.get("title", "")
         artist = song.get("artist", "")
 
-        if normalize_text(title) in disliked:
-            continue
         if artist_entities and not _matches_any(artist, artist_entities):
             continue
         if song_entities and not _matches_any(title, song_entities):
             continue
-        if language and not _language_matches(song, str(language)):
-            continue
-        if region and normalize_text(song.get("region")) != normalize_text(region):
-            continue
         if instrumental and not _language_matches(song, "Instrumental"):
             continue
-        filtered.append(item)
+        entity_filtered.append(item)
 
-    return filtered
+    def _language_region_status(song: Mapping[str, Any]) -> str:
+        """Return match, unknown, or conflict for sparse catalog labels."""
+        has_unknown = False
+        if language:
+            if _has_known_label(song.get("language")):
+                if not _language_matches(song, str(language)):
+                    return "conflict"
+            else:
+                has_unknown = True
+        if region:
+            if _has_known_label(song.get("region")):
+                if normalize_text(song.get("region")) != normalize_text(region):
+                    return "conflict"
+            else:
+                has_unknown = True
+        return "unknown" if has_unknown else "match"
+
+    has_sparse_label_constraint = bool(language or region)
+    if not has_sparse_label_constraint:
+        return entity_filtered
+
+    strict_matches = []
+    unknown_labels = []
+    conflicts = []
+    for item in entity_filtered:
+        status = _language_region_status(item.get("song") or {})
+        if status == "match":
+            strict_matches.append(item)
+        elif status == "unknown":
+            unknown_labels.append(item)
+        else:
+            conflicts.append(item)
+
+    # Known matches are most trustworthy; missing labels remain eligible instead
+    # of being mistaken for conflicts.
+    preferred = strict_matches + unknown_labels
+
+    min_required = max(int(limit or 0), 8) if limit is not None else 0
+    if not min_required or len(preferred) >= min_required:
+        return preferred
+
+    # Preserve entity/instrumental/safety constraints, but fill a sparse language
+    # or region result from the remaining RRF candidates rather than returning an
+    # unusably short or empty list.
+    needed = min_required - len(preferred)
+    relaxed_filtered = preferred + conflicts[:needed]
+    if logger is not None:
+        logger.warning(
+            "[HardFilterFallback] language/region filtering left %d/%d preferred "
+            "candidates; filled to %d from RRF while keeping entity/safety strict",
+            len(preferred),
+            len(entity_filtered),
+            len(relaxed_filtered),
+        )
+    return relaxed_filtered
