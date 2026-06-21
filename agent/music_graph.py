@@ -30,6 +30,12 @@ from agent.netease_query import (
     fetch_json_with_retry,
     parse_play_url_payload,
 )
+from agent.retrieval_fallback import (
+    avoid_terms,
+    decide_online_fallback,
+    fallback_query,
+    filter_results_by_avoid,
+)
 from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
@@ -481,94 +487,56 @@ class MusicRecommendationGraph:
                 timings.update(raw_hybrid_result.metadata.get("timings") or {})
             timings["search_node_ms"] = round((_time.time() - _t0) * 1000, 3)
 
-            # ══ 本地未命中检测：graph_search 有实体但结果不精确时，降级联网 ══
-            # Case 1: 完全无结果
-            # Case 2: 有结果但没有精确匹配请求的歌名（如搜"痛仰西湖"返回痛仰的其他歌）
-            intent_type = state.get("intent_type", "")
-            graph_entities = (retrieval_plan or {}).get("graph_entities", [])
-            graph_artist_entities = (retrieval_plan or {}).get("graph_artist_entities", []) or []
-            graph_song_entities = (retrieval_plan or {}).get("graph_song_entities", []) or []
-            need_web_fallback = False
+            for item in search_results:
+                if not isinstance(item, dict):
+                    continue
+                song = item.get("song", item)
+                if isinstance(song, dict):
+                    song.setdefault("source", "local")
 
-            if intent_type == "graph_search" and bool(graph_entities):
-                if not search_results:
-                    # Case 1: 完全无结果
-                    need_web_fallback = True
-                    logger.warning(
-                        f"[search_songs] 本地库完全未命中，将降级联网搜索: entities={graph_entities}"
-                    )
-                elif graph_artist_entities and not graph_song_entities:
-                    matched_artists = 0
-                    checked_artists = 0
-                    for r in search_results:
-                        song = r.get("song", r) if isinstance(r, dict) else {}
-                        if not isinstance(song, dict):
-                            continue
-                        artist = song.get("artist", "")
-                        if not artist or artist == "互联网最新情报":
-                            continue
-                        checked_artists += 1
-                        if artist_matches(artist, tuple(graph_artist_entities)):
-                            matched_artists += 1
-                    if checked_artists == 0 or matched_artists / max(checked_artists, 1) < 0.7:
-                        need_web_fallback = True
-                        logger.warning(
-                            f"[search_songs] 歌手实体结果命中不足，将降级联网搜索: "
-                            f"artists={graph_artist_entities}, matched={matched_artists}/{checked_artists}"
-                        )
-                elif graph_song_entities:
-                    # Case 2: 有多个实体（歌手+歌名），检查返回结果是否精确包含歌名
-                    # 实体可能是 ["痛仰乐队", "西湖"] 或 ["周杰伦", "Jay Chou", "稻香"]
-                    # 检查 graph 返回的歌名是否与任何 entity 模糊匹配
-                    result_titles = set()
-                    for r in search_results:
-                        t = ""
-                        if isinstance(r, dict):
-                            t = r.get("title", "") or r.get("song_name", "") or r.get("name", "")
-                            song_dict = r.get("song", {})
-                            if isinstance(song_dict, dict):
-                                t = t or song_dict.get("title", "") or song_dict.get("song_name", "")
-                        result_titles.add(t.lower().strip())
-
-                    # 对每个 entity，看它是否出现在某首歌名中（或者歌名出现在它中）
-                    entity_matched_in_title = False
-                    for ent in graph_song_entities:
-                        ent_lower = ent.lower().strip()
-                        if not ent_lower:
-                            continue
-                        for title in result_titles:
-                            if not title:
-                                continue
-                            if ent_lower in title or title in ent_lower:
-                                entity_matched_in_title = True
-                                break
-                        if entity_matched_in_title:
-                            break
-
-                    if not entity_matched_in_title:
-                        need_web_fallback = True
-                        logger.warning(
-                            f"[search_songs] 本地库返回 {len(search_results)} 首但无精确歌名匹配，"
-                            f"降级联网搜索: entities={graph_entities}, "
-                            f"result_titles={list(result_titles)[:3]}"
-                        )
+            fallback_decision = decide_online_fallback(search_results, retrieval_plan)
+            if fallback_decision.required:
+                logger.warning(
+                    "[search_songs] 本地库存不足，统一降级联网: reason=%s, inventory=%d",
+                    fallback_decision.reason,
+                    fallback_decision.inventory_count,
+                )
 
             return {
                 "search_results": search_results,
                 "recommendations": raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else [],
-                "_need_web_fallback": need_web_fallback,
-                "_web_fallback_query": " ".join(graph_entities[:4]) if graph_entities else query,
+                "_need_web_fallback": fallback_decision.required,
+                "_web_fallback_query": fallback_query(retrieval_plan, query),
+                "retrieval_meta": {
+                    "inventory_count": fallback_decision.inventory_count,
+                    "result_count": len(search_results),
+                    "source": "local",
+                    "degraded": fallback_decision.required,
+                    "degraded_reason": fallback_decision.reason or None,
+                },
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": timings,
             }
             
         except Exception as e:
             logger.error(f"搜索歌曲失败: {str(e)}")
+            retrieval_plan = state.get("retrieval_plan") or {}
+            fallback_decision = decide_online_fallback([], retrieval_plan)
             return {
                 "search_results": [],
                 "recommendations": [],
-                "_need_web_fallback": False,
-                "_web_fallback_query": "",
+                "_need_web_fallback": fallback_decision.required,
+                "_web_fallback_query": fallback_query(
+                    retrieval_plan,
+                    state.get("intent_parameters", {}).get("query", state.get("input", "")),
+                ),
+                "retrieval_meta": {
+                    "inventory_count": 0,
+                    "result_count": 0,
+                    "source": "local",
+                    "degraded": fallback_decision.required,
+                    "degraded_reason": "local_retrieval_error" if fallback_decision.required else None,
+                },
                 "step_count": state.get("step_count", 0) + 1,
                 "error_log": state.get("error_log", []) + [
                     {"node": "search_songs", "error": str(e)}
@@ -598,6 +566,20 @@ class MusicRecommendationGraph:
         user_input = state.get("input", "")
         fallback_query = state.get("_web_fallback_query", "")
         retrieval_plan = state.get("retrieval_plan") or {}
+        prior_retrieval_meta = dict(state.get("retrieval_meta") or {})
+        excluded_by_avoid = 0
+
+        def _web_meta(result_count: int, failure_reason: str | None = None) -> Dict[str, Any]:
+            degraded = bool(prior_retrieval_meta.get("degraded")) or bool(failure_reason)
+            return {
+                "inventory_count": int(prior_retrieval_meta.get("inventory_count") or 0),
+                "result_count": result_count,
+                "source": "web",
+                "degraded": degraded,
+                "degraded_reason": failure_reason or prior_retrieval_meta.get("degraded_reason"),
+                "excluded_by_avoid": excluded_by_avoid,
+            }
+
         params = state.get("intent_parameters", {})
         netease_plan = build_netease_query_plan(
             user_input=user_input,
@@ -662,10 +644,21 @@ class MusicRecommendationGraph:
                             if artist_matches("、".join(a.get("name", "") for a in s.get("artists", [])), netease_plan.artist_terms)
                         ]
 
+                songs, excluded_by_avoid = filter_results_by_avoid(
+                    songs,
+                    avoid_terms(retrieval_plan),
+                )
+                if excluded_by_avoid:
+                    logger.info(
+                        "[web_fallback] 联网结果应用否定约束，排除 %d 首",
+                        excluded_by_avoid,
+                    )
+
                 if not songs:
                     logger.warning(f"[web_fallback] 联网搜索无结果: {query}")
                     return {"search_results": [], "recommendations": [],
                             "_need_web_fallback": False,
+                            "retrieval_meta": _web_meta(0, "web_search_empty"),
                             "step_count": state.get("step_count", 0) + 1,
                             "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0)}
 
@@ -767,6 +760,7 @@ class MusicRecommendationGraph:
                     raw_markdown="",
                 ),
                 "_need_web_fallback": False,
+                "retrieval_meta": _web_meta(len(results)),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
             }
@@ -776,6 +770,7 @@ class MusicRecommendationGraph:
             return {
                 "search_results": [], "recommendations": [],
                 "_need_web_fallback": False,
+                "retrieval_meta": _web_meta(0, "web_search_error"),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
             }

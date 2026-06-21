@@ -48,6 +48,7 @@ class MusicAgentState(TypedDict, total=False):
     # 额外信息
     metadata: Dict[str, Any]  # 元数据
     timings: Dict[str, float]  # 分阶段耗时（毫秒），用于评测与可观测性
+    retrieval_meta: Dict[str, Any]  # 库存命中、结果来源与降级原因
     retrieval_plan: Optional[Dict[str, Any]]  # 统一检索计划（来自 MusicQueryPlan）
 
     # GraphZep 记忆上下文（新增）

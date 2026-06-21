@@ -76,6 +76,7 @@ class MusicRecommendationAgent:
                 "error_log": [],
                 "metadata": {},
                 "timings": {},
+                "retrieval_meta": {},
             }
             
             # 执行工作流
@@ -104,6 +105,7 @@ class MusicRecommendationAgent:
                 "playlist": result.get("playlist"),
                 "errors": result.get("error_log", []),
                 "timings": timings,
+                "retrieval_meta": result.get("retrieval_meta", {}),
             }
             
         except Exception as e:
@@ -118,6 +120,7 @@ class MusicRecommendationAgent:
                 "timings": {
                     "agent_total_ms": round((time.perf_counter() - request_started) * 1000, 3)
                 },
+                "retrieval_meta": {},
             }
     
     async def stream_recommendations(
@@ -179,6 +182,7 @@ class MusicRecommendationAgent:
                 "error_log": [],
                 "metadata": {"request_id": _request_id},
                 "timings": {},
+                "retrieval_meta": {},
             }
             
             config = {"recursion_limit": 50}
@@ -267,7 +271,11 @@ class MusicRecommendationAgent:
                             yield {"type": "song", "song": song, "index": i, "total": len(recommendations)}
                     yield {"type": "recommendations_complete"}
             
-            yield {"type": "complete", "success": True}
+            yield {
+                "type": "complete",
+                "success": True,
+                "retrieval_meta": result.get("retrieval_meta", {}),
+            }
             logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")
             
         except asyncio.CancelledError:

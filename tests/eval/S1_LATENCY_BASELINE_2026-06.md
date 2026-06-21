@@ -3,7 +3,8 @@
 ## Reproduction
 
 ```powershell
-$env:DASHSCOPE_API_KEY=$null
+$line = Get-Content .env | Where-Object { $_ -match '^\s*DASHSCOPE_API_KEY\s*=' } | Select-Object -First 1
+$env:DASHSCOPE_API_KEY = ($line -replace '^\s*DASHSCOPE_API_KEY\s*=\s*', '').Trim().Trim('"').Trim("'")
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --timing --quiet
 ```
 

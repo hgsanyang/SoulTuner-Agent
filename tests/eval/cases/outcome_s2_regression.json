@@ -1,0 +1,27 @@
+[
+  {
+    "id": "holdout_artist_01_jay_not_love_song",
+    "category": "explicit_artist",
+    "query": "周杰伦，但不要情歌，想听酷一点的",
+    "checks": {"min_results": 3, "artist_any_of": ["周杰伦", "Jay Chou"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认保留周杰伦约束，同时避开明显苦情/情歌"]}
+  },
+  {
+    "id": "holdout_artist_02_eason_exclude_ten_years",
+    "category": "negative_constraint",
+    "query": "陈奕迅的歌，但不要十年",
+    "checks": {"min_results": 2, "artist_any_of": ["陈奕迅", "Eason"], "artist_match_min_ratio": 0.5, "must_exclude": [{"title": "十年", "artist": "陈奕迅"}], "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+  {
+    "id": "holdout_song_01_qingtian_not_jay",
+    "category": "explicit_song",
+    "query": "想听晴天，但不是周杰伦那首",
+    "checks": {"min_results": 1, "must_include_titles": ["晴天"], "must_exclude": [{"title": "晴天", "artist": "周杰伦"}], "min_playable_ratio": 0.3, "not_degraded": true, "manual_review": ["确认理解同名歌/翻唱边界，而非默认周杰伦"]}
+  },
+  {
+    "id": "dev_context_04_same_artist_different_mood",
+    "category": "multi_turn_context",
+    "query": "还是林俊杰，但别要苦情歌",
+    "chat_history": [{"role": "user", "content": "林俊杰的歌"}, {"role": "assistant", "content": "推荐了一些林俊杰抒情歌。"}],
+    "checks": {"min_results": 2, "artist_any_of": ["林俊杰", "JJ Lin"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认保留歌手，减少苦情取向"]}
+  }
+]
