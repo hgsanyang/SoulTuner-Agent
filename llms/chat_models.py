@@ -49,7 +49,7 @@ def _chat_openai_extra_body(provider: str, target_model: str) -> dict:
 
 
 def get_chat_model(
-    provider: str = "siliconflow",
+    provider: str = "dashscope",
     model_name: Optional[str] = None,
     temperature: float = 0.7,
     timeout: Optional[int] = None,
@@ -104,7 +104,7 @@ def deepseek_llm(temperature: float = 0.7):
 
 
 def qwen_llm(temperature: float = 0.7):
-    return get_chat_model(provider="siliconflow", temperature=temperature)
+    return get_chat_model(provider="dashscope", temperature=temperature)
 
 
 def siliconflow_llm(temperature: float = 0.7):
@@ -114,13 +114,13 @@ def siliconflow_llm(temperature: float = 0.7):
 def get_intent_chat_model():
     """Return the Planner LLM, falling back to the main LLM settings."""
     try:
-        provider = _settings_value("intent_llm_provider", "") or _settings_value("llm_default_provider", "siliconflow")
+        provider = _settings_value("intent_llm_provider", "") or _settings_value("llm_default_provider", "dashscope")
         model_name = _settings_value("intent_llm_model", "") or _settings_value("llm_default_model", "") or None
         max_tokens = _settings_value("intent_max_tokens", 2048)
         temperature = _settings_value("intent_temperature", 0.3)
         return get_chat_model(provider=provider, model_name=model_name, temperature=temperature, max_tokens=max_tokens)
     except Exception:
-        return get_chat_model(provider="siliconflow", temperature=0.3, max_tokens=2048)
+        return get_chat_model(provider="dashscope", temperature=0.3, max_tokens=2048)
 
 
 def gemini_llm(model_name: Optional[str] = None, temperature: float = 1.0):
@@ -130,21 +130,21 @@ def gemini_llm(model_name: Optional[str] = None, temperature: float = 1.0):
 def get_compress_chat_model():
     """Return the GSSC compression LLM, defaulting to the main LLM."""
     try:
-        provider = _settings_value("compress_llm_provider", "") or _settings_value("llm_default_provider", "siliconflow")
+        provider = _settings_value("compress_llm_provider", "") or _settings_value("llm_default_provider", "dashscope")
         model_name = _settings_value("compress_llm_model", "") or None
         return get_chat_model(provider=provider, model_name=model_name, temperature=0.3, max_tokens=2048)
     except Exception:
-        return get_chat_model(provider="siliconflow", temperature=0.3, max_tokens=2048)
+        return get_chat_model(provider="dashscope", temperature=0.3, max_tokens=2048)
 
 
 def get_explain_chat_model():
     """Return the explanation-generation LLM, defaulting to the main LLM."""
     try:
-        provider = _settings_value("explain_llm_provider", "") or _settings_value("llm_default_provider", "siliconflow")
+        provider = _settings_value("explain_llm_provider", "") or _settings_value("llm_default_provider", "dashscope")
         model_name = _settings_value("explain_llm_model", "") or _settings_value("llm_default_model", "") or None
         return get_chat_model(provider=provider, model_name=model_name, temperature=0.7)
     except Exception:
-        return get_chat_model(provider="siliconflow", temperature=0.7)
+        return get_chat_model(provider="dashscope", temperature=0.7)
 
 
 def ollama_llm(model_name: Optional[str] = None, temperature: float = 0.6):

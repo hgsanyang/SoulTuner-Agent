@@ -49,18 +49,23 @@ async def startup_event():
         logger.info("🧪 Mock 模式：跳过模型、Neo4j、GraphZep 与 KV Cache 预热")
         return
     
-    # 1. 预加载 M2D-CLAP 跨模态模型（音频骨干 + 文本编码器）
+    # 1. 预加载 M2D-CLAP 音频骨干；文本编码器后台预热，避免首次下载阻塞 API 就绪。
     try:
         from retrieval.audio_embedder import get_m2d2_model, encode_text_to_embedding
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, get_m2d2_model)
         logger.info(f"  ✅ M2D-CLAP 音频骨干预加载完成 ({_t.time()-_t0:.1f}s)")
-        # ★ 关键：预热文本编码器（GTE-base / BERT-base）
-        # 文本编码器是懒加载的（首次 encode_clap_text 才创建），
-        # 包含 AutoModel.from_pretrained() 初始化，首次耗时 ~60-70s。
-        # 在启动时预热，避免首次用户请求等待。
-        await loop.run_in_executor(None, lambda: encode_text_to_embedding("warmup"))
-        logger.info(f"  ✅ M2D-CLAP 文本编码器预热完成 ({_t.time()-_t0:.1f}s)")
+
+        async def _warmup_text_encoder_background():
+            try:
+                await loop.run_in_executor(None, lambda: encode_text_to_embedding("warmup"))
+                logger.info(f"  ✅ M2D-CLAP 文本编码器后台预热完成 ({_t.time()-_t0:.1f}s)")
+            except Exception as warmup_error:
+                logger.warning(f"  ⚠️ M2D-CLAP 文本编码器后台预热失败，向量召回将按路超时降级: {warmup_error}")
+
+        if os.getenv("MUSIC_M2D_TEXT_WARMUP", "background").lower() not in {"0", "false", "off"}:
+            asyncio.create_task(_warmup_text_encoder_background())
+            logger.info("  🔄 M2D-CLAP 文本编码器后台预热已启动")
     except Exception as e:
         logger.error(f"  ❌ M2D-CLAP 模型预加载失败: {e}")
     
@@ -237,7 +242,7 @@ class RecommendationRequest(BaseModel):
     mood: Optional[str] = None
     user_preferences: Optional[Dict[str, Any]] = None
     chat_history: Optional[List[Dict[str, str]]] = None
-    llm_provider: str = "siliconflow"          # 模型供应商: siliconflow / dashscope / google / ...
+    llm_provider: str = "dashscope"            # 模型供应商: dashscope / siliconflow / google / ...
     web_search_enabled: bool = True           # 是否开启联网搜索
 
 
@@ -254,7 +259,7 @@ class JourneyRequest(BaseModel):
     duration: int = 60  # 总时长(分钟)
     user_preferences: Optional[Dict[str, Any]] = None
     context: Optional[Dict[str, Any]] = None  # 天气、地点、时间等
-    llm_provider: str = "siliconflow"  # 模型提供商，和推荐页保持一致
+    llm_provider: str = "dashscope"  # 模型提供商，和推荐页保持一致
 
 
 class SearchRequest(BaseModel):
@@ -332,7 +337,7 @@ async def stream_recommendations(
             from agent.music_graph import set_llm, set_intent_llm, set_explain_llm
             from config.settings import settings as _req_settings
             
-            _provider = _req_settings.llm_default_provider or "siliconflow"
+            _provider = _req_settings.llm_default_provider or "dashscope"
             _model = _req_settings.llm_default_model
             
             new_llm = get_chat_model(provider=_provider, model_name=_model)
@@ -702,8 +707,11 @@ async def get_settings_endpoint():
         "intent_llm_model": settings.intent_llm_model,
         "hyde_llm_provider": settings.hyde_llm_provider,
         "hyde_llm_model": settings.hyde_llm_model,
+        "explain_llm_provider": settings.explain_llm_provider,
+        "explain_llm_model": settings.explain_llm_model,
         "compress_llm_provider": settings.compress_llm_provider,
         "compress_llm_model": settings.compress_llm_model,
+        "explanation_fast_mode": settings.explanation_fast_mode,
         "context_total_budget": settings.context_total_budget,
         "intent_max_tokens": settings.intent_max_tokens,
         "finetuned_model_path": settings.finetuned_model_path,
@@ -749,6 +757,7 @@ class SettingsUpdateRequest(BaseModel):
     compress_llm_model: str | None = None
     explain_llm_provider: str | None = None
     explain_llm_model: str | None = None
+    explanation_fast_mode: bool | None = None
     context_total_budget: int | None = None
     intent_max_tokens: int | None = None
     finetuned_model_path: str | None = None
@@ -883,7 +892,9 @@ async def reset_settings_endpoint():
             "compress_llm_model": fresh.compress_llm_model,
             "explain_llm_provider": fresh.explain_llm_provider,
             "explain_llm_model": fresh.explain_llm_model,
+            "explanation_fast_mode": fresh.explanation_fast_mode,
             "context_total_budget": fresh.context_total_budget,
+            "intent_max_tokens": fresh.intent_max_tokens,
             "finetuned_model_path": fresh.finetuned_model_path,
             "llm_timeout": fresh.llm_timeout,
             "audio_data_dir": fresh.audio_data_dir,

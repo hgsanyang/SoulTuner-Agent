@@ -24,7 +24,7 @@ class MultiLLM(BaseLLM):
 
     def __init__(
         self,
-        provider: str = "siliconflow",
+        provider: str = "dashscope",
         model_name: Optional[str] = None,
         temperature: float = 0.7,
     ):

@@ -2,8 +2,8 @@ param(
     [ValidateSet("up", "down", "doctor", "test", "ingest", "logs", "mock", "netease-start", "netease-stop", "netease-status")]
     [string]$Action = "up",
 
-    [ValidateSet("lite", "standard", "full")]
-    [string]$Profile = "standard"
+    [ValidateSet("cpu", "gpu")]
+    [string]$Profile = "cpu"
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +38,14 @@ function Invoke-ProjectPytest {
     }
     Write-Host "pytest is not available in music_agent; falling back to system python."
     & python -m pytest tests/unit/ -q
+}
+
+function Assert-LastNativeCommand {
+    param([string]$Step)
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Step failed (exit code $LASTEXITCODE)."
+    }
 }
 
 function Get-NeteaseApiDir {
@@ -98,32 +106,66 @@ function Start-NeteaseApi {
 }
 
 function Stop-NeteaseApi {
+    $containerId = docker compose --profile cpu --profile gpu ps -q netease 2>$null
+    if ($LASTEXITCODE -eq 0 -and $containerId) {
+        docker compose --profile cpu --profile gpu stop netease
+        Assert-LastNativeCommand "Stopping Docker Netease proxy"
+        Write-Host "Docker Netease proxy stopped"
+        return
+    }
+
     $proc = Get-NeteaseProcess
     if (-not $proc) {
         Write-Host "NeteaseAPI: already stopped"
         return
     }
+    if ($proc.ProcessName -ne "node") {
+        throw "Port 3000 belongs to $($proc.ProcessName) (pid=$($proc.Id)); refusing to stop an unrelated process."
+    }
     Stop-Process -Id $proc.Id -Force
     Write-Host "NeteaseAPI stopped (pid=$($proc.Id))"
 }
 
+function Stop-LocalNeteaseApiForDocker {
+    $containerId = docker compose --profile cpu --profile gpu ps -q netease 2>$null
+    if ($LASTEXITCODE -eq 0 -and $containerId) {
+        return
+    }
+
+    $proc = Get-NeteaseProcess
+    if (-not $proc) {
+        return
+    }
+    if ($proc.ProcessName -eq "node") {
+        Write-Host "Stopping old local NeteaseAPI on :3000 before starting Docker proxy (pid=$($proc.Id))"
+        Stop-Process -Id $proc.Id -Force
+        Start-Sleep -Seconds 1
+        return
+    }
+    Write-Warning "Port 3000 is occupied by $($proc.ProcessName) (pid=$($proc.Id)). Docker Netease proxy may not start."
+}
+
 switch ($Action) {
     "up" {
-        if ($Profile -eq "lite") {
-            docker compose up -d neo4j backend frontend
-        } else {
-            docker compose --profile $Profile up -d
+        Stop-LocalNeteaseApiForDocker
+        docker compose --profile $Profile up -d --remove-orphans neo4j graphzep searxng netease backend
+        Assert-LastNativeCommand "Starting core Docker services"
+        docker compose --profile $Profile up -d frontend
+        Assert-LastNativeCommand "Starting frontend"
+        if ($Profile -eq "gpu") {
+            docker compose --profile gpu up -d ingest-worker
+            Assert-LastNativeCommand "Starting GPU ingestion worker"
         }
         Write-Host "Frontend: http://localhost:3003"
         Write-Host "Backend:  http://localhost:8501"
         Write-Host "Neo4j:    http://localhost:7474"
-        if ($Profile -ne "lite") {
-            Write-Host "GraphZep: http://localhost:3100"
-            Write-Host "SearxNG:  http://localhost:8888"
-        }
+        Write-Host "GraphZep: http://localhost:3100"
+        Write-Host "SearxNG:  http://localhost:8888"
+        Write-Host "Netease:  http://localhost:3000"
     }
     "down" {
-        docker compose --profile standard --profile full down
+        docker compose --profile cpu --profile gpu down
+        Assert-LastNativeCommand "Stopping Docker services"
     }
     "doctor" {
         Invoke-ProjectPython scripts/doctor.py
@@ -132,14 +174,15 @@ switch ($Action) {
         Invoke-ProjectPytest
     }
     "ingest" {
-        if ($Profile -eq "full") {
-            docker compose --profile full run --rm ingest-worker python scripts/ingest_worker.py
+        if ($Profile -eq "gpu") {
+            docker compose --profile gpu run --rm ingest-worker python scripts/ingest_worker.py
+            Assert-LastNativeCommand "Running GPU ingestion"
         } else {
             Invoke-ProjectPython scripts/ingest_worker.py
         }
     }
     "logs" {
-        docker compose --profile standard --profile full logs -f --tail 200
+        docker compose --profile cpu --profile gpu logs -f --tail 200
     }
     "mock" {
         Invoke-ProjectPython start.py --mock

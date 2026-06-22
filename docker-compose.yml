@@ -35,7 +35,7 @@ services:
 
   # ---- GraphZep 记忆服务 ----
   graphzep:
-    profiles: ["standard", "full"]
+    profiles: ["cpu", "gpu"]
     build: ./graphzep_service
     container_name: soultuner-graphzep
     depends_on:
@@ -47,9 +47,9 @@ services:
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"
-      OPENAI_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
-      OPENAI_API_KEY: ${SiliconFlow_API_KEY}
-      MODEL_NAME: ${GRAPHZEP_MODEL_NAME:-deepseek-ai/DeepSeek-V3.2}
+      OPENAI_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      OPENAI_API_KEY: ${DASHSCOPE_API_KEY}
+      MODEL_NAME: ${GRAPHZEP_MODEL_NAME:-qwen3.7-plus}
       EMBEDDING_MODEL_NAME: ${EMBEDDING_MODEL_NAME:-BAAI/bge-m3}
       PORT: "3100"
     restart: unless-stopped
@@ -77,17 +77,20 @@ services:
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"
       GRAPHZEP_BASE_URL: http://graphzep:3100
-      SILICONFLOW_API_KEY: ${SiliconFlow_API_KEY}
-      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
       MODEL_NAME: ${MODEL_NAME:-qwen3.7-plus}
       MUSIC_AUDIO_DATA_DIR: /app/data/processed_audio/audio
       MUSIC_DATA_ROOT: /app/data
       MUSIC_WEB_SEARCH_ENABLED: "1"
       MUSIC_INLINE_INGEST_ENABLED: "0"
       MUSIC_INGEST_QUEUE_DIR: /app/data/ingest_queue
-      # 在线链路只读已挂载缓存；模型下载由 scripts/download_models.py 独立完成。
-      HF_HUB_OFFLINE: "1"
-      TRANSFORMERS_OFFLINE: "1"
+      NETEASE_API_BASE: http://netease:3000
+      # 默认允许缺失的 HuggingFace 文本编码器自动下载，保证 CPU/GPU 一键启动后向量检索可用。
+      # 如需完全离线运行，可在 .env 设置 HF_OFFLINE=true 并提前准备本地缓存。
+      HF_OFFLINE: ${HF_OFFLINE:-false}
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_CACHE: /root/.cache/huggingface/hub
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
       # 本地模型推理（可选，通过宿主机暴露的 vLLM 端口）
       VLLM_BASE_URL: ${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
     volumes:
@@ -105,10 +108,10 @@ services:
       retries: 5
       start_period: 120s  # M2D-CLAP 模型预热约 15-30s
 
-  # ---- 离线音乐增强 Worker（Full 模式）----
+  # ---- 离线音乐增强 Worker（GPU 模式）----
   # 在线 API 只写元数据和任务队列；该 Worker 独立完成歌词标签与音频向量提取。
   ingest-worker:
-    profiles: ["full"]
+    profiles: ["gpu"]
     build: .
     container_name: soultuner-ingest-worker
     command: ["python", "scripts/ingest_worker.py", "--watch"]
@@ -120,9 +123,12 @@ services:
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"
       MUSIC_INGEST_QUEUE_DIR: /app/data/ingest_queue
-      SILICONFLOW_API_KEY: ${SiliconFlow_API_KEY}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
-      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      HF_OFFLINE: ${HF_OFFLINE:-false}
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_CACHE: /root/.cache/huggingface/hub
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
     volumes:
       - ${MUSIC_DATA_PATH:-./data}:/app/data
       - ${M2D_CLAP_CACHE:-~/.cache/m2d_clap}:/root/.cache/m2d_clap
@@ -136,13 +142,22 @@ services:
               count: 1
               capabilities: [gpu]
 
-  # ---- 联网元搜索（Standard / Full 模式）----
+  # ---- 联网元搜索（CPU / GPU 模式）----
   searxng:
-    profiles: ["standard", "full"]
+    profiles: ["cpu", "gpu"]
     image: searxng/searxng:latest
     container_name: soultuner-searxng
     ports:
       - "8888:8080"
+    restart: unless-stopped
+
+  # ---- 网易云音乐代理（CPU / GPU 模式）----
+  netease:
+    profiles: ["cpu", "gpu"]
+    image: binaryify/netease_cloud_music_api:v4.26.0
+    container_name: soultuner-netease
+    ports:
+      - "3000:3000"
     restart: unless-stopped
 
   # ---- Next.js 前端 ----
