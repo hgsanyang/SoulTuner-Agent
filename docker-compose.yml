@@ -79,7 +79,7 @@ services:
       GRAPHZEP_BASE_URL: http://graphzep:3100
       SILICONFLOW_API_KEY: ${SiliconFlow_API_KEY}
       SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
-      MODEL_NAME: ${MODEL_NAME:-deepseek-ai/DeepSeek-V3.2}
+      MODEL_NAME: ${MODEL_NAME:-qwen3.7-plus}
       MUSIC_AUDIO_DATA_DIR: /app/data/processed_audio/audio
       MUSIC_DATA_ROOT: /app/data
       MUSIC_WEB_SEARCH_ENABLED: "1"

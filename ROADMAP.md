@@ -29,9 +29,10 @@
 - **✅ A1.6 = R1.6 库存感知与联网约束闭环**：联网降级只看最终库存与分层硬约束，不再依赖 intent label；字面 `soft_intent.avoid` 同样过滤联网结果；API 返回库存、来源与降级原因。4 个目标回归 `4/4`，holdout `17/20 (85%)`，单测 `109 passed`。
 - **✅ B1.1 = S3 延迟快赢**：GraphZep 离线熔断缓存、Planner 结果缓存、解释 fast-mode、HF offline 与项目私有 `.env` 密钥优先级已落地。dev 端到端 p50 `29.88s → 8.88s`，解释 p50 `17.41s → 0.00s`；holdout `17/20 → 19/20`。
 - **✅ S4 英文镜像验证**：新增 10 条英文自然语言 outcome 用例（dev 6 / holdout 4）。英文合计 `8/10 (80.0%)`，非英文 `64/70 (91.4%)`，差距 `11.4pp`，未达到 A2 触发阈值；英文失败归因于软排序，不是语言槽/实体链接。
+- **✅ S5 = B2 部署简化 + README 去 stale**：README/README_EN 顶部改成普通用户 Docker 3 步；本地开发/GPU 入库折叠；旧 `51 tests`、平等合并、7 类意图分类等描述已替换；`soultuner.ps1 up lite` 与 `up standard` 验证通过，doctor 全绿。
 - 模型统一为 `qwen3.7-plus`；评测报告均记录 git sha、dirty 状态、Planner `temperature=0` 与非密钥配置。
 
-> 检索控制流、联网约束闭环、第一轮延迟快赢与英文镜像验证已完成。Phase N 下一步做 S5 部署/文档简化；韩语库存、软排序与联网尾延迟保留为后续质量/性能里程碑。
+> 检索控制流、联网约束闭环、第一轮延迟快赢、英文镜像验证与部署文档简化已完成。Phase N 下一步做 S6a 前端 bug 审计；韩语库存、软排序与联网尾延迟保留为后续质量/性能里程碑。
 
 ---
 
@@ -70,7 +71,7 @@
 | 里程碑 | 目标 | 关键动作 | 依赖 | 验收 |
 |---|---|---|---|---|
 | **B1 = P3 降延迟** | 普通 3–8s / 复杂联网 10–15s | GraphZep 熔断（并入 A6）、Planner 输出缓存(query+profile hash)、explanation fast mode、HF offline、web fallback 优先 Netease | — | S3 第一轮已通过：dev p50 29.88s→8.88s；后续继续压 Planner 与 web fallback p95 |
-| **B2 = P6 部署一键化** | 真一键 | `soultuner.ps1 up lite/standard`、固定端口、doctor 给"下一步按钮式建议"、`PUBLIC_DEMO_MODE=1`(禁入库/下载/路径暴露、限频、脱敏日志、mock 数据) | — | 一条命令起栈；demo 模式安全 |
+| **B2 = P6 部署一键化** | 真一键 | `soultuner.ps1 up lite/standard`、固定端口、doctor 给"下一步按钮式建议"、`PUBLIC_DEMO_MODE=1`(禁入库/下载/路径暴露、限频、脱敏日志、mock 数据) | — | S5 第一轮已通过：三步 Docker 文档、lite/standard 启动、doctor 全绿；demo 模式安全另排 |
 | **B3 = P7 前端表达** | 用户看得懂"为什么推它" | 命中意图标签可视化、来源标注、无结果可操作建议、反馈按钮(喜欢/不喜欢/换一批/太吵/太慢/更小众)、dev-only 调试面板 | A3(反馈表) | 反馈按钮回写反馈表 |
 | **B4 = P8 数据合规** | 可公网推广 | 默认不分发音频，只展示元数据/解释/用户自有曲库；demo 用 mock/无版权 | — | demo 不含版权音频 |
 
@@ -93,7 +94,7 @@
 | S2 | A1.6 库存感知 + 联网约束闭环 | ✅ 已完成 | 目标回归 `4/4`；holdout `17/20 (85%)`；`109 passed` |
 | S3 | B1 GraphZep 熔断、HF offline、解释 fast-mode、Planner 缓存 | ✅ 已完成 | dev p50 `29.88s → 8.88s`；holdout `17/20 → 19/20`；详见 `tests/eval/S3_LATENCY_FAST_MODE_2026-06.md` |
 | S4 | 英文自然语言镜像用例与条件触发 A2 | ✅ 已完成 | 英文 `8/10`，非英文 `64/70`，差距 `11.4pp`；未触发 A2 |
-| S5 | B2 Docker 三步启动 + README/README_EN 去 stale | 待执行 | 新手 ≤3 条命令起栈；doctor 全绿 |
+| S5 | B2 Docker 三步启动 + README/README_EN 去 stale | ✅ 已完成 | 三步 Docker 文档已置顶；`up lite/standard` 通过；doctor 全绿 |
 | S6a | 前端 bug 审计与关键流程 smoke | 待执行 | 无 console error；推荐/播放/反馈/曲库通过 |
 | S6b | 曲库管理/入库 UI 设计与实现 | 待设计确认 | 先交设计稿，获批后才写代码 |
 | S7 | README/ROADMAP/DEEPDIVE 总扫 | 等待 S6b | 全部文档与最终实现一致 |
@@ -116,6 +117,6 @@
 
 ## 6. 下一步
 
-**先做 S5 部署简化 + README 去 stale。**
+**先做 S6a 前端 bug 审计 + smoke。**
 
-S4 英文镜像没有暴露实体链接或语言槽解析层面的系统性失败，暂不触发 A2。下一步转向 S5：把普通用户启动路径压成 Docker 三步，修 README/README_EN 里的 stale 数字与旧架构描述，并确认 `soultuner.ps1 up lite/standard`。
+S5 已把普通用户启动路径压成 Docker 三步，并验证 `soultuner.ps1 up lite`、`soultuner.ps1 up standard` 与 doctor。下一步转向 S6a：跑起前端，收集 console 报错和关键流程 bug，先列清单再修。
