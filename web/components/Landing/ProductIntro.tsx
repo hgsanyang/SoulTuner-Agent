@@ -113,7 +113,7 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
             zIndex: 1,
           }}
         >
-          更懂你你的私人灵魂调音师
+          更懂你的私人灵魂调音师
           <br />
           用自然语言描述心情或场景，即刻生成专属你的沉浸式歌单。
         </p>

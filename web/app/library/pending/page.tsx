@@ -183,7 +183,7 @@ export default function PendingPage() {
                                     </div>
 
                                     {/* Play */}
-                                    <button title="试听" onClick={e => { e.stopPropagation(); playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
+                                    <button title="试听" aria-label={`试听 ${song.title}`} onClick={e => { e.stopPropagation(); playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
                                         style={{ background: 'none', border: 'none', color: theme.colors.primary.accent, cursor: 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'transform 0.2s' }}
                                         onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
@@ -192,7 +192,7 @@ export default function PendingPage() {
                                     </button>
 
                                     {/* Delete */}
-                                    <button title="删除" onClick={e => { e.stopPropagation(); handleDelete(song); }}
+                                    <button title="删除" aria-label={`删除 ${song.title}`} onClick={e => { e.stopPropagation(); handleDelete(song); }}
                                         style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'color 0.2s' }}
                                         onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
                                         onMouseLeave={e => (e.currentTarget.style.color = theme.colors.text.muted)}

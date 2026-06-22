@@ -30,9 +30,10 @@
 - **✅ B1.1 = S3 延迟快赢**：GraphZep 离线熔断缓存、Planner 结果缓存、解释 fast-mode、HF offline 与项目私有 `.env` 密钥优先级已落地。dev 端到端 p50 `29.88s → 8.88s`，解释 p50 `17.41s → 0.00s`；holdout `17/20 → 19/20`。
 - **✅ S4 英文镜像验证**：新增 10 条英文自然语言 outcome 用例（dev 6 / holdout 4）。英文合计 `8/10 (80.0%)`，非英文 `64/70 (91.4%)`，差距 `11.4pp`，未达到 A2 触发阈值；英文失败归因于软排序，不是语言槽/实体链接。
 - **✅ S5 = B2 部署简化 + README 去 stale**：README/README_EN 顶部改成普通用户 Docker 3 步；本地开发/GPU 入库折叠；旧 `51 tests`、平等合并、7 类意图分类等描述已替换；`soultuner.ps1 up lite` 与 `up standard` 验证通过，doctor 全绿。
+- **✅ S6a 前端 bug 审计 + smoke**：修复首页文案错字、`/playlist` 误用通用推荐欢迎页、推荐/曲库/播放器图标按钮无可访问名称，以及浏览器自动播放拦截被误打成 console error。前端 lint/build 通过；浏览器 smoke 覆盖 `/playlist`、推荐播放/反馈、我的曲库，新增 console error 为 0。
 - 模型统一为 `qwen3.7-plus`；评测报告均记录 git sha、dirty 状态、Planner `temperature=0` 与非密钥配置。
 
-> 检索控制流、联网约束闭环、第一轮延迟快赢、英文镜像验证与部署文档简化已完成。Phase N 下一步做 S6a 前端 bug 审计；韩语库存、软排序与联网尾延迟保留为后续质量/性能里程碑。
+> 检索控制流、联网约束闭环、第一轮延迟快赢、英文镜像验证、部署文档简化与前端 smoke 已完成。Phase N 下一步进入 S6b 曲库管理/入库 UI 设计确认；韩语库存、软排序与联网尾延迟保留为后续质量/性能里程碑。
 
 ---
 
@@ -95,7 +96,7 @@
 | S3 | B1 GraphZep 熔断、HF offline、解释 fast-mode、Planner 缓存 | ✅ 已完成 | dev p50 `29.88s → 8.88s`；holdout `17/20 → 19/20`；详见 `tests/eval/S3_LATENCY_FAST_MODE_2026-06.md` |
 | S4 | 英文自然语言镜像用例与条件触发 A2 | ✅ 已完成 | 英文 `8/10`，非英文 `64/70`，差距 `11.4pp`；未触发 A2 |
 | S5 | B2 Docker 三步启动 + README/README_EN 去 stale | ✅ 已完成 | 三步 Docker 文档已置顶；`up lite/standard` 通过；doctor 全绿 |
-| S6a | 前端 bug 审计与关键流程 smoke | 待执行 | 无 console error；推荐/播放/反馈/曲库通过 |
+| S6a | 前端 bug 审计与关键流程 smoke | ✅ 已完成 | 前端 lint/build 通过；推荐播放/反馈/曲库 smoke 通过；新增 console error 为 0 |
 | S6b | 曲库管理/入库 UI 设计与实现 | 待设计确认 | 先交设计稿，获批后才写代码 |
 | S7 | README/ROADMAP/DEEPDIVE 总扫 | 等待 S6b | 全部文档与最终实现一致 |
 
@@ -117,6 +118,6 @@
 
 ## 6. 下一步
 
-**先做 S6a 前端 bug 审计 + smoke。**
+**先做 S6b 曲库管理/入库 UI 设计确认。**
 
-S5 已把普通用户启动路径压成 Docker 三步，并验证 `soultuner.ps1 up lite`、`soultuner.ps1 up standard` 与 doctor。下一步转向 S6a：跑起前端，收集 console 报错和关键流程 bug，先列清单再修。
+S6a 已把前端 smoke 里发现的文案、页面语义、可访问名称与播放器 console error 修掉。下一步转向 S6b：先给出曲库管理/入库 UI 的布局与交互设计稿，确认后再写代码。

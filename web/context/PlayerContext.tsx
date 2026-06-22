@@ -58,6 +58,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
+    const handlePlaybackError = (error: unknown) => {
+        console.warn('Audio playback was blocked or failed:', error);
+        setIsPlaying(false);
+    };
+
+    const startAudio = (audio: HTMLAudioElement) => {
+        audio.play().catch(handlePlaybackError);
+    };
+
     useEffect(() => {
         audioRef.current = new Audio();
         audioRef.current.volume = volume;
@@ -90,7 +99,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (isAuto && playMode === 'loop') {
             if (audioRef.current) {
                 audioRef.current.currentTime = 0;
-                audioRef.current.play();
+                startAudio(audioRef.current);
             }
             return;
         }
@@ -125,7 +134,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         if (audioRef.current && song.preview_url) {
             audioRef.current.src = song.preview_url;
-            audioRef.current.play().catch(e => console.error("Audio play error:", e));
+            startAudio(audioRef.current);
         } else if (audioRef.current && !song.preview_url) {
             // Stop audio if no preview
             audioRef.current.pause();
@@ -159,7 +168,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             audioRef.current.pause();
             setIsPlaying(false);
         } else {
-            audioRef.current.play().catch(e => console.error("Audio play error:", e));
+            startAudio(audioRef.current);
             setIsPlaying(true);
         }
     };

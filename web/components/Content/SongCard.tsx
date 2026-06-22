@@ -201,24 +201,24 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
 
         {/* 操作按钮（同行右侧） */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.15rem', flexShrink: 0 }}>
-          <button onClick={handleQueueToggle} title={inQueue ? '从播放列表移除' : '加入播放列表'} style={actionBtnStyle(inQueue ? '#1DB954' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleQueueToggle} title={inQueue ? '从播放列表移除' : '加入播放列表'} aria-label={inQueue ? `从播放列表移除 ${title}` : `加入播放列表 ${title}`} style={actionBtnStyle(inQueue ? '#1DB954' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             {inQueue ? (
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><polyline stroke="#1DB954" points="3 9 4.5 10.5 7 8" strokeWidth="2" /></svg>
             ) : (
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="1" y1="12" x2="5" y2="12" /><line x1="3" y1="10" x2="3" y2="14" /></svg>
             )}
           </button>
-          <button onClick={handleAcquire} title={acquireState === 'done' ? '已下载到待入库' : acquireState === 'loading' ? '正在下载...' : '下载到待入库'} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleAcquire} title={acquireState === 'done' ? '已下载到待入库' : acquireState === 'loading' ? '正在下载...' : '下载到待入库'} aria-label={`${acquireState === 'done' ? '已下载到待入库' : acquireState === 'loading' ? '正在下载' : '下载到待入库'} ${title}`} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             {acquireState === 'done' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>) : acquireState === 'loading' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f0a500" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>) : (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>)}
           </button>
-          <button onClick={handleLike} title={liked ? '取消喜欢' : '添加到喜欢'} style={actionBtnStyle(liked ? '#e91e63' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleLike} title={liked ? '取消喜欢' : '添加到喜欢'} aria-label={liked ? `取消喜欢 ${title}` : `添加到喜欢 ${title}`} style={actionBtnStyle(liked ? '#e91e63' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill={liked ? '#e91e63' : 'none'} stroke={liked ? '#e91e63' : 'currentColor'} strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>
           </button>
-          <button onClick={handleDislike} title="不喜欢这首歌" style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleDislike} title="不喜欢这首歌" aria-label={`不喜欢这首歌 ${title}`} style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,120,120,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" /></svg>
           </button>
           <div style={{ position: 'relative' }}>
-            <button onClick={e => { e.stopPropagation(); setShowFolderPicker(prev => !prev); }} title="收藏到歌单" style={actionBtnStyle(showFolderPicker ? '#fff' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+            <button onClick={e => { e.stopPropagation(); setShowFolderPicker(prev => !prev); }} title="收藏到歌单" aria-label={`收藏到歌单 ${title}`} style={actionBtnStyle(showFolderPicker ? '#fff' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={showFolderPicker ? '#fff' : 'currentColor'} strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
             </button>
             {showFolderPicker && (
@@ -238,7 +238,7 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
             )}
           </div>
           {onRemove && (
-            <button onClick={handleRemove} title="从推荐结果中移除" style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+            <button onClick={handleRemove} title="从推荐结果中移除" aria-label={`从推荐结果中移除 ${title}`} style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,100,100,0.8)" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
           )}
@@ -247,6 +247,7 @@ export default function SongCard({ title, artist, genre, mood, reason, preview_u
             <button
               onClick={e => { e.stopPropagation(); setShowDeleteConfirm(prev => !prev); }}
               title="从本地曲库彻底删除"
+              aria-label={`从本地曲库彻底删除 ${title}`}
               style={actionBtnStyle(showDeleteConfirm ? '#ff4444' : undefined)}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,60,60,0.2)')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
