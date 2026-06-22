@@ -33,16 +33,52 @@ def _song_dict(item: Mapping[str, Any]) -> Mapping[str, Any]:
     return nested if isinstance(nested, Mapping) else item
 
 
+def _song_entities_are_similarity_seeds(
+    retrieval_plan: Mapping[str, Any] | None,
+    query: str = "",
+) -> bool:
+    plan = dict(retrieval_plan or {})
+    soft = dict(plan.get("soft_intent") or {})
+    context = " ".join(
+        [
+            query,
+            str(soft.get("goal") or ""),
+            str(soft.get("vibe") or ""),
+            str(plan.get("vector_acoustic_query") or ""),
+            str(plan.get("web_search_keywords") or ""),
+        ]
+    ).casefold()
+    return any(
+        term in context
+        for term in (
+            "类似",
+            "相似",
+            "听感",
+            "像",
+            "同类",
+            "similar",
+            "same vibe",
+            "sounds like",
+            "like this",
+        )
+    )
+
+
 def decide_online_fallback(
     search_results: Sequence[Mapping[str, Any]],
     retrieval_plan: Mapping[str, Any] | None,
+    query: str = "",
 ) -> FallbackDecision:
     """Decide fallback from final local inventory, independent of intent label."""
     artists, songs, hard = layered_constraints(retrieval_plan)
+    song_entities_are_reference = bool(songs) and _song_entities_are_similarity_seeds(
+        retrieval_plan,
+        query,
+    )
     count = len(search_results)
     has_explicit_constraint = bool(
         artists
-        or songs
+        or (songs and not song_entities_are_reference)
         or hard.get("language")
         or hard.get("region")
         or hard.get("instrumental")
@@ -64,7 +100,7 @@ def decide_online_fallback(
         if not checked or matched / len(checked) < 0.7:
             return FallbackDecision(True, "local_artist_match_insufficient", count)
 
-    if songs:
+    if songs and not song_entities_are_reference:
         normalized_titles = [_normalize(_song_dict(item).get("title")) for item in search_results]
         title_matched = any(
             normalized_term

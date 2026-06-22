@@ -16,6 +16,7 @@
 import os
 import sys
 import logging
+import threading
 import warnings
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
@@ -106,6 +107,7 @@ def get_m2d2_model():
 # 加一层轻量缓存兜底：命中时跳过 ~100ms 的 M2D-CLAP 推理。
 _TEXT_EMB_CACHE: Dict[str, List[float]] = {}
 _TEXT_EMB_CACHE_MAX = 16  # 最多缓存 16 条（覆盖单次请求 + 少量历史）
+_TEXT_EMB_LOCK = threading.Lock()
 
 
 def encode_text_to_embedding(text: str) -> List[float]:
@@ -124,18 +126,23 @@ def encode_text_to_embedding(text: str) -> List[float]:
         logger.info(f"[M2D-CLAP] 文本 embedding 缓存命中: '{text[:50]}...'")
         return _TEXT_EMB_CACHE[text]
 
-    model, _ = get_m2d2_model()
-    device = next(model.parameters()).device
-    
-    with torch.no_grad():
-        # encode_clap_text 接受字符串列表，返回 (B, D) 的文本嵌入
-        text_features = model.encode_clap_text([text])
-        embedding = text_features.cpu().numpy().flatten().tolist()
-    
-    # 写入缓存（超限时淘汰最早的条目）
-    if len(_TEXT_EMB_CACHE) >= _TEXT_EMB_CACHE_MAX:
-        _TEXT_EMB_CACHE.pop(next(iter(_TEXT_EMB_CACHE)))
-    _TEXT_EMB_CACHE[text] = embedding
+    with _TEXT_EMB_LOCK:
+        if text in _TEXT_EMB_CACHE:
+            logger.info(f"[M2D-CLAP] 文本 embedding 缓存命中: '{text[:50]}...'")
+            return _TEXT_EMB_CACHE[text]
+
+        model, _ = get_m2d2_model()
+        device = next(model.parameters()).device
+
+        with torch.no_grad():
+            # encode_clap_text 接受字符串列表，返回 (B, D) 的文本嵌入
+            text_features = model.encode_clap_text([text])
+            embedding = text_features.cpu().numpy().flatten().tolist()
+
+        # 写入缓存（超限时淘汰最早的条目）
+        if len(_TEXT_EMB_CACHE) >= _TEXT_EMB_CACHE_MAX:
+            _TEXT_EMB_CACHE.pop(next(iter(_TEXT_EMB_CACHE)))
+        _TEXT_EMB_CACHE[text] = embedding
     
     return embedding
 

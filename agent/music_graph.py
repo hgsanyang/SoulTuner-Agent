@@ -495,7 +495,7 @@ class MusicRecommendationGraph:
                 if isinstance(song, dict):
                     song.setdefault("source", "local")
 
-            fallback_decision = decide_online_fallback(search_results, retrieval_plan)
+            fallback_decision = decide_online_fallback(search_results, retrieval_plan, query)
             if fallback_decision.required:
                 logger.warning(
                     "[search_songs] 本地库存不足，统一降级联网: reason=%s, inventory=%d",
@@ -522,7 +522,11 @@ class MusicRecommendationGraph:
         except Exception as e:
             logger.error(f"搜索歌曲失败: {str(e)}")
             retrieval_plan = state.get("retrieval_plan") or {}
-            fallback_decision = decide_online_fallback([], retrieval_plan)
+            fallback_decision = decide_online_fallback(
+                [],
+                retrieval_plan,
+                state.get("intent_parameters", {}).get("query", state.get("input", "")),
+            )
             return {
                 "search_results": [],
                 "recommendations": [],
@@ -743,6 +747,8 @@ class MusicRecommendationGraph:
                             "audio_url": play_url,      # 兼容
                             "cover_url": cover_url,
                             "source": "online_search",
+                            "recall_sources": ["web"],
+                            "recall_source_labels": ["联网"],
                             "platform": "netease",
                             "is_trial": is_trial,       # 标记是否 30s 试听
                         }

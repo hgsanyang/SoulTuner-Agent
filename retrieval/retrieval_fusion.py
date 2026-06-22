@@ -10,11 +10,12 @@ from typing import Any, Dict, Iterable, List, Mapping
 RRF_K = 60
 
 SOURCE_LABELS = {
-    "graph": "知识图谱",
-    "dense": "稠密语义",
-    "lexical": "BM25词法",
+    "graph": "图谱检索",
+    "dense": "向量检索",
+    "lexical": "词法检索",
     "personal": "个性化",
     "cold": "冷启动",
+    "web": "联网",
 }
 
 DEFAULT_RECALL_WEIGHTS = {
@@ -129,6 +130,10 @@ def weighted_rrf(
     for item in results:
         labels = [SOURCE_LABELS.get(source, source) for source in item["_recall_sources"]]
         item["reason"] = "RRF召回来源: " + " + ".join(labels)
+        item["recall_sources"] = list(item["_recall_sources"])
+        item["recall_source_labels"] = labels
+        item["song"]["recall_sources"] = list(item["_recall_sources"])
+        item["song"]["recall_source_labels"] = labels
         item["_both_engines"] = len(labels) > 1
         item["_rrf_score"] = round(item["_rrf_score"], 8)
         item["similarity_score"] = item["_rrf_score"]

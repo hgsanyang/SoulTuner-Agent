@@ -33,6 +33,16 @@ def test_missing_exact_song_and_weak_artist_results_trigger_web():
     assert decide_online_fallback(wrong_song, _plan(songs=["晴天", "Sunny Day"])).reason == "local_song_match_missing"
 
 
+def test_similarity_reference_song_does_not_force_web_fallback():
+    local_results = [{"song": {"title": "Monday Morning", "artist": "Pulp"}}]
+    plan = _plan(songs=["Running Up That Hill"])
+    plan["soft_intent"] = {"goal": "找听感相似的歌", "vibe": "类似合成器流行", "avoid": []}
+
+    decision = decide_online_fallback(local_results, plan, "有没有类似听感的歌")
+
+    assert not decision.required
+
+
 def test_explicit_song_allows_title_suffix_but_not_truncated_alias():
     live_version = [{"song": {"title": "晴天 (Live)", "artist": "歌手"}}]
     assert not decide_online_fallback(live_version, _plan(songs=["晴天"])).required

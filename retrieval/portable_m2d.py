@@ -469,6 +469,54 @@ class PortableM2D(torch.nn.Module):
 
 # For the CLAP models
 
+def _resolve_hf_model_path(model_id):
+    """Prefer a concrete local HF snapshot when mounted cache symlinks are not hub-resolvable."""
+    import os
+    from pathlib import Path
+
+    def _usable_container_path(value):
+        if not value:
+            return None
+        text = str(value)
+        if len(text) >= 3 and text[1:3] in {":/", ":\\"}:
+            return None
+        path = Path(text).expanduser()
+        return path if path.exists() else None
+
+    if not isinstance(model_id, str) or "/" not in model_id:
+        return model_id
+
+    explicit_env = (
+        model_id.upper()
+        .replace("/", "_")
+        .replace("-", "_")
+        .replace(".", "_")
+    ) + "_PATH"
+    explicit_path = _usable_container_path(os.getenv(explicit_env))
+    if explicit_path:
+        return str(explicit_path)
+
+    configured_cache = (
+        _usable_container_path(os.getenv("HF_HUB_CACHE"))
+        or _usable_container_path(os.getenv("HUGGINGFACE_HUB_CACHE"))
+    )
+    configured_home = _usable_container_path(os.getenv("HF_HOME"))
+    cache_root = configured_cache or (
+        configured_home / "hub" if configured_home else Path("~/.cache/huggingface/hub").expanduser()
+    )
+    repo_dir = cache_root / ("models--" + model_id.replace("/", "--"))
+    snapshots_dir = repo_dir / "snapshots"
+    if snapshots_dir.is_dir():
+        snapshots = [
+            path for path in snapshots_dir.iterdir()
+            if path.is_dir() and (path / "config.json").is_file()
+        ]
+        if snapshots:
+            snapshots.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+            return str(snapshots[0])
+
+    return model_id
+
 class GTETextEncoder(torch.nn.Module):
     def __init__(self, clip_weight="thenlper/gte-base"):
         super().__init__()
@@ -477,8 +525,16 @@ class GTETextEncoder(torch.nn.Module):
         os.environ["TOKENIZERS_PARALLELISM"] = "true"  # To suppress warnings.
 
         local_only = os.getenv("HF_HUB_OFFLINE", "0") == "1"
-        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight, local_files_only=local_only)
-        self.model = AutoModel.from_pretrained(clip_weight, local_files_only=local_only)
+        resolved_weight = _resolve_hf_model_path(clip_weight)
+        use_local_snapshot = resolved_weight != clip_weight
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            resolved_weight,
+            local_files_only=local_only or use_local_snapshot,
+        )
+        self.model = AutoModel.from_pretrained(
+            resolved_weight,
+            local_files_only=local_only or use_local_snapshot,
+        )
 
     def __call__(self, texts, truncate=True, max_length=512):
         def average_pool(last_hidden_states, attention_mask):
@@ -552,8 +608,16 @@ class BertXEncoder(torch.nn.Module):
         os.environ["TOKENIZERS_PARALLELISM"] = "true"  # To suppress warnings.
 
         local_only = os.getenv("HF_HUB_OFFLINE", "0") == "1"
-        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight, local_files_only=local_only)
-        self.text_encoder = AutoModel.from_pretrained(clip_weight, local_files_only=local_only)
+        resolved_weight = _resolve_hf_model_path(clip_weight)
+        use_local_snapshot = resolved_weight != clip_weight
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            resolved_weight,
+            local_files_only=local_only or use_local_snapshot,
+        )
+        self.text_encoder = AutoModel.from_pretrained(
+            resolved_weight,
+            local_files_only=local_only or use_local_snapshot,
+        )
 
     def forward(self, batch_text, truncate=True, max_length=512):
         device = next(self.text_encoder.parameters()).device

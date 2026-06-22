@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import asyncio
+import concurrent.futures
 import time
 from typing import List, Dict, Any, Optional
 
@@ -235,6 +236,34 @@ class MusicHybridRetrieval:
             if graph_entities
             else query
         )
+
+        similarity_seed_terms = (
+            "类似",
+            "相似",
+            "听感",
+            "像",
+            "同类",
+            "similar",
+            "same vibe",
+            "sounds like",
+            "like this",
+        )
+        similarity_context = " ".join(
+            [
+                query,
+                str(soft_intent.get("goal") or ""),
+                str(soft_intent.get("vibe") or ""),
+                vector_desc,
+            ]
+        ).casefold()
+        filter_hard_constraints = dict(hard_constraints)
+        if graph_song_entities and any(term in similarity_context for term in similarity_seed_terms):
+            filter_hard_constraints["song_entities"] = []
+            logger.info(
+                "[Retrieval] song_entities=%s 作为相似听感参考种子，不进入最终硬过滤",
+                graph_song_entities,
+            )
+
         logger.info(
             "[Retrieval] 分层计划: intent=%s | hard=%s | soft=%s | hints=%s | weights=%s",
             intent_type,
@@ -260,10 +289,19 @@ class MusicHybridRetrieval:
         async def run_sync_in_executor(func, *args, **kwargs):
             return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
+        recall_source_timeout = float(os.getenv("RECALL_SOURCE_TIMEOUT_SECONDS", "15"))
+
         async def timed_recall(source: str, awaitable):
             started = time.perf_counter()
             try:
-                return await awaitable
+                return await asyncio.wait_for(awaitable, timeout=recall_source_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[Recall:%s] 超时 %.1fs，跳过本路召回（其它召回继续参与 RRF）",
+                    source,
+                    recall_source_timeout,
+                )
+                return ""
             finally:
                 timings[f"recall_{source}_ms"] = round(
                     (time.perf_counter() - started) * 1000,
@@ -361,9 +399,14 @@ class MusicHybridRetrieval:
                                     "cover_url": top_hit.get("cover_url"),
                                     "album": top_hit.get("album", "未知"),
                                     "genre": "Web Trends",
+                                    "source": "online_search",
+                                    "recall_sources": ["web"],
+                                    "recall_source_labels": ["联网"],
                                 },
                                 "reason": "🌐 全网最新发掘",
                                 "similarity_score": 9.5 - (index * 0.1),
+                                "_recall_sources": ["web"],
+                                "_recall_source_labels": ["联网"],
                             }
                         )
                 return playable_songs
@@ -388,12 +431,12 @@ class MusicHybridRetrieval:
         timings["retrieval_web_ms"] = round((time.perf_counter() - web_started) * 1000, 3)
         self._current_query = query
         self._current_hyde_text = vector_desc
-        self._current_hard_constraints = hard_constraints
+        self._current_hard_constraints = filter_hard_constraints
 
         result = self._format_results(
             source_raw=source_raw,
             recall_weights=recall_weights,
-            hard_constraints=hard_constraints,
+            hard_constraints=filter_hard_constraints,
             web_res=web_raw,
             web_playable=web_playable,
             graph_entities=graph_entities,
@@ -549,8 +592,23 @@ class MusicHybridRetrieval:
                 return candidates
 
             # ── 语义锚：query → text embedding ──
-            logger.info(f"[TriAnchor] 编码 query text embedding...")
-            query_emb = np.array(encode_text_to_embedding(query_text))
+            # 首次启动时 HuggingFace 文本编码器可能仍在下载，不能让精排阻塞整条推荐链。
+            tri_text_timeout = float(os.getenv("TRI_ANCHOR_TEXT_TIMEOUT_SECONDS", "8"))
+            query_emb = None
+            executor = None
+            try:
+                logger.info("[TriAnchor] 编码 query text embedding...")
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                future = executor.submit(encode_text_to_embedding, query_text)
+                query_emb = np.array(future.result(timeout=tri_text_timeout))
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "[TriAnchor] query text embedding 超时 %.1fs，跳过语义锚，保留声学/个性化排序",
+                    tri_text_timeout,
+                )
+            finally:
+                if executor is not None:
+                    executor.shutdown(wait=False, cancel_futures=True)
 
             # ── 批量获取候选歌曲的 M2D + OMAR embedding ──
             titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
@@ -602,7 +660,7 @@ class MusicHybridRetrieval:
 
                 # 维度 1: 语义分（归一化到 [0,1]）
                 m2d_emb = m2d_map.get(title)
-                if m2d_emb is not None:
+                if query_emb is not None and m2d_emb is not None:
                     raw_semantic = _cosine(m2d_emb, query_emb)
                     semantic = _normalize_cosine(raw_semantic)
                 else:
@@ -921,6 +979,10 @@ class MusicHybridRetrieval:
             }
             for item in filtered_web:
                 song = item.get("song", {})
+                item["recall_sources"] = ["web"]
+                item["recall_source_labels"] = ["联网"]
+                song["recall_sources"] = ["web"]
+                song["recall_source_labels"] = ["联网"]
                 key = self._normalize_key(song.get("title", ""), song.get("artist", ""))
                 if key not in existing_keys:
                     final_list.append(item)
@@ -1154,8 +1216,16 @@ class MusicHybridRetrieval:
         if web_res and "未能找到相关有效信息" not in web_res:
             final_list.insert(0, {
                 "_raw_markdown": web_res,
-                "song": {"title": "🌐 全网资讯补充", "artist": "互联网最新情报", "genre": "News"},
+                "song": {
+                    "title": "🌐 全网资讯补充",
+                    "artist": "互联网最新情报",
+                    "genre": "News",
+                    "recall_sources": ["web"],
+                    "recall_source_labels": ["联网"],
+                },
                 "reason": "包含通过多源聚合引擎获取的最新的互联网关联资讯，用于补充音乐库之外的信息。",
+                "recall_sources": ["web"],
+                "recall_source_labels": ["联网"],
                 "similarity_score": WEB_RESULT_PRIORITY_SCORE
             })
 
