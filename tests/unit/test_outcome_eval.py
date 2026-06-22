@@ -10,7 +10,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from tests.eval.evaluate_outcomes import _unwrap_songs, _is_degraded, _load_cases, evaluate_case
+from tests.eval.evaluate_outcomes import (
+    _is_degraded,
+    _load_cases,
+    _percentile,
+    _summarize_timings,
+    _unwrap_songs,
+    evaluate_case,
+)
 
 
 def _song(title, artist, genre="", playable=True, **extra):
@@ -23,6 +30,20 @@ def _song(title, artist, genre="", playable=True, **extra):
 
 def _result(songs, intent="graph_search", errors=None):
     return {"recommendations": songs, "intent_type": intent, "errors": errors or []}
+
+
+def test_timing_percentiles_and_summary():
+    assert _percentile([10, 20, 30, 40], 0.5) == 25
+    summary = _summarize_timings([
+        {"timings_ms": {"end_to_end_ms": 100, "intent_ms": 20}},
+        {"timings_ms": {"end_to_end_ms": 200, "intent_ms": 40}},
+    ])
+    assert summary["stages"]["end_to_end_ms"] == {
+        "count": 2,
+        "mean": 150.0,
+        "p50": 150.0,
+        "p95": 195.0,
+    }
 
 
 # ---------------------------------------------------------------- _unwrap_songs

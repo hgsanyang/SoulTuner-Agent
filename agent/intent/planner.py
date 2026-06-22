@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
+import hashlib
+import json
 import os
 from datetime import date
+import time
 from typing import Any, Callable
 
 from config.logging_config import get_logger
@@ -35,6 +39,68 @@ MUSIC_REQUEST_CUES = (
 )
 
 
+class PlannerResultCache:
+    """Small process-local TTL/LRU cache for validated planner outputs."""
+
+    def __init__(
+        self,
+        ttl_seconds: int = 300,
+        max_entries: int = 256,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.ttl_seconds = max(0, int(ttl_seconds))
+        self.max_entries = max(1, int(max_entries))
+        self._clock = clock
+        self._items: OrderedDict[str, tuple[float, MusicQueryPlan]] = OrderedDict()
+
+    @staticmethod
+    def make_key(
+        *,
+        user_input: str,
+        user_preferences: str,
+        chat_history: str,
+        previous_plan: str,
+        graphzep_facts: str,
+        provider: str,
+        model_name: str,
+        current_date: str,
+    ) -> str:
+        profile_context = json.dumps(
+            [user_preferences, chat_history, previous_plan, graphzep_facts],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        profile_hash = hashlib.sha256(profile_context.encode("utf-8")).hexdigest()
+        material = "\0".join(
+            [user_input.strip(), profile_hash, provider, model_name, current_date]
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def get(self, key: str) -> MusicQueryPlan | None:
+        if self.ttl_seconds <= 0:
+            return None
+        entry = self._items.get(key)
+        if entry is None:
+            return None
+        expires_at, plan = entry
+        if self._clock() >= expires_at:
+            self._items.pop(key, None)
+            return None
+        self._items.move_to_end(key)
+        return plan.model_copy(deep=True)
+
+    def put(self, key: str, plan: MusicQueryPlan) -> None:
+        if self.ttl_seconds <= 0:
+            return
+        self._items[key] = (
+            self._clock() + self.ttl_seconds,
+            plan.model_copy(deep=True),
+        )
+        self._items.move_to_end(key)
+        while len(self._items) > self.max_entries:
+            self._items.popitem(last=False)
+
+
 def apply_routing_guardrails(plan: MusicQueryPlan, user_input: str) -> MusicQueryPlan:
     """Prevent explicit music requests from being rounded into general chat."""
     normalized_input = user_input.lower()
@@ -61,6 +127,10 @@ class IntentPlanner:
 
     def __init__(self, llm_factory: Callable[[], Any]):
         self._llm_factory = llm_factory
+        self._cache = PlannerResultCache(
+            ttl_seconds=settings.planner_cache_ttl_seconds,
+            max_entries=settings.planner_cache_max_entries,
+        )
 
     async def plan(
         self,
@@ -92,6 +162,22 @@ class IntentPlanner:
             or settings.intent_llm_model
             or settings.llm_default_model
         )
+        current_date = str(date.today())
+        cache_key = self._cache.make_key(
+            user_input=user_input,
+            user_preferences=user_preferences,
+            chat_history=chat_history,
+            previous_plan=previous_plan,
+            graphzep_facts=graphzep_facts,
+            provider=provider,
+            model_name=model_name,
+            current_date=current_date,
+        )
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            logger.info("[IntentPlanner] cache hit provider=%s model=%s", provider, model_name)
+            return cached
+
         context = await build_context(
             graphzep_facts=graphzep_facts,
             chat_history=chat_history,
@@ -102,7 +188,7 @@ class IntentPlanner:
             user_preferences=user_preferences,
             chat_history=context["chat_history"],
             previous_plan=previous_plan,
-            current_date=str(date.today()),
+            current_date=current_date,
         )
         logger.info("[IntentPlanner] provider=%s model=%s", provider, model_name)
 
@@ -137,4 +223,6 @@ class IntentPlanner:
                 UNIFIED_PLANNER_HUMAN,
                 payload,
             )
-        return apply_routing_guardrails(plan, user_input)
+        plan = apply_routing_guardrails(plan, user_input)
+        self._cache.put(cache_key, plan)
+        return plan

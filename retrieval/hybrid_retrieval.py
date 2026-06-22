@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import asyncio
+import time
 from typing import List, Dict, Any, Optional
 
 from tools.semantic_search import semantic_search
@@ -164,6 +165,8 @@ class MusicHybridRetrieval:
             precomputed_plan: 来自上游统一 Prompt 的预计算检索计划（dict 格式的 RetrievalPlan）。
                               layered 字段优先；legacy 字段仅用于历史调用兼容。
         """
+        retrieval_started = time.perf_counter()
+        timings: Dict[str, float] = {}
         logger.info(f"[Retrieval] 开始处理请求: {query}")
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
             from retrieval.mock_retrieval import mock_retrieve
@@ -257,32 +260,42 @@ class MusicHybridRetrieval:
         async def run_sync_in_executor(func, *args, **kwargs):
             return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
+        async def timed_recall(source: str, awaitable):
+            started = time.perf_counter()
+            try:
+                return await awaitable
+            finally:
+                timings[f"recall_{source}_ms"] = round(
+                    (time.perf_counter() - started) * 1000,
+                    3,
+                )
+
         # 2. 五路召回永远一起运行；intent_type 只改变 RRF 权重。
         recall_tasks = {
-            "graph": run_sync_in_executor(
+            "graph": timed_recall("graph", run_sync_in_executor(
                 graph_candidate_recall,
                 hard_constraints,
                 hints,
                 limit=recall_limit,
-            ),
-            "dense": run_sync_in_executor(
+            )),
+            "dense": timed_recall("dense", run_sync_in_executor(
                 semantic_search.invoke,
                 {"query": vector_desc, "limit": recall_limit},
-            ),
-            "lexical": run_sync_in_executor(
+            )),
+            "lexical": timed_recall("lexical", run_sync_in_executor(
                 lexical_bm25_recall,
                 lexical_query,
                 limit=recall_limit,
-            ),
-            "personal": run_sync_in_executor(
+            )),
+            "personal": timed_recall("personal", run_sync_in_executor(
                 personalized_recall,
                 GRAPH_AFFINITY_USER_ID,
                 limit=recall_limit,
-            ),
-            "cold": run_sync_in_executor(
+            )),
+            "cold": timed_recall("cold", run_sync_in_executor(
                 cold_start_recall,
                 limit=recall_limit,
-            ),
+            )),
         }
         recall_results = await asyncio.gather(*recall_tasks.values(), return_exceptions=True)
         source_raw: Dict[str, str] = {}
@@ -360,6 +373,7 @@ class MusicHybridRetrieval:
 
         # 3. 联网只作为显式需求或实体本地零召回后的补充，不参与本地引擎开关。
         web_raw = ""
+        web_started = time.perf_counter()
         if os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
             graph_empty = source_raw.get("graph") in ("", "[]")
             lexical_empty = source_raw.get("lexical") in ("", "[]")
@@ -371,11 +385,12 @@ class MusicHybridRetrieval:
                 web_raw = await _federated_search_async(query)
 
         web_playable = await _extract_and_fetch_web_songs(web_raw)
+        timings["retrieval_web_ms"] = round((time.perf_counter() - web_started) * 1000, 3)
         self._current_query = query
         self._current_hyde_text = vector_desc
         self._current_hard_constraints = hard_constraints
 
-        return self._format_results(
+        result = self._format_results(
             source_raw=source_raw,
             recall_weights=recall_weights,
             hard_constraints=hard_constraints,
@@ -383,7 +398,14 @@ class MusicHybridRetrieval:
             web_playable=web_playable,
             graph_entities=graph_entities,
             final_limit=limit,
+            timings=timings,
         )
+        result.metadata.setdefault("timings", timings)
+        result.metadata["timings"]["retrieval_total_ms"] = round(
+            (time.perf_counter() - retrieval_started) * 1000,
+            3,
+        )
+        return result
 
 
     @staticmethod
@@ -811,6 +833,7 @@ class MusicHybridRetrieval:
         web_playable: List[dict] = None,
         graph_entities: List[str] = None,
         final_limit: int = 15,
+        timings: Dict[str, float] = None,
     ) -> ToolOutput:
         """
         合并各召回源并执行统一过滤与排序。
@@ -826,6 +849,8 @@ class MusicHybridRetrieval:
           7. 最终安全去重 + FinalCut
         """
         from config.settings import settings as _settings
+        timings = timings if timings is not None else {}
+        fusion_started = time.perf_counter()
 
         # ---- Step 1: 解析各召回源结果 ----
         source_items = {
@@ -900,6 +925,12 @@ class MusicHybridRetrieval:
                 if key not in existing_keys:
                     final_list.append(item)
                     existing_keys.add(key)
+
+        timings["fusion_filter_ms"] = round(
+            (time.perf_counter() - fusion_started) * 1000,
+            3,
+        )
+        ranking_started = time.perf_counter()
 
         # ---- Step 4: Artist 多样性初筛（提前执行，减轻后续计算负担）----
         max_per_artist = _settings.max_songs_per_artist
@@ -1117,6 +1148,8 @@ class MusicHybridRetrieval:
             logger.info(f"[FinalCut] 精排后截断: {len(final_list)} → {final_limit} 首")
             final_list = final_list[:final_limit]
 
+        timings["ranking_ms"] = round((time.perf_counter() - ranking_started) * 1000, 3)
+
         # 如果有全网聚合结果，强行塞一条纯文本作为上下文给大模型
         if web_res and "未能找到相关有效信息" not in web_res:
             final_list.insert(0, {
@@ -1200,7 +1233,8 @@ class MusicHybridRetrieval:
             success=len(final_list) > 0,
             data=final_list,
             raw_markdown=raw_markdown,
-            error_message=None if final_list else "Not found"
+            error_message=None if final_list else "Not found",
+            metadata={"timings": timings},
         )
 
     def _generate_hyde_description(

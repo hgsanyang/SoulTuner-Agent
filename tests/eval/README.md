@@ -22,6 +22,15 @@ python -m tests.eval.calibrate_soft_judge --min-accuracy 0.95
 Reports are written to `tests/eval/results/` and include git sha, branch, dirty
 state, effective model config, Planner temperature, and key non-secret settings.
 
+Add `--timing` to include per-case stage timings and aggregate p50/p95 latency:
+
+```powershell
+python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --timing
+```
+
+The timing report covers GraphZep, intent planning, each recall source,
+fusion/filter, ranking, web fallback, explanation, Agent total, and end to end.
+
 ## Soft-Intent Judge
 
 `objective_soft_judge` is an early, non-cyclic heuristic for soft intents. It

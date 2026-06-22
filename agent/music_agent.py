@@ -5,6 +5,7 @@
 
 import asyncio
 import os
+import time
 from typing import Dict, Any, Optional, List
 
 
@@ -42,6 +43,7 @@ class MusicRecommendationAgent:
         Returns:
             包含推荐结果的字典
         """
+        request_started = time.perf_counter()
         try:
             logger.info(f"开始处理音乐推荐请求: {query}")
             
@@ -72,7 +74,9 @@ class MusicRecommendationAgent:
                 "playlist": None,
                 "step_count": 0,
                 "error_log": [],
-                "metadata": {}
+                "metadata": {},
+                "timings": {},
+                "retrieval_meta": {},
             }
             
             # 执行工作流
@@ -86,6 +90,8 @@ class MusicRecommendationAgent:
                 config["configurable"] = {"thread_id": thread_id}
                 logger.info(f"[Checkpoint] thread_id={thread_id}")
             result = await self.app.ainvoke(initial_state, config=config)
+            timings = dict(result.get("timings") or {})
+            timings["agent_total_ms"] = round((time.perf_counter() - request_started) * 1000, 3)
             
             logger.info("音乐推荐完成")
             
@@ -97,7 +103,9 @@ class MusicRecommendationAgent:
                 "intent_type": result.get("intent_type", ""),
                 "explanation": result.get("explanation", ""),
                 "playlist": result.get("playlist"),
-                "errors": result.get("error_log", [])
+                "errors": result.get("error_log", []),
+                "timings": timings,
+                "retrieval_meta": result.get("retrieval_meta", {}),
             }
             
         except Exception as e:
@@ -108,7 +116,11 @@ class MusicRecommendationAgent:
                 "response": "抱歉，处理你的请求时遇到了问题。请稍后重试。",
                 "recommendations": [],
                 "search_results": [],
-                "errors": [{"node": "main", "error": str(e)}]
+                "errors": [{"node": "main", "error": str(e)}],
+                "timings": {
+                    "agent_total_ms": round((time.perf_counter() - request_started) * 1000, 3)
+                },
+                "retrieval_meta": {},
             }
     
     async def stream_recommendations(
@@ -169,6 +181,8 @@ class MusicRecommendationAgent:
                 "step_count": 0,
                 "error_log": [],
                 "metadata": {"request_id": _request_id},
+                "timings": {},
+                "retrieval_meta": {},
             }
             
             config = {"recursion_limit": 50}
@@ -257,7 +271,11 @@ class MusicRecommendationAgent:
                             yield {"type": "song", "song": song, "index": i, "total": len(recommendations)}
                     yield {"type": "recommendations_complete"}
             
-            yield {"type": "complete", "success": True}
+            yield {
+                "type": "complete",
+                "success": True,
+                "retrieval_meta": result.get("retrieval_meta", {}),
+            }
             logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")
             
         except asyncio.CancelledError:

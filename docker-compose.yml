@@ -85,8 +85,9 @@ services:
       MUSIC_WEB_SEARCH_ENABLED: "1"
       MUSIC_INLINE_INGEST_ENABLED: "0"
       MUSIC_INGEST_QUEUE_DIR: /app/data/ingest_queue
-      # HuggingFace 镜像（国内网络必需，用于首次下载 BERT 等文本编码器）
-      HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+      # 在线链路只读已挂载缓存；模型下载由 scripts/download_models.py 独立完成。
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
       # 本地模型推理（可选，通过宿主机暴露的 vLLM 端口）
       VLLM_BASE_URL: ${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
     volumes:

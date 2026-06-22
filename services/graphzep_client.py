@@ -25,13 +25,23 @@ class GraphZepClient:
         self,
         base_url: str = GRAPHZEP_BASE_URL,
         http_client: Optional[Any] = None,
-        unavailable_ttl_seconds: int = 300,
+        unavailable_ttl_seconds: Optional[int] = None,
+        request_timeout_seconds: Optional[float] = None,
     ):
         self.base_url = base_url
-        self._unavailable_ttl_seconds = unavailable_ttl_seconds
+        self._unavailable_ttl_seconds = int(
+            unavailable_ttl_seconds
+            if unavailable_ttl_seconds is not None
+            else settings.graphzep_unavailable_ttl_seconds
+        )
         self._unavailable_until = 0.0
         self._offline_warning_logged = False
-        timeout = httpx.Timeout(6.0, connect=1.0)
+        request_timeout = float(
+            request_timeout_seconds
+            if request_timeout_seconds is not None
+            else settings.graphzep_request_timeout_seconds
+        )
+        timeout = httpx.Timeout(request_timeout, connect=min(0.75, request_timeout))
         self._client = http_client or httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
     def _is_temporarily_unavailable(self) -> bool:

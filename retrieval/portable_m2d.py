@@ -8,6 +8,7 @@ Additional requirements for CLAP:
 """
 
 import logging
+import os
 import numpy as np
 from pathlib import Path
 from functools import partial
@@ -475,8 +476,9 @@ class GTETextEncoder(torch.nn.Module):
         import os
         os.environ["TOKENIZERS_PARALLELISM"] = "true"  # To suppress warnings.
 
-        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight)
-        self.model = AutoModel.from_pretrained(clip_weight)
+        local_only = os.getenv("HF_HUB_OFFLINE", "0") == "1"
+        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight, local_files_only=local_only)
+        self.model = AutoModel.from_pretrained(clip_weight, local_files_only=local_only)
 
     def __call__(self, texts, truncate=True, max_length=512):
         def average_pool(last_hidden_states, attention_mask):
@@ -515,7 +517,11 @@ class NVEmbedV2Encoder(torch.nn.Module):
         super().__init__()
         os.environ["TOKENIZERS_PARALLELISM"] = "true"  # To suppress warnings.
 
-        self.model = AutoModel.from_pretrained(clip_weight, trust_remote_code=True)
+        self.model = AutoModel.from_pretrained(
+            clip_weight,
+            trust_remote_code=True,
+            local_files_only=os.getenv("HF_HUB_OFFLINE", "0") == "1",
+        )
 
     def __call__(self, texts, **kwargs):
         embeddings = self.model.encode(texts, instruction="", max_length=32768)
@@ -545,8 +551,9 @@ class BertXEncoder(torch.nn.Module):
         import os
         os.environ["TOKENIZERS_PARALLELISM"] = "true"  # To suppress warnings.
 
-        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight)
-        self.text_encoder = AutoModel.from_pretrained(clip_weight)
+        local_only = os.getenv("HF_HUB_OFFLINE", "0") == "1"
+        self.tokenizer = AutoTokenizer.from_pretrained(clip_weight, local_files_only=local_only)
+        self.text_encoder = AutoModel.from_pretrained(clip_weight, local_files_only=local_only)
 
     def forward(self, batch_text, truncate=True, max_length=512):
         device = next(self.text_encoder.parameters()).device
