@@ -40,7 +40,10 @@ class IntentHints(BaseModel):
 class RetrievalPlan(BaseModel):
     """检索执行计划：分层表达硬约束、软意图与可选提示，并保留旧字段兼容。"""
 
-    use_graph: bool = Field(default=False, description="是否启用知识图谱检索")
+    use_graph: bool = Field(
+        default=False,
+        description="旧版兼容提示；R1 后不再作为图谱召回开关",
+    )
     hard_constraints: HardConstraints = Field(default_factory=HardConstraints, description="实体/语言/地区/纯音乐等硬约束")
     soft_intent: SoftIntent = Field(default_factory=SoftIntent, description="自由文本软意图，供向量检索和 HyDE 使用")
     hints: IntentHints = Field(default_factory=IntentHints, description="可选标签提示，不能替代软意图")
@@ -55,7 +58,10 @@ class RetrievalPlan(BaseModel):
     graph_language_filter: Optional[str] = Field(default=None, description="语言过滤")
     graph_region_filter: Optional[str] = Field(default=None, description="地区过滤")
 
-    use_vector: bool = Field(default=False, description="是否启用声学向量检索")
+    use_vector: bool = Field(
+        default=False,
+        description="旧版兼容提示；R1 后不再作为稠密召回开关",
+    )
     vector_acoustic_query: Optional[str] = Field(default=None, description="用于向量检索的声学描述查询（HyDE）")
 
     use_web_search: bool = Field(default=False, description="是否启用联网搜索")
