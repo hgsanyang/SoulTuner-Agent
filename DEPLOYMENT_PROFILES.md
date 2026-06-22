@@ -27,10 +27,11 @@ Windows commands:
 `mock` starts the backend with deterministic planner and retrieval fixtures. It
 does not require an API key, Neo4j, GraphZep, or local embedding models.
 
-Online song discovery remains available in every profile. Newly downloaded songs are
-written to Neo4j immediately with playable URLs. Lyrics analysis and M2D-CLAP/OMAR
-audio embeddings are queued under `data/ingest_queue/` and processed by the Full
-profile worker, so the online API process does not need a GPU.
+Online song discovery remains available in every profile. Web results are returned
+immediately as playable recommendations and can be staged by the user. Lyrics
+analysis plus M2D-CLAP/OMAR audio embeddings are queued under
+`data/ingest_queue/` and processed by the Full profile worker, so the online API
+process does not need a GPU and does not block on ingestion.
 
 Stable local ports:
 

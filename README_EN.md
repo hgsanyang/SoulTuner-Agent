@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-51_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-116_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -41,15 +41,38 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 ---
 
+## 🚀 For Regular Users · Docker in 3 Steps
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env: at least fill NEO4J_PASSWORD and DASHSCOPE_API_KEY
+.\soultuner.ps1 up lite       # Neo4j + Backend + Frontend, no GPU required
+.\soultuner.ps1 doctor        # Open http://localhost:3003 after health checks pass
+```
+
+Use `.\soultuner.ps1 up standard` when you need GraphZep memory and SearxNG; use `.\soultuner.ps1 up full` when you need the separate ingestion worker. The local Netease music proxy is optional and can be started with `.\soultuner.ps1 netease-start`.
+
+<details>
+<summary>Local development / GPU ingestion / manual steps</summary>
+
+- Local development: create the `music_agent` Conda environment, install Python dependencies and `web/` dependencies, then run `python startup_all.py`.
+- Model cache: run `python scripts/download_models.py` once. Online recommendation reads mounted local caches and does not download models inside the request path.
+- GPU ingestion: online recommendation does not require a GPU; lyrics tagging, audio vectors, and batch ingestion are handled by `.\soultuner.ps1 up full` or `.\soultuner.ps1 ingest full`.
+- Manual ports: Neo4j `:7687`, GraphZep `:3100`, Backend `:8501`, Frontend `:3003`.
+
+</details>
+
+---
+
 ## ✨ Core Features
 
 | Feature | Description |
 |---|---|
-| 🔀 **Hybrid RAG** | Concurrent GraphRAG + Semantic Search, equal-merge dedup + tri-anchor normalized reranking |
+| 🔀 **Hybrid RAG** | Parallel graph / dense / BM25 / personal / cold-start recall, weighted RRF fusion + tri-anchor reranking |
 | 🎵 **Dual Audio Embeddings**| M2D-CLAP cross-modal semantics + OMAR-RQ acoustic features, tri-anchor normalized fusion (weights adjustable) |
-| 🧠 **Long-term Memory** | GraphZep dual-stage recall, retaining user preferences across sessions |
+| 🧠 **Long-term Memory** | GraphZep dual-stage recall with circuit-breaker fallback, retaining user preferences across sessions |
 | 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
-| 🤖 **Smart Intent Recognition** | 7-class intent + DST multi-turn tag inheritance, supporting both API LLMs + local Qwen3-4B |
+| 🤖 **Smart Intent Recognition** | Layered intent plan: `hard_constraints / soft_intent / hints` + multi-turn inheritance |
 | 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j + GraphZep dual write |
 | 🌐 **Web Search Fallback** | SearxNG federated search + LLM summarization when the local library is insufficient |
 | 🎼 **Music Journey** | LLM Story → Emotion breakdown → Step-by-step retrieval, real-time SSE streaming |
@@ -118,13 +141,10 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  Hybrid Retrieval Engine                                            │
 │                                                                     │
-│  ┌─────────────┐  ┌──────────────────┐  ┌──────────────┐          │
-│  │  GraphRAG   │  │  Semantic Search │  │  Web Search  │          │
-│  │  Neo4j      │  │  M2D-CLAP+OMAR   │  │  SearxNG     │          │
-│  └──────┬──────┘  └────────┬─────────┘  └──────┬───────┘          │
-│         └──────────────────┼───────────────────┘                   │
+│  GraphRAG · Dense KNN · BM25 · Personal · Cold-start · Web Fallback│
+│         └──────────────────┬───────────────────┘                   │
 │                            ▼                                        │
-│              Merge & Dedup (Equal Merge & Deduplication)             │
+│              Weighted RRF Fusion (keeps per-source ranks)            │
 │                            ▼                                        │
 │              Coarse Rank (Graph Affinity cutoff)                     │
 │                            ▼                                        │
@@ -146,16 +166,16 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 | Layer | Technology |
 |---|---|
 | **Frontend** | Next.js 14 + React 18 |
-| **Agent** | LangGraph StateGraph (7-class intent routing) |
+| **Agent** | LangGraph StateGraph (layered intent planning + multi-recall routing) |
 | **Backend** | FastAPI + SSE Streaming |
 | **Graph Database** | Neo4j 5.x (Native Vector Index + Graph Relations + User Behavior direct-write) |
 | **Audio Embeddings** | M2D-CLAP 2025 (Cross-modal semantics, 768d) + OMAR-RQ (Acoustic features, 1024d) |
-| **LLMs** | DeepSeek-V3.2 / Gemini / Doubao / Qwen (API) + Qwen3-4B (SGLang Local) |
+| **LLMs** | Default `dashscope / qwen3.7-plus`, switchable to Gemini / Doubao / DeepSeek / local Qwen3-4B |
 | **Long-term Memory**| GraphZep temporal memory (Dual-stage recall) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
 | **Ranking Algorithm**| Tri-Anchor Normalized Rerank (Semantic+Acoustic+Personal) + Graph Affinity Coarse Rank + Thompson Sampling + MMR |
 | **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
-| **Containerization** | Docker Compose (Neo4j + GraphZep + Backend + Frontend) |
+| **Containerization** | Docker Compose Lite/Standard/Full (Neo4j + Backend + Frontend, optional GraphZep/SearxNG/Worker) |
 
 > 📖 For full tech stack and frontend engineering details, see [Technical_Report.md](Technical_Report.md)
 
@@ -166,37 +186,36 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 ### RAG Hybrid Retrieval Pipeline
 
 ```text
-User Query → Planner (LLM) + DST multi-turn tag inheritance
-               ↓  intent_type + retrieval_plan
-    ┌──────────┼──────────┐
-    ▼          ▼          ▼
- GraphRAG   VectorKNN  WebSearch       ← Step 1: Concurrent Recall
- (Cypher)  (M2D+OMAR)  (SearxNG)
-    └──────────┼──────────┘
+User Query → Planner (LLM) outputs a layered plan
+               ↓  hard_constraints + soft_intent + hints + intent_type
+    ┌──────────┬──────────┬──────────┬──────────┬──────────┐
+    ▼          ▼          ▼          ▼          ▼
+ GraphRAG   Dense KNN    BM25     Personal   Cold-start    ← Step 1: parallel recall
+ (Neo4j)   (M2D+OMAR) (title/artist/lyrics) (profile/logs) (explore)
+    └──────────┴──────────┴──────────┴──────────┴──────────┘
                ▼
-   Step 2: Merge & Deduplicate           ← Replaces legacy weighted RRF
+   Step 2: Weighted RRF fusion            ← Preserves per-source rank and source metadata
                ▼
-   Step 2.5: DISLIKES Filter             ← Exclude explicitly disliked songs
+   Step 3: hard_constraints + DISLIKES    ← Only hard filter; mood/scenario/genre stay soft
                ▼
-   Step 3: Artist Diversity Filter       ← ≤ N songs per artist (Exception for specific queries)
+   Step 4: Artist Diversity Filter        ← ≤ N songs per artist (exception for specific queries)
                ▼
-   Step 4: Coarse Rank + TS Explore      ← Graph Affinity sort → keep 65% → tail Thompson Sampling rescue
+   Step 5: Coarse Rank + TS Explore       ← Graph Affinity + Thompson Sampling long-tail rescue
                ▼
-   Step 5: Tri-Anchor Normalized Rerank  ← Semantic(M2D-CLAP) + Acoustic(OMAR-RQ) + Personal(Graph Affinity MinMax)
+   Step 6: Tri-Anchor Normalized Rerank   ← Semantic(M2D-CLAP) + Acoustic(OMAR-RQ) + Personal
                ▼
-   Step 6: MMR Multi-dim Diversity       ← Relies on genre + mood + theme + scenario
-               ▼
-   Step 7: FinalCut (≤ 15 tracks)        ← Final safety truncation
+   Step 7: MMR Multi-dim Diversity + FinalCut
 ```
 
 **Key Design Decisions**:
 
-- **GraphRAG Typed Entity Matching**: The Planner now splits extracted entities into `graph_artist_entities` (artist names) and `graph_song_entities` (song/album titles). GraphRAG executes precise AND matching (`Artist.name AND Song.title`) replacing the legacy flat-tag OR fuzzy matching. This drastically reduces cross-contamination from same-name artists/songs. Both Chinese and English aliases must be included to support the bilingual graph.
-- **GraphRAG 5-Dimensional Tag Filtering**: Beyond Typed Entity, 5-dimensional tag filtering (genre / scenario / mood / language / region) is preserved, with 200+ EN/ZH alias mappings.
+- **Layered Intent Plan**: The Planner outputs `hard_constraints / soft_intent / hints`. Entities, language, and instrumental constraints are hard filters; mood, scenario, and vibe are ranking signals.
+- **Five Parallel Recall Paths**: Graph entities/tags, M2D-CLAP dense search, BM25 lexical search, personalization, and cold-start exploration always run; `intent_type` only adjusts weights.
+- **Weighted RRF Fusion**: Candidates are merged with `weight / (60 + rank)`, preserving source rank and source metadata instead of equal merging.
 - **Dual Vector Models**: M2D-CLAP cross-modal semantics + OMAR-RQ acoustics, tri-anchor normalized reranking fusion.
 - **Coarse Rank + Thompson Sampling**: Graph Affinity scored cutoff (`coarse_cut_ratio=65%`), tail candidates rescued via TS sampling (`Beta(α,β)` distribution) for exploration-exploitation balance.
 - **Tri-Anchor Normalized Reranking**: Semantic anchor `(cosine+1)/2` (M2D-CLAP) + Acoustic anchor `(cosine+1)/2` (OMAR-RQ centroid) + Personal anchor `MinMax` (Graph Affinity), all normalized to [0,1] then weighted fusion (frontend-tunable, auto-normalized so α+β+γ=1).
-- **DST Multi-turn Tag Inheritance**: Planner preserves previous `retrieval_plan` state (genre/mood/language/acoustic semantics) across turns, automatically augmenting new constraints on follow-up queries (e.g., prev=Pop → follow-up "sadder" → keep Pop + add Sad).
+- **DST Multi-turn Inheritance**: Planner preserves the previous layered plan across turns and adds new constraints from follow-up queries.
 - **MMR Jaccard**: Re-ranking using the `{genre, mood, theme, scenario}` multidimensional tags for candidate diversity.
 
 ### Agent Workflow
@@ -205,7 +224,7 @@ User Query → Planner (LLM) + DST multi-turn tag inheritance
 stateDiagram-v2
     [*] --> recall_memory: Start
     recall_memory --> plan_query: GraphZep Coarse/Fine Recall
-    plan_query --> route_intent: LLM Structured Output (7 intents)
+    plan_query --> route_intent: LLM Structured Output (layered intent)
 
     route_intent --> search_songs: graph_search / hybrid_search / vector_search
     route_intent --> web_fallback: web_search (direct to live search)
@@ -227,7 +246,7 @@ stateDiagram-v2
     persist_memory --> [*]: GraphZep Async Write
 ```
 
-> Intent recognition supports both API LLMs (DeepSeek-V3.2, etc.) and local Qwen3-4B modes (deployed via SGLang). In local mode, the HyDE acoustic text is generated by an independent module.
+> Intent recognition defaults to `dashscope / qwen3.7-plus` and also supports other API LLMs plus local Qwen3-4B modes deployed via SGLang. In local mode, the HyDE acoustic text is generated by an independent module.
 
 > `web_search` intent now routes **directly to the `web_fallback` node** (Online Music API live search), bypassing HybridRetrieval entirely. Supports Chinese-first query extraction, multi-level fallback query resolution, and 30-second preview detection.
 
@@ -263,39 +282,23 @@ User search → Discover new song → Download to "Pending" staging area → Fro
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 51 tests across 5 modules (key formatting, Token budget, alias mapping, dedup, schemas) |
-| **Intent Eval** | 55 human-annotated queries, covering all 7 intents. Achieved **98.2%** accuracy (54/55) |
+| **Unit Testing** | 116 tests covering settings loading, Planner cache, outcome eval, fusion filters, explanation fast-mode, and more |
+| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 56 dev cases and 24 holdout cases |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
 | **Code Standards** | Enforced by Ruff static analysis + pyproject.toml |
 
 <details>
-<summary>Intent Classification Eval Details</summary>
+<summary>Outcome Eval Details</summary>
 
-```text
-Eval Date: 2026-04-09
-Model: DeepSeek-V3.2 (SiliconFlow)
-Test set: 55 annotated queries (tests/eval/intent_test_queries.json)
-
-Intent Type          Correct   Total   Accuracy
-────────────────────────────────────────────────
-graph_search              15      15     100.0%
-hybrid_search             19      20      95.0%
-vector_search              6       6     100.0%
-web_search                 4       4     100.0%
-general_chat               4       4     100.0%
-acquire_music              3       3     100.0%
-recommend_by_favorites     3       3     100.0%
-────────────────────────────────────────────────
-TOTAL                     54      55      98.2%
-Avg. Latency: 11.55s/query (Includes classification + NER + extraction + HyDE generation, single LLM call)
+```powershell
+python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast
+python -m tests.eval.evaluate_outcomes --split holdout --planner-temperature 0 --fast
 ```
 
-Run evaluations:
+The harness checks whether returned songs satisfy artist, title, language, playability, negation, soft intent, and fallback behavior. After S4, the suite includes 10 English mirror cases: English totals `8/10`, non-English totals `64/70`, so A2 language normalization was not triggered.
 
-```bash
-python -m tests.eval.evaluate_intent --provider siliconflow
-```
+The legacy `evaluate_intent.py` remains useful only as a route-label regression check; it is no longer used as evidence of recommendation quality. See `tests/eval/README.md` for details.
 
 </details>
 
@@ -339,166 +342,57 @@ erDiagram
 
 ---
 
-## 🚀 Quick Start
+## 🧰 Startup And Ingestion Reference
 
-Deployment takes 3 steps: **① Preparation** → **② Select Deployment Method** → **③ Data Ingestion**.
+For everyday use, the 3-step Docker block near the top is enough. See [DEPLOYMENT_PROFILES.md](DEPLOYMENT_PROFILES.md) for deployment profiles, ports, and online-song ingestion behavior.
 
----
-
-### Step 1: Preparation (Required for both methods)
-
-**1.1 Music Data**: Place MP3 files in the `data/processed_audio/audio/` directory (Customizable via `.env`).
-
-**1.2 Environment Variables**:
-
-```bash
-cp .env.example .env
-# Edit .env: Fill in SiliconFlow_API_KEY and NEO4J_PASSWORD at minimum
-```
-
-**1.3 Model Weights Download** (Required once, takes ~**2.4 GB**):
-
-```bash
-# Set up Python env (Required later for Data Ingestion)
-conda create -n music_agent python=3.11 && conda activate music_agent
-pip install -r requirements.txt
-
-# Download model weights (Skips existing files automatically)
-python scripts/download_models.py
-```
-
-| Model | Size | Purpose | Path |
-|---|---|---|---|
-| M2D-CLAP 2025 | ~1.6 GB | Runtime Text/Audio cross-modal encoding & Dual-anchor reranking | `~/.cache/m2d_clap/` |
-| BERT-base-uncased | ~440 MB | M2D-CLAP internal text encoder | `~/.cache/huggingface/` |
-| OMAR-RQ multicodebook | ~400 MB | Feature extractor during audio ingestion | `~/.cache/huggingface/` |
-
-> 💡 GraphZep embeddings invoke the SiliconFlow API (`BAAI/bge-m3`) directly, no download required.
-
----
-
-### Step 2: Select Deployment Method
-
-<table>
-<tr><th></th><th>Method A: Docker Compose (Recommended)</th><th>Method B: Local Conda</th></tr>
-<tr><td><b>Best For</b></td><td>Quick evaluation, demo deployment</td><td>Daily development, code debugging</td></tr>
-<tr><td><b>Neo4j</b></td><td>Built-in container, starts automatically</td><td>Install <a href="https://neo4j.com/download/">Neo4j Desktop</a> and start manually</td></tr>
-<tr><td><b>GraphZep</b></td><td>Built-in container, starts automatically</td><td>Auto-started by <code>startup_all.py</code></td></tr>
-</table>
-
-#### Method A: Docker Compose (Recommended)
-
-> Backend image is ~**11 GB** (PyTorch + M2D-CLAP libs). Model weights are cached natively on host volume instead of packed.
->
-> ⚠️ **GPU Requirement**: NVIDIA GPU acceleration enabled by default for M2D cross-modal encoding. Ensure you have the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). (Comment out `deploy.resources` in docker-compose.yml if you strictly have no GPU).
-
-```bash
-# Update .env mappings printed by download_models.py:
-#   MUSIC_DATA_PATH   = Data Directory
-#   M2D_CLAP_CACHE    = M2D Model Cache 
-#   HF_HOME           = HuggingFace Cache
-
-# 1-Click Startup
-docker compose up -d
-
-# ★ Track backend startup natively (Observe warmup progress)
-docker logs -f soultuner-backend
-
-# You'll see:
-#   🚀 Initializing crucial components...
-#   ✅ M2D-CLAP Preloaded (14.9s)
-#   ✅ Agent Configured (14.9s)
-#   ✅ Neo4j established (15.8s)
-#   🏁 Startup executed in 15.8s.
-# Ctrl+C to stop tailing logs (Doesn't stop containers)
-
-# Verify services
-docker compose ps
-
-# Access Links:
-# Frontend: http://localhost:3003 | Backend API: http://localhost:8501 | Neo4j: http://localhost:7474
-```
-
-<details>
-<summary>Docker DevOps Cheatsheet</summary>
-
-| Command | Description |
+| Command | Purpose |
 |---|---|
-| `docker logs -f soultuner-backend` | Track backend logs |
-| `docker compose up -d --build backend` | Rebuild and restart backend |
-| `docker compose restart backend` | Restart backend without rebuild |
-| `docker compose down` | Tear down containers |
-| `docker compose down -v` | Erase containers and volumes (⚠️ Deletes Neo4j schema) |
-
-</details>
-
-#### Method B: Local Conda
-
-> ⚠️ You must install [Neo4j Desktop](https://neo4j.com/download/) and run it. Pass the auth details to `NEO4J_URI` & `NEO4J_PASSWORD` in `.env`.
-
-```bash
-# We created the Conda environment in Step 1.
-# Pre-install frontend modules:
-cd web && npm install && cd ..
-
-# One-command bootstrapper (Backend + Frontend + GraphZep + SearxNG)
-python startup_all.py
-
-# Or separated tabs:
-conda activate music_agent; python startup_all.py --no-web    # Tab A: Backend & DBs
-cd web && npm run dev                                         # Tab B: Frontend (HMR)
-```
+| `.\soultuner.ps1 up lite` | Neo4j + Backend + Frontend for regular demos |
+| `.\soultuner.ps1 up standard` | Lite + GraphZep + SearxNG |
+| `.\soultuner.ps1 up full` | Standard + separate ingestion worker |
+| `.\soultuner.ps1 doctor` | Environment diagnosis and next-step hints |
+| `.\soultuner.ps1 test` | Unit tests |
+| `.\soultuner.ps1 mock` | End-to-end mock run without external services |
+| `.\soultuner.ps1 ingest full` | Process the ingestion queue via the Full profile worker |
+| `.\soultuner.ps1 netease-start` | Optional local Netease music proxy on `:3000` |
 
 <details>
-<summary>Full Manual Orchestration</summary>
+<summary>First-time model cache and data ingestion</summary>
 
-| Terminal | Command | Port |
-|---|---|---|
-| 0 | Start Neo4j DB | `:7687` |
-| 1 | `cd graphzep_service/server && npm run dev` | `:3100` |
-| 2 | `python start.py --mode api` | `:8501` |
-| 3 | `cd web && npm run dev` | `:3003` |
-| 4 | `docker compose -f docker-compose.searxng.yml up -d` | `:8888` |
+```powershell
+conda create -n music_agent python=3.11
+conda activate music_agent
+pip install -r requirements.txt
+python scripts/download_models.py
+.\soultuner.ps1 ingest full
+```
+
+Online recommendation only reads mounted model caches. Batch lyrics tagging, audio-vector extraction, and new-song ingestion are handled by the Full profile worker so day-to-day recommendation does not depend on GPU work.
 
 </details>
 
-Proceed to **Step 3 Data Ingestion** upon successfully starting.
+<details>
+<summary>Local development / manual startup</summary>
 
----
-
-### Step 3: Data Ingestion (Required Once)
-
-Neo4j natively launches as a fresh empty database. You MUST execute data population pipelines before generating recommendations.
-
-```bash
-conda activate music_agent
-
-# ── Docker deployments require explicit Neo4j pointer ──
-# Linux/Mac:
-export NEO4J_URI=bolt://127.0.0.1:7687 NEO4J_PASSWORD=12345678
-# Windows PowerShell:
-# $env:NEO4J_URI="bolt://127.0.0.1:7687"; $env:NEO4J_PASSWORD="12345678"
-
-# ── Local Deployments use .env ──
-
-# 1. Lyrics Tag Extraction (LLM automated, skip if lyrics_analysis.json exists)
-python data/pipeline/lyrics_analyzer.py
-
-# 2. Ingest to Neo4j (Metadata + Lyrics Tags + Audio Vectors, GPU recommended)
-python data/pipeline/ingest_to_neo4j.py
-
-# If no GPU (Skip vectors, writes metadata and tags only, takes mere minutes)
-python data/pipeline/ingest_to_neo4j.py --skip-embeddings
-
-# Retroactively calculate vectors:
-python data/pipeline/ingest_to_neo4j.py --update-embeddings
+```powershell
+cd web
+npm install
+cd ..
+python startup_all.py
 ```
 
-> ✅ Persists persistently to Neo4j (Docker explicit volumes or Local Desktop). Running again is unnecessary across boots.
-> 📖 Read [Technical_Report.md](Technical_Report.md) for full dataset/schema administration.
+| Service | Port |
+|---|---|
+| Neo4j Bolt / Browser | `7687` / `7474` |
+| GraphZep | `3100` |
+| Backend | `8501` |
+| Frontend | `3003` |
+| SearxNG | `8888` |
+
+</details>
 
 ---
-
 ### Optional: Local LLM Deployment (WSL + SGLang)
 
 Hardware-accelerated deployment workflow for 8GB VRAM cards (e.g., RTX 4070), providing local reasoning via Qwen3-4B logic bounds in intent determination.
@@ -559,8 +453,8 @@ Hardware-accelerated deployment workflow for 8GB VRAM cards (e.g., RTX 4070), pr
 │
 ├── graphzep_service/           # Micro node for GraphZep
 ├── tests/                      # Testing & Eval
-│   ├── unit/                   # 51 pytest metrics
-│   └── eval/                   # Benchmark tools (evaluate_intent.py)
+│   ├── unit/                   # 116 pytest tests
+│   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
 ├── .github/workflows/ci.yml    # GitHub Actions definitions
 ├── docker-compose.yml          # Container configuration
 ├── Dockerfile                  # API Engine definitions
@@ -579,7 +473,7 @@ Hardware-accelerated deployment workflow for 8GB VRAM cards (e.g., RTX 4070), pr
 |---|---|---|
 | `OPENAI_BASE_URL` | Global LLM path base | `https://api.siliconflow.cn/v1` |
 | `OPENAI_API_KEY` | Core LLM gateway | — |
-| `MODEL_NAME` | Main reasoning model | `deepseek-ai/DeepSeek-V3.2` |
+| `MODEL_NAME` | Main reasoning model | `qwen3.7-plus` |
 | `VOLCENGINE_BASE_URL` | Volcengine path limits | `https://ark.cn-beijing.volces.com/api/v3` |
 | `VOLCENGINE_API_KEY` | Volcengine Gateway | Optional |
 | `NEO4J_URI` | Neo4j bindings | `neo4j://127.0.0.1:7687` |

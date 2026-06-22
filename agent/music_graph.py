@@ -23,8 +23,8 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger
 from config.settings import settings
-from agent.explanation import build_fast_explanation
-from agent.intent import IntentPlanner
+from agent.explanation import emit_fast_explanation
+from agent.intent.planner import IntentPlanner
 from agent.netease_query import (
     artist_matches,
     build_netease_query_plan,
@@ -1196,9 +1196,7 @@ class MusicRecommendationGraph:
             }
 
         if settings.explanation_fast_mode:
-            response = build_fast_explanation(recommendations)
-            await _push_song_cards()
-            await _finish_queue(response)
+            response = await emit_fast_explanation(recommendations, explanation_queue)
             logger.info("[Explanation] fast-mode 跳过解释 LLM")
             return {
                 "explanation": response,

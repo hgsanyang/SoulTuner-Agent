@@ -121,5 +121,31 @@
     "category": "fallback",
     "query": "推荐我上个月一直循环但后来又说不喜欢的那首",
     "checks": {"not_degraded": true, "manual_review": ["确认在缺少可靠记忆时不会编造私人历史；有记忆时应尊重 dislike"]}
+  },
+
+  {
+    "id": "holdout_en_negative_01_eason_exclude_ten_years",
+    "category": "negative_constraint",
+    "query": "Eason Chan songs, but not Ten Years",
+    "checks": {"min_results": 2, "artist_any_of": ["陈奕迅", "Eason"], "artist_match_min_ratio": 0.5, "must_exclude": [{"title": "十年", "artist": "陈奕迅"}], "min_playable_ratio": 0.4, "not_degraded": true}
+  },
+  {
+    "id": "holdout_en_song_01_love_story_original",
+    "category": "explicit_song",
+    "query": "Love Story by Taylor Swift, preferably the original and no covers",
+    "checks": {"min_results": 1, "must_include_titles": ["Love Story"], "artist_any_of": ["Taylor Swift"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认不是明显翻唱版本"]}
+  },
+  {
+    "id": "holdout_en_language_01_instrumental_focus",
+    "category": "language_constraint",
+    "query": "instrumental piano for focus, no vocals",
+    "checks": {"min_results": 3, "language_any_of": ["Instrumental"], "language_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认钢琴/器乐/专注场景成立"]}
+  },
+  {
+    "id": "holdout_en_context_01_same_vibe_chinese",
+    "category": "multi_turn_context",
+    "query": "Same vibe, but in Chinese",
+    "chat_history": [{"role": "user", "content": "Recommend some ethereal English female vocals"}, {"role": "assistant", "content": "I recommended some ethereal English female vocal tracks."}],
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认继承空灵氛围，并切换到中文"]}
   }
 ]

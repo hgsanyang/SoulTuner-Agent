@@ -6,8 +6,9 @@ It is not an intent-label accuracy test.
 ## Splits
 
 - `smoke`: the original 12-case fast regression set.
-- `dev`: 50 cases for day-to-day iteration.
-- `holdout`: 20 frozen cases. Do not tune directly against this set.
+- `dev`: 56 cases for day-to-day iteration, including 6 English mirror cases.
+- `holdout`: 24 frozen cases, including 4 English mirror cases. Do not tune
+  directly against this set.
 - `all`: dev + holdout, for explicit milestone checks only.
 
 Run:

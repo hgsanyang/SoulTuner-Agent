@@ -312,5 +312,42 @@
     "category": "fallback",
     "query": "我要非常安静但又特别炸裂的睡前蹦迪歌",
     "checks": {"min_results": 1, "not_degraded": true, "manual_review": ["确认系统能处理自相矛盾意图，最好解释取舍或折中"]}
+  },
+
+  {
+    "id": "dev_en_artist_01_jay_chou",
+    "category": "explicit_artist",
+    "query": "Play some Jay Chou songs",
+    "checks": {"min_results": 3, "artist_any_of": ["周杰伦", "Jay Chou"], "artist_match_min_ratio": 0.7, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_en_song_01_jiangnan",
+    "category": "explicit_song",
+    "query": "I want JJ Lin's song Jiangnan",
+    "checks": {"min_results": 1, "must_include_titles": ["江南"], "artist_any_of": ["林俊杰", "JJ Lin"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "dev_en_language_01_quiet_japanese",
+    "category": "language_constraint",
+    "query": "quiet Japanese songs",
+    "checks": {"min_results": 3, "language_any_of": ["Japanese"], "language_match_min_ratio": 0.7, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认结果整体安静/低动态，而非吵闹"]}
+  },
+  {
+    "id": "dev_en_mood_01_uplift",
+    "category": "soft_mood",
+    "query": "songs that can help me feel uplifted",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.5, "not_degraded": true, "objective_soft_judge": {"positive_any": ["energetic", "hopeful", "happy", "driving", "journey"], "negative_any": ["melancholy", "lonely", "sleep"], "min_positive_ratio": 0.35, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.6}}
+  },
+  {
+    "id": "dev_en_scene_01_night_drive",
+    "category": "scenario",
+    "query": "music for driving at night, not too loud",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认适合夜间驾驶，稳定、有氛围但不炸"]}
+  },
+  {
+    "id": "dev_en_negative_01_chinese_not_sad",
+    "category": "negative_constraint",
+    "query": "Chinese songs, but not sad",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["happy", "hopeful", "energetic", "peaceful"], "negative_any": ["melancholy", "lonely"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.35, "min_coverage_ratio": 0.6}}
   }
 ]
