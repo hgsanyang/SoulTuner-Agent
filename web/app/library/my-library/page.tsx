@@ -195,7 +195,7 @@ export default function MyLibraryPage() {
                                 </span>
 
                                 {/* Play */}
-                                <button title={song.audio_url ? '播放' : '暂无音源'}
+                                <button title={song.audio_url ? '播放' : '暂无音源'} aria-label={song.audio_url ? `播放 ${song.title}` : `${song.title} 暂无音源`}
                                     onClick={e => {
                                         e.stopPropagation();
                                         if (song.audio_url) {
@@ -214,7 +214,7 @@ export default function MyLibraryPage() {
                                 </button>
 
                                 {/* Delete */}
-                                <button title="从曲库移除" onClick={e => { e.stopPropagation(); handleDelete(song); }}
+                                <button title="从曲库移除" aria-label={`从曲库移除 ${song.title}`} onClick={e => { e.stopPropagation(); handleDelete(song); }}
                                     disabled={isDeleting}
                                     style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: isDeleting ? 'wait' : 'pointer', padding: '0.4rem', display: 'flex', transition: 'color 0.2s' }}
                                     onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}

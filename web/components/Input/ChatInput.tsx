@@ -122,6 +122,7 @@ export default function ChatInput({
               type="button"
               onClick={handleAbort}
               title="中止当前搜索"
+              aria-label="中止当前搜索"
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: '40px', height: '40px',
@@ -151,6 +152,7 @@ export default function ChatInput({
               type="submit"
               disabled={!value.trim()}
               title="发送"
+              aria-label="发送"
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: '40px', height: '40px',

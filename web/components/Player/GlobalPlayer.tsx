@@ -123,7 +123,7 @@ export default function GlobalPlayer() {
                         <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
                             {/* Header */}
                             <div style={{ padding: '1.5rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                                <button onClick={() => setExpanded(false)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: '0.25rem' }}>
+                                <button onClick={() => setExpanded(false)} aria-label="收起全屏播放器" style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: '0.25rem' }}>
                                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <polyline points="6 15 12 9 18 15"/>
                                     </svg>
@@ -264,7 +264,7 @@ export default function GlobalPlayer() {
                             <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#fff' }}>
                                 播放列表 <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.38)', fontWeight: 400 }}>({queue.length})</span>
                             </span>
-                            <button onClick={() => setShowQueue(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer', padding: '0.2rem' }}>
+                            <button onClick={() => setShowQueue(false)} aria-label="关闭播放列表" style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer', padding: '0.2rem' }}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                                     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                                 </svg>
@@ -308,13 +308,13 @@ export default function GlobalPlayer() {
                                             {/* hover actions */}
                                             {isHov && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                                                    <button onClick={e => { e.stopPropagation(); toggleLike(song); }} title={songLiked ? '取消喜欢' : '喜欢'}
+                                                    <button onClick={e => { e.stopPropagation(); toggleLike(song); }} title={songLiked ? '取消喜欢' : '喜欢'} aria-label={songLiked ? `取消喜欢 ${song.title}` : `喜欢 ${song.title}`}
                                                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.28rem', display: 'flex', color: songLiked ? '#e91e63' : 'rgba(255,255,255,0.45)' }}>
                                                         <svg width="15" height="15" viewBox="0 0 24 24" fill={songLiked ? '#e91e63' : 'none'} stroke="currentColor" strokeWidth="2">
                                                             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                                                         </svg>
                                                     </button>
-                                                    <button onClick={e => { e.stopPropagation(); removeFromQueue(song.title, song.artist); }} title="从列表移除"
+                                                    <button onClick={e => { e.stopPropagation(); removeFromQueue(song.title, song.artist); }} title="从列表移除" aria-label={`从播放列表移除 ${song.title}`}
                                                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.28rem', display: 'flex', color: 'rgba(255,100,100,0.65)' }}>
                                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                                                             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
@@ -347,6 +347,15 @@ export default function GlobalPlayer() {
                     <div
                         onClick={() => setExpanded(prev => !prev)}
                         title="打开播放器"
+                        role="button"
+                        tabIndex={0}
+                        aria-label="打开播放器"
+                        onKeyDown={e => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setExpanded(prev => !prev);
+                            }
+                        }}
                         style={{
                             width: '56px', height: '56px', borderRadius: theme.borderRadius.sm,
                             backgroundColor: '#333', flexShrink: 0, overflow: 'hidden',
@@ -368,14 +377,14 @@ export default function GlobalPlayer() {
                     </div>
 
                     {/* ❤ Like - 红色 */}
-                    <button onClick={() => toggleLike(currentSong)} style={{ background: 'none', border: 'none', color: isLiked ? '#e91e63' : theme.colors.text.muted, cursor: 'pointer', marginLeft: '0.4rem', padding: '0.25rem', transition: 'color 0.2s' }}>
+                    <button onClick={() => toggleLike(currentSong)} aria-label={isLiked ? `取消喜欢 ${currentSong.title}` : `喜欢 ${currentSong.title}`} style={{ background: 'none', border: 'none', color: isLiked ? '#e91e63' : theme.colors.text.muted, cursor: 'pointer', marginLeft: '0.4rem', padding: '0.25rem', transition: 'color 0.2s' }}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill={isLiked ? '#e91e63' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                         </svg>
                     </button>
 
                     {/* 收藏到歌单 */}
-                    <button onClick={() => setShowFolderPicker(p => !p)} style={{ background: 'none', border: 'none', color: showFolderPicker ? '#fff' : theme.colors.text.muted, cursor: 'pointer', padding: '0.25rem', transition: 'color 0.2s' }}>
+                    <button onClick={() => setShowFolderPicker(p => !p)} aria-label={`收藏到歌单 ${currentSong.title}`} style={{ background: 'none', border: 'none', color: showFolderPicker ? '#fff' : theme.colors.text.muted, cursor: 'pointer', padding: '0.25rem', transition: 'color 0.2s' }}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill={showFolderPicker ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
                         </svg>
@@ -405,23 +414,23 @@ export default function GlobalPlayer() {
                 {/* Center Controls */}
                 <div style={{ flex: '1', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-                        <button onClick={() => setPlayMode(playMode === 'sequence' ? 'random' : playMode === 'random' ? 'loop' : 'sequence')} style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer' }} title="切换播放模式">
+                        <button onClick={() => setPlayMode(playMode === 'sequence' ? 'random' : playMode === 'random' ? 'loop' : 'sequence')} aria-label="切换播放模式" style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer' }} title="切换播放模式">
                             <PlayModeIcon />
                         </button>
-                        <button onClick={playPrev} style={{ background: 'none', border: 'none', color: theme.colors.text.primary, cursor: 'pointer' }}>
+                        <button onClick={playPrev} aria-label="上一首" style={{ background: 'none', border: 'none', color: theme.colors.text.primary, cursor: 'pointer' }}>
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" strokeWidth="2"/></svg>
                         </button>
-                        <button onClick={togglePlay} style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none' }}>
+                        <button onClick={togglePlay} aria-label={isPlaying ? '暂停' : '播放'} style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none' }}>
                             {isPlaying
                                 ? <svg width="16" height="16" viewBox="0 0 24 24" fill="#000"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                                 : <svg width="18" height="18" viewBox="0 0 24 24" fill="#000" style={{ marginLeft: '2px' }}><polygon points="5 3 19 12 5 21 5 3"/></svg>
                             }
                         </button>
-                        <button onClick={playNext} style={{ background: 'none', border: 'none', color: theme.colors.text.primary, cursor: 'pointer' }}>
+                        <button onClick={playNext} aria-label="下一首" style={{ background: 'none', border: 'none', color: theme.colors.text.primary, cursor: 'pointer' }}>
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2"/></svg>
                         </button>
                         {/* 播放列表按钮（替换原下载按钮） */}
-                        <button onClick={() => setShowQueue(p => !p)} title="播放列表" style={{ background: 'none', border: 'none', color: showQueue ? '#fff' : theme.colors.text.muted, cursor: 'pointer', transition: 'color 0.2s' }}>
+                        <button onClick={() => setShowQueue(p => !p)} title="播放列表" aria-label="播放列表" style={{ background: 'none', border: 'none', color: showQueue ? '#fff' : theme.colors.text.muted, cursor: 'pointer', transition: 'color 0.2s' }}>
                             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
                                 <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
@@ -438,14 +447,14 @@ export default function GlobalPlayer() {
 
                 {/* Right Controls */}
                 <div style={{ flex: '1', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '1rem' }}>
-                    <button style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer' }}>
+                    <button aria-label="音量" style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer' }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
                             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
                         </svg>
                     </button>
                     <input type="range" min="0" max="1" step="0.01" value={volume} onChange={e => setVolume(Number(e.target.value))} style={{ width: '80px', accentColor: theme.colors.text.primary, height: '4px', cursor: 'pointer' }} />
-                    <button onClick={() => setExpanded(prev => !prev)} title="展开/收起播放器" style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer', marginLeft: '0.5rem' }}>
+                    <button onClick={() => setExpanded(prev => !prev)} title="展开/收起播放器" aria-label={isExpanded ? '收起播放器' : '展开播放器'} style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer', marginLeft: '0.5rem' }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
                             <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
