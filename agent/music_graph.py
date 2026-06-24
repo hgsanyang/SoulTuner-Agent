@@ -36,6 +36,7 @@ from agent.retrieval_fallback import (
     decide_online_fallback,
     fallback_query,
     filter_results_by_avoid,
+    filter_results_by_requested_language,
 )
 from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
@@ -573,6 +574,7 @@ class MusicRecommendationGraph:
         retrieval_plan = state.get("retrieval_plan") or {}
         prior_retrieval_meta = dict(state.get("retrieval_meta") or {})
         excluded_by_avoid = 0
+        excluded_by_language = 0
 
         def _web_meta(result_count: int, failure_reason: str | None = None) -> Dict[str, Any]:
             degraded = bool(prior_retrieval_meta.get("degraded")) or bool(failure_reason)
@@ -583,6 +585,7 @@ class MusicRecommendationGraph:
                 "degraded": degraded,
                 "degraded_reason": failure_reason or prior_retrieval_meta.get("degraded_reason"),
                 "excluded_by_avoid": excluded_by_avoid,
+                "excluded_by_language": excluded_by_language,
             }
 
         params = state.get("intent_parameters", {})
@@ -657,6 +660,17 @@ class MusicRecommendationGraph:
                     logger.info(
                         "[web_fallback] 联网结果应用否定约束，排除 %d 首",
                         excluded_by_avoid,
+                    )
+
+                requested_language = (retrieval_plan.get("hard_constraints") or {}).get("language")
+                songs, excluded_by_language = filter_results_by_requested_language(
+                    songs,
+                    requested_language,
+                )
+                if excluded_by_language:
+                    logger.info(
+                        "[web_fallback] 联网结果应用语言确认，排除 %d 首",
+                        excluded_by_language,
                     )
 
                 if not songs:
@@ -751,6 +765,7 @@ class MusicRecommendationGraph:
                             "recall_source_labels": ["联网"],
                             "platform": "netease",
                             "is_trial": is_trial,       # 标记是否 30s 试听
+                            "language": s.get("_inferred_language"),
                         }
                     })
 

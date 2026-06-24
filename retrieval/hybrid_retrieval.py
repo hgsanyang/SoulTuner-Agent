@@ -289,7 +289,7 @@ class MusicHybridRetrieval:
         async def run_sync_in_executor(func, *args, **kwargs):
             return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
 
-        recall_source_timeout = float(os.getenv("RECALL_SOURCE_TIMEOUT_SECONDS", "15"))
+        recall_source_timeout = float(os.getenv("RECALL_SOURCE_TIMEOUT_SECONDS", "45"))
 
         async def timed_recall(source: str, awaitable):
             started = time.perf_counter()
@@ -522,6 +522,7 @@ class MusicHybridRetrieval:
                     "scenarios": _clean_list(item.get("scenarios")),
                     "language": item.get("language", "Unknown"),
                     "region": item.get("region", "Unknown"),
+                    "vector_backend": item.get("vector_backend"),
                     "preview_url": item.get("preview_url", None),
                     "cover_url": item.get("cover_url", None),
                     "lrc_url": item.get("lrc_url", None),

@@ -106,6 +106,50 @@ _TRANSLATION_CACHE = {
 }
 
 
+def _dense_backend() -> str:
+    backend = str(getattr(settings, "dense_text_audio_backend", "muq") or "muq").strip().lower()
+    if backend not in {"muq", "m2d", "both"}:
+        logger.warning("[SemanticSearch] 未知 dense backend=%s，回退到 muq", backend)
+        return "muq"
+    return backend
+
+
+def _backend_spec(backend: str) -> dict:
+    if backend == "muq":
+        return {
+            "name": "MuQ-MuLan",
+            "index": "song_muq_index",
+            "property": "muq_embedding",
+            "source": "Neo4j SemanticSearch (MuQ-MuLan)",
+        }
+    return {
+        "name": "M2D-CLAP",
+        "index": "song_m2d2_index",
+        "property": "m2d2_embedding",
+        "source": "Neo4j SemanticSearch (M2D-CLAP)",
+    }
+
+
+def _encode_query_for_backend(text: str, backend: str) -> List[float]:
+    if backend == "muq":
+        from retrieval.muq_embedder import encode_text_to_muq
+
+        return encode_text_to_muq(text)
+    return encode_text_to_embedding(text)
+
+
+def _has_vector_index(client, index_name: str) -> bool:
+    try:
+        check_result = client.execute_query(
+            "SHOW INDEXES YIELD name, state WHERE name = $name RETURN count(*) AS cnt, collect(state) AS states",
+            {"name": index_name},
+        )
+        return bool(check_result and check_result[0].get("cnt", 0) > 0)
+    except Exception as exc:
+        logger.warning("[SemanticSearch] 向量索引检查失败 %s: %s", index_name, exc)
+        return False
+
+
 def _translate_query(query: str) -> str:
     """
     【V2 升级】查询预处理：中文情绪词命中缓存则直接翻译，
@@ -145,107 +189,100 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
         # 1. 文本预处理
         search_text = _translate_query(query)
 
-        # 2. M2D-CLAP 编码：文本 → query_vector
-        logger.info(f"[SemanticSearch] 正在用 M2D-CLAP 编码查询文本...")
-        query_vector = encode_text_to_embedding(search_text)
-        logger.info(f"[SemanticSearch] 编码完成，向量维度: {len(query_vector)}")
-
-        # 3. 构建 Neo4j 原生向量检索 Cypher
+        # 2. 构建 Neo4j 原生向量检索 Cypher
         client = get_neo4j_client()
 
-        if artist_filter or genre_filter or language_filter or region_filter:
+        def _run_backend(backend: str) -> List[Dict[str, Any]]:
+            spec = _backend_spec(backend)
+            if not _has_vector_index(client, spec["index"]):
+                logger.warning("[SemanticSearch] %s 索引不存在，跳过该后端", spec["index"])
+                return []
+
+            logger.info("[SemanticSearch] 正在用 %s 编码查询文本...", spec["name"])
+            query_vector = _encode_query_for_backend(search_text, backend)
+            logger.info("[SemanticSearch] %s 编码完成，向量维度: %d", spec["name"], len(query_vector))
+
+            if artist_filter or genre_filter or language_filter or region_filter:
+                # ============================================================
+                # 联合查询：硬过滤 + 向量软排序
+                # ============================================================
+                where_clauses = []
+                params = {"query_vector": query_vector, "limit": limit}
+
+                match_pattern = "(s:Song)"
+                if artist_filter:
+                    match_pattern = "(s:Song)-[:PERFORMED_BY]->(a:Artist)"
+                    where_clauses.append("toLower(a.name) CONTAINS toLower($artist_filter)")
+                    params["artist_filter"] = artist_filter
+                if genre_filter:
+                    if "-[:PERFORMED_BY]->" in match_pattern:
+                        match_pattern = "(s:Song)-[:PERFORMED_BY]->(a:Artist), (s)-[:BELONGS_TO_GENRE]->(g:Genre)"
+                    else:
+                        match_pattern = "(s:Song)-[:BELONGS_TO_GENRE]->(g:Genre)"
+                    where_clauses.append("toLower(g.name) CONTAINS toLower($genre_filter)")
+                    params["genre_filter"] = genre_filter
+
+                if language_filter:
+                    where_clauses.append("toLower(s.language) = toLower($language_filter)")
+                    params["language_filter"] = language_filter
+
+                if region_filter:
+                    where_clauses.append("toLower(s.region) = toLower($region_filter)")
+                    params["region_filter"] = region_filter
+
+                where_str = " AND ".join(where_clauses)
+                vector_property = spec["property"]
+                cypher = f"""
+                MATCH {match_pattern}
+                WHERE {where_str} AND s.{vector_property} IS NOT NULL
+                WITH s,
+                     vector.similarity.cosine(s.{vector_property}, $query_vector) AS score
+                ORDER BY score DESC
+                LIMIT $limit
+                OPTIONAL MATCH (s)-[:PERFORMED_BY]->(art:Artist)
+                OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(genre:Genre)
+                OPTIONAL MATCH (s)-[:HAS_MOOD]->(mood:Mood)
+                OPTIONAL MATCH (s)-[:HAS_THEME]->(theme:Theme)
+                OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(scenario:Scenario)
+                RETURN s.title AS title, art.name AS artist,
+                       s.album AS album, s.audio_url AS audio_url,
+                       s.cover_url AS cover_url, s.lrc_url AS lrc_url,
+                       coalesce(s.language, 'Unknown') AS language,
+                       coalesce(s.region, 'Unknown') AS region,
+                       collect(DISTINCT genre.name) AS genres,
+                       collect(DISTINCT mood.name) AS moods,
+                       collect(DISTINCT theme.name) AS themes,
+                       collect(DISTINCT scenario.name) AS scenarios,
+                       score AS similarity_score
+                """
+                logger.info(
+                    "[SemanticSearch] 执行 %s 联合图向量查询（language=%s, region=%s）",
+                    spec["name"],
+                    language_filter,
+                    region_filter,
+                )
+                rows = client.execute_query(cypher, params)
+                for row in rows:
+                    row["_vector_backend"] = backend
+                    row["_vector_backend_name"] = spec["name"]
+                return rows
+
             # ============================================================
-            # 【V2 核心创新】联合查询：硬过滤 + 向量软排序
-            # 先用 MATCH 锁定歌手/流派候选池，再 vector.queryNodes 排序
+            # 纯向量检索 + OMAR 声学质心二阶段融合
+            # MuQ/M2D 负责文本→音频语义匹配，OMAR 保持声学辅助。
             # ============================================================
-            where_clauses = []
-            params = {"query_vector": query_vector, "limit": limit}
-
-            match_pattern = "(s:Song)"
-            if artist_filter:
-                match_pattern = "(s:Song)-[:PERFORMED_BY]->(a:Artist)"
-                where_clauses.append("toLower(a.name) CONTAINS toLower($artist_filter)")
-                params["artist_filter"] = artist_filter
-            if genre_filter:
-                if "-[:PERFORMED_BY]->" in match_pattern:
-                    match_pattern = "(s:Song)-[:PERFORMED_BY]->(a:Artist), (s)-[:BELONGS_TO_GENRE]->(g:Genre)"
-                else:
-                    match_pattern = "(s:Song)-[:BELONGS_TO_GENRE]->(g:Genre)"
-                where_clauses.append("toLower(g.name) CONTAINS toLower($genre_filter)")
-                params["genre_filter"] = genre_filter
-
-            # 语言过滤：使用 Song 节点属性（不是关系节点）
-            lang_match = ""
-            if language_filter:
-                where_clauses.append("toLower(s.language) = toLower($language_filter)")
-                params["language_filter"] = language_filter
-
-            # 地区过滤：使用 Song 节点属性（不是关系节点）
-            region_match = ""
-            if region_filter:
-                where_clauses.append("toLower(s.region) = toLower($region_filter)")
-                params["region_filter"] = region_filter
-
-            where_str = " AND ".join(where_clauses)
-
-            # 两阶段查询：先硬过滤收集候选 Song ID，再在候选中做向量排序
-            cypher = f"""
-            MATCH {match_pattern}{lang_match}{region_match}
-            WHERE {where_str} AND s.m2d2_embedding IS NOT NULL
-            WITH s, 
-                 vector.similarity.cosine(s.m2d2_embedding, $query_vector) AS score
-            ORDER BY score DESC
-            LIMIT $limit
-            OPTIONAL MATCH (s)-[:PERFORMED_BY]->(art:Artist)
-            OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(genre:Genre)
-            OPTIONAL MATCH (s)-[:HAS_MOOD]->(mood:Mood)
-            OPTIONAL MATCH (s)-[:HAS_THEME]->(theme:Theme)
-            OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(scenario:Scenario)
-            RETURN s.title AS title, art.name AS artist, 
-                   s.album AS album, s.audio_url AS audio_url,
-                   s.cover_url AS cover_url, s.lrc_url AS lrc_url,
-                   coalesce(s.language, 'Unknown') AS language,
-                   coalesce(s.region, 'Unknown') AS region,
-                   collect(DISTINCT genre.name) AS genres,
-                   collect(DISTINCT mood.name) AS moods,
-                   collect(DISTINCT theme.name) AS themes,
-                   collect(DISTINCT scenario.name) AS scenarios,
-                   score AS similarity_score
-            """
-
-            logger.info(f"[SemanticSearch] 执行联合图向量查询（硬过滤模式，含 language={language_filter}, region={region_filter}）")
-            results = client.execute_query(cypher, params)
-
-        else:
-            # ============================================================
-            # 【V2 + OMAR 双向量融合】纯向量检索 + 双模型加权融合
-            # M2D-CLAP: 跨模态语义匹配（文本↔音频语义）权重 0.7
-            # OMAR-RQ:  纯声学特征匹配（乐器/节奏/调性）权重 0.3
-            # 当 Song 节点无 omar_embedding 时自动退回单模型 M2D-CLAP
-            # ============================================================
-            
-            # 先检查 omar_embedding 向量索引是否存在
             _has_omar_index = False
             try:
-                check_cypher = "SHOW INDEXES YIELD name WHERE name = 'song_omar_index' RETURN count(*) AS cnt"
-                check_result = client.execute_query(check_cypher, {})
-                if check_result and check_result[0].get("cnt", 0) > 0:
-                    _has_omar_index = True
-                    logger.info("[SemanticSearch] OMAR-RQ 向量索引存在，启用双向量融合")
+                _has_omar_index = _has_vector_index(client, "song_omar_index")
+                if _has_omar_index:
+                    logger.info("[SemanticSearch] OMAR-RQ 向量索引存在，启用声学融合")
             except Exception:
-                logger.info("[SemanticSearch] OMAR 索引检查跳过，使用单模型 M2D-CLAP")
-            
+                logger.info("[SemanticSearch] OMAR 索引检查跳过，使用单文本音频后端")
+
             if _has_omar_index:
-                # ============================================================
-                # 正确的两阶段 OMAR 双向量融合
-                # Phase 1: M2D-CLAP KNN（文本 → 语义匹配）→ 广泛候选集
-                # Phase 2: 取候选集的 OMAR 向量求质心 → OMAR KNN → 声学近邻
-                # Phase 3: 两路结果按 song 合并加权排序
-                # ============================================================
-                wide = limit * 3  # 广泛候选                
-                # ---- Phase 1: M2D-CLAP KNN ----
-                m2d_cypher = """
-                CALL db.index.vector.queryNodes('song_m2d2_index', $wide, $query_vector)
+                wide = limit * 3
+                base_cypher = f"""
+                CALL db.index.vector.queryNodes('{spec["index"]}', $wide, $query_vector)
                 YIELD node AS song, score
                 OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
                 OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
@@ -264,15 +301,15 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                        score AS similarity_score,
                        elementId(song) AS _eid
                 """
-                m2d_results = client.execute_query(m2d_cypher, {"query_vector": query_vector, "wide": wide})
-                logger.info(f"[SemanticSearch] Phase 1 M2D-CLAP KNN: {len(m2d_results)} 候选")
-                
+                base_results = client.execute_query(base_cypher, {"query_vector": query_vector, "wide": wide})
+                logger.info("[SemanticSearch] Phase 1 %s KNN: %d 候选", spec["name"], len(base_results))
+
                 # ---- Phase 2: OMAR 质心 + OMAR KNN ----
                 omar_scores = {}  # eid → omar_score
                 try:
-                    if m2d_results:
-                        # 取 M2D top 候选的 OMAR embedding，求质心
-                        top_eids = [r["_eid"] for r in m2d_results[:limit]]
+                    if base_results:
+                        # 取文本音频 top 候选的 OMAR embedding，求质心
+                        top_eids = [r["_eid"] for r in base_results[:limit]]
                         centroid_cypher = """
                         UNWIND $eids AS eid
                         MATCH (s) WHERE elementId(s) = eid AND s.omar_embedding IS NOT NULL
@@ -298,47 +335,92 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                         else:
                             logger.info("[SemanticSearch] OMAR 候选不足（<2），跳过 Phase 2")
                 except Exception as e:
-                    logger.warning(f"[SemanticSearch] OMAR Phase 2 失败，退回 M2D-only: {e}")
-                
+                    logger.warning("[SemanticSearch] OMAR Phase 2 失败，退回 %s-only: %s", spec["name"], e)
+
                 # ---- Phase 3: 融合排序 ----
                 fused = []
-                for r in m2d_results:
-                    m2d_s = r["similarity_score"]
+                for r in base_results:
+                    base_s = r["similarity_score"]
                     omar_s = omar_scores.get(r["_eid"], 0.0)
                     # 有 OMAR 分数时加权融合，否则只用 M2D
                     if omar_s > 0:
-                        score = 0.7 * m2d_s + 0.3 * omar_s
+                        score = 0.7 * base_s + 0.3 * omar_s
                     else:
-                        score = m2d_s
-                    fused.append({**r, "similarity_score": score})
-                
+                        score = base_s
+                    fused.append({**r, "similarity_score": score, "_vector_backend": backend, "_vector_backend_name": spec["name"]})
+
                 fused.sort(key=lambda x: x["similarity_score"], reverse=True)
-                results = fused[:limit]
-                logger.info(f"[SemanticSearch] Phase 3 融合排序完成，返回 {len(results)} 首(limit={limit}, OMAR加权: {sum(1 for r in fused[:limit] if omar_scores.get(r.get('_eid'), 0) > 0)})")
-            else:
-                # 单模型 M2D-CLAP KNN（无 OMAR 索引时）
-                cypher = """
-                CALL db.index.vector.queryNodes('song_m2d2_index', $limit, $query_vector)
-                YIELD node AS song, score
-                OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
-                OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
-                OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
-                OPTIONAL MATCH (song)-[:HAS_THEME]->(theme:Theme)
-                OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
-                RETURN song.title AS title, art.name AS artist,
-                       song.album AS album, song.audio_url AS audio_url,
-                       song.cover_url AS cover_url, song.lrc_url AS lrc_url,
-                       coalesce(song.language, 'Unknown') AS language,
-                       coalesce(song.region, 'Unknown') AS region,
-                       collect(DISTINCT genre.name) AS genres,
-                       collect(DISTINCT mood.name) AS moods,
-                       collect(DISTINCT theme.name) AS themes,
-                       collect(DISTINCT scenario.name) AS scenarios,
-                       score AS similarity_score
-                """
-                params = {"query_vector": query_vector, "limit": limit}
-                logger.info(f"[SemanticSearch] 执行单模型 M2D-CLAP KNN 检索")
-                results = client.execute_query(cypher, params)
+                rows = fused[:limit]
+                logger.info(
+                    "[SemanticSearch] Phase 3 融合排序完成，返回 %d 首(limit=%d, OMAR加权=%d)",
+                    len(rows),
+                    limit,
+                    sum(1 for r in rows if omar_scores.get(r.get("_eid"), 0) > 0),
+                )
+                return rows
+
+            cypher = f"""
+            CALL db.index.vector.queryNodes('{spec["index"]}', $limit, $query_vector)
+            YIELD node AS song, score
+            OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
+            OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
+            OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
+            OPTIONAL MATCH (song)-[:HAS_THEME]->(theme:Theme)
+            OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
+            RETURN song.title AS title, art.name AS artist,
+                   song.album AS album, song.audio_url AS audio_url,
+                   song.cover_url AS cover_url, song.lrc_url AS lrc_url,
+                   coalesce(song.language, 'Unknown') AS language,
+                   coalesce(song.region, 'Unknown') AS region,
+                   collect(DISTINCT genre.name) AS genres,
+                   collect(DISTINCT mood.name) AS moods,
+                   collect(DISTINCT theme.name) AS themes,
+                   collect(DISTINCT scenario.name) AS scenarios,
+                   score AS similarity_score
+            """
+            logger.info("[SemanticSearch] 执行单模型 %s KNN 检索", spec["name"])
+            rows = client.execute_query(cypher, {"query_vector": query_vector, "limit": limit})
+            for row in rows:
+                row["_vector_backend"] = backend
+                row["_vector_backend_name"] = spec["name"]
+            return rows
+
+        configured_backend = _dense_backend()
+        backend_order = ["muq", "m2d"] if configured_backend == "both" else [configured_backend]
+        if configured_backend == "muq":
+            backend_order.append("m2d")
+
+        results = []
+        used_backends = []
+        seen_backend = set()
+        for backend in backend_order:
+            if backend in seen_backend:
+                continue
+            seen_backend.add(backend)
+            try:
+                backend_results = _run_backend(backend)
+            except Exception as exc:
+                logger.warning("[SemanticSearch] %s 后端失败: %s", _backend_spec(backend)["name"], exc)
+                backend_results = []
+            if backend_results:
+                used_backends.append(backend)
+                if configured_backend == "both":
+                    results.extend(backend_results)
+                    continue
+                results = backend_results
+                break
+            if backend == "muq":
+                logger.warning("[SemanticSearch] MuQ-MuLan 无结果，尝试 M2D-CLAP fallback")
+
+        if configured_backend == "both" and results:
+            deduped = {}
+            for row in results:
+                key = f"{row.get('title') or ''}::{row.get('artist') or ''}".casefold()
+                existing = deduped.get(key)
+                if existing is None or float(row.get("similarity_score") or 0.0) > float(existing.get("similarity_score") or 0.0):
+                    deduped[key] = row
+            results = sorted(deduped.values(), key=lambda row: float(row.get("similarity_score") or 0.0), reverse=True)[:limit]
+        logger.info("[SemanticSearch] dense backend configured=%s used=%s", configured_backend, used_backends or ["none"])
 
         # 4. 格式化结果
         BASE_API_URL = settings.api_base_url
@@ -359,6 +441,8 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
             moods = [x for x in (record.get("moods") or []) if x]
             themes = [x for x in (record.get("themes") or []) if x]
             scenarios = [x for x in (record.get("scenarios") or []) if x]
+            vector_backend = record.get("_vector_backend") or configured_backend
+            vector_backend_name = record.get("_vector_backend_name") or _backend_spec("muq" if vector_backend == "both" else vector_backend)["name"]
             genre_display_parts = []
             if genres:
                 genre_display_parts.append("/".join(genres[:2]))
@@ -378,7 +462,8 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                 "scenarios": scenarios,
                 "language": record.get("language", "Unknown"),
                 "region": record.get("region", "Unknown"),
-                "source": "Neo4j SemanticSearch (M2D-CLAP)",
+                "source": f"Neo4j SemanticSearch ({vector_backend_name})",
+                "vector_backend": vector_backend,
                 "similarity_score": float(similarity),
                 "preview_url": preview_url,
                 "cover_url": cover_full,
