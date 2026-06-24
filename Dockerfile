@@ -1,8 +1,8 @@
 # ============================================================
 # SoulTuner-Agent Python 后端 Dockerfile
 #
-# 包含 M2D-CLAP 跨模态模型运行时依赖，支持：
-#   - 语义向量检索（Semantic Search）
+# 包含 MuQ-MuLan、M2D-CLAP 与 OMAR-RQ 运行时依赖，支持：
+#   - MuQ-MuLan 文搜音主召回（M2D-CLAP 自动回退）
 #   - 五路召回、RRF 融合与三锚精排
 #   - HyDE 声学描述 → 向量匹配
 #
@@ -25,7 +25,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
-# 安装 M2D-CLAP 运行时代码库（参见 retrieval/portable_m2d.py）
+# 安装 M2D-CLAP / OMAR-RQ 的补充运行时代码库（MuQ 已在 requirements.txt）
 # 注意：这些是运行模型所需的 Python 库，不是模型权重文件
 # 模型权重通过 docker-compose.yml 的 volume 从宿主机挂载
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \

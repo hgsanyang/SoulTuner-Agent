@@ -90,7 +90,10 @@ def graph_candidate_recall(
     genres = list(hints.get("genres") or [])
     moods = [hints.get("mood")] if hints.get("mood") else []
     scenarios = [hints.get("scenario")] if hints.get("scenario") else []
-    if not any((artists, songs, genres, moods, scenarios)):
+    language = hard_constraints.get("language")
+    region = hard_constraints.get("region")
+    instrumental = bool(hard_constraints.get("instrumental"))
+    if not any((artists, songs, genres, moods, scenarios, language, region, instrumental)):
         return "[]"
 
     query = """
@@ -140,6 +143,28 @@ def graph_candidate_recall(
             + _clean_list(row.get("moods"))
             + _clean_list(row.get("scenarios"))
         )
+        language_match = bool(
+            language
+            and normalize_text(row.get("language")) == normalize_text(language)
+        )
+        region_match = bool(
+            region
+            and normalize_text(row.get("region")) == normalize_text(region)
+        )
+        instrumental_match = bool(
+            instrumental
+            and normalize_text(row.get("language")) == "instrumental"
+        )
+
+        # Hard label constraints are also recall signals.  Without this, a
+        # language-only query never enters graph recall and sparse languages
+        # may be absent from the RRF pool even when they exist in the catalog.
+        if language and not language_match:
+            continue
+        if region and not region_match:
+            continue
+        if instrumental and not instrumental_match:
+            continue
         row["recall_score"] = (
             (8.0 if title_exact else 6.0 if _contains(title, songs) else 0.0)
             + (
@@ -163,6 +188,9 @@ def graph_candidate_recall(
                 )
                 else 0.0
             )
+            + (4.0 if language_match else 0.0)
+            + (3.0 if region_match else 0.0)
+            + (4.0 if instrumental_match else 0.0)
         )
     rows = sorted(
         (row for row in rows if float(row.get("recall_score") or 0.0) > 0),

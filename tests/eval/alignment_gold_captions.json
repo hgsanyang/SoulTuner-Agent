@@ -1,0 +1,3110 @@
+{
+  "schema_version": 1,
+  "created_by": "tests.eval.build_alignment_gold",
+  "created_from_git": "ed6f0a81b80f",
+  "frozen": true,
+  "notes": [
+    "Captions are deterministic metadata/tag captions and do not use the online HyDE prompt.",
+    "This is a relative text-to-audio alignment ruler, not an absolute MusicCaps-style human truth set.",
+    "The first 15 selected captions were manually reviewed for template consistency and objective tag wording."
+  ],
+  "song_count_in_neo4j_with_m2d2": 1127,
+  "selected_count": 100,
+  "manual_reviewed_count": 15,
+  "items": [
+    {
+      "music_id": "185712",
+      "title": "小宇",
+      "artists": [
+        "张震岳"
+      ],
+      "caption": "A Chinese pop, rock, and punk song, with a bright vibe, conveying melancholy, happy, and romantic moods, with themes of love, suited for late-night and driving contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Bright",
+        "genres": [
+          "Pop",
+          "Rock",
+          "Punk"
+        ],
+        "moods": [
+          "Melancholy",
+          "Happy",
+          "Romantic"
+        ],
+        "themes": [
+          "Love"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Driving",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "32070215",
+      "title": "10 Hz Alpha Thunderstorm (Extended Version)",
+      "artists": [
+        "White Noise Meditation"
+      ],
+      "caption": "An ambient instrumental track, with an ethereal vibe, conveying peaceful and relaxing moods, with themes of nature, suited for sleep and study contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Western",
+        "vibe": "Ethereal",
+        "genres": [
+          "Ambient"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Nature"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Study"
+        ]
+      }
+    },
+    {
+      "music_id": "29154677",
+      "title": "Where Have You Gone",
+      "artists": [
+        "Carousel"
+      ],
+      "caption": "An English pop and indie song, with an indie vibe, conveying melancholy and hopeful moods, with themes of love and loss, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Hopeful"
+        ],
+        "themes": [
+          "Love",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "1142673",
+      "title": "Travelin' Band",
+      "artists": [
+        "Creedence Clearwater Revival"
+      ],
+      "caption": "An English rock and country song, with a retro vibe, conveying energetic and happy moods, with themes of journey and freedom, suited for driving and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Rock",
+          "Country"
+        ],
+        "moods": [
+          "Energetic",
+          "Happy"
+        ],
+        "themes": [
+          "Journey",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Driving",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "19188939",
+      "title": "Anti-O****m",
+      "artists": [
+        "Sonic Youth"
+      ],
+      "caption": "An English rock and experimental song, with a raw vibe, conveying energetic and angry moods, with themes of life and freedom, suited for party and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Raw",
+        "genres": [
+          "Rock",
+          "Experimental"
+        ],
+        "moods": [
+          "Energetic",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Party",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "447926067",
+      "title": "鼓楼",
+      "artists": [
+        "赵雷"
+      ],
+      "caption": "A Chinese singer-songwriter and folk song, with a warm vibe, conveying peaceful and relaxing moods, with themes of life and urban, suited for commute and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Warm",
+        "genres": [
+          "Singer-Songwriter",
+          "Folk"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Life",
+          "Urban"
+        ],
+        "scenarios": [
+          "Commute",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "486855953",
+      "title": "马马嘟嘟骑",
+      "artists": [
+        "斯斯与帆"
+      ],
+      "caption": "A Chinese pop and folk song, with an acoustic vibe, conveying happy and peaceful moods, with themes of life and youth, suited for travel and cooking contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Acoustic",
+        "genres": [
+          "Pop",
+          "Folk"
+        ],
+        "moods": [
+          "Happy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Youth"
+        ],
+        "scenarios": [
+          "Travel",
+          "Cooking"
+        ]
+      }
+    },
+    {
+      "music_id": "2744750011",
+      "title": "我不用问",
+      "artists": [
+        "deca joins"
+      ],
+      "caption": "A Chinese alternative and indie song, with a raw vibe, conveying melancholy and peaceful moods, with themes of life and self-discovery, suited for late-night and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Raw",
+        "genres": [
+          "Alternative",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Self-discovery"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "1642632",
+      "title": "Ther",
+      "artists": [
+        "Kraffa"
+      ],
+      "caption": "An ambient and experimental instrumental track, with an acoustic vibe, conveying dreamy and peaceful moods, with themes of nature, suited for sleep and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Western",
+        "vibe": "Acoustic",
+        "genres": [
+          "Ambient",
+          "Experimental"
+        ],
+        "moods": [
+          "Dreamy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Nature"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "22714590",
+      "title": "1984",
+      "artists": [
+        "andymori"
+      ],
+      "caption": "A Japanese rock and indie song, with an indie vibe, conveying nostalgic and energetic moods, with themes of life and youth, suited for driving and morning contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Indie",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Nostalgic",
+          "Energetic"
+        ],
+        "themes": [
+          "Life",
+          "Youth"
+        ],
+        "scenarios": [
+          "Driving",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "1305648755",
+      "title": "Autumn Wounds",
+      "artists": [
+        "Soror Dolorosa"
+      ],
+      "caption": "An English alternative and indie song, with a dark vibe, conveying melancholy and lonely moods, with themes of nature and loss, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dark",
+        "genres": [
+          "Alternative",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Nature",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "29734857",
+      "title": "Cornfield Chase",
+      "artists": [
+        "Hans Zimmer"
+      ],
+      "caption": "An ambient and classical instrumental track, with a cinematic vibe, conveying dreamy and peaceful moods, with themes of nature and journey, suited for sleep and study contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Western",
+        "vibe": "Cinematic",
+        "genres": [
+          "Ambient",
+          "Classical"
+        ],
+        "moods": [
+          "Dreamy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Nature",
+          "Journey"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Study"
+        ]
+      }
+    },
+    {
+      "music_id": "18317149",
+      "title": "Let Me Live",
+      "artists": [
+        "Queen"
+      ],
+      "caption": "An English pop and rock song, with a warm vibe, conveying energetic and hopeful moods, with themes of life and growth, suited for driving and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Warm",
+        "genres": [
+          "Pop",
+          "Rock"
+        ],
+        "moods": [
+          "Energetic",
+          "Hopeful"
+        ],
+        "themes": [
+          "Life",
+          "Growth"
+        ],
+        "scenarios": [
+          "Driving",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "1974125151",
+      "title": "As It Was",
+      "artists": [
+        "Harry Grover"
+      ],
+      "caption": "An English pop and indie song, with an urban vibe, conveying melancholy, nostalgic, and romantic moods, with themes of life and love, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Urban",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Nostalgic",
+          "Romantic"
+        ],
+        "themes": [
+          "Life",
+          "Love",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute",
+          "Driving"
+        ]
+      }
+    },
+    {
+      "music_id": "1449626870",
+      "title": "Secret Place",
+      "artists": [
+        "Tyler Brown Williams"
+      ],
+      "caption": "An English folk and acoustic song, with a warm vibe, conveying romantic and peaceful moods, with themes of freedom and love, suited for morning and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": true,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Warm",
+        "genres": [
+          "Folk",
+          "Acoustic"
+        ],
+        "moods": [
+          "Romantic",
+          "Peaceful"
+        ],
+        "themes": [
+          "Freedom",
+          "Love"
+        ],
+        "scenarios": [
+          "Morning",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "1960129465",
+      "title": "我们的地方",
+      "artists": [
+        "椅子乐团 The Chairs"
+      ],
+      "caption": "A Chinese pop and indie song, with a warm vibe, conveying healing and peaceful moods, with themes of life and love, suited for late-night and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Warm",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Healing",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Love"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "428423260",
+      "title": "Replica",
+      "artists": [
+        "The xx"
+      ],
+      "caption": "An English electronic and indie song, with an urban vibe, conveying melancholy and dreamy moods, with themes of life and self-discovery, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Urban",
+        "genres": [
+          "Electronic",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Dreamy"
+        ],
+        "themes": [
+          "Life",
+          "Self-discovery"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "567366398",
+      "title": "88",
+      "artists": [
+        "Inner Wave"
+      ],
+      "caption": "An English alternative and indie song, with an indie vibe, conveying dreamy and relaxing moods, with themes of life and self-discovery, suited for late-night and driving contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Alternative",
+          "Indie"
+        ],
+        "moods": [
+          "Dreamy",
+          "Relaxing"
+        ],
+        "themes": [
+          "Life",
+          "Self-discovery"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Driving"
+        ]
+      }
+    },
+    {
+      "music_id": "1844245338",
+      "title": "野花",
+      "artists": [
+        "野渡乐队"
+      ],
+      "caption": "A Chinese pop and rock song, with a warm vibe, conveying healing and hopeful moods, with themes of life and nature, suited for travel and morning contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Warm",
+        "genres": [
+          "Pop",
+          "Rock"
+        ],
+        "moods": [
+          "Healing",
+          "Hopeful"
+        ],
+        "themes": [
+          "Life",
+          "Nature"
+        ],
+        "scenarios": [
+          "Travel",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "1934914284",
+      "title": "くだらない",
+      "artists": [
+        "羊文学"
+      ],
+      "caption": "A Japanese alternative and indie song, with an indie vibe, conveying melancholy and lonely moods, with themes of life and self-discovery, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Indie",
+        "genres": [
+          "Alternative",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Life",
+          "Self-discovery"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "1479510189",
+      "title": "海边旅馆一夜",
+      "artists": [
+        "Schoolgirl byebye"
+      ],
+      "caption": "A Chinese pop and indie song, with an indie vibe, conveying melancholy and lonely moods, with themes of love and night, suited for late-night and sleep contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Indie",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Love",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Sleep"
+        ]
+      }
+    },
+    {
+      "music_id": "1878001165",
+      "title": "Empty backyard（空后院）",
+      "artists": [
+        "酒鬼在楼上"
+      ],
+      "caption": "A Chinese electronic and indie song, with a dark vibe, conveying melancholy and angry moods, with themes of life and loss, suited for late-night contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Dark",
+        "genres": [
+          "Electronic",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night"
+        ]
+      }
+    },
+    {
+      "music_id": "1490987790",
+      "title": "Soft Lips",
+      "artists": [
+        "BlankCh3ck"
+      ],
+      "caption": "An English pop and indie song, with an indie vibe, conveying happy and romantic moods, with themes of love, suited for morning and cooking contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Happy",
+          "Romantic"
+        ],
+        "themes": [
+          "Love"
+        ],
+        "scenarios": [
+          "Morning",
+          "Cooking"
+        ]
+      }
+    },
+    {
+      "music_id": "536064363",
+      "title": "Bodys",
+      "artists": [
+        "Car Seat Headrest"
+      ],
+      "caption": "An English rock and indie song, with an indie vibe, conveying energetic and romantic moods, with themes of youth and love, suited for late-night and party contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Energetic",
+          "Romantic"
+        ],
+        "themes": [
+          "Youth",
+          "Love"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Party"
+        ]
+      }
+    },
+    {
+      "music_id": "1475040295",
+      "title": "Car Crash in G Major",
+      "artists": [
+        "fanclubwallet"
+      ],
+      "caption": "An English pop and indie song, with an indie vibe, conveying melancholy and angry moods, with themes of life and heartbreak, suited for late-night and driving contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Driving"
+        ]
+      }
+    },
+    {
+      "music_id": "1890111",
+      "title": "Coyotes",
+      "artists": [
+        "Richard Thompson"
+      ],
+      "caption": "An English singer-songwriter and folk song, with an acoustic vibe, conveying nostalgic and peaceful moods, with themes of life and nature, suited for commute and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Acoustic",
+        "genres": [
+          "Singer-Songwriter",
+          "Folk"
+        ],
+        "moods": [
+          "Nostalgic",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Nature"
+        ],
+        "scenarios": [
+          "Commute",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "407927991",
+      "title": "Darkness Of The Day",
+      "artists": [
+        "Isaac Gracie"
+      ],
+      "caption": "An English singer-songwriter and folk song, with an indie vibe, conveying melancholy and lonely moods, with themes of loss and night, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Singer-Songwriter",
+          "Folk"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Loss",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "509512457",
+      "title": "我还年轻 我还年轻",
+      "artists": [
+        "老王乐队"
+      ],
+      "caption": "A Chinese folk and indie song, with an indie vibe, conveying melancholy and energetic moods, with themes of life and youth, suited for driving and party contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Indie",
+        "genres": [
+          "Folk",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Energetic"
+        ],
+        "themes": [
+          "Life",
+          "Youth",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Driving",
+          "Party"
+        ]
+      }
+    },
+    {
+      "music_id": "2115838953",
+      "title": "烂灯泡",
+      "artists": [
+        "刘烨溦"
+      ],
+      "caption": "A Chinese pop and indie song, with a raw vibe, conveying energetic and angry moods, with themes of life and heartbreak, suited for party and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Raw",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Energetic",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Party",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "2035279723",
+      "title": "床",
+      "artists": [
+        "草东没有派对"
+      ],
+      "caption": "A Chinese alternative, rock, and indie song, with an indie vibe, conveying melancholy, lonely, and angry moods, with themes of life and loss, suited for late-night and sleep contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Indie",
+        "genres": [
+          "Alternative",
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Sleep",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "3312929543",
+      "title": "Thirst of Life",
+      "artists": [
+        "The fin."
+      ],
+      "caption": "An English dreampop and indie song, with a dreampop vibe, conveying dreamy and hopeful moods, with themes of life and freedom, suited for commute and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Japan",
+        "vibe": "Dreampop",
+        "genres": [
+          "Dreampop",
+          "Indie"
+        ],
+        "moods": [
+          "Dreamy",
+          "Hopeful"
+        ],
+        "themes": [
+          "Life",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Commute",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "27281345",
+      "title": "Lady Writer",
+      "artists": [
+        "Dire Straits"
+      ],
+      "caption": "An English pop and rock song, with a retro vibe, conveying energetic and happy moods, with themes of life, suited for driving and work contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Pop",
+          "Rock"
+        ],
+        "moods": [
+          "Energetic",
+          "Happy"
+        ],
+        "themes": [
+          "Life"
+        ],
+        "scenarios": [
+          "Driving",
+          "Work"
+        ]
+      }
+    },
+    {
+      "music_id": "1481911863",
+      "title": "悲伤只是一种普遍的情绪",
+      "artists": [
+        "塑料"
+      ],
+      "caption": "A Chinese rock and punk song, with a raw vibe, conveying melancholy and angry moods, with themes of life and society, suited for late-night and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Raw",
+        "genres": [
+          "Rock",
+          "Punk"
+        ],
+        "moods": [
+          "Melancholy",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Society"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "20363333",
+      "title": "Red House",
+      "artists": [
+        "Jimi Hendrix"
+      ],
+      "caption": "An English rock and blues song, with a retro vibe, conveying melancholy and lonely moods, with themes of love and heartbreak, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Rock",
+          "Blues"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Love",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "19542375",
+      "title": "The Man Who Can't Be Moved",
+      "artists": [
+        "The Script"
+      ],
+      "caption": "An English pop and rock song, with an urban vibe, conveying melancholy and hopeful moods, with themes of love and heartbreak, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Urban",
+        "genres": [
+          "Pop",
+          "Rock"
+        ],
+        "moods": [
+          "Melancholy",
+          "Hopeful"
+        ],
+        "themes": [
+          "Love",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "26199455",
+      "title": "Save Rock And Roll",
+      "artists": [
+        "Fall Out Boy，Elton John",
+        "Fall Out Boy、Elton John"
+      ],
+      "caption": "An English pop and rock song, with a cinematic vibe, conveying energetic and hopeful moods, with themes of life and freedom, suited for driving and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Cinematic",
+        "genres": [
+          "Pop",
+          "Rock"
+        ],
+        "moods": [
+          "Energetic",
+          "Hopeful"
+        ],
+        "themes": [
+          "Life",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Driving",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "1350521355",
+      "title": "Harvey",
+      "artists": [
+        "Her's"
+      ],
+      "caption": "An English dreampop and indie song, with a dreampop vibe, conveying dreamy and peaceful moods, with themes of love and night, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dreampop",
+        "genres": [
+          "Dreampop",
+          "Indie"
+        ],
+        "moods": [
+          "Dreamy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Love",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "28528999",
+      "title": "A Sky Full of Stars",
+      "artists": [
+        "Coldplay"
+      ],
+      "caption": "An English pop and alternative song, with a cinematic vibe, conveying energetic and hopeful moods, with themes of nature and love, suited for driving and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Cinematic",
+        "genres": [
+          "Pop",
+          "Alternative"
+        ],
+        "moods": [
+          "Energetic",
+          "Hopeful"
+        ],
+        "themes": [
+          "Nature",
+          "Love"
+        ],
+        "scenarios": [
+          "Driving",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "18807855",
+      "title": "Lie To Me",
+      "artists": [
+        "Jonny Lang"
+      ],
+      "caption": "An English rock and blues song, with a raw vibe, conveying melancholy and lonely moods, with themes of love and heartbreak, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Raw",
+        "genres": [
+          "Rock",
+          "Blues"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Love",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "16882038",
+      "title": "Mellow Song",
+      "artists": [
+        "Blur"
+      ],
+      "caption": "An English alternative and rock song, with an indie vibe, conveying dreamy and relaxing moods, with themes of life and night, suited for late-night and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Dreamy",
+          "Relaxing"
+        ],
+        "themes": [
+          "Life",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "299599",
+      "title": "你喜欢不如我喜欢",
+      "artists": [
+        "王菲"
+      ],
+      "caption": "A Chinese pop and mandopop song, with an ethereal vibe, conveying peaceful and relaxing moods, with themes of love, suited for travel and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Hong Kong",
+        "vibe": "Ethereal",
+        "genres": [
+          "Pop",
+          "Mandopop"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Love"
+        ],
+        "scenarios": [
+          "Travel",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "1379582401",
+      "title": "Long Long Way",
+      "artists": [
+        "Mando Diao"
+      ],
+      "caption": "An English alternative and rock song, with a raw vibe, conveying energetic and lonely moods, with themes of life and journey, suited for travel and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Raw",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Energetic",
+          "Lonely"
+        ],
+        "themes": [
+          "Life",
+          "Journey"
+        ],
+        "scenarios": [
+          "Travel",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "405485948",
+      "title": "Counting Stars",
+      "artists": [
+        "Nujabes"
+      ],
+      "caption": "A hip-hop and jazz instrumental track, with a lo-fi vibe, conveying dreamy and peaceful moods, with themes of nature and night, suited for sleep and study contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Japan",
+        "vibe": "Lo-fi",
+        "genres": [
+          "Hip-Hop",
+          "Jazz"
+        ],
+        "moods": [
+          "Dreamy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Nature",
+          "Night"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Study"
+        ]
+      }
+    },
+    {
+      "music_id": "4428408",
+      "title": "Whirl",
+      "artists": [
+        "Wiretree"
+      ],
+      "caption": "An English pop and indie song, with an indie vibe, conveying happy and relaxing moods, with themes of love, suited for driving and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Happy",
+          "Relaxing"
+        ],
+        "themes": [
+          "Love"
+        ],
+        "scenarios": [
+          "Driving",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "29747526",
+      "title": "Who Says",
+      "artists": [
+        "Selena Gomez"
+      ],
+      "caption": "An English pop and indie song, with a bright vibe, conveying happy and hopeful moods, with themes of self-discovery and growth, suited for commute and morning contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Bright",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Happy",
+          "Hopeful"
+        ],
+        "themes": [
+          "Self-discovery",
+          "Growth"
+        ],
+        "scenarios": [
+          "Commute",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "487864613",
+      "title": "寂川",
+      "artists": [
+        "忘乡"
+      ],
+      "caption": "An ambient and post-rock instrumental track, with an ethereal vibe, conveying peaceful and relaxing moods, with themes of nature, suited for sleep and study contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Mainland China",
+        "vibe": "Ethereal",
+        "genres": [
+          "Ambient",
+          "Post-Rock"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Nature"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Study"
+        ]
+      }
+    },
+    {
+      "music_id": "2015829578",
+      "title": "不都媽生的5.0",
+      "artists": [
+        "扎进心脏的智齿"
+      ],
+      "caption": "A rock and experimental instrumental track, with an experimental vibe, conveying energetic and angry moods, with themes of life and experimental, suited for late-night contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Mainland China",
+        "vibe": "Experimental",
+        "genres": [
+          "Rock",
+          "Experimental"
+        ],
+        "moods": [
+          "Energetic",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Experimental"
+        ],
+        "scenarios": [
+          "Late Night"
+        ]
+      }
+    },
+    {
+      "music_id": "27731259",
+      "title": "丢",
+      "artists": [
+        "布衣乐队"
+      ],
+      "caption": "A Chinese folk and rock song, with a warm vibe, conveying melancholy and nostalgic moods, with themes of life and loss, suited for late-night and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Warm",
+        "genres": [
+          "Folk",
+          "Rock"
+        ],
+        "moods": [
+          "Melancholy",
+          "Nostalgic"
+        ],
+        "themes": [
+          "Life",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "351285",
+      "title": "火车日记",
+      "artists": [
+        "丢火车"
+      ],
+      "caption": "A Chinese rock and indie song, with an indie vibe, conveying energetic and hopeful moods, with themes of life and journey, suited for driving and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Indie",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Energetic",
+          "Hopeful"
+        ],
+        "themes": [
+          "Life",
+          "Journey"
+        ],
+        "scenarios": [
+          "Driving",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "541853",
+      "title": "ふるさとの匂い",
+      "artists": [
+        "吉森信"
+      ],
+      "caption": "An ambient and classical instrumental track, with an acoustic vibe, conveying nostalgic and peaceful moods, with themes of life and nature, suited for sleep and morning contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Japan",
+        "vibe": "Acoustic",
+        "genres": [
+          "Ambient",
+          "Classical"
+        ],
+        "moods": [
+          "Nostalgic",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Nature"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "757761",
+      "title": "歩いても 歩いても",
+      "artists": [
+        "ゴンチチ"
+      ],
+      "caption": "A pop and acoustic instrumental track, with an acoustic vibe, conveying peaceful and relaxing moods, with themes of life and nature, suited for study and morning contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Japan",
+        "vibe": "Acoustic",
+        "genres": [
+          "Pop",
+          "Acoustic"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Life",
+          "Nature"
+        ],
+        "scenarios": [
+          "Study",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "4017234",
+      "title": "What It Is",
+      "artists": [
+        "Mark Knopfler"
+      ],
+      "caption": "An English rock and blues song, with a retro vibe, conveying melancholy and peaceful moods, with themes of life and urban, suited for late-night and driving contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Rock",
+          "Blues"
+        ],
+        "moods": [
+          "Melancholy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Urban"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Driving"
+        ]
+      }
+    },
+    {
+      "music_id": "2738338863",
+      "title": "Teenage Dreams",
+      "artists": [
+        "Lazer Boomerang"
+      ],
+      "caption": "A pop and electronic instrumental track, with a retro vibe, conveying nostalgic and dreamy moods, with themes of life and youth, suited for sleep and driving contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Pop",
+          "Electronic"
+        ],
+        "moods": [
+          "Nostalgic",
+          "Dreamy"
+        ],
+        "themes": [
+          "Life",
+          "Youth"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Driving"
+        ]
+      }
+    },
+    {
+      "music_id": "431811455",
+      "title": "I Will Follow You",
+      "artists": [
+        "Toulouse"
+      ],
+      "caption": "An English singer-songwriter and soul song, with a warm vibe, conveying romantic and healing moods, with themes of love, suited for morning and cooking contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Warm",
+        "genres": [
+          "Singer-Songwriter",
+          "Soul"
+        ],
+        "moods": [
+          "Romantic",
+          "Healing"
+        ],
+        "themes": [
+          "Love"
+        ],
+        "scenarios": [
+          "Morning",
+          "Cooking"
+        ]
+      }
+    },
+    {
+      "music_id": "442300",
+      "title": "いつも何度でも (千と千尋の神隠し)",
+      "artists": [
+        "木村弓"
+      ],
+      "caption": "An ambient and classical instrumental track, with an acoustic vibe, conveying healing and peaceful moods, with themes of life and journey, suited for sleep and study contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Japan",
+        "vibe": "Acoustic",
+        "genres": [
+          "Ambient",
+          "Classical"
+        ],
+        "moods": [
+          "Healing",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Journey"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Study"
+        ]
+      }
+    },
+    {
+      "music_id": "29423160",
+      "title": "Ontario Gothic",
+      "artists": [
+        "Foxes in Fiction"
+      ],
+      "caption": "An English electronic and indie song, with a dreampop vibe, conveying melancholy and dreamy moods, with themes of self-discovery and night, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dreampop",
+        "genres": [
+          "Electronic",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Dreamy"
+        ],
+        "themes": [
+          "Self-discovery",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "1806621414",
+      "title": "Это так архаично",
+      "artists": [
+        "Где Фантом?"
+      ],
+      "caption": "An alternative and indie song, with an indie vibe, conveying melancholy and lonely moods, with themes of life and growth, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Other",
+        "region": "Other",
+        "vibe": "Indie",
+        "genres": [
+          "Alternative",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Life",
+          "Growth"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "208927",
+      "title": "思念",
+      "artists": [
+        "蔡健雅"
+      ],
+      "caption": "A Chinese pop and singer-songwriter song, with an urban vibe, conveying melancholy and lonely moods, with themes of heartbreak and memory, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Urban",
+        "genres": [
+          "Pop",
+          "Singer-Songwriter"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Heartbreak",
+          "Memory"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "2095818109",
+      "title": "つくる",
+      "artists": [
+        "ひとひら"
+      ],
+      "caption": "A Japanese singer-songwriter and folk song, with an indie vibe, conveying healing and peaceful moods, with themes of life and growth, suited for study and morning contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Indie",
+        "genres": [
+          "Singer-Songwriter",
+          "Folk"
+        ],
+        "moods": [
+          "Healing",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Growth"
+        ],
+        "scenarios": [
+          "Study",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "18304316",
+      "title": "Death II",
+      "artists": [
+        "Pulp"
+      ],
+      "caption": "An English pop and alternative song, with an urban vibe, conveying melancholy and lonely moods, with themes of loss and night, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Urban",
+        "genres": [
+          "Pop",
+          "Alternative"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Loss",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "21158594",
+      "title": "Kids",
+      "artists": [
+        "MGMT"
+      ],
+      "caption": "An English pop and indie song, with a bright vibe, conveying energetic and happy moods, with themes of youth and nature, suited for commute and party contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Bright",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Energetic",
+          "Happy"
+        ],
+        "themes": [
+          "Youth",
+          "Nature"
+        ],
+        "scenarios": [
+          "Commute",
+          "Party"
+        ]
+      }
+    },
+    {
+      "music_id": "1824927085",
+      "title": "Leave The Door Open",
+      "artists": [
+        "Bruno Mars，Anderson .Paak，Silk Sonic",
+        "Bruno Mars、Anderson .Paak、Silk Sonic"
+      ],
+      "caption": "An English r&b and soul song, with a retro vibe, conveying happy and romantic moods, with themes of love, suited for party and cooking contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "R&B",
+          "Soul"
+        ],
+        "moods": [
+          "Happy",
+          "Romantic"
+        ],
+        "themes": [
+          "Love"
+        ],
+        "scenarios": [
+          "Party",
+          "Cooking"
+        ]
+      }
+    },
+    {
+      "music_id": "4237809",
+      "title": "Goodbye Blue Sky",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "caption": "An English alternative and rock song, with a cinematic vibe, conveying melancholy and dreamy moods, with themes of life and loss, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Cinematic",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Melancholy",
+          "Dreamy"
+        ],
+        "themes": [
+          "Life",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "4237167",
+      "title": "High Hopes",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "caption": "An English alternative and rock song, with a cinematic vibe, conveying melancholy and nostalgic moods, with themes of life and nature, suited for late-night and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Cinematic",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Melancholy",
+          "Nostalgic"
+        ],
+        "themes": [
+          "Life",
+          "Nature"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "2698851599",
+      "title": "How Long, How Low?",
+      "artists": [
+        "Chance Peña，Hayd",
+        "Chance Peña、Hayd"
+      ],
+      "caption": "An English pop and acoustic song, with an indie vibe, conveying melancholy and lonely moods, with themes of life and growth, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Pop",
+          "Acoustic"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Life",
+          "Growth"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "19455185",
+      "title": "Alcohol",
+      "artists": [
+        "The Kinks"
+      ],
+      "caption": "An English rock and blues song, with a retro vibe, conveying melancholy and angry moods, with themes of life and loss, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Rock",
+          "Blues"
+        ],
+        "moods": [
+          "Melancholy",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "29423159",
+      "title": "Shadow's Song",
+      "artists": [
+        "Foxes in Fiction"
+      ],
+      "caption": "An English electronic and indie song, with a dreampop vibe, conveying melancholy and dreamy moods, with themes of self-discovery and loss, suited for sleep and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dreampop",
+        "genres": [
+          "Electronic",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Dreamy"
+        ],
+        "themes": [
+          "Self-discovery",
+          "Loss"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "541259",
+      "title": "暖かい家路",
+      "artists": [
+        "吉森信"
+      ],
+      "caption": "An ambient and classical instrumental track, with an acoustic vibe, conveying peaceful and warm moods, with themes of home, suited for commute and sleep contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Japan",
+        "vibe": "Acoustic",
+        "genres": [
+          "Ambient",
+          "Classical"
+        ],
+        "moods": [
+          "Peaceful",
+          "Warm"
+        ],
+        "themes": [
+          "Home"
+        ],
+        "scenarios": [
+          "Commute",
+          "Sleep"
+        ]
+      }
+    },
+    {
+      "music_id": "1853157133",
+      "title": "Chaise Longue",
+      "artists": [
+        "Wet Leg"
+      ],
+      "caption": "An English alternative and indie song, with an indie vibe, conveying energetic and happy moods, with themes of youth and freedom, suited for commute and party contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Alternative",
+          "Indie"
+        ],
+        "moods": [
+          "Energetic",
+          "Happy"
+        ],
+        "themes": [
+          "Youth",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Commute",
+          "Party"
+        ]
+      }
+    },
+    {
+      "music_id": "1400047209",
+      "title": "Na zewnątrz",
+      "artists": [
+        "Siekiera"
+      ],
+      "caption": "An alternative and punk instrumental track, with a dark vibe, conveying energetic and angry moods, with themes of life and freedom, suited for late-night and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Other",
+        "vibe": "Dark",
+        "genres": [
+          "Alternative",
+          "Punk"
+        ],
+        "moods": [
+          "Energetic",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "27809038",
+      "title": "Disco",
+      "artists": [
+        "ミツメ"
+      ],
+      "caption": "A Japanese pop and indie song, with an indie vibe, conveying dreamy and relaxing moods, with themes of love and night, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Indie",
+        "genres": [
+          "Pop",
+          "Indie"
+        ],
+        "moods": [
+          "Dreamy",
+          "Relaxing"
+        ],
+        "themes": [
+          "Love",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "4331335",
+      "title": "Lullaby",
+      "artists": [
+        "The Cure"
+      ],
+      "caption": "An English alternative and rock song, with a dark vibe, conveying dreamy and lonely moods, with themes of life and night, suited for late-night and sleep contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dark",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Dreamy",
+          "Lonely"
+        ],
+        "themes": [
+          "Life",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Sleep"
+        ]
+      }
+    },
+    {
+      "music_id": "22581157",
+      "title": "Ruby My Dear",
+      "artists": [
+        "Thelonious Monk"
+      ],
+      "caption": "A jazz instrumental track, with a retro vibe, conveying peaceful and relaxing moods, with themes of love, suited for late-night and cooking contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Jazz"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Love"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Cooking"
+        ]
+      }
+    },
+    {
+      "music_id": "1305774797",
+      "title": "Busy and Important",
+      "artists": [
+        "Tom Rosenthal"
+      ],
+      "caption": "An English singer-songwriter and indie song, with an indie vibe, conveying melancholy and peaceful moods, with themes of life and growth, suited for study and work contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Singer-Songwriter",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Growth"
+        ],
+        "scenarios": [
+          "Study",
+          "Work"
+        ]
+      }
+    },
+    {
+      "music_id": "548556869",
+      "title": "半句再见",
+      "artists": [
+        "孙燕姿"
+      ],
+      "caption": "A Chinese pop and ballad song, with a warm vibe, conveying melancholy and nostalgic moods, with themes of heartbreak and loss, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Warm",
+        "genres": [
+          "Pop",
+          "Ballad"
+        ],
+        "moods": [
+          "Melancholy",
+          "Nostalgic"
+        ],
+        "themes": [
+          "Heartbreak",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "3885354",
+      "title": "Summer",
+      "artists": [
+        "A Toys Orchestra"
+      ],
+      "caption": "An English rock and indie song, with an indie vibe, conveying nostalgic and hopeful moods, with themes of youth and nature, suited for travel and morning contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Nostalgic",
+          "Hopeful"
+        ],
+        "themes": [
+          "Youth",
+          "Nature"
+        ],
+        "scenarios": [
+          "Travel",
+          "Morning"
+        ]
+      }
+    },
+    {
+      "music_id": "1311427648",
+      "title": "Episode 33",
+      "artists": [
+        "She Her Her Hers"
+      ],
+      "caption": "A Japanese alternative and indie song, with a dreampop vibe, conveying dreamy and relaxing moods, with themes of love and night, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Dreampop",
+        "genres": [
+          "Alternative",
+          "Indie"
+        ],
+        "moods": [
+          "Dreamy",
+          "Relaxing"
+        ],
+        "themes": [
+          "Love",
+          "Night"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "2110353349",
+      "title": "天各一方",
+      "artists": [
+        "Sunken Boat 沉舟乐队"
+      ],
+      "caption": "A Chinese rock and indie song, with an indie vibe, conveying energetic and hopeful moods, with themes of journey and freedom, suited for driving and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Indie",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Energetic",
+          "Hopeful"
+        ],
+        "themes": [
+          "Journey",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Driving",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "723162",
+      "title": "Scene",
+      "artists": [
+        "Envy"
+      ],
+      "caption": "A Japanese rock and post-rock song, with a raw vibe, conveying melancholy and energetic moods, with themes of life and loss, suited for late-night and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Raw",
+        "genres": [
+          "Rock",
+          "Post-Rock"
+        ],
+        "moods": [
+          "Melancholy",
+          "Energetic"
+        ],
+        "themes": [
+          "Life",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "18860434",
+      "title": "Love Will Tear Us Apart",
+      "artists": [
+        "Joy Division"
+      ],
+      "caption": "An English alternative and rock song, with a dark vibe, conveying melancholy and angry moods, with themes of love and loss, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dark",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Melancholy",
+          "Angry"
+        ],
+        "themes": [
+          "Love",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "234014",
+      "title": "写不完的温柔",
+      "artists": [
+        "G.E.M.邓紫棋"
+      ],
+      "caption": "A Chinese pop and mandopop song, with a warm vibe, conveying melancholy and healing moods, with themes of love and heartbreak, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Hong Kong",
+        "vibe": "Warm",
+        "genres": [
+          "Pop",
+          "Mandopop"
+        ],
+        "moods": [
+          "Melancholy",
+          "Healing"
+        ],
+        "themes": [
+          "Love",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "19288281",
+      "title": "A Token of Gratitude",
+      "artists": [
+        "The Radio Dept."
+      ],
+      "caption": "An English shoegaze and indie song, with a dreamy vibe, conveying melancholy and peaceful moods, with themes of life and love, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dreamy",
+        "genres": [
+          "Shoegaze",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Love"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "1469826254",
+      "title": "生命",
+      "artists": [
+        "声音玩具"
+      ],
+      "caption": "A Chinese rock and indie song, with an ethereal vibe, conveying melancholy and peaceful moods, with themes of life and self-discovery, suited for late-night and sleep contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Ethereal",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Self-discovery"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Sleep"
+        ]
+      }
+    },
+    {
+      "music_id": "4238581",
+      "title": "Astronomy Domine",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "caption": "An English rock and experimental song, with a dark vibe, conveying dreamy and energetic moods, with themes of nature and journey, suited for late-night and travel contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dark",
+        "genres": [
+          "Rock",
+          "Experimental"
+        ],
+        "moods": [
+          "Dreamy",
+          "Energetic"
+        ],
+        "themes": [
+          "Nature",
+          "Journey"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Travel"
+        ]
+      }
+    },
+    {
+      "music_id": "1391252099",
+      "title": "Found Me",
+      "artists": [
+        "Men I Trust"
+      ],
+      "caption": "An English dreampop and indie song, with an indie vibe, conveying healing and peaceful moods, with themes of life and self-discovery, suited for morning and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Indie",
+        "genres": [
+          "Dreampop",
+          "Indie"
+        ],
+        "moods": [
+          "Healing",
+          "Peaceful"
+        ],
+        "themes": [
+          "Life",
+          "Self-discovery"
+        ],
+        "scenarios": [
+          "Morning",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "21308373",
+      "title": "Your Silent Face",
+      "artists": [
+        "New Order"
+      ],
+      "caption": "An English alternative and electronic song, with a retro vibe, conveying melancholy and lonely moods, with themes of life and urban, suited for late-night and commute contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Retro",
+        "genres": [
+          "Alternative",
+          "Electronic"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Life",
+          "Urban"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Commute"
+        ]
+      }
+    },
+    {
+      "music_id": "1413487049",
+      "title": "Люди Надоели",
+      "artists": [
+        "Molchat Doma"
+      ],
+      "caption": "An alternative and rock song, with a dark vibe, conveying lonely and angry moods, with themes of life and urban, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Other",
+        "region": "Other",
+        "vibe": "Dark",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Lonely",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Urban"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "20045587",
+      "title": "Peace - A Theme",
+      "artists": [
+        "King Crimson"
+      ],
+      "caption": "An ambient and rock instrumental track, with an acoustic vibe, conveying peaceful and relaxing moods, with themes of nature, suited for sleep and study contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Western",
+        "vibe": "Acoustic",
+        "genres": [
+          "Ambient",
+          "Rock"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Nature"
+        ],
+        "scenarios": [
+          "Sleep",
+          "Study"
+        ]
+      }
+    },
+    {
+      "music_id": "410846168",
+      "title": "Faithless the Wonder Boy",
+      "artists": [
+        "Radiohead"
+      ],
+      "caption": "An English alternative and rock song, with a dark vibe, conveying lonely and angry moods, with themes of life and youth, suited for late-night contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dark",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Lonely",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Youth"
+        ],
+        "scenarios": [
+          "Late Night"
+        ]
+      }
+    },
+    {
+      "music_id": "21974009",
+      "title": "You Only Live Once",
+      "artists": [
+        "The Strokes"
+      ],
+      "caption": "An English rock and indie song, with an urban vibe, conveying melancholy and energetic moods, with themes of life and self-discovery, suited for driving and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Urban",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Melancholy",
+          "Energetic"
+        ],
+        "themes": [
+          "Life",
+          "Self-discovery"
+        ],
+        "scenarios": [
+          "Driving",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "1378463108",
+      "title": "复活（Live）",
+      "artists": [
+        "野外合作社"
+      ],
+      "caption": "A Chinese alternative and rock song, with a raw vibe, conveying energetic and angry moods, with themes of life and freedom, suited for late-night and driving contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Raw",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Energetic",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Driving"
+        ]
+      }
+    },
+    {
+      "music_id": "22714573",
+      "title": "Weapons of mass destruction",
+      "artists": [
+        "andymori"
+      ],
+      "caption": "A Japanese rock and indie song, with an indie vibe, conveying nostalgic and hopeful moods, with themes of life and youth, suited for commute and driving contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Indie",
+        "genres": [
+          "Rock",
+          "Indie"
+        ],
+        "moods": [
+          "Nostalgic",
+          "Hopeful"
+        ],
+        "themes": [
+          "Life",
+          "Youth",
+          "Urban"
+        ],
+        "scenarios": [
+          "Commute",
+          "Driving"
+        ]
+      }
+    },
+    {
+      "music_id": "315962",
+      "title": "我离开我自己",
+      "artists": [
+        "杨乃文"
+      ],
+      "caption": "A Chinese pop and singer-songwriter song, with a warm vibe, conveying melancholy and lonely moods, with themes of self-discovery and loss, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Warm",
+        "genres": [
+          "Pop",
+          "Singer-Songwriter"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Self-discovery",
+          "Loss"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "77373",
+      "title": "晚霞",
+      "artists": [
+        "窦唯"
+      ],
+      "caption": "An ambient and electronic instrumental track, with an ambient vibe, conveying peaceful and relaxing moods, with themes of nature, suited for late-night and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Mainland China",
+        "vibe": "Ambient",
+        "genres": [
+          "Ambient",
+          "Electronic"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Nature"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "26450093",
+      "title": "風待ち",
+      "artists": [
+        "伍々慧"
+      ],
+      "caption": "An acoustic and jazz instrumental track, with an acoustic vibe, conveying peaceful and relaxing moods, with themes of nature, suited for study and relaxing contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Instrumental",
+        "region": "Japan",
+        "vibe": "Acoustic",
+        "genres": [
+          "Acoustic",
+          "Jazz"
+        ],
+        "moods": [
+          "Peaceful",
+          "Relaxing"
+        ],
+        "themes": [
+          "Nature"
+        ],
+        "scenarios": [
+          "Study",
+          "Relaxing"
+        ]
+      }
+    },
+    {
+      "music_id": "150434",
+      "title": "无缘",
+      "artists": [
+        "陶喆"
+      ],
+      "caption": "A Chinese pop and r&b song, with an urban vibe, conveying melancholy and lonely moods, with themes of love and heartbreak, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Taiwan",
+        "vibe": "Urban",
+        "genres": [
+          "Pop",
+          "R&B"
+        ],
+        "moods": [
+          "Melancholy",
+          "Lonely"
+        ],
+        "themes": [
+          "Love",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "1816446845",
+      "title": "Opus",
+      "artists": [
+        "Black Country, New Road"
+      ],
+      "caption": "An English alternative and post-rock song, with an experimental vibe, conveying energetic and angry moods, with themes of life and youth, suited for late-night and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Experimental",
+        "genres": [
+          "Alternative",
+          "Post-Rock"
+        ],
+        "moods": [
+          "Energetic",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Youth"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "1837817428",
+      "title": "Mazel Tov",
+      "artists": [
+        "脏手指 Oh! Dirty Fingers"
+      ],
+      "caption": "A Chinese rock and punk song, with a raw vibe, conveying energetic and happy moods, with themes of youth and freedom, suited for party and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Chinese",
+        "region": "Mainland China",
+        "vibe": "Raw",
+        "genres": [
+          "Rock",
+          "Punk"
+        ],
+        "moods": [
+          "Energetic",
+          "Happy"
+        ],
+        "themes": [
+          "Youth",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Party",
+          "Workout"
+        ]
+      }
+    },
+    {
+      "music_id": "26418808",
+      "title": "Rain",
+      "artists": [
+        "秦基博"
+      ],
+      "caption": "A Japanese ballad and j-pop song, with a cinematic vibe, conveying melancholy and romantic moods, with themes of nature and heartbreak, suited for late-night and rainy-day contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "Japanese",
+        "region": "Japan",
+        "vibe": "Cinematic",
+        "genres": [
+          "Ballad",
+          "J-Pop"
+        ],
+        "moods": [
+          "Melancholy",
+          "Romantic"
+        ],
+        "themes": [
+          "Nature",
+          "Heartbreak"
+        ],
+        "scenarios": [
+          "Late Night",
+          "Rainy Day"
+        ]
+      }
+    },
+    {
+      "music_id": "18309786",
+      "title": "Another Brick In The Wall (Part 2) (Live)",
+      "artists": [
+        "Pink Floyd"
+      ],
+      "caption": "An English alternative and rock song, with a dark vibe, conveying energetic and angry moods, with themes of life and freedom, suited for work and workout contexts.",
+      "caption_source": "metadata_tags_template_v1",
+      "manual_reviewed": false,
+      "metadata": {
+        "language": "English",
+        "region": "Western",
+        "vibe": "Dark",
+        "genres": [
+          "Alternative",
+          "Rock"
+        ],
+        "moods": [
+          "Energetic",
+          "Angry"
+        ],
+        "themes": [
+          "Life",
+          "Freedom"
+        ],
+        "scenarios": [
+          "Work",
+          "Workout"
+        ]
+      }
+    }
+  ]
+}

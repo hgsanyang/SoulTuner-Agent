@@ -2,6 +2,7 @@ from agent.retrieval_fallback import (
     decide_online_fallback,
     fallback_query,
     filter_results_by_avoid,
+    filter_results_by_requested_language,
 )
 
 
@@ -63,5 +64,56 @@ def test_literal_avoid_filters_title_and_artist_but_not_subjective_words():
     ]
 
 
+def test_conversational_artist_avoid_extracts_literal_core():
+    rows = [
+        {"song": {"title": "晴天", "artist": "周杰伦.、Asasblue"}},
+        {"song": {"title": "晴天", "artist": "Lucky小爱"}},
+    ]
+    kept, excluded = filter_results_by_avoid(rows, ["周杰伦那首"])
+
+    assert excluded == 1
+    assert kept[0]["song"]["artist"] == "Lucky小爱"
+
+
+def test_sparse_language_inventory_triggers_web_but_sufficient_matches_do_not():
+    sparse = [
+        {"song": {"title": "A", "artist": "x", "language": "Japanese"}},
+        {"song": {"title": "B", "artist": "y", "language": "Unknown"}},
+    ]
+    sufficient = [
+        {"song": {"title": "A", "artist": "x", "language": "Cantonese"}},
+        {"song": {"title": "B", "artist": "y", "language": "粤语"}},
+        {"song": {"title": "C", "artist": "z", "language": "Cantonese"}},
+        {"song": {"title": "D", "artist": "q", "language": "Chinese"}},
+    ]
+
+    decision = decide_online_fallback(sparse, _plan(language="Korean"))
+    assert decision.required
+    assert decision.reason == "local_language_match_insufficient"
+    assert not decide_online_fallback(sufficient, _plan(language="Cantonese")).required
+
+
+def test_korean_web_filter_requires_hangul_and_adds_inferred_language():
+    rows = [
+        {"name": "그리운 사람", "artists": [{"name": "박흥우"}]},
+        {"name": "韩语抒情版", "artists": [{"name": "中文歌手"}]},
+    ]
+
+    kept, excluded = filter_results_by_requested_language(rows, "Korean")
+
+    assert excluded == 1
+    assert kept == [
+        {
+            "name": "그리운 사람",
+            "artists": [{"name": "박흥우"}],
+            "_inferred_language": "Korean",
+        }
+    ]
+
+
 def test_song_only_avoid_query_prefers_cover_search():
     assert fallback_query(_plan(songs=["晴天"], avoid=["周杰伦"]), "fallback") == "晴天 翻唱"
+
+
+def test_language_only_fallback_uses_searchable_catalog_terms():
+    assert fallback_query(_plan(language="Korean"), "fallback") == "韩国 抒情歌"

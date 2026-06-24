@@ -195,22 +195,26 @@ class UnifiedIngestion:
         return tags_index
 
     def _ensure_embedder(self):
-        """懒加载 M2D-CLAP + OMAR-RQ 模型"""
+        """懒加载 M2D-CLAP + OMAR-RQ + MuQ-MuLan 模型"""
         if self._embedder_loaded:
             return
         from retrieval.audio_embedder import get_m2d2_model, get_omar_model
+        from retrieval.muq_embedder import get_muq_model
         logger.info("正在加载 M2D-CLAP 跨模态模型..")
         get_m2d2_model()
         logger.info("正在加载 OMAR-RQ (multicodebook) 音频特征模型...")
         get_omar_model()
+        logger.info("正在加载 MuQ-MuLan 文搜音模型...")
+        get_muq_model()
         self._embedder_loaded = True
-        logger.info("✅ 双模型加载完毕")
+        logger.info("✅ 向量模型加载完毕")
 
     def _extract_embeddings(self, audio_path: str) -> Dict[str, List[float]]:
         """
-        对单个音频文件提取双模型向量（M2D-CLAP + OMAR-RQ 均使用 16kHz）。        超过 MAX_AUDIO_SECONDS 的音频只截取前 N 秒，防止 OOM。        """
+        对单个音频文件提取向量。M2D/OMAR 使用 16kHz，MuQ 使用 24kHz。        超过 MAX_AUDIO_SECONDS 的音频只截取前 N 秒，防止 OOM。        """
         import librosa
         from retrieval.audio_embedder import encode_audio_to_embedding, extract_audio_representation
+        from retrieval.muq_embedder import encode_audio_to_muq
 
         # 先快速读取时长（不解码音频数据，几乎零开销）
         file_duration = librosa.get_duration(path=audio_path)
@@ -223,8 +227,10 @@ class UnifiedIngestion:
 
         audio_np, sr = librosa.load(audio_path, sr=None, mono=True, duration=load_duration)
 
-        # 两个模型统一使用 16kHz，只需重采样一次
+        # M2D-CLAP / OMAR-RQ 使用 16kHz
         audio_16k = librosa.resample(audio_np, orig_sr=sr, target_sr=16000)
+        # MuQ-MuLan 使用 24kHz
+        audio_24k = librosa.resample(audio_np, orig_sr=sr, target_sr=24000)
 
         # M2D-CLAP: 跨模态向量（文本-音频同空间）
         m2d2_emb = encode_audio_to_embedding(audio_16k, sample_rate=16000)
@@ -232,7 +238,10 @@ class UnifiedIngestion:
         # OMAR-RQ: 纯音频特征向量（声学表征）
         omar_emb = extract_audio_representation(audio_16k, sample_rate=16000)
 
-        return {"m2d2_embedding": m2d2_emb, "omar_embedding": omar_emb}
+        # MuQ-MuLan: 音乐专用文本-音频向量
+        muq_emb = encode_audio_to_muq(audio_24k, sample_rate=24000)
+
+        return {"m2d2_embedding": m2d2_emb, "omar_embedding": omar_emb, "muq_embedding": muq_emb}
 
     def _quick_music_id(self, audio_path: str) -> str:
         """快速获取 music_id（用于启动时统计，不加载完整元数据）"""
@@ -326,6 +335,9 @@ class UnifiedIngestion:
         if song_data.get("omar_embedding"):
             set_parts.append("s.omar_embedding = $omar_embedding")
             params["omar_embedding"] = song_data["omar_embedding"]
+        if song_data.get("muq_embedding"):
+            set_parts.append("s.muq_embedding = $muq_embedding")
+            params["muq_embedding"] = song_data["muq_embedding"]
 
         set_clause = ", ".join(set_parts)
 
@@ -453,6 +465,7 @@ class UnifiedIngestion:
             "region": region,
             "m2d2_embedding": None,
             "omar_embedding": None,
+            "muq_embedding": None,
             "audio_path": audio_path,
             **urls,
         }
@@ -484,11 +497,16 @@ class UnifiedIngestion:
 
             # 提取向量（可选，非线程安全操作，仅在串行模式下调用）
             if need_embeddings:
-                logger.info(f"  🧠 [{idx}/{total}] 提取 M2D2 + OMAR 向量: {basename}")
+                logger.info(f"  🧠 [{idx}/{total}] 提取 M2D2 + OMAR + MuQ 向量: {basename}")
                 embs = self._extract_embeddings(audio_path)
                 song_data["m2d2_embedding"] = embs["m2d2_embedding"]
                 song_data["omar_embedding"] = embs["omar_embedding"]
-                logger.info(f"  ✅ M2D2: {len(embs['m2d2_embedding'])}维, OMAR: {len(embs['omar_embedding'])}维")
+                song_data["muq_embedding"] = embs["muq_embedding"]
+                logger.info(
+                    f"  ✅ M2D2: {len(embs['m2d2_embedding'])}维, "
+                    f"OMAR: {len(embs['omar_embedding'])}维, "
+                    f"MuQ: {len(embs['muq_embedding'])}维"
+                )
 
             # 写入 Neo4j
             self._write_song_to_neo4j(song_data)

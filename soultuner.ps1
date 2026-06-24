@@ -148,12 +148,19 @@ function Stop-LocalNeteaseApiForDocker {
 switch ($Action) {
     "up" {
         Stop-LocalNeteaseApiForDocker
-        docker compose --profile $Profile up -d --remove-orphans neo4j graphzep searxng netease backend
+        $ComposeFiles = @("-f", "docker-compose.yml")
+        if ($Profile -eq "gpu") {
+            $ComposeFiles += @("-f", "docker-compose.gpu.yml")
+            $env:DENSE_TEXT_AUDIO_BACKEND = "muq"
+        } else {
+            $env:DENSE_TEXT_AUDIO_BACKEND = "m2d"
+        }
+        docker compose @ComposeFiles --profile $Profile up -d --remove-orphans neo4j graphzep searxng netease backend
         Assert-LastNativeCommand "Starting core Docker services"
-        docker compose --profile $Profile up -d frontend
+        docker compose @ComposeFiles --profile $Profile up -d frontend
         Assert-LastNativeCommand "Starting frontend"
         if ($Profile -eq "gpu") {
-            docker compose --profile gpu up -d ingest-worker
+            docker compose @ComposeFiles --profile gpu up -d ingest-worker
             Assert-LastNativeCommand "Starting GPU ingestion worker"
         }
         Write-Host "Frontend: http://localhost:3003"

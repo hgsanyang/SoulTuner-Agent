@@ -49,6 +49,7 @@ nest_asyncio>=1.5.0
 
 # 文本及音频嵌入模型
 sentence-transformers>=3.0.0
+muq==0.1.0
 
 # Token 计数工具
 tiktoken>=0.7.0

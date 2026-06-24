@@ -47,11 +47,14 @@ class DataFlywheelV2:
             return
         
         from retrieval.audio_embedder import get_m2d2_model, get_omar_model
+        from retrieval.muq_embedder import get_muq_model
         
         logger.info("[DataFlywheel V2] 正在加载 M2D2 跨模态模型..")
         get_m2d2_model()
         logger.info("[DataFlywheel V2] 正在加载 OMAR/MERT 音频特征模型...")
         get_omar_model()
+        logger.info("[DataFlywheel V2] 正在加载 MuQ-MuLan 文搜音模型...")
+        get_muq_model()
         
         self._models_loaded = True
         logger.info("[DataFlywheel V2] ✅ 双模型加载完毕")
@@ -62,6 +65,7 @@ class DataFlywheelV2:
         """
         import librosa
         from retrieval.audio_embedder import encode_audio_to_embedding, extract_audio_representation
+        from retrieval.muq_embedder import encode_audio_to_muq
         
         # 加载音频（统一为单声道）        audio_np, sr = librosa.load(audio_path, sr=None, mono=True)
         
@@ -72,10 +76,14 @@ class DataFlywheelV2:
         # OMAR/MERT: 纯音频特征(需要 24kHz)
         audio_24k = librosa.resample(audio_np, orig_sr=sr, target_sr=24000)
         omar_emb = extract_audio_representation(audio_24k, sample_rate=24000)
+
+        # MuQ-MuLan: 音乐专用文本-音频向量(需要 24kHz)
+        muq_emb = encode_audio_to_muq(audio_24k, sample_rate=24000)
         
         return {
             "m2d2_embedding": m2d2_emb,
-            "omar_embedding": omar_emb
+            "omar_embedding": omar_emb,
+            "muq_embedding": muq_emb,
         }
     
     def _llm_auto_tag(self, song_name: str, artist: str = "") -> Dict[str, Any]:
@@ -137,6 +145,7 @@ class DataFlywheelV2:
         artist: str,
         m2d2_embedding: List[float],
         omar_embedding: List[float],
+        muq_embedding: List[float],
         auto_tags: Dict[str, Any],
         filepath: str = ""
     ):
@@ -150,6 +159,7 @@ class DataFlywheelV2:
         MERGE (s:Song {title: $title, artist: $artist_name})
         SET s.m2d2_embedding = $m2d2_embedding,
             s.omar_embedding = $omar_embedding,
+            s.muq_embedding = $muq_embedding,
             s.genre = $genre,
             s.mood = $mood,
             s.instruments = $instruments,
@@ -174,6 +184,7 @@ class DataFlywheelV2:
             "artist_name": artist,
             "m2d2_embedding": m2d2_embedding,
             "omar_embedding": omar_embedding,
+            "muq_embedding": muq_embedding,
             "genre": genre,
             "mood": auto_tags.get("mood", ""),
             "instruments": auto_tags.get("instruments", ""),
@@ -236,6 +247,7 @@ class DataFlywheelV2:
                     artist=artist,
                     m2d2_embedding=embeddings["m2d2_embedding"],
                     omar_embedding=embeddings["omar_embedding"],
+                    muq_embedding=embeddings["muq_embedding"],
                     auto_tags=auto_tags,
                     filepath=file_path
                 )
@@ -271,6 +283,7 @@ class DataFlywheelV2:
                     artist=artist,
                     m2d2_embedding=[],
                     omar_embedding=[],
+                    muq_embedding=[],
                     auto_tags=auto_tags
                 )
             except Exception as e:

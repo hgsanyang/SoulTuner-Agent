@@ -233,6 +233,11 @@ class GlobalSettings(BaseSettings):
         default=24,
         description="仅向量检索时的返回条数（Neo4j KNN）",
     )
+    dense_text_audio_backend: str = Field(
+        default="muq",
+        validation_alias="DENSE_TEXT_AUDIO_BACKEND",
+        description="文搜音稠密召回后端：muq / m2d / both；MuQ 失败时自动回退 M2D",
+    )
     graph_search_limit: int = Field(
         default=24,
         description="仅图谱检索时的返回条数（GraphRAG）",
@@ -402,6 +407,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
         "finetuned_model_path", "llm_timeout", "llm_temperature",
         "audio_data_dir", "mtg_audio_dir", "online_acquired_dir",
         "graph_search_limit", "semantic_search_limit",
+        "dense_text_audio_backend",
         "mixed_retrieval_limit", "hybrid_retrieval_limit", "web_search_max_results",
         "graph_affinity_enabled", "graph_affinity_max_hops",
         "coarse_cut_ratio", "exploration_ratio",

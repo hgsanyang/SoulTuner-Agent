@@ -28,14 +28,16 @@ logger = logging.getLogger(__name__)
 # 【V2 升级】M2D-CLAP 实测输出 768 维（非早期文档的 512 维），OMAR/MERT 输出 768 维
 M2D2_EMBEDDING_DIM = 768
 OMAR_EMBEDDING_DIM = 768
+MUQ_EMBEDDING_DIM = 512
 
 
 def create_vector_indexes():
     """
     【V2 升级】创建 Neo4j 原生向量索引
     
-    创建两个索引：    1. song_m2d2_index: 基于 M2D2 跨模态向量的索引（文本搜音频用）
-    2. song_omar_index: 基于 OMAR 纯音频向量的索引（相似听感搜索用）    """
+    创建三个索引：    1. song_m2d2_index: 基于 M2D2 跨模态向量的索引（备用文本搜音频）
+    2. song_omar_index: 基于 OMAR 纯音频向量的索引（相似听感搜索用）
+    3. song_muq_index: 基于 MuQ-MuLan 音乐文本向量的索引（主文本搜音频）    """
     client = get_neo4j_client()
     
     # ---- 创建 M2D2 向量索引 (跨模态检索) ----
@@ -77,6 +79,26 @@ def create_vector_indexes():
             logger.info("[Schema V2] song_omar_index 已存在，跳过")
         else:
             logger.error(f"[Schema V2] 创建 OMAR 索引失败: {e}")
+
+    # ---- 创建 MuQ-MuLan 向量索引 (音乐文本检索) ----
+    logger.info(f"[Schema V2] 创建 MuQ-MuLan 向量索引 (dim={MUQ_EMBEDDING_DIM})...")
+    try:
+        client.execute_query(f"""
+        CREATE VECTOR INDEX song_muq_index IF NOT EXISTS
+        FOR (s:Song) ON (s.muq_embedding)
+        OPTIONS {{
+            indexConfig: {{
+                `vector.dimensions`: {MUQ_EMBEDDING_DIM},
+                `vector.similarity_function`: 'cosine'
+            }}
+        }}
+        """)
+        logger.info("[Schema V2] ✅ song_muq_index 创建成功")
+    except Exception as e:
+        if "already exists" in str(e).lower() or "equivalent index" in str(e).lower():
+            logger.info("[Schema V2] song_muq_index 已存在，跳过")
+        else:
+            logger.error(f"[Schema V2] 创建 MuQ-MuLan 索引失败: {e}")
 
 
 def verify_indexes():
@@ -249,6 +271,7 @@ def add_song_with_embeddings(
     genre: str = "",
     m2d2_embedding: list = None,
     omar_embedding: list = None,
+    muq_embedding: list = None,
     auto_tags: dict = None,
     preview_url: str = ""
 ):
@@ -275,6 +298,10 @@ def add_song_with_embeddings(
     if omar_embedding:
         params["omar_embedding"] = omar_embedding
         set_parts.append("s.omar_embedding = $omar_embedding")
+
+    if muq_embedding:
+        params["muq_embedding"] = muq_embedding
+        set_parts.append("s.muq_embedding = $muq_embedding")
     
     set_clause = ", ".join(set_parts)
     

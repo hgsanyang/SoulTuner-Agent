@@ -37,7 +37,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 > 📖 For full features and interaction details, please refer to [Feature_Walkthrough.md](Feature_Walkthrough.md)
 >
-> Orchestrated via LangGraph multi-node Agent workflow, integrating Knowledge Graph (Neo4j), Dual-model audio embeddings (M2D-CLAP + OMAR-RQ), LLM, and GraphZep long-term memory to achieve multi-path hybrid retrieval, weighted RRF fusion, Neo4j graph distance weighting, SSE streaming recommendations, web search fallback, music journey orchestration, and a user behavior data flywheel.
+> Orchestrated via a LangGraph multi-node Agent workflow, integrating Neo4j, a MuQ-MuLan text-to-music anchor, M2D-CLAP / OMAR-RQ auxiliary representations, LLMs, and GraphZep long-term memory for multi-path retrieval, weighted RRF fusion, streaming recommendations, web fallback, music journeys, and a behavior data flywheel.
 
 ---
 
@@ -50,7 +50,7 @@ Copy-Item .env.example .env
 .\soultuner.ps1 doctor        # Open http://localhost:3003 after health checks pass
 ```
 
-If you have an NVIDIA GPU and want the separate ingestion worker, use `.\soultuner.ps1 up gpu` instead.
+With an NVIDIA GPU, use `.\soultuner.ps1 up gpu`: the backend enables MuQ-MuLan fp16 and starts the separate ingestion worker. CPU mode keeps the complete product workflow but automatically uses the lighter M2D text-to-music fallback so the 663M MuQ model cannot exhaust Docker memory.
 
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
@@ -69,7 +69,7 @@ If you have an NVIDIA GPU and want the separate ingestion worker, use `.\soultun
 | Feature | Description |
 |---|---|
 | 🔀 **Hybrid RAG** | Parallel graph / dense / BM25 / personal / cold-start recall, weighted RRF fusion + tri-anchor reranking |
-| 🎵 **Dual Audio Embeddings**| M2D-CLAP cross-modal semantics + OMAR-RQ acoustic features, tri-anchor normalized fusion (weights adjustable) |
+| 🎵 **Multimodal Text-to-Music** | MuQ-MuLan is the Chinese-strong primary recall model, M2D-CLAP is the fallback, and OMAR-RQ adds acoustic similarity |
 | 🧠 **Long-term Memory** | GraphZep dual-stage recall with circuit-breaker fallback, retaining user preferences across sessions |
 | 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
 | 🤖 **Smart Intent Recognition** | Layered intent plan: `hard_constraints / soft_intent / hints` + multi-turn inheritance |
@@ -169,7 +169,7 @@ If you have an NVIDIA GPU and want the separate ingestion worker, use `.\soultun
 | **Agent** | LangGraph StateGraph (layered intent planning + multi-recall routing) |
 | **Backend** | FastAPI + SSE Streaming |
 | **Graph Database** | Neo4j 5.x (Native Vector Index + Graph Relations + User Behavior direct-write) |
-| **Audio Embeddings** | M2D-CLAP 2025 (Cross-modal semantics, 768d) + OMAR-RQ (Acoustic features, 1024d) |
+| **Audio Embeddings** | MuQ-MuLan (primary text-to-music, 512d) + M2D-CLAP (semantic fallback/rerank, 768d) + OMAR-RQ (acoustic auxiliary, 1024d) |
 | **LLMs** | Default `dashscope / qwen3.7-plus`; other providers are advanced overrides |
 | **Long-term Memory**| GraphZep temporal memory (Dual-stage recall) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
@@ -177,7 +177,7 @@ If you have an NVIDIA GPU and want the separate ingestion worker, use `.\soultun
 | **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
 | **Containerization** | Docker Compose CPU/GPU entrypoints; CPU includes the full online stack, GPU adds the ingestion worker |
 
-> 📖 For full tech stack and frontend engineering details, see [Technical_Report.md](Technical_Report.md)
+> 📖 See [tests/eval/README.md](tests/eval/README.md) for recommendation-quality and alignment evaluation commands.
 
 ---
 
@@ -191,7 +191,7 @@ User Query → Planner (LLM) outputs a layered plan
     ┌──────────┬──────────┬──────────┬──────────┬──────────┐
     ▼          ▼          ▼          ▼          ▼
  GraphRAG   Dense KNN    BM25     Personal   Cold-start    ← Step 1: parallel recall
- (Neo4j)   (M2D+OMAR) (title/artist/lyrics) (profile/logs) (explore)
+ (Neo4j)   (MuQ+OMAR) (title/artist/lyrics) (profile/logs) (explore)
     └──────────┴──────────┴──────────┴──────────┴──────────┘
                ▼
    Step 2: Weighted RRF fusion            ← Preserves per-source rank and source metadata
@@ -202,7 +202,7 @@ User Query → Planner (LLM) outputs a layered plan
                ▼
    Step 5: Coarse Rank + TS Explore       ← Graph Affinity + Thompson Sampling long-tail rescue
                ▼
-   Step 6: Tri-Anchor Normalized Rerank   ← Semantic(M2D-CLAP) + Acoustic(OMAR-RQ) + Personal
+   Step 6: Tri-Anchor Normalized Rerank   ← Auxiliary semantic(M2D-CLAP) + Acoustic(OMAR-RQ) + Personal
                ▼
    Step 7: MMR Multi-dim Diversity + FinalCut
 ```
@@ -210,11 +210,12 @@ User Query → Planner (LLM) outputs a layered plan
 **Key Design Decisions**:
 
 - **Layered Intent Plan**: The Planner outputs `hard_constraints / soft_intent / hints`. Entities, language, and instrumental constraints are hard filters; mood, scenario, and vibe are ranking signals.
-- **Five Parallel Recall Paths**: Graph entities/tags, M2D-CLAP dense search, BM25 lexical search, personalization, and cold-start exploration always run; `intent_type` only adjusts weights.
+- **Five Parallel Recall Paths**: Graph entities/tags, MuQ-MuLan text-to-music search, BM25 lexical search, personalization, and cold-start exploration always run; `intent_type` only adjusts weights.
 - **Weighted RRF Fusion**: Candidates are merged with `weight / (60 + rank)`, preserving source rank and source metadata instead of equal merging.
-- **Dual Vector Models**: M2D-CLAP cross-modal semantics + OMAR-RQ acoustics, tri-anchor normalized reranking fusion.
+- **Three-model roles**: MuQ-MuLan is the default text-to-music anchor; M2D-CLAP remains available for recall fallback and semantic reranking; OMAR-RQ supplies text-independent acoustic similarity.
 - **Coarse Rank + Thompson Sampling**: Graph Affinity scored cutoff (`coarse_cut_ratio=65%`), tail candidates rescued via TS sampling (`Beta(α,β)` distribution) for exploration-exploitation balance.
-- **Tri-Anchor Normalized Reranking**: Semantic anchor `(cosine+1)/2` (M2D-CLAP) + Acoustic anchor `(cosine+1)/2` (OMAR-RQ centroid) + Personal anchor `MinMax` (Graph Affinity), all normalized to [0,1] then weighted fusion (frontend-tunable, auto-normalized so α+β+γ=1).
+- **Tri-Anchor Normalized Reranking**: Auxiliary semantic anchor `(cosine+1)/2` (M2D-CLAP) + acoustic anchor `(cosine+1)/2` (OMAR-RQ centroid) + personal anchor `MinMax` (Graph Affinity), normalized to [0,1] before weighted fusion.
+- **Deployable fallback**: `DENSE_TEXT_AUDIO_BACKEND=muq|m2d|both`; a missing MuQ model/index or encoding failure automatically falls back to M2D, while lazy loading keeps the default memory footprint bounded.
 - **DST Multi-turn Inheritance**: Planner preserves the previous layered plan across turns and adds new constraints from follow-up queries.
 - **MMR Jaccard**: Re-ranking using the `{genre, mood, theme, scenario}` multidimensional tags for candidate diversity.
 
@@ -282,7 +283,7 @@ User search → Discover new song → Download to "Pending" staging area → Fro
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 116 tests covering settings loading, Planner cache, outcome eval, fusion filters, explanation fast-mode, and more |
+| **Unit Testing** | 141 tests covering settings loading, Planner cache, outcome eval, fusion filters, explanation fast-mode, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 56 dev cases and 24 holdout cases |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
@@ -320,6 +321,7 @@ erDiagram
     Song {
         string title
         string music_id
+        float_arr muq_embedding
         float_arr m2d2_embedding
         float_arr omar_embedding
         string audio_url
@@ -338,7 +340,7 @@ erDiagram
     }
 ```
 
-**Vector Indices**: `song_m2d2_index` (768d, cosine) + `song_omar_index` (1024d, cosine)
+**Vector Indices**: `song_muq_index` (512d, cosine, primary text-to-music) + `song_m2d2_index` (768d, cosine, fallback/rerank) + `song_omar_index` (1024d, cosine, acoustic auxiliary).
 
 ---
 
@@ -412,7 +414,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 .
 ├── agent/                      # LangGraph Agent
 │   ├── music_agent.py          # Native agent loop
-│   └── music_graph.py          # StateGraph definitions (7 intent routing schemas)
+│   └── music_graph.py          # StateGraph workflow with layered intent routing
 │
 ├── api/                        # FastAPI Interfaces
 │   ├── server.py               # Gateway & Settings API
@@ -423,14 +425,15 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 ├── retrieval/                  # Engine abstractions
 │   ├── hybrid_retrieval.py     # Multi-path Fusion + Coarse Rank(Graph Affinity+TS) + Tri-Anchor Rerank + MMR
 │   ├── gssc_context_builder.py # GSSC pipeline (Budgeting + Abstract Context mapping)
-│   ├── audio_embedder.py       # M2D-CLAP mappings
+│   ├── muq_embedder.py         # MuQ-MuLan 24kHz audio/text encoder (lazy-loaded)
+│   ├── audio_embedder.py       # M2D-CLAP fallback and semantic rerank encoder
 │   ├── neo4j_client.py         # Node connectivity definitions
 │   ├── music_journey.py        # Journey architect algorithms
 │   └── user_memory.py          # Neo4j Preferences & Logs
 │
 ├── tools/                      # Tool executions
 │   ├── graphrag_search.py      # Neo4j Cypher definitions
-│   ├── semantic_search.py      # M2D-CLAP + OMAR Vector implementations
+│   ├── semantic_search.py      # MuQ primary, M2D fallback, OMAR-assisted retrieval
 │   ├── web_search_aggregator.py# SearxNG + Tavily routers
 │   └── acquire_music.py        # Flywheel tools (download to staging + on-demand ingest)
 │
@@ -452,7 +455,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 │
 ├── graphzep_service/           # Micro node for GraphZep
 ├── tests/                      # Testing & Eval
-│   ├── unit/                   # 116 pytest tests
+│   ├── unit/                   # 141 pytest tests
 │   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
 ├── .github/workflows/ci.yml    # GitHub Actions definitions
 ├── docker-compose.yml          # Container configuration
@@ -475,9 +478,11 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 | `MODEL_NAME` | Main reasoning model | `qwen3.7-plus` |
 | `NEO4J_URI` | Neo4j bindings | `neo4j://127.0.0.1:7687` |
 | `NEO4J_PASSWORD` | Neo4j security parameters | — |
+| `DENSE_TEXT_AUDIO_BACKEND` | Text-to-music backend | `muq` (Docker CPU automatically uses `m2d`; `both` optional) |
+| `RECALL_SOURCE_TIMEOUT_SECONDS` | Per-recall timeout | `60` (covers MuQ cold loading) |
 | `TAVILY_API_KEY` | Cloud indexing rules | Optional |
 
-> 📖 View configurable settings, weights metrics & configurations mapping in [Technical_Report.md](Technical_Report.md)
+MuQ-MuLan processes 24kHz audio and loads on demand. This project measured about 2.75GB peak VRAM in fp32 and about 1.4GB in fp16. `up gpu` exposes the GPU to the backend and enables fp16, while `up cpu` selects M2D to avoid an unresponsive CPU container during MuQ cold loading. MuQ weights use **CC-BY-NC 4.0** and therefore are restricted to non-commercial use unless separately licensed.
 
 ---
 
@@ -488,7 +493,8 @@ Architectural inspiration was expanded heavily upon [imagist13/Muisc-Research](h
 | Project | Purpose |
 |---|---|
 | [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | Core graph storage structure representations |
-| [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP vectors & representation rules |
+| [OpenMuQ/MuQ](https://github.com/OpenMuQ/MuQ) | MuQ-MuLan primary text-to-music model (CC-BY-NC 4.0) |
+| [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP fallback and auxiliary semantics |
 | [MTG/omar](https://github.com/MTG/omar) | Raw acoustics implementations |
 
 ---

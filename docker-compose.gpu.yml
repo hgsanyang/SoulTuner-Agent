@@ -1,0 +1,14 @@
+services:
+  backend:
+    environment:
+      DENSE_TEXT_AUDIO_BACKEND: muq
+      MUQ_MULAN_FP16: "true"
+      MUSIC_M2D_MODEL_WARMUP: "false"
+      MUSIC_M2D_TEXT_WARMUP: "false"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

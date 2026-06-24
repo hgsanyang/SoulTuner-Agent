@@ -49,25 +49,30 @@ async def startup_event():
         logger.info("🧪 Mock 模式：跳过模型、Neo4j、GraphZep 与 KV Cache 预热")
         return
     
-    # 1. 预加载 M2D-CLAP 音频骨干；文本编码器后台预热，避免首次下载阻塞 API 就绪。
-    try:
-        from retrieval.audio_embedder import get_m2d2_model, encode_text_to_embedding
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, get_m2d2_model)
-        logger.info(f"  ✅ M2D-CLAP 音频骨干预加载完成 ({_t.time()-_t0:.1f}s)")
+    # 1. CPU profile预加载M2D；GPU profile先让MuQ按需进入显存，避免两个大模型的加载峰值叠加。
+    loop = asyncio.get_running_loop()
+    preload_m2d = os.getenv("MUSIC_M2D_MODEL_WARMUP", "true").lower() not in {"0", "false", "off"}
+    if preload_m2d:
+        try:
+            from retrieval.audio_embedder import get_m2d2_model, encode_text_to_embedding
 
-        async def _warmup_text_encoder_background():
-            try:
-                await loop.run_in_executor(None, lambda: encode_text_to_embedding("warmup"))
-                logger.info(f"  ✅ M2D-CLAP 文本编码器后台预热完成 ({_t.time()-_t0:.1f}s)")
-            except Exception as warmup_error:
-                logger.warning(f"  ⚠️ M2D-CLAP 文本编码器后台预热失败，向量召回将按路超时降级: {warmup_error}")
+            await loop.run_in_executor(None, get_m2d2_model)
+            logger.info(f"  ✅ M2D-CLAP 音频骨干预加载完成 ({_t.time()-_t0:.1f}s)")
 
-        if os.getenv("MUSIC_M2D_TEXT_WARMUP", "background").lower() not in {"0", "false", "off"}:
-            asyncio.create_task(_warmup_text_encoder_background())
-            logger.info("  🔄 M2D-CLAP 文本编码器后台预热已启动")
-    except Exception as e:
-        logger.error(f"  ❌ M2D-CLAP 模型预加载失败: {e}")
+            async def _warmup_text_encoder_background():
+                try:
+                    await loop.run_in_executor(None, lambda: encode_text_to_embedding("warmup"))
+                    logger.info(f"  ✅ M2D-CLAP 文本编码器后台预热完成 ({_t.time()-_t0:.1f}s)")
+                except Exception as warmup_error:
+                    logger.warning(f"  ⚠️ M2D-CLAP 文本编码器后台预热失败，向量召回将按路超时降级: {warmup_error}")
+
+            if os.getenv("MUSIC_M2D_TEXT_WARMUP", "background").lower() not in {"0", "false", "off"}:
+                asyncio.create_task(_warmup_text_encoder_background())
+                logger.info("  🔄 M2D-CLAP 文本编码器后台预热已启动")
+        except Exception as e:
+            logger.error(f"  ❌ M2D-CLAP 模型预加载失败: {e}")
+    else:
+        logger.info("  ⏭️ M2D-CLAP 启动预热已关闭，将在语义精排首次使用时按需加载")
     
     # 2. 预初始化 Agent 实例（编译 LangGraph 工作流 + MemorySaver）
     try:
