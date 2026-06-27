@@ -1,5 +1,4 @@
 import os
-from neo4j import GraphDatabase
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,6 +22,8 @@ class Neo4jClient:
         password = os.getenv("NEO4J_PASSWORD", "12345678")
         
         try:
+            from neo4j import GraphDatabase
+
             self.driver = GraphDatabase.driver(uri, auth=(user, password))
             # 测试连接
             self.driver.verify_connectivity()
