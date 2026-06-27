@@ -16,7 +16,6 @@ from typing import List, Dict, Any, Optional
 from langchain_core.tools import tool
 
 from retrieval.neo4j_client import get_neo4j_client
-from retrieval.audio_embedder import encode_text_to_embedding
 from config.logging_config import get_logger
 from config.settings import settings
 
@@ -135,6 +134,8 @@ def _encode_query_for_backend(text: str, backend: str) -> List[float]:
         from retrieval.muq_embedder import encode_text_to_muq
 
         return encode_text_to_muq(text)
+    from retrieval.audio_embedder import encode_text_to_embedding
+
     return encode_text_to_embedding(text)
 
 
