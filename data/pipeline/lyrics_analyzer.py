@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 # 将项目根目录加入 sys.path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # ---- 目录配置（与 prepare_gemini_lrc_prompt.py 保持一致）----
 LYRICS_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\lyrics"
 METADATA_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\metadata"
-OUTPUT_DIR = os.path.join(str(PROJECT_ROOT), "data_pipeline", "gemini_prompts")
+OUTPUT_DIR = os.path.join(str(PROJECT_ROOT), "data", "pipeline", "gemini_prompts")
 RESULT_JSON_PATH = os.path.join(OUTPUT_DIR, "gemini_result.json")
 
 # 每批发送的歌曲数量（API 模式建议小一些，避免超 token 限制）

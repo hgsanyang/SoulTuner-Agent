@@ -490,28 +490,40 @@ async def _extract_lyrics_tags(basename: str, lrc_path: str) -> Optional[Dict]:
             return {"moods": ["Instrumental"], "themes": [], "scenarios": [], "vibe": ""}
 
         # 调用 LLM
-        from llms.multi_llm import MultiLLM
-        llm = MultiLLM(provider="siliconflow", temperature=0.3)
+        from llms.multi_llm import get_chat_model
+        llm = get_chat_model(
+            provider=settings.llm_default_provider,
+            model_name=settings.llm_default_model,
+            temperature=0.3,
+            max_tokens=800,
+        )
 
         prompt = f"""分析以下歌词，返回纯 JSON 对象（不加 markdown 代码块）。{{
-  "moods": ["1-3个情绪标签，如 Happy/Melancholy/Healing"],
-  "themes": ["1-3个主题标签，如 Love/Youth/Life"],
-  "scenarios": ["1-2个场景标签，如 Late Night/Driving"],
-  "vibe": "1个氛围标签，如 Indie/Acoustic/Lo-fi"
+  "moods": ["1-5个情绪标签，按实际内容选择，如 Melancholy/Healing/Nostalgic/Dreamy"],
+  "themes": ["0-5个主题标签，按实际内容选择，如 Love/Youth/Life/Journey"],
+  "scenarios": ["1-5个场景标签，按实际适配场景选择，如 Late Night/Driving/Rainy Day"],
+  "vibe": "1个氛围标签，如 Indie/Acoustic/Lo-fi",
+  "genres": ["1-5个流派标签，按实际风格选择，如 Rock/Indie/Pop/Ballad"],
+  "language": "English/Chinese/Japanese/Korean/Cantonese/Instrumental/Mixed/Other/Unknown",
+  "region": "Western/Mainland China/Taiwan/Hong Kong/Japan/Korea/Other/Unknown"
 }}
+
+不要为了凑数量硬填标签；不确定就少填。
 
 歌曲: {basename}
 歌词:
 {cleaned[:2000]}"""
 
         response = llm.invoke(
-            system_prompt="你只返回纯 JSON，不加任何解释文字。",
-            user_prompt=prompt,
-            max_tokens=500,
+            [
+                ("system", "你只返回纯 JSON，不加任何解释文字。"),
+                ("human", prompt),
+            ]
         )
 
         # 解析 JSON
-        text = response.strip()
+        text = response.content if hasattr(response, "content") else str(response)
+        text = text.strip()
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
