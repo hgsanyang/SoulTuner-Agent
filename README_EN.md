@@ -382,6 +382,16 @@ python scripts/download_models.py
 
 Online recommendation only reads mounted model caches. Batch lyrics tagging, audio-vector extraction, and new-song ingestion are handled by the GPU worker so day-to-day recommendation does not depend on GPU work.
 
+Manual yt-dlp downloads under `data/yt_dlp_manual/downloads` use the same canonical ingestion path:
+
+```powershell
+python data/pipeline/yt_dlp_manual_flywheel.py --dry-run
+python data/pipeline/yt_dlp_manual_flywheel.py --stage --include-existing --batch-size 5
+python data/pipeline/ingest_to_neo4j.py --dataset yt_dlp_manual --manifest data/pipeline/gemini_prompts/<manifest>.json --force
+```
+
+The flywheel stages files into `../data/processed_audio/`, generates LLM tags, then uses GPU extraction for MuQ/M2D/OMAR before writing to Docker Neo4j. Generated manifests, tag JSON, and media files are gitignored.
+
 </details>
 
 <details>
