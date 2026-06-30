@@ -53,6 +53,54 @@ _SOFT_AVOID_GROUPS = {
     },
 }
 
+_SOFT_PREFERENCE_GROUPS = {
+    "quiet_soft": {
+        "triggers": (
+            "安静",
+            "柔软",
+            "柔和",
+            "轻柔",
+            "平静",
+            "雨天",
+            "下雨",
+            "雨声",
+            "治愈",
+            "午后",
+            "阅读",
+            "看书",
+            "学习",
+            "写代码",
+            "专注",
+            "睡前",
+            "quiet",
+            "soft",
+            "gentle",
+            "calm",
+            "rainy",
+            "rain",
+            "lo-fi",
+            "lofi",
+            "study",
+            "focus",
+            "sleep",
+        ),
+        "negative": {
+            "dance": 0.18,
+            "party": 0.18,
+            "workout": 0.18,
+            "edm": 0.18,
+            "energetic": 0.18,
+            "driving": 0.18,
+            "aggressive": 0.18,
+            "metal": 0.16,
+            "electronic": 0.12,
+            "rock": 0.10,
+            "upbeat": 0.10,
+        },
+        "positive": ("peaceful", "relaxing", "healing", "dreamy", "lo-fi", "acoustic", "folk", "ambient", "late night", "rainy day", "melancholy", "study", "calm"),
+    },
+}
+
 
 def _norm_token(value: Any) -> str:
     return str(value or "").strip().casefold()
@@ -112,6 +160,21 @@ def _avoid_context_fragments(text: str) -> List[str]:
     return fragments
 
 
+def _request_explicitly_wants(context: str, tag: str) -> bool:
+    explicit_terms = {
+        "rock": ("rock", "摇滚"),
+        "dance": ("dance", "舞曲", "蹦迪"),
+        "edm": ("edm", "电音", "电子"),
+        "energetic": ("energetic", "热血", "高能", "有精神", "燃"),
+        "driving": ("driving", "开车", "驾驶", "公路"),
+        "workout": ("workout", "运动", "跑步", "健身"),
+        "party": ("party", "派对", "聚会"),
+        "electronic": ("electronic", "电子", "电音"),
+        "metal": ("metal", "金属"),
+    }
+    return any(term in context for term in explicit_terms.get(tag, (tag,)))
+
+
 def rerank_with_soft_constraints(
     candidates: List[dict],
     soft_intent: Dict[str, Any] | None,
@@ -131,11 +194,9 @@ def rerank_with_soft_constraints(
 
     soft = soft_intent or {}
     avoid_terms = _iter_terms(soft.get("avoid"))
-    if not avoid_terms:
-        return candidates
 
     avoid_context = " ".join(avoid_terms + _avoid_context_fragments(query_text)).casefold()
-    positive_context = " ".join(
+    preference_context = " ".join(
         _iter_terms(query_text)
         + _iter_terms(soft.get("goal"))
         + _iter_terms(soft.get("trajectory"))
@@ -150,7 +211,12 @@ def rerank_with_soft_constraints(
         for group in _SOFT_AVOID_GROUPS.values()
         if any(trigger.casefold() in avoid_context for trigger in group["triggers"])
     ]
-    if not active_groups:
+    active_preference_groups = [
+        group
+        for group in _SOFT_PREFERENCE_GROUPS.values()
+        if any(trigger.casefold() in preference_context for trigger in group["triggers"])
+    ]
+    if not active_groups and not active_preference_groups:
         return candidates
 
     adjusted: List[dict] = []
@@ -170,7 +236,22 @@ def rerank_with_soft_constraints(
             positive_hits.update(
                 token
                 for token in group["positive"]
-                if token in positive_context and _contains_token(tokens, token)
+                if token in preference_context and _contains_token(tokens, token)
+            )
+
+        conflict_hits: set[str] = set()
+        conflict_penalty = 0.0
+        for group in active_preference_groups:
+            for token, weight in group["negative"].items():
+                if _request_explicitly_wants(preference_context, token):
+                    continue
+                if _contains_token(tokens, token):
+                    conflict_hits.add(token)
+                    conflict_penalty += weight
+            positive_hits.update(
+                token
+                for token in group["positive"]
+                if _contains_token(tokens, token)
             )
 
         penalty = 0.0
@@ -179,6 +260,7 @@ def rerank_with_soft_constraints(
                 penalty += 0.22
             else:
                 penalty += 0.14
+        penalty += conflict_penalty
         bonus = min(0.18, 0.04 * len(positive_hits))
         penalty = min(0.65, penalty)
 
@@ -187,6 +269,7 @@ def rerank_with_soft_constraints(
         clone["_soft_avoid_penalty"] = round(penalty, 4)
         clone["_soft_positive_bonus"] = round(bonus, 4)
         clone["_soft_negative_hits"] = sorted(negative_hits)
+        clone["_soft_conflict_hits"] = sorted(conflict_hits)
         clone["_soft_positive_hits"] = sorted(positive_hits)
         clone["similarity_score"] = base - penalty + bonus
         adjusted.append(clone)

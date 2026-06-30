@@ -113,6 +113,33 @@ def _profile_options(profile_text: str, options: list[RefinementOption]) -> None
         )
 
 
+def _fallback_options(options: list[RefinementOption]) -> None:
+    _add_unique(
+        options,
+        label="更安静",
+        prompt="更安静一点，动态收住",
+        reason="通用偏好微调",
+    )
+    _add_unique(
+        options,
+        label="更有节奏",
+        prompt="更有节奏一点，能量往上提",
+        reason="通用偏好微调",
+    )
+    _add_unique(
+        options,
+        label="更小众",
+        prompt="更小众一点，少一点热门榜单感",
+        reason="通用偏好微调",
+    )
+    _add_unique(
+        options,
+        label="少人声",
+        prompt="少人声一点，更适合专注听",
+        reason="通用偏好微调",
+    )
+
+
 def build_refinement_suggestions(
     *,
     user_input: str,
@@ -153,12 +180,13 @@ def build_refinement_suggestions(
     ]
     text = _norm(" ".join(text_parts))
 
-    has_entity = bool(hard.artist_entities or hard.song_entities)
     has_soft_signal = bool(soft.goal or soft.trajectory or soft.vibe or soft.avoid or hints.genres or hints.mood or hints.scenario)
     soft_cue_count = sum(1 for cue in SOFT_AMBIGUITY_CUES if cue in text)
-    should_offer = not has_entity and (has_soft_signal or soft_cue_count >= 2 or plan.intent_type == "vector_search")
-    if not should_offer:
-        return RefinementSuggestion(confidence=0.86, reason="concrete_constraints")
+    should_offer = has_soft_signal or soft_cue_count >= 1 or plan.intent_type in {
+        "vector_search",
+        "hybrid_search",
+        "graph_search",
+    }
 
     options: list[RefinementOption] = []
     if _has(text, r"lo[- ]?fi|lofi|beats?|chill"):
@@ -183,13 +211,14 @@ def build_refinement_suggestions(
 
     _profile_options(user_profile, options)
 
-    if len(options) < 2:
-        _add_unique(options, label="更安静", prompt="更安静一点，动态收住", reason="通用软意图细化")
-        _add_unique(options, label="更有节奏", prompt="更有节奏一点，能量往上提", reason="通用软意图细化")
-    if len(options) < 3:
-        _add_unique(options, label="更小众", prompt="更小众一点，少一点热门榜单感", reason="通用软意图细化")
+    if should_offer and len(options) < 3:
+        _fallback_options(options)
 
-    confidence = 0.66
+    confidence = 0.86
+    reason = "concrete_constraints"
+    if has_soft_signal or soft_cue_count:
+        confidence = 0.66
+        reason = "soft_intent_open_ended"
     if soft_cue_count >= 3:
         confidence = 0.58
     if state.last_delta.followup:
@@ -199,6 +228,6 @@ def build_refinement_suggestions(
 
     return RefinementSuggestion(
         confidence=round(confidence, 2),
-        reason="soft_intent_open_ended",
+        reason=reason,
         options=options[: max(0, max_options)],
     )

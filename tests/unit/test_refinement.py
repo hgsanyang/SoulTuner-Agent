@@ -39,7 +39,7 @@ def test_focus_context_predicts_sparse_vocal_chip():
     assert suggestion.options
 
 
-def test_concrete_artist_request_does_not_offer_refinement_chips():
+def test_concrete_artist_request_still_offers_non_blocking_refinement_chips():
     plan = MusicQueryPlan.model_validate(
         {
             "intent_type": "graph_search",
@@ -53,4 +53,4 @@ def test_concrete_artist_request_does_not_offer_refinement_chips():
     suggestion = build_refinement_suggestions(user_input="周杰伦的歌", plan=plan)
 
     assert suggestion.confidence >= 0.85
-    assert suggestion.options == []
+    assert [option.label for option in suggestion.options] == ["更安静", "更有节奏", "更小众", "少人声"]

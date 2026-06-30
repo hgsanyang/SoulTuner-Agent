@@ -110,3 +110,37 @@ def test_soft_avoid_falls_back_to_penalized_order_when_too_few_clean_candidates(
     assert len(ranked) == 3
     assert ranked[0]["song"]["title"] == "kpop ballad"
     assert ranked[-1]["song"]["title"] == "dance pop"
+
+
+def test_quiet_soft_request_demotes_high_energy_conflicts():
+    candidates = [
+        _candidate("wild heart", ["Dance", "Rock"], ["Energetic"], ["Driving"], 0.98),
+        _candidate("rain room", ["Alternative"], ["Dreamy", "Healing"], ["Rainy Day"], 0.78),
+        _candidate("soft folk", ["Folk", "Acoustic"], ["Peaceful"], ["Study"], 0.74),
+        _candidate("late night", ["Pop"], ["Melancholy"], ["Late Night"], 0.70),
+        _candidate("quiet lofi", ["Lo-Fi"], ["Relaxing"], ["Study"], 0.68),
+    ]
+
+    ranked = rerank_with_soft_constraints(
+        candidates,
+        {"vibe": "柔软安静的雨天感觉"},
+        {"scenario": "Rainy Day", "mood": "Calm"},
+        query_text="今天是下雨天，需要偏柔软安静的感觉",
+        min_keep=3,
+    )
+
+    titles = [item["song"]["title"] for item in ranked]
+    assert "wild heart" not in titles[:3]
+    assert "wild heart" not in titles
+
+    fallback_ranked = rerank_with_soft_constraints(
+        candidates,
+        {"vibe": "柔软安静的雨天感觉"},
+        {"scenario": "Rainy Day", "mood": "Calm"},
+        query_text="今天是下雨天，需要偏柔软安静的感觉",
+        min_keep=6,
+    )
+
+    by_title = {item["song"]["title"]: item for item in fallback_ranked}
+    assert set(by_title["wild heart"]["_soft_conflict_hits"]) >= {"dance", "energetic", "driving"}
+    assert by_title["rain room"]["_soft_positive_hits"]
