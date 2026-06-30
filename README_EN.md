@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-116_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-168_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -50,7 +50,7 @@ Copy-Item .env.example .env
 .\soultuner.ps1 doctor        # Open http://localhost:3003 after health checks pass
 ```
 
-With an NVIDIA GPU, use `.\soultuner.ps1 up gpu`: the backend enables MuQ-MuLan fp16 and starts the separate ingestion worker. CPU mode keeps the complete product workflow but automatically uses the lighter M2D text-to-music fallback so the 663M MuQ model cannot exhaust Docker memory.
+Both CPU and GPU modes start the complete product workflow. The difference is multimodal quality and ingestion throughput: `up cpu` defaults to the lighter M2D text-to-music fallback while Neo4j, recommendation, web fallback, and the frontend remain fully available; with an NVIDIA GPU, use `.\soultuner.ps1 up gpu` to enable MuQ-MuLan fp16 as the primary text-to-music anchor and start the separate ingestion worker.
 
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
@@ -274,17 +274,28 @@ The frontend profile panel saves preferences (genre/mood/scenario/language), sim
 
 ### Data Flywheel
 
-User search → Discover new song → Download to "Pending" staging area → Frontend preview & playback → Select and confirm ingestion → LLM label extraction + Dual vector encoding → Neo4j ingestion → Discoverable next time.
+User search → Discover new song → Download to "Pending" staging area → Frontend preview & playback → Select and confirm ingestion → LLM label extraction + MuQ/M2D/OMAR vector encoding → Neo4j ingestion → Discoverable next time.
 
 > 💡 Songs acquired from the web no longer auto-ingest. Users manage ingested songs from the "My Library" page (search/play/delete).
+
+### Feedback Loop
+
+Every recommendation slate is appended to `data/feedback/exposures.jsonl` with query, intent, recall provenance, rank, and tri-anchor scores. User events such as like, save, skip, full play, repeat, and dislike still write to Neo4j, and are also appended to `data/feedback/events.jsonl`. Offline replay can estimate reversible tri-anchor ranking weights:
+
+```powershell
+python scripts/replay_feedback.py
+python scripts/replay_feedback.py --write
+```
+
+Replay uses `logistic_tri_anchor_v1` by default and prints matched events, positive/negative counts, feature coverage, and baseline/learned log-loss. If explicit positive/negative feedback is insufficient, the report returns `insufficient_data` and `--write` refuses to create weights, preventing fake learning from empty data. When `data/feedback/ranking_weights.json` exists, tri-anchor reranking reads it first; missing or invalid files fall back to settings/UI weights.
 
 ### Engineering Quality
 
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 141 tests covering settings loading, Planner cache, outcome eval, fusion filters, explanation fast-mode, and more |
-| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 56 dev cases and 24 holdout cases |
+| **Unit Testing** | 168 tests covering settings loading, Planner cache, outcome eval, fusion filters, DST, feedback logs, alignment calibration, and more |
+| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 57 dev cases and 34 holdout cases |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
 | **Code Standards** | Enforced by Ruff static analysis + pyproject.toml |
@@ -295,9 +306,10 @@ User search → Discover new song → Download to "Pending" staging area → Fro
 ```powershell
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast
 python -m tests.eval.evaluate_outcomes --split holdout --planner-temperature 0 --fast
+python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
 ```
 
-The harness checks whether returned songs satisfy artist, title, language, playability, negation, soft intent, and fallback behavior. After S4, the suite includes 10 English mirror cases: English totals `8/10`, non-English totals `64/70`, so A2 language normalization was not triggered.
+The harness checks whether returned songs satisfy artist, title, language, playability, negation, soft intent, and fallback behavior. The holdout set now has 34 cases covering English mirrors, multi-turn context, negative constraints, and soft intent; run it with `--planner-temperature 0`.
 
 The legacy `evaluate_intent.py` remains useful only as a route-label regression check; it is no longer used as evidence of recommendation quality. See `tests/eval/README.md` for details.
 
@@ -350,8 +362,8 @@ For everyday use, the 3-step Docker block near the top is enough. The commands b
 
 | Command | Purpose |
 |---|---|
-| `.\soultuner.ps1 up cpu` | Full CPU online stack: Neo4j + Backend + Frontend + GraphZep + SearxNG + Netease proxy container |
-| `.\soultuner.ps1 up gpu` | CPU stack + separate ingestion worker for lyrics tags, audio vectors, and batch ingest |
+| `.\soultuner.ps1 up cpu` | Full CPU online stack; text-to-music uses the M2D fallback by default to avoid heavy MuQ cold loading |
+| `.\soultuner.ps1 up gpu` | Full CPU workflow + MuQ-MuLan fp16 primary text-to-music anchor + separate ingestion worker for lyrics tags, audio vectors, and batch ingest |
 | `.\soultuner.ps1 doctor` | Environment diagnosis and next-step hints |
 | `.\soultuner.ps1 test` | Unit tests |
 | `.\soultuner.ps1 mock` | End-to-end mock run without external services |
@@ -455,7 +467,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 │
 ├── graphzep_service/           # Micro node for GraphZep
 ├── tests/                      # Testing & Eval
-│   ├── unit/                   # 141 pytest tests
+│   ├── unit/                   # 168 pytest tests
 │   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
 ├── .github/workflows/ci.yml    # GitHub Actions definitions
 ├── docker-compose.yml          # Container configuration
@@ -479,6 +491,9 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 | `NEO4J_URI` | Neo4j bindings | `neo4j://127.0.0.1:7687` |
 | `NEO4J_PASSWORD` | Neo4j security parameters | — |
 | `DENSE_TEXT_AUDIO_BACKEND` | Text-to-music backend | `muq` (Docker CPU automatically uses `m2d`; `both` optional) |
+| `MUSIC_DENSE_QUERY_VARIANTS` | Multi-view HyDE vector ensemble | `0` (set `1` to average acoustic/emotional/context query views) |
+| `MUSIC_ALIGNMENT_CALIBRATION_PATH` | Optional text/audio gap calibration JSON | empty (scale/bias per backend; missing file is no-op) |
+| `MUSIC_FEEDBACK_DIR` | Exposure/event feedback log directory | `data/feedback` |
 | `RECALL_SOURCE_TIMEOUT_SECONDS` | Per-recall timeout | `60` (covers MuQ cold loading) |
 | `TAVILY_API_KEY` | Cloud indexing rules | Optional |
 

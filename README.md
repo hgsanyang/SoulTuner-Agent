@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-116_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-168_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -50,7 +50,7 @@ Copy-Item .env.example .env
 .\soultuner.ps1 doctor        # 绿灯后打开 http://localhost:3003
 ```
 
-有 NVIDIA GPU 时，把第三行改成 `.\soultuner.ps1 up gpu`：后端会启用 MuQ-MuLan fp16，并同时启动独立入库 Worker。CPU 模式仍提供完整业务功能，但自动使用资源更轻的 M2D 文搜音回退，避免 663M MuQ 模型挤占 Docker 内存。
+CPU 和 GPU 都能启动完整产品功能。区别只在多模态质量与入库吞吐：`up cpu` 默认用资源更轻的 M2D 文搜音回退，Neo4j / 推荐 / 联网 / 前端全可用；有 NVIDIA GPU 时，把第三行改成 `.\soultuner.ps1 up gpu`，后端会启用 MuQ-MuLan fp16 文搜音主锚，并同时启动独立入库 Worker。
 
 <details>
 <summary>本地开发 / GPU 入库 / 手动分步</summary>
@@ -279,13 +279,24 @@ stateDiagram-v2
 
 > 💡 联网获取的歌曲不再自动入库，用户可在「我的曲库」页面管理已入库歌曲（播放/搜索/删除）。
 
+### 反馈闭环
+
+推荐完成时会写入 `data/feedback/exposures.jsonl`，记录当轮 query、intent、召回来源、排序位置和三锚分数。点赞、收藏、跳过、完整播放、不喜欢等行为继续直写 Neo4j，同时追加到 `data/feedback/events.jsonl`。可用下面命令离线重放并生成可回退的三锚权重：
+
+```powershell
+python scripts/replay_feedback.py
+python scripts/replay_feedback.py --write
+```
+
+默认 replay 使用 `logistic_tri_anchor_v1`，会输出 matched events、正负反馈数量、特征覆盖率、baseline/learned log-loss 等审计字段；当显式正负反馈不足时会返回 `insufficient_data`，`--write` 会拒绝生成权重，避免空数据伪学习。生成的 `data/feedback/ranking_weights.json` 存在时会被三锚精排优先读取；不存在或格式错误时自动回到 settings/前端配置权重。
+
 ### 工程质量
 
 | 维度                 | 说明                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | **CI/CD**      | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
-| **单元测试**   | 141 tests（设置加载、Planner 缓存、结果评测、融合过滤、解释 fast-mode 等） |
-| **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；当前 dev 56 条、holdout 24 条 |
+| **单元测试**   | 168 tests（设置加载、Planner 缓存、结果评测、融合过滤、DST、反馈日志、对齐校准等） |
+| **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；当前 dev 57 条、holdout 34 条 |
 | **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比）              |
 | **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres）         |
 | **代码规范**   | Ruff 静态检查 + pyproject.toml 统一配置                                      |
@@ -296,9 +307,10 @@ stateDiagram-v2
 ```powershell
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast
 python -m tests.eval.evaluate_outcomes --split holdout --planner-temperature 0 --fast
+python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
 ```
 
-当前尺子不只看路由标签，而是检查返回歌曲是否满足歌手、歌名、语言、可播放、否定约束、软意图和降级行为。S4 后新增 10 条英文镜像用例，英文合计 `8/10`，非英文 `64/70`，未触发 A2 语言规范化迁移。
+当前尺子不只看路由标签，而是检查返回歌曲是否满足歌手、歌名、语言、可播放、否定约束、软意图和降级行为。Holdout 已扩展到 34 条，覆盖英文镜像、多轮上下文、否定约束和软意图；评测必须使用 `--planner-temperature 0`。
 
 旧的 `evaluate_intent.py` 只作为路由标签回归参考，不再作为推荐质量证明。运行评测详情见 `tests/eval/README.md`。
 
@@ -351,8 +363,8 @@ erDiagram
 
 | 命令 | 用途 |
 |---|---|
-| `.\soultuner.ps1 up cpu` | CPU 完整在线体验：Neo4j + Backend + Frontend + GraphZep + SearxNG + 网易云代理容器 |
-| `.\soultuner.ps1 up gpu` | CPU 模式 + 独立入库 Worker（歌词标签、音频向量、批量入库） |
+| `.\soultuner.ps1 up cpu` | CPU 完整在线体验；文搜音默认使用 M2D 回退，避免 MuQ 冷加载占用过多内存 |
+| `.\soultuner.ps1 up gpu` | CPU 完整体验 + MuQ-MuLan fp16 文搜音主锚 + 独立入库 Worker（歌词标签、音频向量、批量入库） |
 | `.\soultuner.ps1 doctor` | 环境体检与下一步建议 |
 | `.\soultuner.ps1 test` | 单元测试 |
 | `.\soultuner.ps1 mock` | 无外部服务端到端自测 |
@@ -464,7 +476,7 @@ python startup_all.py
 │
 ├── graphzep_service/           # GraphZep 微服务
 ├── tests/                      # 测试与评测
-│   ├── unit/                   # 单元测试 (141 tests, pytest)
+│   ├── unit/                   # 单元测试 (168 tests, pytest)
 │   │   ├── test_normalize_key.py
 │   │   ├── test_gssc_token_budget.py
 │   │   ├── test_tag_expansion.py
@@ -496,6 +508,9 @@ python startup_all.py
 | `NEO4J_URI`           | Neo4j 连接        | `neo4j://127.0.0.1:7687`                   |
 | `NEO4J_PASSWORD`      | Neo4j 密码        | —                                           |
 | `DENSE_TEXT_AUDIO_BACKEND` | 文搜音后端 | `muq`（Docker CPU 自动使用 `m2d`；可选 `both`） |
+| `MUSIC_DENSE_QUERY_VARIANTS` | 多描述 HyDE 向量集成 | `0`（设为 `1` 后对同一查询生成声学/情绪多视角并平均向量） |
+| `MUSIC_ALIGNMENT_CALIBRATION_PATH` | 文搜音 gap 校正文件 | 空（提供 JSON 后按后端应用 scale/bias 校准，缺失即 no-op） |
+| `MUSIC_FEEDBACK_DIR` | 曝光/行为日志目录 | `data/feedback` |
 | `RECALL_SOURCE_TIMEOUT_SECONDS` | 单路召回超时 | `60`（覆盖 MuQ 首次冷加载）          |
 | `TAVILY_API_KEY`      | 联网搜索          | 可选                                         |
 

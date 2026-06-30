@@ -247,6 +247,7 @@ class RecommendationRequest(BaseModel):
     mood: Optional[str] = None
     user_preferences: Optional[Dict[str, Any]] = None
     chat_history: Optional[List[Dict[str, str]]] = None
+    dialog_state: Optional[Dict[str, Any]] = None
     llm_provider: str = "dashscope"            # 模型供应商: dashscope / siliconflow / google / ...
     web_search_enabled: bool = True           # 是否开启联网搜索
 
@@ -321,6 +322,7 @@ async def stream_recommendations(
     mood: Optional[str] = None,
     user_preferences: Optional[Dict[str, Any]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    dialog_state: Optional[Dict[str, Any]] = None,
     web_search_enabled: bool = True,
     is_disconnected=None,
 ) -> AsyncGenerator[str, None]:
@@ -378,7 +380,8 @@ async def stream_recommendations(
         async for event in agent.stream_recommendations(
             query=query,
             chat_history=chat_history,
-            user_preferences=user_preferences
+            user_preferences=user_preferences,
+            dialog_state=dialog_state,
         ):
             # ★ 检测客户端是否已断开（用户点击了"停止生成"）
             if is_disconnected:
@@ -537,6 +540,7 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
             mood=request.mood,
             user_preferences=request.user_preferences,
             chat_history=request.chat_history,
+            dialog_state=request.dialog_state,
             web_search_enabled=request.web_search_enabled,
             is_disconnected=raw_request.is_disconnected,
         ),
@@ -593,7 +597,8 @@ async def get_recommendations(request: RecommendationRequest):
         result = await agent.get_recommendations(
             query=request.query,
             user_preferences=request.user_preferences,
-            chat_history=request.chat_history
+            chat_history=request.chat_history,
+            dialog_state=request.dialog_state,
         )
         return result
     except Exception as e:
@@ -932,6 +937,7 @@ class UserEventRequest(BaseModel):
     song_title: str           # 歌曲名
     artist: str = "未知"      # 歌手
     user_id: str = "local_admin"
+    exposure_id: Optional[str] = None
     extra: Optional[str] = None  # 额外信息(如播放时长)
 
 
@@ -991,7 +997,21 @@ async def capture_user_event(request: UserEventRequest):
         elif event == "full_play":
             memory.record_listened_song(request.user_id, title, artist)
 
-        # ② GraphZep 异步写入（仅作为补充上下文，不作为主记忆源）
+        # ② 本地 JSONL 事件日志：供离线重放、排序权重学习和未来 DPO/SFT 数据构建。
+        try:
+            from services.feedback_logger import log_user_event
+            log_user_event(
+                event_type=event,
+                song_title=title,
+                artist=artist,
+                user_id=request.user_id,
+                exposure_id=request.exposure_id,
+                extra=request.extra,
+            )
+        except Exception as log_error:
+            logger.warning(f"[Feedback] 行为事件日志写入失败: {log_error}")
+
+        # ③ GraphZep 异步写入（仅作为补充上下文，不作为主记忆源）
         template = EVENT_TEMPLATES.get(
             event,
             "用户对《{title}》{artist} 执行了" + event + " 操作"
@@ -1428,9 +1448,15 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
         OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+        OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
+        OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
+        OPTIONAL MATCH (s)-[:IN_LANGUAGE]->(lang:Language)
         WITH s, a,
              collect(DISTINCT m.name) AS moods,
-             collect(DISTINCT t.name) AS themes
+             collect(DISTINCT t.name) AS themes,
+             collect(DISTINCT g.name) AS genres,
+             collect(DISTINCT sc.name) AS scenarios,
+             collect(DISTINCT lang.name) AS languages
         RETURN s.title AS title,
                coalesce(a.name, s.artist, 'Unknown') AS artist,
                s.album AS album,
@@ -1442,7 +1468,8 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                s.duration AS duration,
                s.format AS format,
                s.vibe AS vibe,
-               moods, themes
+               moods, themes, genres, scenarios,
+               coalesce(s.language, languages[0], '') AS language
         ORDER BY s.updated_at DESC
         SKIP $offset LIMIT $limit
         """
@@ -1468,6 +1495,9 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "vibe": r.get("vibe", ""),
                 "moods": r.get("moods", []),
                 "themes": r.get("themes", []),
+                "genres": r.get("genres", []),
+                "scenarios": r.get("scenarios", []),
+                "language": r.get("language", ""),
             })
 
         return {"success": True, "songs": songs, "total": total}

@@ -18,6 +18,10 @@ export default function MyLibraryPage() {
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
+    const [sourceFilter, setSourceFilter] = useState('all');
+    const [languageFilter, setLanguageFilter] = useState('all');
+    const [moodFilter, setMoodFilter] = useState('all');
+    const [selectedSong, setSelectedSong] = useState<LibrarySong | null>(null);
     const [deleting, setDeleting] = useState<string | null>(null);
     const { playSong } = usePlayer();
     const { showToast } = useLibrary();
@@ -47,17 +51,26 @@ export default function MyLibraryPage() {
         }
     };
 
-    // Filter by search (null-safe: title/artist/album may be null from Neo4j)
-    const filtered = searchQuery.trim()
-        ? songs.filter(s => {
-            const q = searchQuery.toLowerCase();
-            return (s.title || '').toLowerCase().includes(q) ||
-                (s.artist || '').toLowerCase().includes(q) ||
-                (s.album || '').toLowerCase().includes(q) ||
-                (s.moods || []).some(m => (m || '').toLowerCase().includes(q)) ||
-                (s.vibe || '').toLowerCase().includes(q);
-        })
-        : songs;
+    const sourceOptions = Array.from(new Set(songs.map(s => s.source || 'local'))).sort();
+    const languageOptions = Array.from(new Set(songs.map(s => s.language || '').filter(Boolean))).sort();
+    const moodOptions = Array.from(new Set(songs.flatMap(s => s.moods || []).filter(Boolean))).sort();
+
+    const filtered = songs.filter(s => {
+        const q = searchQuery.trim().toLowerCase();
+        const matchesQuery = !q ||
+            (s.title || '').toLowerCase().includes(q) ||
+            (s.artist || '').toLowerCase().includes(q) ||
+            (s.album || '').toLowerCase().includes(q) ||
+            (s.moods || []).some(m => (m || '').toLowerCase().includes(q)) ||
+            (s.themes || []).some(t => (t || '').toLowerCase().includes(q)) ||
+            (s.genres || []).some(g => (g || '').toLowerCase().includes(q)) ||
+            (s.scenarios || []).some(sc => (sc || '').toLowerCase().includes(q)) ||
+            (s.vibe || '').toLowerCase().includes(q);
+        const matchesSource = sourceFilter === 'all' || (s.source || 'local') === sourceFilter;
+        const matchesLanguage = languageFilter === 'all' || (s.language || '') === languageFilter;
+        const matchesMood = moodFilter === 'all' || (s.moods || []).includes(moodFilter);
+        return matchesQuery && matchesSource && matchesLanguage && matchesMood;
+    });
 
     const sourceLabel = (src: string) => {
         switch (src) {
@@ -94,25 +107,40 @@ export default function MyLibraryPage() {
                 </div>
             </div>
 
-            {/* Search bar */}
-            <div style={{ position: 'relative', maxWidth: '400px' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={theme.colors.text.muted} strokeWidth="2" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }}>
-                    <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-                <input
-                    type="text"
-                    placeholder="搜索歌名、歌手、专辑..."
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    style={{
-                        width: '100%', padding: '0.65rem 0.85rem 0.65rem 2.5rem',
-                        background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`,
-                        borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary,
-                        fontSize: '0.88rem', outline: 'none', transition: 'border-color 0.2s',
-                    }}
-                    onFocus={e => (e.currentTarget.style.borderColor = theme.colors.primary.accent)}
-                    onBlur={e => (e.currentTarget.style.borderColor = theme.colors.border.default)}
-                />
+            {/* Search and filters */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
+                <div style={{ position: 'relative', minWidth: '260px', flex: '1 1 320px', maxWidth: '460px' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={theme.colors.text.muted} strokeWidth="2" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }}>
+                        <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <input
+                        type="text"
+                        placeholder="搜索歌名、歌手、专辑、标签"
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        style={{
+                            width: '100%', padding: '0.65rem 0.85rem 0.65rem 2.5rem',
+                            background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`,
+                            borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary,
+                            fontSize: '0.88rem', outline: 'none', transition: 'border-color 0.2s',
+                        }}
+                        onFocus={e => (e.currentTarget.style.borderColor = theme.colors.primary.accent)}
+                        onBlur={e => (e.currentTarget.style.borderColor = theme.colors.border.default)}
+                    />
+                </div>
+                <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary }}>
+                    <option value="all">全部来源</option>
+                    {sourceOptions.map(source => <option key={source} value={source}>{sourceLabel(source).text}</option>)}
+                </select>
+                <select value={languageFilter} onChange={e => setLanguageFilter(e.target.value)} style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary }}>
+                    <option value="all">全部语言</option>
+                    {languageOptions.map(language => <option key={language} value={language}>{language}</option>)}
+                </select>
+                <select value={moodFilter} onChange={e => setMoodFilter(e.target.value)} style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary }}>
+                    <option value="all">全部情绪</option>
+                    {moodOptions.map(mood => <option key={mood} value={mood}>{mood}</option>)}
+                </select>
+                <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>显示 {filtered.length} / {total}</span>
             </div>
 
             {/* Song List */}
@@ -181,6 +209,9 @@ export default function MyLibraryPage() {
 
                                 {/* Tags */}
                                 <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0, flexWrap: 'wrap', maxWidth: '180px' }}>
+                                    {song.genres?.slice(0, 1).map(g => (
+                                        <span key={g} style={{ fontSize: '0.7rem', padding: '0.15rem 0.45rem', borderRadius: '9999px', background: 'rgba(59,130,246,0.12)', color: '#93c5fd', whiteSpace: 'nowrap' }}>{g}</span>
+                                    ))}
                                     {song.moods?.slice(0, 2).map(m => (
                                         <span key={m} style={{ fontSize: '0.7rem', padding: '0.15rem 0.45rem', borderRadius: '9999px', background: 'rgba(29,185,84,0.12)', color: theme.colors.primary.accent, whiteSpace: 'nowrap' }}>{m}</span>
                                     ))}
@@ -193,6 +224,11 @@ export default function MyLibraryPage() {
                                 <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '9999px', border: `1px solid ${src.color}33`, color: src.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
                                     {src.text}
                                 </span>
+
+                                <button title="详情" aria-label={`查看 ${song.title} 详情`} onClick={e => { e.stopPropagation(); setSelectedSong(song); }}
+                                    style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.35rem 0.6rem', borderRadius: theme.borderRadius.sm, fontSize: '0.76rem' }}>
+                                    详情
+                                </button>
 
                                 {/* Play */}
                                 <button title={song.audio_url ? '播放' : '暂无音源'} aria-label={song.audio_url ? `播放 ${song.title}` : `${song.title} 暂无音源`}
@@ -225,6 +261,34 @@ export default function MyLibraryPage() {
                             </div>
                         );
                     })}
+                </div>
+            )}
+
+            {selectedSong && (
+                <div style={{ border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.md, background: 'rgba(255,255,255,0.03)', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '1rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedSong.title}</div>
+                            <div style={{ fontSize: '0.84rem', color: theme.colors.text.secondary }}>{selectedSong.artist}{selectedSong.album ? ` · ${selectedSong.album}` : ''}</div>
+                        </div>
+                        <button onClick={() => setSelectedSong(null)} style={{ background: 'none', border: `1px solid ${theme.colors.border.default}`, color: theme.colors.text.secondary, cursor: 'pointer', borderRadius: theme.borderRadius.sm, padding: '0.35rem 0.6rem' }}>关闭</button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.65rem', fontSize: '0.82rem', color: theme.colors.text.secondary }}>
+                        <div>来源：{sourceLabel(selectedSong.source).text}</div>
+                        <div>语言：{selectedSong.language || '未标注'}</div>
+                        <div>格式：{selectedSong.format || '未知'}</div>
+                        <div>时长：{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : '未知'}</div>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                        {[...(selectedSong.genres || []), ...(selectedSong.moods || []), ...(selectedSong.themes || []), ...(selectedSong.scenarios || [])].slice(0, 20).map(tag => (
+                            <span key={tag} style={{ fontSize: '0.72rem', padding: '0.18rem 0.5rem', borderRadius: '9999px', background: 'rgba(255,255,255,0.06)', color: theme.colors.text.secondary }}>{tag}</span>
+                        ))}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.35rem', fontSize: '0.76rem', color: theme.colors.text.muted }}>
+                        <div>音频：{selectedSong.audio_url || '无'}</div>
+                        <div>歌词：{selectedSong.lrc_url || '无'}</div>
+                        <div>ID：{selectedSong.music_id || '无'}</div>
+                    </div>
                 </div>
             )}
         </div>

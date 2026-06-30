@@ -111,6 +111,23 @@ def get_provider_config(provider: str) -> dict[str, Any]:
     return MODEL_REGISTRY[provider_key]
 
 
+def sanitize_no_proxy_for_httpx() -> None:
+    """Drop IPv6 loopback no_proxy entries that httpx may parse as a bad port.
+
+    Some Windows shells export ``NO_PROXY=...,::1,::1/128``. Recent httpx builds
+    can treat bare IPv6 tokens as URL patterns and raise ``Invalid port ':1'``
+    while constructing OpenAI-compatible clients. Keeping localhost/127.0.0.1 is
+    enough for this project, so we remove only those IPv6 loopback tokens.
+    """
+    blocked = {"::1", "::1/128", "[::1]"}
+    for env_name in ("NO_PROXY", "no_proxy"):
+        raw = os.getenv(env_name)
+        if not raw:
+            continue
+        kept = [part.strip() for part in raw.split(",") if part.strip() and part.strip() not in blocked]
+        os.environ[env_name] = ",".join(kept)
+
+
 def provider_api_key(provider: str) -> str | None:
     config = get_provider_config(provider)
     return get_env_value(config["api_key_env"])
@@ -123,6 +140,8 @@ def provider_base_url(provider: str) -> str | None:
 
 def inject_provider_env(provider: str, api_key: str | None = None, base_url: str | None = None) -> None:
     """Set environment variables expected by LiteLLM/LangChain provider adapters."""
+    sanitize_no_proxy_for_httpx()
+
     provider_key = provider.lower()
     api_key = api_key if api_key is not None else provider_api_key(provider_key)
     base_url = base_url if base_url is not None else provider_base_url(provider_key)

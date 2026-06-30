@@ -6,8 +6,10 @@ It is not an intent-label accuracy test.
 ## Splits
 
 - `smoke`: the original 12-case fast regression set.
-- `dev`: 56 cases for day-to-day iteration, including 6 English mirror cases.
-- `holdout`: 24 frozen cases, including 4 English mirror cases. Do not tune
+- `dev`: 57 cases for day-to-day iteration, including 6 English mirror cases
+  and one clarification case.
+- `holdout`: 34 frozen cases, including English mirrors, multi-turn context,
+  negative constraints, and soft-intent cases. Do not tune
   directly against this set.
 - `all`: dev + holdout, for explicit milestone checks only.
 
@@ -22,15 +24,21 @@ python -m tests.eval.calibrate_soft_judge --min-accuracy 0.95
 
 Reports are written to `tests/eval/results/` and include git sha, branch, dirty
 state, effective model config, Planner temperature, and key non-secret settings.
+Outcome eval sets `EVAL_DISABLE_SIDE_EFFECTS=True` internally so it measures the
+recommendation path without writing preference extraction, GraphZep persistence,
+or profile-refresh side effects.
 
 Add `--timing` to include per-case stage timings and aggregate p50/p95 latency:
 
 ```powershell
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --timing
+python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
 ```
 
 The timing report covers GraphZep, intent planning, each recall source,
 fusion/filter, ranking, web fallback, explanation, Agent total, and end to end.
+`--case-timeout` is useful for slow dev profiling: a stuck case is marked
+`TIMEOUT`, the run continues, and the JSON report includes `slow_cases`.
 
 ## Text-To-Audio Alignment Eval
 
@@ -44,6 +52,21 @@ It evaluates 24 Chinese/English language, genre, mood, and scenario queries
 against catalog labels and reports P@10 for MuQ-MuLan and M2D-CLAP on the same
 corpus. It is deterministic and does not call an LLM. Use this ruler together
 with outcome dev/holdout when changing the dense text-to-music backend.
+When experimenting with `MUSIC_DENSE_QUERY_VARIANTS=1` or
+`MUSIC_ALIGNMENT_CALIBRATION_PATH`, compare this attribute ruler before and
+after the change, then confirm the end-to-end outcome eval does not regress.
+
+To train and validate the reversible text/audio gap calibration:
+
+```powershell
+python scripts/train_alignment_calibration.py --backend both --k 10 --output data/alignment_calibration.json
+python -m tests.eval.evaluate_alignment_attribute --k 10 --calibration-path data/alignment_calibration.json
+```
+
+The current centroid-bias calibration is deliberately conservative: it performs
+a train split shrink search and may choose `shrink=0` when validation would not
+improve. In that case the calibration file is a safe no-op and should not be
+enabled in production unless a later frozen validation report shows a gain.
 
 `evaluate_alignment` isolates M2D-CLAP text-to-audio alignment from the
 end-to-end Agent. It uses a frozen metadata/tag caption set and does not call

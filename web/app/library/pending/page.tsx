@@ -18,6 +18,8 @@ export default function PendingPage() {
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(true);
     const [ingesting, setIngesting] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [formatFilter, setFormatFilter] = useState('all');
     const { playSong } = usePlayer();
     const { showToast } = useLibrary();
     const router = useRouter();
@@ -40,11 +42,23 @@ export default function PendingPage() {
         });
     };
 
+    const formats = Array.from(new Set(songs.map(s => s.format).filter(Boolean))).sort();
+    const filteredSongs = songs.filter(song => {
+        const q = searchQuery.trim().toLowerCase();
+        const matchesQuery = !q ||
+            (song.title || '').toLowerCase().includes(q) ||
+            (song.artist || '').toLowerCase().includes(q) ||
+            (song.album || '').toLowerCase().includes(q);
+        const matchesFormat = formatFilter === 'all' || song.format === formatFilter;
+        return matchesQuery && matchesFormat;
+    });
+    const allFilteredSelected = filteredSongs.length > 0 && filteredSongs.every(s => selected.has(s.file_basename));
+
     const toggleSelectAll = () => {
-        if (selected.size === songs.length) {
+        if (allFilteredSelected) {
             setSelected(new Set());
         } else {
-            setSelected(new Set(songs.map(s => s.file_basename)));
+            setSelected(new Set(filteredSongs.map(s => s.file_basename)));
         }
     };
 
@@ -116,28 +130,56 @@ export default function PendingPage() {
                     <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>暂存区</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>待入库</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                        {loading ? '加载中...' : `共 ${songs.length} 首歌曲等待确认入库`}
+                        {loading ? '加载中...' : `共 ${songs.length} 首待确认，当前显示 ${filteredSongs.length} 首，已选 ${selected.size} 首`}
                     </p>
                 </div>
             </div>
 
+            {!loading && songs.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
+                    <div style={{ position: 'relative', minWidth: '260px', flex: '1 1 280px', maxWidth: '420px' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={theme.colors.text.muted} strokeWidth="2" style={{ position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)' }}>
+                            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        <input
+                            type="text"
+                            placeholder="搜索歌名、歌手、专辑"
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            style={{ width: '100%', padding: '0.65rem 0.85rem 0.65rem 2.5rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary, fontSize: '0.88rem', outline: 'none' }}
+                        />
+                    </div>
+                    <select
+                        value={formatFilter}
+                        onChange={e => setFormatFilter(e.target.value)}
+                        style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary, fontSize: '0.88rem', outline: 'none' }}
+                    >
+                        <option value="all">全部格式</option>
+                        {formats.map(format => <option key={format} value={format}>{format.toUpperCase()}</option>)}
+                    </select>
+                    <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
+                        状态：待入库 → 分析中 → 已入库
+                    </span>
+                </div>
+            )}
+
             {/* Song List */}
-            {!loading && songs.length === 0 ? (
+            {!loading && filteredSongs.length === 0 ? (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '4rem', borderRadius: theme.borderRadius.lg, backgroundColor: 'rgba(255,255,255,0.02)', border: `1px dashed ${theme.colors.border.default}`, textAlign: 'center' }}>
                     <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '0.5rem' }}>
                         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={theme.colors.text.muted} strokeWidth="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
                         </svg>
                     </div>
-                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>暂无待入库歌曲</h3>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>{songs.length === 0 ? '暂无待入库歌曲' : '没有匹配的待入库歌曲'}</h3>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        通过 AI 对话获取新歌后，歌曲会先下载到这里等待你确认入库。
+                        {songs.length === 0 ? '通过 AI 对话获取新歌后，歌曲会先下载到这里等待你确认入库。' : '调整搜索关键词或格式筛选后再试。'}
                     </p>
                 </div>
             ) : (
                 <>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                        {songs.map((song) => {
+                        {filteredSongs.map((song) => {
                             const isSelected = selected.has(song.file_basename);
                             return (
                                 <div key={song.file_basename}
@@ -182,6 +224,10 @@ export default function PendingPage() {
                                         {song.acquired_at ? new Date(song.acquired_at).toLocaleDateString('zh-CN') : ''}
                                     </div>
 
+                                    <span style={{ fontSize: '0.72rem', padding: '0.16rem 0.5rem', borderRadius: '9999px', color: ingesting && isSelected ? '#60a5fa' : '#f59e0b', border: `1px solid ${ingesting && isSelected ? 'rgba(96,165,250,0.35)' : 'rgba(245,158,11,0.35)'}`, whiteSpace: 'nowrap' }}>
+                                        {ingesting && isSelected ? '分析中' : '待入库'}
+                                    </span>
+
                                     {/* Play */}
                                     <button title="试听" aria-label={`试听 ${song.title}`} onClick={e => { e.stopPropagation(); playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
                                         style={{ background: 'none', border: 'none', color: theme.colors.primary.accent, cursor: 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'transform 0.2s' }}
@@ -218,11 +264,11 @@ export default function PendingPage() {
                                 onMouseEnter={e => { e.currentTarget.style.borderColor = theme.colors.primary.accent; e.currentTarget.style.color = theme.colors.text.primary; }}
                                 onMouseLeave={e => { e.currentTarget.style.borderColor = theme.colors.border.focus; e.currentTarget.style.color = theme.colors.text.secondary; }}
                             >
-                                {selected.size === songs.length ? '取消全选' : '全选'}
+                                {allFilteredSelected ? '取消全选' : '全选当前'}
                             </button>
 
                             <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted }}>
-                                已选 {selected.size} / {songs.length}
+                                已选 {selected.size} / 当前 {filteredSongs.length}
                             </span>
 
                             <div style={{ flex: 1 }} />
