@@ -383,6 +383,16 @@ python scripts/download_models.py
 
 在线推荐只读已挂载的模型缓存；批量歌词标签、音频向量和新歌入库由 GPU Worker 独立处理，避免日常推荐链路依赖 GPU。
 
+手动 yt-dlp 下载目录（`data/yt_dlp_manual/downloads`）可走同一套标准入库链路：
+
+```powershell
+python data/pipeline/yt_dlp_manual_flywheel.py --dry-run
+python data/pipeline/yt_dlp_manual_flywheel.py --stage --include-existing --batch-size 5
+python data/pipeline/ingest_to_neo4j.py --dataset yt_dlp_manual --manifest data/pipeline/gemini_prompts/<manifest>.json --force
+```
+
+脚本会把下载文件整理到 `../data/processed_audio/`，补齐 LLM 标签，并通过 GPU 提取 MuQ/M2D/OMAR 向量后写入 Docker Neo4j。生成的 manifest、标签 JSON 和音频文件都被 `.gitignore` 排除，不会进入仓库。
+
 </details>
 
 <details>
