@@ -50,6 +50,12 @@ from retrieval.user_memory import UserMemoryManager
 from retrieval.history import MusicContextManager
 from llms.prompts import MUSIC_RECOMMENDATION_EXPLAINER_PROMPT, MUSIC_CHAT_RESPONSE_PROMPT
 from schemas.query_plan import MusicQueryPlan, RetrievalPlan
+from schemas.dialog_state import (
+    apply_dialog_state_to_plan,
+    apply_plan_delta,
+    infer_dialog_state_from_history,
+    should_clarify_before_planning,
+)
 
 logger = get_logger(__name__)
 
@@ -295,6 +301,21 @@ class MusicRecommendationGraph:
         chat_history = state.get("chat_history", [])
         
         try:
+            previous_dialog_state = state.get("dialog_state") or infer_dialog_state_from_history(chat_history)
+            clarification = should_clarify_before_planning(user_input, previous_dialog_state)
+            if clarification.required:
+                logger.info("[DST] 触发澄清反问: %s", clarification.reason)
+                return {
+                    "intent_type": "clarification",
+                    "intent_parameters": {"query": user_input},
+                    "intent_context": clarification.reason,
+                    "clarification": clarification.model_dump(),
+                    "clarification_options": list(clarification.options),
+                    "final_response": clarification.question,
+                    "step_count": state.get("step_count", 0) + 1,
+                    "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                }
+
             # 格式化对话历史
             context_manager = MusicContextManager()
             history_text = context_manager.format_chat_history(chat_history)
@@ -368,6 +389,8 @@ class MusicRecommendationGraph:
                 previous_plan=_previous_plan_text,
                 graphzep_facts=state.get("graphzep_facts", ""),
             )
+            dialog_state = apply_plan_delta(previous_dialog_state, plan, user_input)
+            plan = apply_dialog_state_to_plan(plan, dialog_state)
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(
                 f"识别到意图: {plan.intent_type} | "
@@ -393,6 +416,7 @@ class MusicRecommendationGraph:
                 "intent_parameters": plan.parameters,
                 "intent_context": plan.context,
                 "retrieval_plan": retrieval_plan_dict,
+                "dialog_state": dialog_state.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
             }
@@ -449,10 +473,37 @@ class MusicRecommendationGraph:
             return "generate_recommendations"
         elif intent_type == "acquire_music":
             return "acquire_online_music"
+        elif intent_type == "clarification":
+            return "clarification"
         elif intent_type.startswith("create_playlist"):
             return "analyze_user_preferences"
         else:
             return "general_chat"
+
+    async def clarification_node(self, state: MusicAgentState) -> Dict[str, Any]:
+        """Return a deterministic clarification question instead of guessing."""
+        clarification = state.get("clarification") or {}
+        question = clarification.get("question") or state.get("final_response") or "你想保留上一轮的哪种音乐感觉？"
+        options = clarification.get("options") or state.get("clarification_options") or []
+        request_id = (state.get("metadata") or {}).get("request_id")
+        explanation_queue = self._explanation_queues.get(request_id) if request_id else None
+        if explanation_queue is not None:
+            await explanation_queue.put(question)
+            await explanation_queue.put(None)
+        return {
+            "final_response": question,
+            "recommendations": [],
+            "search_results": [],
+            "clarification_options": options,
+            "retrieval_meta": {
+                **(state.get("retrieval_meta") or {}),
+                "source": "clarification",
+                "degraded": False,
+                "clarification_required": True,
+                "clarification_reason": clarification.get("reason"),
+            },
+            "step_count": state.get("step_count", 0) + 1,
+        }
     
     async def search_songs_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
@@ -654,7 +705,7 @@ class MusicRecommendationGraph:
 
                 songs, excluded_by_avoid = filter_results_by_avoid(
                     songs,
-                    avoid_terms(retrieval_plan),
+                    avoid_terms(retrieval_plan, user_input),
                 )
                 if excluded_by_avoid:
                     logger.info(
@@ -1755,6 +1806,10 @@ class MusicRecommendationGraph:
         3. 将结果写入 Neo4j 用户画像（UserMemoryManager）
         """
         logger.info("--- [步骤] 提取用户偏好（独立节点） ---")
+
+        if settings.eval_disable_side_effects:
+            logger.info("[EvalMode] 跳过后台偏好提取与 GSSC 预压缩")
+            return {}
         
         user_query = state.get("input", "")
         raw_recommendations = state.get("recommendations", [])
@@ -1883,6 +1938,10 @@ class MusicRecommendationGraph:
         使用 asyncio.create_task 确保不阻塞返回流程。
         """
         logger.info("--- [GraphZep] 异步持久化对话 ---")
+
+        if settings.eval_disable_side_effects:
+            logger.info("[EvalMode] 跳过 GraphZep 持久化与画像刷新")
+            return {}
         
         user_input = state.get("input", "")
         bot_response = state.get("final_response", "")
@@ -1959,6 +2018,7 @@ class MusicRecommendationGraph:
         workflow.add_node("enhanced_recommendations", self.enhanced_recommendations_node)
         workflow.add_node("create_playlist", self.create_playlist_node)
         workflow.add_node("general_chat", self.general_chat_node)
+        workflow.add_node("clarification", self.clarification_node)
         workflow.add_node("generate_explanation", self.generate_explanation)
         
         # 设置入口点为 GraphZep 记忆召回
@@ -1977,7 +2037,8 @@ class MusicRecommendationGraph:
                 "web_fallback": "web_fallback",  # web_search 意图直达联网搜索
                 "generate_recommendations": "generate_recommendations",
                 "analyze_user_preferences": "analyze_user_preferences",
-                "general_chat": "general_chat"
+                "general_chat": "general_chat",
+                "clarification": "clarification",
             }
         )
         
@@ -2026,6 +2087,7 @@ class MusicRecommendationGraph:
         workflow.add_edge("generate_explanation", "extract_preferences")
         workflow.add_edge("extract_preferences", "persist_to_graphzep")
         workflow.add_edge("general_chat", "persist_to_graphzep")
+        workflow.add_edge("clarification", "persist_to_graphzep")
         workflow.add_edge("persist_to_graphzep", END)
         
         # 编译图（注入 checkpointer 实现状态持久化）

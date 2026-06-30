@@ -170,29 +170,48 @@ def _rank_ids(query_vector: list[float], matrix: np.ndarray, ids: list[str]) -> 
     return [ids[int(index)] for index in order]
 
 
-def evaluate_attribute_alignment(k: int = 10) -> dict[str, Any]:
+def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "") -> dict[str, Any]:
     from retrieval.audio_embedder import encode_text_to_embedding
+    from retrieval.alignment_calibration import apply_alignment_calibration
     from retrieval.muq_embedder import MUQ_REPO_ID, encode_text_to_muq
 
+    previous_calibration_path = os.environ.get("MUSIC_ALIGNMENT_CALIBRATION_PATH")
+    if calibration_path:
+        os.environ["MUSIC_ALIGNMENT_CALIBRATION_PATH"] = calibration_path
     ids, labels_by_id, m2d_matrix, muq_matrix = _fetch_common_corpus()
     rows = []
     grouped: dict[str, dict[str, list[float]]] = {}
-    for query in FROZEN_ATTRIBUTE_QUERIES:
-        m2d_ranked = _rank_ids(encode_text_to_embedding(query["text"]), m2d_matrix, ids)
-        muq_ranked = _rank_ids(encode_text_to_muq(query["text"]), muq_matrix, ids)
-        m2d_p = precision_at_k(m2d_ranked, labels_by_id, query["target"], k)
-        muq_p = precision_at_k(muq_ranked, labels_by_id, query["target"], k)
-        lang = query["query_language"]
-        grouped.setdefault(lang, {"m2d": [], "muq": []})
-        grouped[lang]["m2d"].append(m2d_p)
-        grouped[lang]["muq"].append(muq_p)
-        rows.append(
-            {
-                **query,
-                "precision_at_k": {"m2d": m2d_p, "muq": muq_p},
-                "top_ids": {"m2d": m2d_ranked[:k], "muq": muq_ranked[:k]},
-            }
-        )
+    try:
+        for query in FROZEN_ATTRIBUTE_QUERIES:
+            m2d_query_vector = apply_alignment_calibration(
+                encode_text_to_embedding(query["text"]),
+                "m2d",
+            )
+            muq_query_vector = apply_alignment_calibration(
+                encode_text_to_muq(query["text"]),
+                "muq",
+            )
+            m2d_ranked = _rank_ids(m2d_query_vector, m2d_matrix, ids)
+            muq_ranked = _rank_ids(muq_query_vector, muq_matrix, ids)
+            m2d_p = precision_at_k(m2d_ranked, labels_by_id, query["target"], k)
+            muq_p = precision_at_k(muq_ranked, labels_by_id, query["target"], k)
+            lang = query["query_language"]
+            grouped.setdefault(lang, {"m2d": [], "muq": []})
+            grouped[lang]["m2d"].append(m2d_p)
+            grouped[lang]["muq"].append(muq_p)
+            rows.append(
+                {
+                    **query,
+                    "precision_at_k": {"m2d": m2d_p, "muq": muq_p},
+                    "top_ids": {"m2d": m2d_ranked[:k], "muq": muq_ranked[:k]},
+                }
+            )
+    finally:
+        if calibration_path:
+            if previous_calibration_path is None:
+                os.environ.pop("MUSIC_ALIGNMENT_CALIBRATION_PATH", None)
+            else:
+                os.environ["MUSIC_ALIGNMENT_CALIBRATION_PATH"] = previous_calibration_path
 
     def mean(values: list[float]) -> float:
         return float(sum(values) / len(values)) if values else 0.0
@@ -213,6 +232,7 @@ def evaluate_attribute_alignment(k: int = 10) -> dict[str, Any]:
         "corpus": {
             "common_m2d_muq_songs": len(ids),
         },
+        "calibration_path": calibration_path or "",
         "k": k,
         "query_count": len(FROZEN_ATTRIBUTE_QUERIES),
         "metrics": {
@@ -227,9 +247,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate M2D vs MuQ attribute precision@K")
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--output", default="")
+    parser.add_argument("--calibration-path", default="", help="Optional alignment calibration JSON")
     args = parser.parse_args()
 
-    report = evaluate_attribute_alignment(k=args.k)
+    report = evaluate_attribute_alignment(k=args.k, calibration_path=args.calibration_path)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = Path(args.output) if args.output else RESULTS_DIR / (
         "alignment_attribute_eval_"
@@ -247,6 +268,8 @@ def main() -> None:
     print(f"Git: {report['git']['branch']} @ {report['git']['sha']} | dirty={report['git']['dirty']}")
     print(f"Corpus common M2D/MuQ songs: {report['corpus']['common_m2d_muq_songs']}")
     print(f"Queries: {report['query_count']} | P@{report['k']}")
+    if report.get("calibration_path"):
+        print(f"Calibration: {report['calibration_path']}")
     print(f"Overall: M2D={metrics['overall']['m2d']:.3f} | MuQ={metrics['overall']['muq']:.3f}")
     for lang, values in metrics["by_query_language"].items():
         print(f"{lang}: M2D={values['m2d']:.3f} | MuQ={values['muq']:.3f}")

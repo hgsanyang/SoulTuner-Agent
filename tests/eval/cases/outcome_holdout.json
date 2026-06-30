@@ -147,5 +147,67 @@
     "query": "Same vibe, but in Chinese",
     "chat_history": [{"role": "user", "content": "Recommend some ethereal English female vocals"}, {"role": "assistant", "content": "I recommended some ethereal English female vocal tracks."}],
     "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认继承空灵氛围，并切换到中文"]}
+  },
+
+  {
+    "id": "holdout_v2_cantonese_nostalgic",
+    "category": "language_constraint",
+    "query": "粤语老歌，想怀旧一下，最好慢一点",
+    "checks": {"min_results": 3, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["nostalgic", "怀旧", "mellow", "soft", "ballad", "romantic"], "negative_any": ["energetic", "party", "dance"], "min_positive_ratio": 0.4, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.5}}
+  },
+  {
+    "id": "holdout_v2_korean_ballad_not_dance",
+    "category": "negative_constraint",
+    "query": "韩语抒情慢歌，别给我打歌舞曲",
+    "checks": {"min_results": 3, "language_any_of": ["Korean", "韩语"], "language_match_min_ratio": 0.6, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["ballad", "sad", "romantic", "mellow", "抒情"], "negative_any": ["dance", "energetic", "party", "edm"], "min_positive_ratio": 0.4, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.5}}
+  },
+  {
+    "id": "holdout_v2_chinese_rock_powerful",
+    "category": "compound_constraint",
+    "query": "中文摇滚，要带点愤怒和力量那种",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.6, "genre_any_of": ["rock", "摇滚", "metal", "punk"], "genre_match_min_ratio": 0.4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["energetic", "angry", "热血", "powerful", "intense"], "negative_any": ["peaceful", "sleep", "ballad"], "min_positive_ratio": 0.4, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "holdout_v2_three_turn_quieter_piano",
+    "category": "multi_turn_context",
+    "query": "再安静一点，加点钢琴",
+    "chat_history": [{"role": "user", "content": "运动的时候听的中文歌"}, {"role": "assistant", "content": "推荐了一些高能量中文运动歌曲。"}, {"role": "user", "content": "现在不运动了，想放松"}, {"role": "assistant", "content": "切换为放松向的歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["peaceful", "relaxing", "piano", "calm", "放松"], "negative_any": ["energetic", "workout"], "min_positive_ratio": 0.4, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.4}, "manual_review": ["确认三轮上下文：运动→放松→更安静+钢琴，逐步继承收窄"]}
+  },
+  {
+    "id": "holdout_v2_crosslingual_jay_upbeat",
+    "category": "mixed_language_boundary",
+    "query": "give me some Jay Chou but more upbeat, not the sad ballads",
+    "checks": {"min_results": 3, "artist_any_of": ["周杰伦", "Jay Chou"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["happy", "upbeat", "energetic", "bright"], "negative_any": ["sad", "melancholy", "ballad"], "min_positive_ratio": 0.34, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "holdout_v2_instrumental_strict_sleep",
+    "category": "language_constraint",
+    "query": "睡前纯音乐，绝对不要有人声",
+    "checks": {"min_results": 3, "language_any_of": ["Instrumental"], "language_match_min_ratio": 0.8, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["sleep", "peaceful", "ambient", "calm", "睡觉"], "negative_any": ["energetic", "party"], "min_positive_ratio": 0.4, "max_negative_ratio": 0.25, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "holdout_v2_jj_not_ballad",
+    "category": "negative_constraint",
+    "query": "林俊杰的歌，但不要那种抒情大歌，要轻快的",
+    "checks": {"min_results": 3, "artist_any_of": ["林俊杰", "JJ Lin"], "artist_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["happy", "upbeat", "bright", "轻快"], "negative_any": ["ballad", "sad", "melancholy", "抒情"], "min_positive_ratio": 0.34, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "holdout_v2_diverse_mandarin_playlist",
+    "category": "diversity",
+    "query": "给我一个华语歌单，风格多样点，别都是一个歌手",
+    "checks": {"min_results": 6, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.6, "max_per_artist": 2, "min_playable_ratio": 0.5, "not_degraded": true}
+  },
+  {
+    "id": "holdout_v2_en_lofi_rainy",
+    "category": "soft_mood",
+    "query": "warm lo-fi beats for a rainy sunday afternoon",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["chill", "lo-fi", "relaxing", "mellow", "rainy", "calm"], "negative_any": ["energetic", "intense", "party"], "min_positive_ratio": 0.4, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "holdout_v2_mood_trajectory_sad_to_release",
+    "category": "soft_mood",
+    "query": "从难过慢慢到释怀的那种感觉",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认有情绪轨迹：起点偏难过/低落，过渡到释怀/平静，而非全程一种情绪"]}
   }
 ]

@@ -349,5 +349,11 @@
     "category": "negative_constraint",
     "query": "Chinese songs, but not sad",
     "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["happy", "hopeful", "energetic", "peaceful"], "negative_any": ["melancholy", "lonely"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.35, "min_coverage_ratio": 0.6}}
+  },
+  {
+    "id": "dev_clarification_01_reference_without_state",
+    "category": "clarification",
+    "query": "有没有类似听感的歌",
+    "checks": {"expected_clarification": true, "manual_review": ["无上一轮上下文时，应反问参考歌/保留氛围，而不是硬猜推荐。"]}
   }
 ]

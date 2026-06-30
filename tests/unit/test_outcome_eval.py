@@ -15,6 +15,7 @@ from tests.eval.evaluate_outcomes import (
     _load_cases,
     _percentile,
     _summarize_timings,
+    _top_slow_cases,
     _unwrap_songs,
     evaluate_case,
 )
@@ -44,6 +45,23 @@ def test_timing_percentiles_and_summary():
         "p50": 150.0,
         "p95": 195.0,
     }
+
+
+def test_top_slow_cases_orders_by_end_to_end_ms():
+    rows = _top_slow_cases([
+        {"id": "fast", "case_status": "pass", "timings_ms": {"end_to_end_ms": 10}},
+        {"id": "slow", "case_status": "fail", "timings_ms": {"end_to_end_ms": 200}},
+        {"id": "missing", "case_status": "pass", "timings_ms": {"intent_ms": 1}},
+    ], limit=1)
+    assert rows == [{
+        "id": "slow",
+        "query": None,
+        "case_status": "fail",
+        "end_to_end_ms": 200.0,
+        "intent_ms": None,
+        "retrieval_total_ms": None,
+        "graphzep_ms": None,
+    }]
 
 
 # ---------------------------------------------------------------- _unwrap_songs
@@ -229,6 +247,27 @@ def test_objective_soft_judge_skips_without_objective_fields():
     rep = evaluate_case(case, _result([_song("A", "x"), _song("B", "y")]))
     assert rep["case_status"] == "indeterminate"
     assert rep["outcomes"][0]["status"] == "skip"
+
+
+def test_expected_clarification_passes_without_songs():
+    case = {"id": "t", "query": "有没有类似听感的", "checks": {"expected_clarification": True}}
+    result = {
+        "recommendations": [],
+        "intent_type": "clarification",
+        "final_response": "你想按哪一种方向继续？",
+        "clarification_options": ["告诉我一首参考歌"],
+    }
+    rep = evaluate_case(case, result)
+
+    assert rep["case_status"] == "pass"
+    assert rep["num_songs"] == 0
+
+
+def test_expected_clarification_fails_when_agent_guesses():
+    case = {"id": "t", "query": "有没有类似听感的", "checks": {"expected_clarification": True}}
+    rep = evaluate_case(case, _result([_song("A", "x")], intent="vector_search"))
+
+    assert rep["case_status"] == "fail"
 
 
 def test_load_cases_split_smoke():

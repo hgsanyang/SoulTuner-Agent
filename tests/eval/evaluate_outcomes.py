@@ -52,6 +52,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import subprocess
 import sys
 import time
@@ -115,6 +116,27 @@ def _summarize_timings(reports: List[Dict[str, Any]]) -> Dict[str, Any]:
             for stage, values in sorted(by_stage.items())
         },
     }
+
+
+def _top_slow_cases(reports: List[Dict[str, Any]], limit: int = 10) -> List[Dict[str, Any]]:
+    """Return the slowest cases by measured end-to-end latency."""
+    rows = []
+    for report in reports:
+        timings = report.get("timings_ms") or {}
+        elapsed = timings.get("end_to_end_ms")
+        if not isinstance(elapsed, (int, float)):
+            continue
+        rows.append({
+            "id": report.get("id"),
+            "query": report.get("query"),
+            "case_status": report.get("case_status"),
+            "end_to_end_ms": round(float(elapsed), 3),
+            "intent_ms": timings.get("intent_ms"),
+            "retrieval_total_ms": timings.get("retrieval_total_ms"),
+            "graphzep_ms": timings.get("graphzep_ms"),
+        })
+    rows.sort(key=lambda row: row["end_to_end_ms"], reverse=True)
+    return rows[:max(0, int(limit))]
 
 
 def _unwrap_songs(result: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -352,6 +374,21 @@ def _c_objective_soft_judge(songs, val, result) -> Tuple[str, str]:
     return decision.status, decision.detail
 
 
+def _c_expected_clarification(songs, val, result) -> Tuple[str, str]:
+    if not val:
+        return ("skip", "未要求澄清")
+    if result.get("intent_type") != "clarification":
+        return ("fail", f"期望澄清，实际 intent={result.get('intent_type')}")
+    has_prompt = bool(result.get("final_response") or result.get("response"))
+    has_options = bool(result.get("clarification_options"))
+    if has_prompt:
+        detail = "已返回澄清问题"
+        if has_options:
+            detail += "，并包含 clarification_options"
+        return ("pass", detail)
+    return ("fail", "澄清路径没有返回问题文本")
+
+
 # 硬 check 名 → 处理器；带 *_ratio 的需要读取整个 checks（因为它们配对取另一个键）
 _HANDLERS = {
     "min_results": _c_min_results,
@@ -361,6 +398,7 @@ _HANDLERS = {
     "max_per_artist": _c_max_per_artist,
     "not_degraded": _c_not_degraded,
     "objective_soft_judge": _c_objective_soft_judge,
+    "expected_clarification": _c_expected_clarification,
 }
 _HANDLERS_WITH_CHECKS = {
     "artist_match_min_ratio": _c_artist_ratio,
@@ -431,14 +469,20 @@ async def run(
     planner_temperature: float,
     timing: bool = False,
     fast: bool = False,
+    case_timeout: float = 0.0,
 ) -> Dict[str, Any]:
+    if not verbose:
+        logging.getLogger().setLevel(logging.WARNING)
     # 延迟导入：让 --help 在无重依赖时也能用
     from config.settings import settings
     settings.intent_llm_provider = provider
     settings.llm_default_provider = provider
     settings.intent_temperature = planner_temperature
     settings.explanation_fast_mode = fast
+    settings.eval_disable_side_effects = True
     from agent.music_agent import MusicRecommendationAgent
+    if not verbose:
+        logging.getLogger().setLevel(logging.WARNING)
 
     cases, case_meta = _load_cases(cases_file=cases_file, split=split)
     model_meta = _effective_model_config(settings, provider, planner_temperature)
@@ -451,6 +495,7 @@ async def run(
         f"(temperature={planner_temperature}, max_tokens={model_meta['intent']['max_tokens']})"
     )
     print(f"Explanation fast-mode: {settings.explanation_fast_mode}")
+    print(f"Eval side effects disabled: {settings.eval_disable_side_effects}")
     print(f"Git: {git_meta['branch']} @ {git_meta['sha'][:12]} | dirty={git_meta['dirty']}\n")
 
     agent = MusicRecommendationAgent()
@@ -461,7 +506,21 @@ async def run(
         query = case["query"]
         case_started = time.perf_counter()
         try:
-            result = await agent.get_recommendations(query, chat_history=case.get("chat_history"))
+            request = agent.get_recommendations(query, chat_history=case.get("chat_history"))
+            if case_timeout and case_timeout > 0:
+                result = await asyncio.wait_for(request, timeout=case_timeout)
+            else:
+                result = await request
+        except asyncio.TimeoutError:
+            result = {
+                "recommendations": [],
+                "intent_type": "TIMEOUT",
+                "errors": [{
+                    "node": "harness",
+                    "error": f"case exceeded timeout {case_timeout:.1f}s",
+                    "timeout_seconds": case_timeout,
+                }],
+            }
         except Exception as e:  # 单 case 失败不应中断整轮
             result = {"recommendations": [], "intent_type": "ERROR",
                       "errors": [{"node": "harness", "error": str(e)}]}
@@ -516,6 +575,8 @@ async def run(
 
     timing_summary = _summarize_timings(reports) if timing else None
     if timing_summary:
+        slow_cases = _top_slow_cases(reports)
+        timing_summary["slow_cases"] = slow_cases
         print("延迟分阶段 (ms):")
         print(f"  {'stage':24s} {'count':>6s} {'mean':>10s} {'p50':>10s} {'p95':>10s}")
         print(f"  {'-'*64}")
@@ -535,6 +596,14 @@ async def run(
                 f"{stats['p50']:>10.1f} {stats['p95']:>10.1f}"
             )
         print()
+        if slow_cases:
+            print("最慢用例:")
+            for row in slow_cases[:10]:
+                print(
+                    f"  {row['end_to_end_ms']:>9.1f}ms  "
+                    f"{row.get('case_status', ''):>13s}  {row.get('id')}"
+                )
+            print()
     print("按 check 类型:")
     print(f"  {'check':24s} {'pass':>6s} {'fail':>6s} {'skip':>6s}")
     print(f"  {'-'*44}")
@@ -570,6 +639,8 @@ async def run(
         "case_meta": case_meta,
         "git": git_meta,
         "model_config": model_meta,
+        "eval_disable_side_effects": bool(settings.eval_disable_side_effects),
+        "case_timeout_seconds": round(case_timeout, 3) if case_timeout and case_timeout > 0 else None,
         "passed": n_pass, "failed": n_fail, "indeterminate": n_indet,
         "decided_pass_rate": round(n_pass / decided, 4) if decided else None,
         "by_check": dict(by_check), "by_category": dict(by_category), "cases": reports,
@@ -599,6 +670,8 @@ def main():
                    help="记录并汇总 Agent/检索各阶段的 p50/p95 延迟")
     p.add_argument("--fast", action="store_true",
                    help="跳过解释 LLM，保留歌曲结果并生成确定性简短说明")
+    p.add_argument("--case-timeout", type=float, default=0.0,
+                   help="单条用例超时秒数；>0 时单 case 超时会标记为 TIMEOUT 并继续整轮")
     args = p.parse_args()
     asyncio.run(run(
         args.provider,
@@ -609,6 +682,7 @@ def main():
         planner_temperature=args.planner_temperature,
         timing=args.timing,
         fast=args.fast,
+        case_timeout=args.case_timeout,
     ))
 
 

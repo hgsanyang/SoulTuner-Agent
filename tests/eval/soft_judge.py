@@ -66,7 +66,22 @@ def objective_tokens(song: dict[str, Any]) -> list[str]:
 
 
 def tag_hit(tokens: list[str], wanted: list[str]) -> bool:
-    return any(w and any(w in token or token in w for token in tokens) for w in wanted)
+    for item in wanted:
+        wanted_norm = norm(item)
+        if not wanted_norm:
+            continue
+        for token in tokens:
+            token_norm = norm(token)
+            if wanted_norm == token_norm:
+                return True
+            # Keep broad partial matches for descriptive phrases, but do not
+            # let short parent tags satisfy specific labels: "pop" is not
+            # "k-pop", and "r&b" is not a longer neighboring tag.
+            if token_norm in wanted_norm and len(token_norm) < 4:
+                continue
+            if wanted_norm in token_norm or token_norm in wanted_norm:
+                return True
+    return False
 
 
 def _confidence(

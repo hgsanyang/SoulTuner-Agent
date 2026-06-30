@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from typing import Optional
 from pathlib import Path
+import json as _json
 import os
 from dotenv import dotenv_values
 
@@ -21,6 +21,20 @@ def load_project_dashscope_key(env_file: Path = PROJECT_ENV_FILE) -> bool:
 
 
 load_project_dashscope_key()
+
+
+def sanitize_no_proxy_for_httpx() -> None:
+    """Remove bare IPv6 loopback tokens that httpx can parse as invalid ports."""
+    blocked = {"::1", "::1/128", "[::1]"}
+    for env_name in ("NO_PROXY", "no_proxy"):
+        raw = os.environ.get(env_name)
+        if not raw:
+            continue
+        kept = [part.strip() for part in raw.split(",") if part.strip() and part.strip() not in blocked]
+        os.environ[env_name] = ",".join(kept)
+
+
+sanitize_no_proxy_for_httpx()
 
 class GlobalSettings(BaseSettings):
     """
@@ -128,6 +142,11 @@ class GlobalSettings(BaseSettings):
         default=False,
         validation_alias="EXPLANATION_FAST_MODE",
         description="跳过解释 LLM，返回确定性简短说明；评测或低延迟部署可显式启用",
+    )
+    eval_disable_side_effects: bool = Field(
+        default=False,
+        validation_alias="EVAL_DISABLE_SIDE_EFFECTS",
+        description="离线评测时关闭后台偏好提取、GraphZep 写入、画像刷新等副作用",
     )
 
     planner_cache_ttl_seconds: int = Field(
@@ -372,7 +391,6 @@ class GlobalSettings(BaseSettings):
 
 
 # ---- 用户设置持久化（JSON 文件） ----
-import json as _json
 
 _USER_SETTINGS_FILE = Path(__file__).parent / "user_settings.json"
 

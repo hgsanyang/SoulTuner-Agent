@@ -10,9 +10,8 @@
 # ============================================================
 
 import json
-import logging
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from langchain_core.tools import tool
 
 from retrieval.neo4j_client import get_neo4j_client
@@ -52,12 +51,10 @@ _TRANSLATION_CACHE = {
     "感动": "emotional, touching, heartfelt, warm, hopeful",
     "温暖": "warm, gentle, hopeful, comforting, acoustic",
     "深沉": "dark, deep, melancholic, slow, atmospheric",
-    "激昂": "intense, powerful, epic, fast, energetic",
     "壮阔": "epic, grand, orchestral, powerful, atmospheric",
     "柔情": "soft, romantic, gentle, emotional, slow",
     "抹情": "emotional, romantic, melancholic, slow, ballad",
     "沉醉": "dreamy, atmospheric, romantic, ambient, slow",
-    "丧": "energetic, intense, powerful, fast, heavy",
     "带感": "groovy, rhythmic, energetic, raw, powerful",
 
     # ── 场景/亚文化词（对齐 M2D-CLAP 训练分布，使用感知描述词汇）──
@@ -90,7 +87,6 @@ _TRANSLATION_CACHE = {
     "思念": "nostalgic, longing, emotional, slow, warm, bittersweet",
     "释然": "peaceful, relieved, hopeful, gentle, warm, uplifting",
     "窒息": "intense, oppressive, heavy, dark, slow, suffocating atmosphere",
-    "炸裂": "explosive, heavy distortion, powerful drums, intense, loud",
     "躁动": "restless, agitated, fast, distorted, raw, energetic",
     "迷幻": "psychedelic, swirling, trippy, reverberant, spacious, dreamy",
     "震撼": "epic, powerful, grand, orchestral, intense, dramatic",
@@ -129,7 +125,38 @@ def _backend_spec(backend: str) -> dict:
     }
 
 
-def _encode_query_for_backend(text: str, backend: str) -> List[float]:
+def _dense_query_variants_enabled() -> bool:
+    return str(os.getenv("MUSIC_DENSE_QUERY_VARIANTS", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def build_dense_query_variants(text: str) -> List[str]:
+    """Return deterministic HyDE-style views for one music query."""
+    base = str(text or "").strip()
+    if not base:
+        return []
+    return [
+        base,
+        f"{base}\nFocus on instrumentation, tempo, timbre, vocals, production texture, and acoustic energy.",
+        f"{base}\nFocus on mood trajectory, listening context, language, genre cues, and emotional atmosphere.",
+    ]
+
+
+def _normalize_vector(vector: List[float]) -> List[float]:
+    norm = sum(float(x) * float(x) for x in vector) ** 0.5
+    return [float(x) / norm for x in vector] if norm > 0 else vector
+
+
+def _mean_vectors(vectors: List[List[float]]) -> List[float]:
+    if not vectors:
+        return []
+    dim = len(vectors[0])
+    if any(len(v) != dim for v in vectors):
+        return vectors[0]
+    mean = [sum(float(v[i]) for v in vectors) / len(vectors) for i in range(dim)]
+    return _normalize_vector(mean)
+
+
+def _encode_single_query_for_backend(text: str, backend: str) -> List[float]:
     if backend == "muq":
         from retrieval.muq_embedder import encode_text_to_muq
 
@@ -137,6 +164,17 @@ def _encode_query_for_backend(text: str, backend: str) -> List[float]:
     from retrieval.audio_embedder import encode_text_to_embedding
 
     return encode_text_to_embedding(text)
+
+
+def _encode_query_for_backend(text: str, backend: str) -> List[float]:
+    variants = build_dense_query_variants(text) if _dense_query_variants_enabled() else [text]
+    vectors = [_normalize_vector(_encode_single_query_for_backend(variant, backend)) for variant in variants if variant]
+    query_vector = _mean_vectors(vectors) if len(vectors) > 1 else vectors[0]
+    if len(vectors) > 1:
+        logger.info("[SemanticSearch] 多描述 HyDE 集成启用: %d variants", len(vectors))
+    from retrieval.alignment_calibration import apply_alignment_calibration
+
+    return apply_alignment_calibration(query_vector, backend)
 
 
 def _has_vector_index(client, index_name: str) -> bool:
@@ -317,12 +355,12 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                         RETURN s.omar_embedding AS emb
                         """
                         emb_rows = client.execute_query(centroid_cypher, {"eids": top_eids})
-                        
+
                         if emb_rows and len(emb_rows) >= 2:
                             import numpy as np
                             embeddings = [row["emb"] for row in emb_rows]
                             centroid = np.mean(embeddings, axis=0).tolist()
-                            
+
                             # 用质心查 OMAR KNN
                             omar_cypher = """
                             CALL db.index.vector.queryNodes('song_omar_index', $wide, $centroid)

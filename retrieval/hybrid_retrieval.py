@@ -1,11 +1,10 @@
 import json
-import logging
 import os
 import re
 import asyncio
 import concurrent.futures
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from tools.semantic_search import semantic_search
 from tools.web_search_aggregator import _federated_search_async
@@ -21,9 +20,7 @@ from retrieval.retrieval_fusion import (
     recall_weights_for_intent,
     weighted_rrf,
 )
-from retrieval.neo4j_client import get_neo4j_client
 from config.logging_config import get_logger
-from config.settings import settings
 from schemas.music_state import ToolOutput
 
 
@@ -36,6 +33,180 @@ MIN_DIVERSE_RESULTS = 6               # 多样性过滤后的最少结果数
 
 # ---- Neo4j 图距离加权参数（从 settings 读取，此处为 fallback 默认值） ----
 GRAPH_AFFINITY_USER_ID = "local_admin" # 图距离计算的用户 ID
+
+# ---- soft_intent.avoid 软否定排序参数 ----
+_SOFT_AVOID_GROUPS = {
+    "dance": {
+        "triggers": ("舞曲", "歌舞曲", "打歌", "女团", "edm", "dance", "party", "club", "蹦迪"),
+        "negative": ("dance", "party", "workout", "electronic", "edm", "energetic"),
+        "positive": ("ballad", "r&b", "soul", "folk", "acoustic", "melancholy", "romantic", "peaceful", "relaxing", "late night", "rainy day"),
+    },
+    "ballad": {
+        "triggers": ("抒情大歌", "苦情", "悲情", "sad ballad", "ballad", "slow ballad"),
+        "negative": ("ballad", "sad", "melancholy", "lonely", "heartbreak", "late night"),
+        "positive": ("happy", "hopeful", "bright", "energetic", "driving", "morning", "pop", "dance", "rock"),
+    },
+    "edm": {
+        "triggers": ("edm", "电子舞曲", "电音", "土嗨", "太炸", "太吵", "过度鸡血"),
+        "negative": ("edm", "electronic", "dance", "party", "workout", "energetic", "angry", "metal"),
+        "positive": ("peaceful", "relaxing", "dreamy", "lo-fi", "acoustic", "folk", "ambient"),
+    },
+}
+
+
+def _norm_token(value: Any) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _iter_terms(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value is None:
+        return []
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _song_objective_tokens(song: Dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for field in ("genre", "genres", "moods", "themes", "scenarios", "language", "region"):
+        value = song.get(field)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            normalized = _norm_token(item)
+            if not normalized:
+                continue
+            tokens.add(normalized)
+            for part in re.split(r"[/|,，\s]+", normalized):
+                if part:
+                    tokens.add(part)
+    return tokens
+
+
+def _contains_token(tokens: set[str], wanted: str) -> bool:
+    wanted_norm = _norm_token(wanted)
+    if not wanted_norm:
+        return False
+    for token in tokens:
+        if wanted_norm == token:
+            return True
+        # Avoid treating broad parent tags as a hit for specific labels:
+        # "pop" must not count as "k-pop", and "r&b" must not count as a
+        # longer neighboring label.
+        if token in wanted_norm and len(token) < 4:
+            continue
+        if wanted_norm in token or token in wanted_norm:
+            return True
+    return False
+
+
+def _avoid_context_fragments(text: str) -> List[str]:
+    normalized = _norm_token(text)
+    if not normalized:
+        return []
+    fragments: List[str] = []
+    for marker in ("avoiding", "avoid", "without", "no ", "not ", "不要", "别给", "别", "排除"):
+        start = normalized.find(marker)
+        if start >= 0:
+            fragments.append(normalized[start : start + 120])
+    return fragments
+
+
+def rerank_with_soft_constraints(
+    candidates: List[dict],
+    soft_intent: Dict[str, Any] | None,
+    hints: Dict[str, Any] | None = None,
+    query_text: str = "",
+    *,
+    min_keep: int = 8,
+) -> List[dict]:
+    """Demote objective-tag conflicts for explicit soft avoid phrases.
+
+    Hard constraints are handled by ``apply_hard_filters``.  This step only
+    shapes ranking for phrases such as "别给我舞曲" or "不要苦情", using
+    objective catalog tags instead of generated explanations.
+    """
+    if not candidates:
+        return candidates
+
+    soft = soft_intent or {}
+    avoid_terms = _iter_terms(soft.get("avoid"))
+    if not avoid_terms:
+        return candidates
+
+    avoid_context = " ".join(avoid_terms + _avoid_context_fragments(query_text)).casefold()
+    positive_context = " ".join(
+        _iter_terms(query_text)
+        + _iter_terms(soft.get("goal"))
+        + _iter_terms(soft.get("trajectory"))
+        + _iter_terms(soft.get("vibe"))
+        + _iter_terms((hints or {}).get("mood"))
+        + _iter_terms((hints or {}).get("scenario"))
+        + _iter_terms((hints or {}).get("genres"))
+    ).casefold()
+
+    active_groups = [
+        group
+        for group in _SOFT_AVOID_GROUPS.values()
+        if any(trigger.casefold() in avoid_context for trigger in group["triggers"])
+    ]
+    if not active_groups:
+        return candidates
+
+    adjusted: List[dict] = []
+    for item in candidates:
+        song = item.get("song") or {}
+        tokens = _song_objective_tokens(song)
+        negative_hits: set[str] = set()
+        positive_hits: set[str] = set()
+
+        for group in active_groups:
+            negative_hits.update(
+                token for token in group["negative"] if _contains_token(tokens, token)
+            )
+            # Positive hints only boost when the current request actually asks
+            # for that family of tags. This avoids turning avoid-only requests
+            # into a broad taste preference.
+            positive_hits.update(
+                token
+                for token in group["positive"]
+                if token in positive_context and _contains_token(tokens, token)
+            )
+
+        penalty = 0.0
+        for hit in negative_hits:
+            if hit in {"dance", "party", "workout", "edm", "energetic", "electronic"}:
+                penalty += 0.22
+            else:
+                penalty += 0.14
+        bonus = min(0.18, 0.04 * len(positive_hits))
+        penalty = min(0.65, penalty)
+
+        clone = dict(item)
+        base = float(clone.get("similarity_score") or clone.get("_rrf_score") or 0.0)
+        clone["_soft_avoid_penalty"] = round(penalty, 4)
+        clone["_soft_positive_bonus"] = round(bonus, 4)
+        clone["_soft_negative_hits"] = sorted(negative_hits)
+        clone["_soft_positive_hits"] = sorted(positive_hits)
+        clone["similarity_score"] = base - penalty + bonus
+        adjusted.append(clone)
+
+    adjusted.sort(
+        key=lambda item: (
+            float(item.get("similarity_score") or 0.0),
+            float(item.get("_rrf_score") or 0.0),
+        ),
+        reverse=True,
+    )
+
+    non_conflicting = [
+        item
+        for item in adjusted
+        if float(item.get("_soft_avoid_penalty") or 0.0) < 0.16
+    ]
+    if len(non_conflicting) >= max(3, min_keep):
+        return non_conflicting
+    return adjusted
 
 # ---- 用户偏好缓存（启动时加载一次，避免每次请求都查 Neo4j） ----
 _user_pref_cache: dict = {}  # {user_id: {genres: set, moods: set, themes: set, scenarios: set, expanded_genres: set}}
@@ -50,7 +221,7 @@ def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
 
     import json as _json
     empty_prefs = {"genres": set(), "moods": set(), "themes": set(), "scenarios": set(), "expanded_genres": set()}
-    
+
     try:
         from retrieval.neo4j_client import get_neo4j_client
         neo4j = get_neo4j_client()
@@ -129,7 +300,7 @@ class MusicHybridRetrieval:
     接收上层的 Query，根据检索计划分发给图谱检索和向量检索引擎执行，
     最后汇总排版返回给大模型。
     """
-    
+
     def __init__(self, llm_client=None):
         # 保存 llm_client 引用（预留，供未来扩展使用）
         self.llm_client = llm_client
@@ -159,7 +330,7 @@ class MusicHybridRetrieval:
     async def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
         """
         主检索入口：五路并行召回 → RRF → 硬过滤 → 统一排序。
-        
+
         Args:
             query: 用户查询
             limit: 返回结果数量
@@ -432,11 +603,14 @@ class MusicHybridRetrieval:
         self._current_query = query
         self._current_hyde_text = vector_desc
         self._current_hard_constraints = filter_hard_constraints
+        self._current_soft_intent = soft_intent
 
         result = self._format_results(
             source_raw=source_raw,
             recall_weights=recall_weights,
             hard_constraints=filter_hard_constraints,
+            soft_intent=soft_intent,
+            hints=hints,
             web_res=web_raw,
             web_playable=web_playable,
             graph_entities=graph_entities,
@@ -560,11 +734,11 @@ class MusicHybridRetrieval:
 
         所有分数归一化到 [0, 1] 后加权融合：
         final_score = α×semantic + β×acoustic + γ×personalize
-        
+
         - semantic:   M2D-CLAP cosine(song_emb, query_text_emb) → (x+1)/2
         - acoustic:   OMAR-RQ cosine(song_emb, centroid) → (x+1)/2
         - personalize: graph_affinity (已在 Step 4 计算) → MinMax 归一化
-        
+
         权重从 settings 读取，自动归一化使 α+β+γ=1。
         """
         if not candidates:
@@ -574,6 +748,21 @@ class MusicHybridRetrieval:
         w_sem = _s.tri_anchor_w_semantic
         w_aco = _s.tri_anchor_w_acoustic
         w_per = _s.tri_anchor_w_personal
+        try:
+            from services.feedback_logger import load_learned_tri_anchor_weights
+            learned_weights = load_learned_tri_anchor_weights()
+            if learned_weights:
+                w_sem = learned_weights["semantic"]
+                w_aco = learned_weights["acoustic"]
+                w_per = learned_weights["personal"]
+                logger.info(
+                    "[TriAnchor] 使用离线学习权重: sem=%.2f, aco=%.2f, per=%.2f",
+                    w_sem,
+                    w_aco,
+                    w_per,
+                )
+        except Exception as e:
+            logger.debug("[TriAnchor] 学习权重不可用，使用配置权重: %s", e)
 
         # 自动归一化权重
         w_total = w_sem + w_aco + w_per
@@ -774,11 +963,13 @@ class MusicHybridRetrieval:
         OPTIONAL MATCH path = shortestPath(
           (u)-[*1..""" + str(max_hops) + """]->(s)
         )
+        OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(th:Theme)
         OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
         RETURN candidate_title AS title,
                CASE WHEN path IS NOT NULL THEN length(path) ELSE -1 END AS distance,
+               collect(DISTINCT g.name) AS genres,
                collect(DISTINCT m.name) AS moods,
                collect(DISTINCT th.name) AS themes,
                collect(DISTINCT sc.name) AS scenarios
@@ -793,6 +984,7 @@ class MusicHybridRetrieval:
                 t = r.get("title", "")
                 distance_map[t] = r.get("distance", -1)
                 cand_tag_map[t] = {
+                    "genres": {x.strip().lower() for x in (r.get("genres") or []) if x and x.strip()},
                     "moods": {x.strip().lower() for x in (r.get("moods") or []) if x and x.strip()},
                     "themes": {x.strip().lower() for x in (r.get("themes") or []) if x and x.strip()},
                     "scenarios": {x.strip().lower() for x in (r.get("scenarios") or []) if x and x.strip()},
@@ -888,6 +1080,8 @@ class MusicHybridRetrieval:
         source_raw: Dict[str, str],
         recall_weights: Dict[str, float],
         hard_constraints: Dict[str, Any],
+        soft_intent: Dict[str, Any] | None = None,
+        hints: Dict[str, Any] | None = None,
         web_res: str = "",
         web_playable: List[dict] = None,
         graph_entities: List[str] = None,
@@ -1045,7 +1239,6 @@ class MusicHybridRetrieval:
             # ── Phase B: Thompson Sampling 探索槽 ──
             # 从尾部捞回冷门歌，用 TS 采样决定哪些冷门歌有机会进入精排
             import random
-            import math
             n_explore = max(int(coarse_cut * _settings.exploration_ratio), 1)
 
             explore_picks = []
@@ -1113,6 +1306,53 @@ class MusicHybridRetrieval:
         rerank_query = hyde_text if hyde_text else (getattr(self, '_current_query', '') or '')
         if rerank_query and final_list:
             final_list = self._tri_anchor_rerank(final_list, rerank_query)
+
+        if cand_tag_map:
+            for item in final_list:
+                song = item.get("song") or {}
+                title = song.get("title", "")
+                tag_entry = cand_tag_map.get(title) or {}
+                for song_field, tag_key in (
+                    ("genres", "genres"),
+                    ("moods", "moods"),
+                    ("themes", "themes"),
+                    ("scenarios", "scenarios"),
+                ):
+                    incoming = {str(tag) for tag in (tag_entry.get(tag_key) or set()) if tag}
+                    if not incoming:
+                        continue
+                    existing = set(_iter_terms(song.get(song_field)))
+                    song[song_field] = sorted(existing | incoming)
+                if not song.get("genre"):
+                    display_parts = (
+                        _iter_terms(song.get("genres"))[:2]
+                        + _iter_terms(song.get("moods"))[:1]
+                        + _iter_terms(song.get("scenarios"))[:1]
+                    )
+                    if display_parts:
+                        song["genre"] = "/".join(display_parts)
+
+        before_soft = len(final_list)
+        final_list = rerank_with_soft_constraints(
+            final_list,
+            soft_intent or getattr(self, "_current_soft_intent", {}) or {},
+            hints or {},
+            " ".join(
+                part
+                for part in (
+                    getattr(self, "_current_query", "") or "",
+                    getattr(self, "_current_hyde_text", "") or "",
+                )
+                if part
+            ),
+            min_keep=3,
+        )
+        if len(final_list) != before_soft:
+            logger.info(
+                "[SoftAvoidRank] soft_intent.avoid 保守降权/裁剪: %d → %d",
+                before_soft,
+                len(final_list),
+            )
 
         # ---- Step 5.5: Cross-Encoder 精排（可选，默认关闭）----
         if _settings.reranker_enabled and final_list:
@@ -1316,11 +1556,11 @@ class MusicHybridRetrieval:
     ) -> str:
         """
         HyDE 声学描述生成（架构分离后的专用模块）。
-        
+
         仅在 use_vector=true 时调用。接收用户输入和 GraphZep 记忆，
         通过 HYDE_ACOUSTIC_GENERATOR_PROMPT 生成纯英文声学描述。
         GraphZep 记忆只影响声学描述内容，不影响路由决策（路由已由 Planner 完成）。
-        
+
         Args:
             query: 用户原始输入
             graphzep_facts: GraphZep 长期记忆文本（可为空）
@@ -1335,32 +1575,32 @@ class MusicHybridRetrieval:
             from langchain_core.output_parsers import StrOutputParser
             from llms.multi_llm import get_intent_chat_model as get_intent_llm
             import traceback
-            
+
             llm = self.llm_client or get_intent_llm()
             chain = (
                 ChatPromptTemplate.from_template(HYDE_ACOUSTIC_GENERATOR_PROMPT)
                 | llm
                 | StrOutputParser()
             )
-            
+
             invoke_params = {
                 "user_input": query,
                 "graphzep_facts": graphzep_facts or "暂无",
                 "intent_type": intent_type or "unknown",
             }
-            
+
             # 使用同步 invoke() 来调用 HyDE chain
             # _generate_hyde_description 在 async retrieve() 中被调用，
             # 但 LangChain chain.invoke() 本身是同步的，这里无需 await
             result = chain.invoke(invoke_params)
-            
+
             result = result.strip()
             word_count = len(result.split())
             logger.info(
                 f"[HyDE] 生成声学描述 ({word_count} words): {result[:100]}..."
             )
             return result
-            
+
         except Exception as e:
             logger.warning(f"[HyDE] 声学描述生成失败，降级使用原始查询: {e}\n{traceback.format_exc()}")
             return query

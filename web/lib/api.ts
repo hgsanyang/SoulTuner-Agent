@@ -47,11 +47,15 @@ export interface SSEEvent {
         total_duration?: number;
         total_songs?: number;
     };
+    exposure_id?: string;
+    dialog_state?: Record<string, any>;
+    clarification_options?: string[];
 }
 
 export interface StreamParams {
     query: string;
     chatHistory?: { role: string; content: string }[];
+    dialogState?: Record<string, any>;
     llmProvider?: string;       // 模型供应商
     webSearchEnabled?: boolean; // 联网搜索开关
 }
@@ -73,6 +77,7 @@ export function streamRecommendations(
                 body: JSON.stringify({
                     query: params.query,
                     chat_history: params.chatHistory || [],
+                    dialog_state: params.dialogState || {},
                     web_search_enabled: params.webSearchEnabled !== false,  // 默认 true
                 }),
                 signal: controller.signal,
@@ -430,6 +435,9 @@ export interface LibrarySong {
     vibe: string;
     moods: string[];
     themes: string[];
+    genres?: string[];
+    scenarios?: string[];
+    language?: string;
 }
 
 export async function fetchLibrarySongs(

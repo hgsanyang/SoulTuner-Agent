@@ -60,7 +60,7 @@ DEFAULT_COVER_DIR = os.path.join(DEFAULT_DATA_ROOT, "covers")
 DEFAULT_LYRICS_DIR = os.path.join(DEFAULT_DATA_ROOT, "lyrics")
 DEFAULT_METADATA_DIR = os.path.join(DEFAULT_DATA_ROOT, "metadata")
 DEFAULT_GEMINI_RESULT_PATH = os.path.join(
-    str(PROJECT_ROOT), "data_pipeline", "gemini_prompts", "gemini_result.json"
+    str(PROJECT_ROOT), "data", "pipeline", "gemini_prompts", "gemini_result.json"
 )
 
 # 默认数据集标签
@@ -250,6 +250,35 @@ class UnifiedIngestion:
         if meta:
             return str(meta.get("musicId", f"local_{basename}"))
         return f"local_{basename}"
+
+    def _audio_files_from_manifest(self, manifest_path: str) -> List[str]:
+        """从本地下载飞轮 manifest 中读取本批次音频路径，用于定向补向量。"""
+        path = Path(manifest_path)
+        if not path.exists():
+            raise FileNotFoundError(f"manifest 不存在: {manifest_path}")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise ValueError("manifest 必须是 JSON list")
+
+        audio_files: List[str] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            audio_path = item.get("audio_path")
+            if audio_path and os.path.exists(audio_path):
+                audio_files.append(str(audio_path))
+                continue
+
+            filename = item.get("filename", "")
+            basename = os.path.splitext(filename)[0]
+            if not basename:
+                continue
+            for ext in ("mp3", "flac", "wav", "ogg"):
+                candidate = os.path.join(self.audio_dir, f"{basename}.{ext}")
+                if os.path.exists(candidate):
+                    audio_files.append(candidate)
+                    break
+        return list(dict.fromkeys(audio_files))
 
     def _preload_audio(self, audio_path: str):
         """预加载并重采样音频到 16kHz（用于多线程预加载）"""
@@ -520,20 +549,25 @@ class UnifiedIngestion:
             logger.error(f"  ❌ [{idx}/{total}] 失败 ({basename}): {e}")
             return False
 
-    def ingest_all(self, skip_embeddings: bool = False, update_embeddings_only: bool = False):
+    def ingest_all(self, skip_embeddings: bool = False, update_embeddings_only: bool = False,
+                   manifest_path: str | None = None):
         """
         主入口：扫描音频目录，写入 Neo4j。
         Args:
             skip_embeddings: True = 只写元数据/标签，跳过耗时的模型推理（多线程并发）
             update_embeddings_only: True = 只更新已入库歌曲的向量        """
-        audio_files = []
-        for ext in ("*.flac", "*.mp3", "*.wav", "*.ogg"):
-            # 顶层目录扫描
-            audio_files.extend(glob.glob(os.path.join(self.audio_dir, ext)))
-            # 递归扫描子目录（用于 MTG 的 {folder_id}/{track_id}.mp3 结构）
-            audio_files.extend(glob.glob(os.path.join(self.audio_dir, "**", ext), recursive=True))
-        # 去重
-        audio_files = list(set(audio_files))
+        if manifest_path:
+            audio_files = self._audio_files_from_manifest(manifest_path)
+            logger.info(f"📦 从 manifest 限定本批次音频: {len(audio_files)} 首")
+        else:
+            audio_files = []
+            for ext in ("*.flac", "*.mp3", "*.wav", "*.ogg"):
+                # 顶层目录扫描
+                audio_files.extend(glob.glob(os.path.join(self.audio_dir, ext)))
+                # 递归扫描子目录（用于 MTG 的 {folder_id}/{track_id}.mp3 结构）
+                audio_files.extend(glob.glob(os.path.join(self.audio_dir, "**", ext), recursive=True))
+            # 去重
+            audio_files = list(set(audio_files))
 
         if not audio_files:
             logger.info(f"✅ {self.audio_dir} 中没有找到任何音频文件")
@@ -637,6 +671,10 @@ if __name__ == "__main__":
         "--gemini-result", type=str, default=None,
         help="自定义 Gemini/标签结果 JSON 文件路径"
     )
+    parser.add_argument(
+        "--manifest", type=str, default=None,
+        help="本地下载飞轮 manifest 路径；提供后只处理 manifest 中的音频"
+    )
     args = parser.parse_args()
 
     # 处理 --reset-progress
@@ -655,5 +693,6 @@ if __name__ == "__main__":
     )
     ingestion.ingest_all(
         skip_embeddings=args.skip_embeddings,
-        update_embeddings_only=args.update_embeddings
+        update_embeddings_only=args.update_embeddings,
+        manifest_path=args.manifest,
     )

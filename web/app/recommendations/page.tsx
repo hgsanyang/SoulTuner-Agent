@@ -27,9 +27,11 @@ export interface ChatMessage {
 // 模型选择已统一由设置面板（SettingsPanel）管理，不再在聊天页快捷切换
 
 const STORAGE_KEY = 'music_chat_history';
+const DIALOG_STATE_KEY = 'music_dialog_state';
 
 export default function RecommendationsPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [dialogState, setDialogState] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const cancelRef = useRef<(() => void) | null>(null);
   const { playSong } = usePlayer();
@@ -69,6 +71,8 @@ export default function RecommendationsPage() {
         const cleaned = parsed.map(m => ({ ...m, thinkingMessage: undefined }));
         setMessages(cleaned);
       }
+      const savedState = localStorage.getItem(DIALOG_STATE_KEY);
+      if (savedState) setDialogState(JSON.parse(savedState));
     } catch { /* 忽略解析错误 */ }
   }, []);
 
@@ -144,6 +148,7 @@ export default function RecommendationsPage() {
       {
         query: value,
         chatHistory: chatHistorySnapshot,
+        dialogState,
         webSearchEnabled,
       },
       (event: SSEEvent) => {
@@ -179,7 +184,16 @@ export default function RecommendationsPage() {
             case 'recommendations_complete':
             case 'complete':
               currentMsg.thinkingMessage = undefined;
-              if (event.type === 'complete') setLoading(false);
+              if (event.type === 'complete') {
+                if (event.dialog_state) {
+                  setDialogState(event.dialog_state);
+                  try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
+                }
+                if (event.clarification_options && event.clarification_options.length > 0) {
+                  currentMsg.content = currentMsg.content || '我需要再确认一下你的意思。';
+                }
+                setLoading(false);
+              }
               break;
             case 'error':
               currentMsg.error = event.error || '发生未知错误';
@@ -195,7 +209,7 @@ export default function RecommendationsPage() {
 
     cancelRef.current = cancel;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, webSearchEnabled]);
+  }, [messages, webSearchEnabled, dialogState]);
 
   /** 中止当前搜索，立即允许新搜索 */
   const handleAbort = useCallback(() => {
@@ -228,6 +242,8 @@ export default function RecommendationsPage() {
     setLoading(false);
     setMessages([]);
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    setDialogState({});
+    try { localStorage.removeItem(DIALOG_STATE_KEY); } catch { /* ignore */ }
   }, []);
 
   /** 从某条 assistant 消息中删除指定索引的歌曲 */
