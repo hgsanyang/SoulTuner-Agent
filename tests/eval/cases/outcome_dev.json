@@ -355,5 +355,25 @@
     "category": "clarification",
     "query": "有没有类似听感的歌",
     "checks": {"expected_clarification": true, "manual_review": ["无上一轮上下文时，应反问参考歌/保留氛围，而不是硬猜推荐。"]}
+  },
+  {
+    "id": "dev_clarification_02_private_memory_without_state",
+    "category": "clarification",
+    "query": "推荐我上个月一直循环但后来又说不喜欢的那首",
+    "checks": {"expected_clarification": true, "dialog_delta_contains": {"reason": "private_memory_reference_without_state"}, "manual_review": ["缺少可靠本会话/长期记忆时，不应编造私人历史。"]}
+  },
+  {
+    "id": "dev_context_06_explicit_dialog_state_same_vibe",
+    "category": "multi_turn_context",
+    "query": "同样的氛围，但换成中文",
+    "dialog_state": {
+      "hard_constraints": {"language": "English"},
+      "soft_intent": {"vibe": "ethereal female vocal, dreamy synth"},
+      "hints": {"genres": ["dream pop"]},
+      "last_intent_type": "hybrid_search",
+      "last_query": "推荐几首空灵的英文女声",
+      "turn_count": 1
+    },
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "dialog_state_contains": {"hard_constraints.language": "Chinese", "soft_intent.vibe": "ethereal"}, "dialog_delta_contains": {"followup": true, "inherited": "soft_intent.vibe"}, "min_playable_ratio": 0.4, "not_degraded": true}
   }
 ]

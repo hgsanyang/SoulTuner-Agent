@@ -52,7 +52,8 @@ from llms.prompts import MUSIC_RECOMMENDATION_EXPLAINER_PROMPT, MUSIC_CHAT_RESPO
 from schemas.query_plan import MusicQueryPlan, RetrievalPlan
 from schemas.dialog_state import (
     apply_dialog_state_to_plan,
-    apply_plan_delta,
+    apply_plan_delta_with_report,
+    coerce_followup_general_chat_to_retrieval,
     infer_dialog_state_from_history,
     should_clarify_before_planning,
 )
@@ -305,12 +306,23 @@ class MusicRecommendationGraph:
             clarification = should_clarify_before_planning(user_input, previous_dialog_state)
             if clarification.required:
                 logger.info("[DST] 触发澄清反问: %s", clarification.reason)
+                clarification_delta = {
+                    "followup": False,
+                    "topic_shift": False,
+                    "confidence": 0.0,
+                    "reason": clarification.reason,
+                    "inherited": [],
+                    "added": {},
+                    "replaced": {},
+                    "removed": [],
+                }
                 return {
                     "intent_type": "clarification",
                     "intent_parameters": {"query": user_input},
                     "intent_context": clarification.reason,
                     "clarification": clarification.model_dump(),
                     "clarification_options": list(clarification.options),
+                    "dialog_delta": clarification_delta,
                     "final_response": clarification.question,
                     "step_count": state.get("step_count", 0) + 1,
                     "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
@@ -389,8 +401,9 @@ class MusicRecommendationGraph:
                 previous_plan=_previous_plan_text,
                 graphzep_facts=state.get("graphzep_facts", ""),
             )
-            dialog_state = apply_plan_delta(previous_dialog_state, plan, user_input)
+            dialog_state, dialog_delta = apply_plan_delta_with_report(previous_dialog_state, plan, user_input)
             plan = apply_dialog_state_to_plan(plan, dialog_state)
+            plan = coerce_followup_general_chat_to_retrieval(plan, dialog_state, user_input)
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(
                 f"识别到意图: {plan.intent_type} | "
@@ -417,6 +430,7 @@ class MusicRecommendationGraph:
                 "intent_context": plan.context,
                 "retrieval_plan": retrieval_plan_dict,
                 "dialog_state": dialog_state.model_dump(),
+                "dialog_delta": dialog_delta.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
             }

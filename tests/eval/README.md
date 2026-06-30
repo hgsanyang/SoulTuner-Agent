@@ -90,6 +90,21 @@ a diagnostic only: captions are not unique song identities, so low recall must
 not be used alone to choose between MuQ and M2D. Attribute P@10 plus end-to-end
 outcomes are the acceptance signals.
 
+## DST And Clarification Checks
+
+A7 adds explicit session-local dialogue state. Outcome cases may provide an
+initial `dialog_state` next to `chat_history`; the harness passes it to the
+agent and records the returned `dialog_state` plus `dialog_delta`.
+
+Useful checks:
+
+- `expected_clarification: true`: a clarification question is the expected
+  result, and it should include `clarification_options` for future UI chips.
+- `dialog_state_contains`: asserts a nested state path contains a value, for
+  example `{"hard_constraints.language": "Chinese"}`.
+- `dialog_delta_contains`: asserts the current turn delta, for example
+  `{"followup": true, "inherited": "soft_intent.vibe"}`.
+
 ## Soft-Intent Judge
 
 `objective_soft_judge` is an early, non-cyclic heuristic for soft intents. It

@@ -270,6 +270,49 @@ def test_expected_clarification_fails_when_agent_guesses():
     assert rep["case_status"] == "fail"
 
 
+def test_dialog_state_contains_check_passes_on_nested_fields():
+    case = {
+        "id": "dst",
+        "query": "同样氛围换中文",
+        "checks": {
+            "dialog_state_contains": {
+                "hard_constraints.language": "Chinese",
+                "soft_intent.vibe": "ethereal",
+            }
+        },
+    }
+    result = {
+        "recommendations": [],
+        "dialog_state": {
+            "hard_constraints": {"language": "Chinese"},
+            "soft_intent": {"vibe": "ethereal female vocal"},
+        },
+    }
+    rep = evaluate_case(case, result)
+
+    assert rep["case_status"] == "pass"
+
+
+def test_dialog_delta_contains_check_can_read_last_delta_fallback():
+    case = {
+        "id": "delta",
+        "query": "同样氛围换中文",
+        "checks": {"dialog_delta_contains": {"followup": True, "inherited": "soft_intent.vibe"}},
+    }
+    result = {
+        "recommendations": [],
+        "dialog_state": {
+            "last_delta": {
+                "followup": True,
+                "inherited": ["soft_intent.vibe"],
+            }
+        },
+    }
+    rep = evaluate_case(case, result)
+
+    assert rep["case_status"] == "pass"
+
+
 def test_load_cases_split_smoke():
     cases, meta = _load_cases(split="smoke")
     assert meta["split"] == "smoke"
