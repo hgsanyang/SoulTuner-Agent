@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tests.eval.calibrate_soft_judge import calibrate, load_gold
-from tests.eval.soft_judge import judge_objective_soft_intent, objective_tokens
+from tests.eval.soft_judge import judge_objective_soft_intent, objective_tokens, tag_hit
 
 
 def test_objective_tokens_ignore_title_artist_and_explanation():
@@ -32,6 +32,11 @@ def test_objective_tokens_ignore_title_artist_and_explanation():
 def test_objective_tokens_map_instrumental_booleans():
     assert "instrumental" in objective_tokens({"instrumental": True})
     assert "vocal" in objective_tokens({"is_instrumental": False})
+
+
+def test_tag_hit_does_not_treat_pop_as_kpop():
+    assert not tag_hit(["pop", "r&b", "romantic"], ["k-pop"])
+    assert tag_hit(["k-pop", "r&b", "romantic"], ["k-pop"])
 
 
 def test_judge_objective_soft_intent_reports_confidence_and_metrics():

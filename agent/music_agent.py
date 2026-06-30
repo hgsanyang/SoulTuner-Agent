@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional, List
 from config.logging_config import get_logger
 from agent.music_graph import MusicRecommendationGraph
 from schemas.music_state import MusicAgentState
+from services.feedback_logger import log_exposure
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
 logger = get_logger(__name__)
@@ -30,7 +31,8 @@ class MusicRecommendationAgent:
         self,
         query: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
-        user_preferences: Optional[Dict[str, Any]] = None
+        user_preferences: Optional[Dict[str, Any]] = None,
+        dialog_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         获取音乐推荐
@@ -77,6 +79,7 @@ class MusicRecommendationAgent:
                 "metadata": {},
                 "timings": {},
                 "retrieval_meta": {},
+                "dialog_state": dialog_state or {},
             }
             
             # 执行工作流
@@ -84,6 +87,7 @@ class MusicRecommendationAgent:
                 "recursion_limit": 50
             }
             # MemorySaver Checkpoint: 传入 thread_id 实现对话状态持久化
+            thread_id = ""
             if getattr(self.graph, 'checkpointer', None):
                 import uuid
                 thread_id = config.get("configurable", {}).get("thread_id", str(uuid.uuid4()))
@@ -92,6 +96,21 @@ class MusicRecommendationAgent:
             result = await self.app.ainvoke(initial_state, config=config)
             timings = dict(result.get("timings") or {})
             timings["agent_total_ms"] = round((time.perf_counter() - request_started) * 1000, 3)
+            raw_recommendations = result.get("recommendations", [])
+            recommendations_for_log = getattr(raw_recommendations, "data", raw_recommendations)
+            if isinstance(recommendations_for_log, list):
+                try:
+                    log_exposure(
+                        query=query,
+                        request_id=thread_id,
+                        recommendations=recommendations_for_log,
+                        intent_type=result.get("intent_type", ""),
+                        retrieval_meta=result.get("retrieval_meta", {}),
+                        dialog_state=result.get("dialog_state", {}),
+                        timings=timings,
+                    )
+                except Exception as log_error:
+                    logger.warning(f"[Feedback] 曝光日志写入失败: {log_error}")
             
             logger.info("音乐推荐完成")
             
@@ -106,6 +125,8 @@ class MusicRecommendationAgent:
                 "errors": result.get("error_log", []),
                 "timings": timings,
                 "retrieval_meta": result.get("retrieval_meta", {}),
+                "dialog_state": result.get("dialog_state", {}),
+                "clarification_options": result.get("clarification_options", []),
             }
             
         except Exception as e:
@@ -127,7 +148,8 @@ class MusicRecommendationAgent:
         self,
         query: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
-        user_preferences: Optional[Dict[str, Any]] = None
+        user_preferences: Optional[Dict[str, Any]] = None,
+        dialog_state: Optional[Dict[str, Any]] = None,
     ):
         """
         流式获取推荐结果（异步生成器）
@@ -183,6 +205,7 @@ class MusicRecommendationAgent:
                 "metadata": {"request_id": _request_id},
                 "timings": {},
                 "retrieval_meta": {},
+                "dialog_state": dialog_state or {},
             }
             
             config = {"recursion_limit": 50}
@@ -258,6 +281,21 @@ class MusicRecommendationAgent:
                 return
             
             result = result_holder.get("result", {})
+            raw_for_log = result.get("recommendations", [])
+            recommendations_for_log = getattr(raw_for_log, "data", raw_for_log)
+            if isinstance(recommendations_for_log, list):
+                try:
+                    log_exposure(
+                        query=query,
+                        request_id=_request_id,
+                        recommendations=recommendations_for_log,
+                        intent_type=result.get("intent_type", ""),
+                        retrieval_meta=result.get("retrieval_meta", {}),
+                        dialog_state=result.get("dialog_state", {}),
+                        timings=result.get("timings", {}),
+                    )
+                except Exception as log_error:
+                    logger.warning(f"[Feedback] 流式曝光日志写入失败: {log_error}")
             
             # 如果歌曲还没通过队列发送（兜底：非流式路径或队列推送失败）
             if not songs_already_sent:
@@ -274,7 +312,10 @@ class MusicRecommendationAgent:
             yield {
                 "type": "complete",
                 "success": True,
+                "exposure_id": _request_id,
                 "retrieval_meta": result.get("retrieval_meta", {}),
+                "dialog_state": result.get("dialog_state", {}),
+                "clarification_options": result.get("clarification_options", []),
             }
             logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")
             

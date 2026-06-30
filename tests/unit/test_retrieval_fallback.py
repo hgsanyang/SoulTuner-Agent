@@ -1,4 +1,5 @@
 from agent.retrieval_fallback import (
+    avoid_terms,
     decide_online_fallback,
     fallback_query,
     filter_results_by_avoid,
@@ -73,6 +74,24 @@ def test_conversational_artist_avoid_extracts_literal_core():
 
     assert excluded == 1
     assert kept[0]["song"]["artist"] == "Lucky小爱"
+
+
+def test_raw_query_negative_phrase_is_used_as_avoid_term():
+    rows = [
+        {"song": {"title": "晴天 (原唱 周杰伦)", "artist": "RyaVocal"}},
+        {"song": {"title": "晴天", "artist": "周杰伦.、Asasblue"}},
+        {"song": {"title": "晴天", "artist": "Lucky小爱"}},
+    ]
+    terms = avoid_terms(_plan(songs=["晴天"]), "想听晴天，但不是周杰伦那首")
+
+    kept, excluded = filter_results_by_avoid(
+        rows,
+        terms,
+    )
+
+    assert "周杰伦" in terms
+    assert excluded == 2
+    assert kept == [{"song": {"title": "晴天", "artist": "Lucky小爱"}}]
 
 
 def test_sparse_language_inventory_triggers_web_but_sufficient_matches_do_not():

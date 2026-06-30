@@ -167,9 +167,30 @@ def decide_online_fallback(
     return FallbackDecision(False, "", count)
 
 
-def avoid_terms(retrieval_plan: Mapping[str, Any] | None) -> list[str]:
+def _query_avoid_terms(query: str = "") -> list[str]:
+    """Extract conservative literal avoid terms from the raw user query."""
+    text = str(query or "").strip()
+    if not text:
+        return []
+
+    terms: list[str] = []
+    for match in re.finditer(
+        r"(?:不是|不要|别(?:是|给我)?|排除|避开)([^，。,；;！!？?\n]{2,24})",
+        text,
+    ):
+        term = match.group(1).strip()
+        term = re.sub(r"^(?:太|很|特别)", "", term).strip()
+        term = re.sub(r"(?:那一首|那首|那一版|这个版本|的歌|的歌曲|原唱)$", "", term).strip()
+        if len(_normalize(term)) >= 2:
+            terms.append(term)
+    return terms
+
+
+def avoid_terms(retrieval_plan: Mapping[str, Any] | None, query: str = "") -> list[str]:
     soft = dict((retrieval_plan or {}).get("soft_intent") or {})
-    return [str(term).strip() for term in soft.get("avoid") or [] if str(term).strip()]
+    terms = [str(term).strip() for term in soft.get("avoid") or [] if str(term).strip()]
+    terms.extend(_query_avoid_terms(query))
+    return list(dict.fromkeys(terms))
 
 
 def filter_results_by_avoid(
