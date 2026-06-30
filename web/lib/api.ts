@@ -49,6 +49,7 @@ export interface SSEEvent {
     };
     exposure_id?: string;
     dialog_state?: Record<string, any>;
+    dialog_delta?: Record<string, any>;
     clarification_options?: string[];
 }
 

@@ -46,6 +46,9 @@
         max_negative_ratio: float,
         min_coverage_ratio: float
     }
+    expected_clarification: true      期望返回澄清反问（澄清≠失败）
+    dialog_state_contains: {path: str}  检查返回 dialog_state 的字段包含指定值
+    dialog_delta_contains: {path: str}  检查本轮状态 delta（followup/继承/替换等）
     manual_review: [str]              人工核对项（不计入自动通过/失败）
 """
 
@@ -389,6 +392,52 @@ def _c_expected_clarification(songs, val, result) -> Tuple[str, str]:
     return ("fail", "澄清路径没有返回问题文本")
 
 
+def _get_path(data: Dict[str, Any], path: str) -> Any:
+    current: Any = data
+    for part in path.split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current
+
+
+def _value_contains(actual: Any, expected: Any) -> bool:
+    if isinstance(actual, list):
+        return any(_value_contains(item, expected) for item in actual)
+    if isinstance(expected, list):
+        return any(_value_contains(actual, item) for item in expected)
+    return _norm(expected) in _norm(actual)
+
+
+def _c_dialog_state_contains(songs, val, result) -> Tuple[str, str]:
+    state = result.get("dialog_state") or {}
+    if not isinstance(val, dict):
+        return ("skip", "dialog_state_contains 需要对象配置")
+    missing: list[str] = []
+    for path, expected in val.items():
+        actual = _get_path(state, path)
+        if not _value_contains(actual, expected):
+            missing.append(f"{path}~={expected!r} (actual={actual!r})")
+    return ("pass" if not missing else "fail", "dialog_state 命中" if not missing else "; ".join(missing))
+
+
+def _c_dialog_delta_contains(songs, val, result) -> Tuple[str, str]:
+    delta = result.get("dialog_delta") or ((result.get("dialog_state") or {}).get("last_delta") or {})
+    if not isinstance(val, dict):
+        return ("skip", "dialog_delta_contains 需要对象配置")
+    missing: list[str] = []
+    for path, expected in val.items():
+        actual = _get_path(delta, path)
+        if isinstance(expected, bool):
+            ok = actual is expected
+        else:
+            ok = _value_contains(actual, expected)
+        if not ok:
+            missing.append(f"{path}~={expected!r} (actual={actual!r})")
+    return ("pass" if not missing else "fail", "dialog_delta 命中" if not missing else "; ".join(missing))
+
+
 # 硬 check 名 → 处理器；带 *_ratio 的需要读取整个 checks（因为它们配对取另一个键）
 _HANDLERS = {
     "min_results": _c_min_results,
@@ -399,6 +448,8 @@ _HANDLERS = {
     "not_degraded": _c_not_degraded,
     "objective_soft_judge": _c_objective_soft_judge,
     "expected_clarification": _c_expected_clarification,
+    "dialog_state_contains": _c_dialog_state_contains,
+    "dialog_delta_contains": _c_dialog_delta_contains,
 }
 _HANDLERS_WITH_CHECKS = {
     "artist_match_min_ratio": _c_artist_ratio,
@@ -445,6 +496,9 @@ def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
         "case_status": case_status,
         "outcomes": outcomes,
         "manual_review": checks.get("manual_review", []),
+        "dialog_state": result.get("dialog_state", {}),
+        "dialog_delta": result.get("dialog_delta", {}),
+        "clarification_options": result.get("clarification_options", []),
         "sample": [f'{s.get("title")} - {s.get("artist")}' for s in songs[:5]],
         "sample_songs": [{
             "title": s.get("title"),
@@ -506,7 +560,11 @@ async def run(
         query = case["query"]
         case_started = time.perf_counter()
         try:
-            request = agent.get_recommendations(query, chat_history=case.get("chat_history"))
+            request = agent.get_recommendations(
+                query,
+                chat_history=case.get("chat_history"),
+                dialog_state=case.get("dialog_state"),
+            )
             if case_timeout and case_timeout > 0:
                 result = await asyncio.wait_for(request, timeout=case_timeout)
             else:

@@ -1,6 +1,8 @@
 from schemas.dialog_state import (
     apply_dialog_state_to_plan,
     apply_plan_delta,
+    apply_plan_delta_with_report,
+    coerce_followup_general_chat_to_retrieval,
     infer_dialog_state_from_history,
     should_clarify_before_planning,
 )
@@ -46,6 +48,51 @@ def test_followup_inherits_previous_vibe_and_replaces_language():
     assert second.turn_count == 2
 
 
+def test_followup_delta_reports_inherited_and_replaced_fields():
+    first = apply_plan_delta(
+        None,
+        _plan(language="English", vibe="ethereal female vocal, dreamy synth", genres=["dream pop"]),
+        "来点空灵英文女声",
+    )
+
+    second, delta = apply_plan_delta_with_report(first, _plan(language="Chinese"), "同样的氛围，但换成中文")
+
+    assert second.last_delta == delta
+    assert delta.followup is True
+    assert delta.topic_shift is False
+    assert "soft_intent.vibe" in delta.inherited
+    assert delta.replaced["hard_constraints.language"] == "Chinese"
+
+
+def test_followup_general_chat_is_coerced_to_retrieval_when_state_is_resolved():
+    first = apply_plan_delta(
+        None,
+        _plan(language="English", vibe="ethereal female vocal, dreamy synth", genres=["dream pop"]),
+        "来点空灵英文女声",
+    )
+    state, delta = apply_plan_delta_with_report(
+        first,
+        _plan(language="Chinese", intent_type="general_chat"),
+        "同样的氛围，但换成中文",
+    )
+    plan = apply_dialog_state_to_plan(_plan(language="Chinese", intent_type="general_chat"), state)
+
+    corrected = coerce_followup_general_chat_to_retrieval(plan, state, "同样的氛围，但换成中文")
+
+    assert delta.followup is True
+    assert corrected.intent_type == "hybrid_search"
+    assert corrected.retrieval_plan.use_vector is True
+    assert corrected.retrieval_plan.hard_constraints.language == "Chinese"
+    assert "ethereal female vocal" in (corrected.retrieval_plan.vector_acoustic_query or "")
+
+
+def test_smalltalk_general_chat_is_not_coerced_without_retrievable_state():
+    plan = _plan(intent_type="general_chat")
+    corrected = coerce_followup_general_chat_to_retrieval(plan, None, "今天怎么样")
+
+    assert corrected.intent_type == "general_chat"
+
+
 def test_explicit_new_artist_starts_new_topic():
     first = apply_plan_delta(
         None,
@@ -69,6 +116,14 @@ def test_unresolved_reference_without_state_triggers_clarification():
     assert clarification.options
 
 
+def test_private_memory_reference_without_state_triggers_clarification():
+    clarification = should_clarify_before_planning("推荐我上个月一直循环但后来又说不喜欢的那首", None)
+
+    assert clarification.required is True
+    assert clarification.reason == "private_memory_reference_without_state"
+    assert "歌名" in clarification.question
+
+
 def test_standalone_mood_trajectory_does_not_clarify():
     clarification = should_clarify_before_planning("从难过慢慢到释怀的那种感觉", None)
 
@@ -87,6 +142,19 @@ def test_legacy_chat_history_seeds_followup_state():
     assert updated.hard_constraints.language == "Chinese"
     assert "ethereal" in updated.soft_intent.vibe
     assert "female vocal" in updated.soft_intent.vibe
+
+
+def test_legacy_chat_history_extracts_artist_and_work_context():
+    state = infer_dialog_state_from_history(
+        [
+            {"role": "user", "content": "林俊杰的歌"},
+            {"role": "assistant", "content": "推荐了一些林俊杰歌曲。"},
+            {"role": "user", "content": "给我一些适合写代码的歌"},
+        ]
+    )
+
+    assert "林俊杰" in state.hard_constraints.artist_entities
+    assert state.hints.scenario == "工作"
 
 
 def test_dialog_state_syncs_back_to_legacy_plan_fields():

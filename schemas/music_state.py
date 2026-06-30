@@ -51,6 +51,7 @@ class MusicAgentState(TypedDict, total=False):
     retrieval_meta: Dict[str, Any]  # 库存命中、结果来源与降级原因
     retrieval_plan: Optional[Dict[str, Any]]  # 统一检索计划（来自 MusicQueryPlan）
     dialog_state: Dict[str, Any]  # A7: 显式本会话音乐意图状态
+    dialog_delta: Dict[str, Any]  # A7: 本轮状态更新报告（继承/替换/新增）
     clarification: Dict[str, Any]  # A7: 澄清反问数据
     clarification_options: List[str]  # A7: 前端 chips 预留
 

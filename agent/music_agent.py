@@ -126,6 +126,7 @@ class MusicRecommendationAgent:
                 "timings": timings,
                 "retrieval_meta": result.get("retrieval_meta", {}),
                 "dialog_state": result.get("dialog_state", {}),
+                "dialog_delta": result.get("dialog_delta", {}),
                 "clarification_options": result.get("clarification_options", []),
             }
             
@@ -315,6 +316,7 @@ class MusicRecommendationAgent:
                 "exposure_id": _request_id,
                 "retrieval_meta": result.get("retrieval_meta", {}),
                 "dialog_state": result.get("dialog_state", {}),
+                "dialog_delta": result.get("dialog_delta", {}),
                 "clarification_options": result.get("clarification_options", []),
             }
             logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")

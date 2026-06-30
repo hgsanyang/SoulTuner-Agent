@@ -46,10 +46,26 @@ UNRESOLVED_REFERENCE_CUES = (
     "上一首",
     "换一个",
     "换首",
+    "他的歌",
+    "她的歌",
+    "他们的歌",
+    "那首歌",
+    "那个歌手",
     "same vibe",
     "that vibe",
     "similar",
     "like that",
+)
+
+PRIVATE_MEMORY_REFERENCE_CUES = (
+    "上个月一直循环",
+    "之前一直循环",
+    "我以前说不喜欢",
+    "后来又说不喜欢",
+    "我上次说的那首",
+    "last month",
+    "i used to loop",
+    "i said i disliked",
 )
 
 
@@ -62,6 +78,19 @@ class ClarificationRequest(BaseModel):
     options: list[str] = Field(default_factory=list)
 
 
+class DialogStateDelta(BaseModel):
+    """Deterministic state update report for the current turn."""
+
+    followup: bool = False
+    topic_shift: bool = False
+    confidence: float = 1.0
+    reason: str = ""
+    inherited: list[str] = Field(default_factory=list)
+    added: dict[str, Any] = Field(default_factory=dict)
+    replaced: dict[str, Any] = Field(default_factory=dict)
+    removed: list[str] = Field(default_factory=list)
+
+
 class DialogMusicState(BaseModel):
     """Session-local structured music state."""
 
@@ -71,6 +100,7 @@ class DialogMusicState(BaseModel):
     last_intent_type: str = ""
     last_query: str = ""
     last_vector_acoustic_query: str = ""
+    last_delta: DialogStateDelta = Field(default_factory=DialogStateDelta)
     turn_count: int = 0
 
 
@@ -92,6 +122,84 @@ def _merge_unique(previous: list[str], current: list[str]) -> list[str]:
     return merged
 
 
+def _non_empty(value: Any) -> bool:
+    if isinstance(value, list):
+        return bool(value)
+    return value not in (None, "", False, [])
+
+
+def _state_value_map(state: DialogMusicState) -> dict[str, Any]:
+    hard = state.hard_constraints
+    soft = state.soft_intent
+    hints = state.hints
+    return {
+        "hard_constraints.artist_entities": list(hard.artist_entities),
+        "hard_constraints.song_entities": list(hard.song_entities),
+        "hard_constraints.language": hard.language,
+        "hard_constraints.region": hard.region,
+        "hard_constraints.instrumental": hard.instrumental,
+        "soft_intent.goal": soft.goal,
+        "soft_intent.trajectory": soft.trajectory,
+        "soft_intent.avoid": list(soft.avoid),
+        "soft_intent.vibe": soft.vibe,
+        "hints.genres": list(hints.genres),
+        "hints.mood": hints.mood,
+        "hints.scenario": hints.scenario,
+    }
+
+
+def _plan_value_map(plan: MusicQueryPlan) -> dict[str, Any]:
+    return _state_value_map(
+        DialogMusicState(
+            hard_constraints=plan.retrieval_plan.hard_constraints,
+            soft_intent=plan.retrieval_plan.soft_intent,
+            hints=plan.retrieval_plan.hints,
+        )
+    )
+
+
+def _build_delta_report(
+    previous: DialogMusicState,
+    plan: MusicQueryPlan,
+    updated: DialogMusicState,
+    *,
+    followup: bool,
+    topic_shift: bool,
+    reason: str,
+) -> DialogStateDelta:
+    prev_values = _state_value_map(previous)
+    plan_values = _plan_value_map(plan)
+    new_values = _state_value_map(updated)
+
+    inherited: list[str] = []
+    added: dict[str, Any] = {}
+    replaced: dict[str, Any] = {}
+    removed: list[str] = []
+
+    for key, new_value in new_values.items():
+        prev_value = prev_values.get(key)
+        plan_value = plan_values.get(key)
+        if followup and _non_empty(prev_value) and new_value == prev_value and not _non_empty(plan_value):
+            inherited.append(key)
+        elif not _non_empty(prev_value) and _non_empty(new_value):
+            added[key] = new_value
+        elif _non_empty(prev_value) and _non_empty(new_value) and new_value != prev_value:
+            replaced[key] = new_value
+        elif _non_empty(prev_value) and not _non_empty(new_value):
+            removed.append(key)
+
+    return DialogStateDelta(
+        followup=followup,
+        topic_shift=topic_shift,
+        confidence=0.8 if followup and inherited else 1.0,
+        reason=reason,
+        inherited=inherited,
+        added=added,
+        replaced=replaced,
+        removed=removed,
+    )
+
+
 def _looks_like_topic_shift(user_input: str, plan: MusicQueryPlan) -> bool:
     """Return True when a turn should replace rather than inherit state."""
     hard = plan.retrieval_plan.hard_constraints
@@ -107,7 +215,19 @@ def should_clarify_before_planning(
 ) -> ClarificationRequest:
     """Ask only for unresolved references that cannot be grounded."""
     state = load_dialog_state(dialog_state)
-    if state.turn_count > 0:
+    has_state = state.turn_count > 0
+    if _has_any(user_input, PRIVATE_MEMORY_REFERENCE_CUES) and not has_state:
+        return ClarificationRequest(
+            required=True,
+            reason="private_memory_reference_without_state",
+            question="我现在没有足够可靠的历史记录来判断你说的是哪一首。你可以告诉我歌名、歌手，或描述一下那首歌的感觉吗？",
+            options=[
+                "告诉我歌名或歌手",
+                "描述那首歌的氛围",
+                "先按相近感觉推荐",
+            ],
+        )
+    if has_state:
         return ClarificationRequest()
     if not _has_any(user_input, UNRESOLVED_REFERENCE_CUES):
         return ClarificationRequest()
@@ -190,12 +310,38 @@ def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMus
         if re.search(r"运动|健身|workout|gym", text):
             hints.scenario = "运动"
             extracted = True
+        if re.search(r"工作|写代码|coding|focus|专注", text):
+            hints.scenario = "工作"
+            extracted = True
         if re.search(r"放松|relax|calm", text):
             hints.mood = "放松"
+            extracted = True
+        if re.search(r"治愈|healing", text):
+            hints.mood = "治愈"
+            soft.vibe = soft.vibe or "healing, gentle, warm"
+            extracted = True
+        if re.search(r"悲伤|难过|想哭|sad|cry", text):
+            hints.mood = "悲伤"
+            soft.vibe = soft.vibe or "sad, melancholy, gentle"
             extracted = True
         if re.search(r"钢琴|piano", text):
             hints.genres = _merge_unique(hints.genres, ["piano"])
             extracted = True
+        if re.search(r"流行|pop", text):
+            hints.genres = _merge_unique(hints.genres, ["pop"])
+            extracted = True
+        if re.search(r"摇滚|rock", text):
+            hints.genres = _merge_unique(hints.genres, ["rock"])
+            extracted = True
+        if re.search(r"安静|quiet|低动态", text):
+            soft.vibe = soft.vibe or "quiet, low energy"
+            extracted = True
+        artist_match = re.search(r"([\w\u4e00-\u9fff·・\-. ]{2,32})的歌", text)
+        if artist_match:
+            artist = str(artist_match.group(1)).strip(" ，,。.!！")
+            if artist and not re.search(r"我|你|他|她|他们|她们|大家|一些|几首", artist):
+                hard.artist_entities = _merge_unique(hard.artist_entities, [artist])
+                extracted = True
 
     if not extracted:
         return DialogMusicState()
@@ -208,15 +354,16 @@ def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMus
     )
 
 
-def apply_plan_delta(
+def apply_plan_delta_with_report(
     previous: DialogMusicState | dict[str, Any] | None,
     plan: MusicQueryPlan,
     user_input: str,
-) -> DialogMusicState:
+) -> tuple[DialogMusicState, DialogStateDelta]:
     """Apply the current plan as a deterministic delta over prior state."""
     prev = load_dialog_state(previous)
     rp = plan.retrieval_plan
-    followup = _has_any(user_input, FOLLOWUP_CUES) and not _looks_like_topic_shift(user_input, plan)
+    topic_shift = _looks_like_topic_shift(user_input, plan)
+    followup = _has_any(user_input, FOLLOWUP_CUES) and not topic_shift
 
     base = prev if followup else DialogMusicState()
     hard = HardConstraints(
@@ -260,8 +407,20 @@ def apply_plan_delta(
 
     if re.search(r"无人声|没人声|纯音乐|instrumental|no vocals?", text):
         hard.instrumental = True
+    if re.search(r"人声再少|人声少|别打扰|不打扰|写代码|focus|coding", text):
+        soft.vibe = soft.vibe or "unobtrusive, sparse vocals, focus-friendly"
+        soft.avoid = _merge_unique(soft.avoid, ["prominent vocals", "distracting vocals"])
+    if re.search(r"别.*(苦情|抒情)|不要.*(苦情|抒情)|not.*sad ballad|not the sad ballads", text):
+        soft.avoid = _merge_unique(soft.avoid, ["sad ballad", "melancholy ballad", "苦情", "抒情大歌"])
+    if re.search(r"不要.*伤|别.*伤|别太丧|not sad|less sad", text):
+        soft.avoid = _merge_unique(soft.avoid, ["sad", "melancholy", "悲伤", "丧"])
+    if re.search(r"拉起来|振作|有精神|upbeat|uplift", text):
+        soft.vibe = soft.vibe or "uplifting, hopeful, brighter energy"
+    if re.search(r"危险感|danger|dark", text):
+        soft.vibe = soft.vibe or "dark, tense, dangerous"
+        soft.avoid = _merge_unique(soft.avoid, ["healing", "gentle", "治愈"])
 
-    return DialogMusicState(
+    updated = DialogMusicState(
         hard_constraints=hard,
         soft_intent=soft,
         hints=hints,
@@ -270,6 +429,26 @@ def apply_plan_delta(
         last_vector_acoustic_query=rp.vector_acoustic_query or base.last_vector_acoustic_query,
         turn_count=prev.turn_count + 1,
     )
+    delta = _build_delta_report(
+        prev,
+        plan,
+        updated,
+        followup=followup,
+        topic_shift=topic_shift,
+        reason="followup_delta" if followup else "new_topic_delta",
+    )
+    updated.last_delta = delta
+    return updated, delta
+
+
+def apply_plan_delta(
+    previous: DialogMusicState | dict[str, Any] | None,
+    plan: MusicQueryPlan,
+    user_input: str,
+) -> DialogMusicState:
+    """Backward-compatible wrapper returning only the updated state."""
+    updated, _delta = apply_plan_delta_with_report(previous, plan, user_input)
+    return updated
 
 
 def apply_dialog_state_to_plan(plan: MusicQueryPlan, dialog_state: DialogMusicState) -> MusicQueryPlan:
@@ -280,5 +459,99 @@ def apply_dialog_state_to_plan(plan: MusicQueryPlan, dialog_state: DialogMusicSt
     rp.soft_intent = dialog_state.soft_intent.model_copy(deep=True)
     rp.hints = dialog_state.hints.model_copy(deep=True)
     # Re-validate to sync layered fields back to legacy fields.
+    updated.retrieval_plan = type(rp).model_validate(rp.model_dump())
+    return updated
+
+
+def has_retrievable_dialog_state(dialog_state: DialogMusicState | dict[str, Any] | None) -> bool:
+    """Return True when a stored state can safely drive a music retrieval turn."""
+    state = load_dialog_state(dialog_state)
+    hard = state.hard_constraints
+    soft = state.soft_intent
+    hints = state.hints
+    return any(
+        [
+            hard.artist_entities,
+            hard.song_entities,
+            hard.language,
+            hard.region,
+            hard.instrumental,
+            soft.goal,
+            soft.trajectory,
+            soft.avoid,
+            soft.vibe,
+            hints.genres,
+            hints.mood,
+            hints.scenario,
+            state.last_vector_acoustic_query,
+        ]
+    )
+
+
+def coerce_followup_general_chat_to_retrieval(
+    plan: MusicQueryPlan,
+    dialog_state: DialogMusicState | dict[str, Any] | None,
+    user_input: str,
+) -> MusicQueryPlan:
+    """Keep resolved follow-up turns on the recommendation path.
+
+    LLM planners sometimes classify short follow-ups such as "same vibe, but
+    Chinese" as general_chat because the current text does not explicitly say
+    "recommend songs".  Once DST has resolved that follow-up into concrete
+    music state, routing to chat would drop valid constraints and return no
+    songs.  This guardrail is intentionally narrow: it only fires for a
+    general_chat plan, a follow-up cue, and an already retrievable state.
+    """
+    state = load_dialog_state(dialog_state)
+    if plan.intent_type != "general_chat":
+        return plan
+    if not (state.last_delta.followup or _has_any(user_input, FOLLOWUP_CUES)):
+        return plan
+    if not has_retrievable_dialog_state(state):
+        return plan
+
+    updated = plan.model_copy(deep=True)
+    updated.intent_type = "hybrid_search"
+    updated.parameters = {
+        "query": user_input,
+        "entities": _merge_unique(
+            state.hard_constraints.artist_entities,
+            state.hard_constraints.song_entities,
+        ),
+    }
+    updated.context = updated.context or "基于对话状态继续推荐"
+    updated.reasoning = "DST 已解析多轮继承，闲聊判定收束为混合检索"
+
+    rp = updated.retrieval_plan
+    rp.use_graph = bool(
+        state.hard_constraints.artist_entities
+        or state.hard_constraints.song_entities
+        or state.hard_constraints.language
+        or state.hard_constraints.region
+        or state.hard_constraints.instrumental
+        or state.hints.genres
+        or state.hints.mood
+        or state.hints.scenario
+    )
+    rp.use_vector = True
+    rp.use_web_search = False
+    if not rp.vector_acoustic_query:
+        vector_parts: list[str] = []
+        for part in [
+            state.soft_intent.goal,
+            state.soft_intent.trajectory,
+            state.soft_intent.vibe,
+            ", ".join(state.soft_intent.avoid),
+            ", ".join(state.hints.genres),
+            state.hints.mood,
+            state.hints.scenario,
+            state.last_vector_acoustic_query,
+            user_input,
+        ]:
+            value = str(part or "").strip()
+            if value and value not in vector_parts:
+                vector_parts.append(value)
+        rp.vector_acoustic_query = " ; ".join(vector_parts) or user_input
+
     updated.retrieval_plan = type(rp).model_validate(rp.model_dump())
     return updated
