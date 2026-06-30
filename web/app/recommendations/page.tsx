@@ -9,7 +9,7 @@ import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
 import SongCard from '@/components/Content/SongCard';
-import { streamRecommendations, type SSEEvent } from '@/lib/api';
+import { streamRecommendations, type RefinementOption, type SSEEvent } from '@/lib/api';
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -20,6 +20,9 @@ export interface ChatMessage {
   content: string;
   songs?: any[];
   thinkingMessage?: string;
+  clarificationOptions?: string[];
+  refinementOptions?: RefinementOption[];
+  intentConfidence?: number;
   error?: string;
 }
 
@@ -189,8 +192,15 @@ export default function RecommendationsPage() {
                   setDialogState(event.dialog_state);
                   try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
                 }
+                if (typeof event.intent_confidence === 'number') {
+                  currentMsg.intentConfidence = event.intent_confidence;
+                }
                 if (event.clarification_options && event.clarification_options.length > 0) {
                   currentMsg.content = currentMsg.content || '我需要再确认一下你的意思。';
+                  currentMsg.clarificationOptions = event.clarification_options;
+                }
+                if (event.refinement_options && event.refinement_options.length > 0) {
+                  currentMsg.refinementOptions = event.refinement_options;
                 }
                 setLoading(false);
               }
@@ -291,6 +301,12 @@ export default function RecommendationsPage() {
     setShowWelcome(false);
     return handleSubmit(value);
   }, [handleSubmit]);
+
+  const handleChipSubmit = useCallback((prompt: string) => {
+    if (!prompt.trim() || loading) return;
+    setShowWelcome(false);
+    handleSubmit(prompt);
+  }, [handleSubmit, loading]);
 
   const toolbar = (
     <div style={{
@@ -499,6 +515,88 @@ export default function RecommendationsPage() {
                           <p style={{ color: theme.colors.text.primary, lineHeight: '1.75', whiteSpace: 'pre-wrap', margin: 0 }}>
                             {msg.content}
                           </p>
+                        </div>
+                      )}
+
+                      {(msg.clarificationOptions?.length || msg.refinementOptions?.length) && (
+                        <div style={{
+                          marginTop: '0.75rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.6rem',
+                          maxWidth: '100%',
+                        }}>
+                          {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                              {msg.clarificationOptions.map((option) => (
+                                <button
+                                  key={option}
+                                  onClick={() => handleChipSubmit(option)}
+                                  disabled={loading}
+                                  style={{
+                                    padding: '0.45rem 0.75rem',
+                                    borderRadius: '999px',
+                                    border: '1px solid rgba(29,185,84,0.35)',
+                                    backgroundColor: 'rgba(29,185,84,0.12)',
+                                    color: 'rgba(245,255,248,0.92)',
+                                    fontSize: '0.82rem',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.18s ease',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  onMouseEnter={e => { if (!loading) e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.2)'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.12)'; }}
+                                >
+                                  {option}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {msg.refinementOptions && msg.refinementOptions.length > 0 && (
+                            <div style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              gap: '0.5rem',
+                              paddingLeft: '0.1rem',
+                            }}>
+                              {msg.refinementOptions.map((option) => (
+                                <button
+                                  key={`${option.label}-${option.prompt}`}
+                                  onClick={() => handleChipSubmit(option.prompt || option.label)}
+                                  disabled={loading}
+                                  title={option.reason || option.prompt}
+                                  style={{
+                                    padding: '0.42rem 0.72rem',
+                                    borderRadius: '999px',
+                                    border: '1px solid rgba(255,255,255,0.13)',
+                                    backgroundColor: option.source === 'profile' ? 'rgba(99,102,241,0.13)' : 'rgba(255,255,255,0.06)',
+                                    color: 'rgba(255,255,255,0.74)',
+                                    fontSize: '0.8rem',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.18s ease',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  onMouseEnter={e => {
+                                    if (!loading) {
+                                      e.currentTarget.style.backgroundColor = option.source === 'profile'
+                                        ? 'rgba(99,102,241,0.22)'
+                                        : 'rgba(255,255,255,0.1)';
+                                      e.currentTarget.style.color = '#fff';
+                                    }
+                                  }}
+                                  onMouseLeave={e => {
+                                    e.currentTarget.style.backgroundColor = option.source === 'profile'
+                                      ? 'rgba(99,102,241,0.13)'
+                                      : 'rgba(255,255,255,0.06)';
+                                    e.currentTarget.style.color = 'rgba(255,255,255,0.74)';
+                                  }}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

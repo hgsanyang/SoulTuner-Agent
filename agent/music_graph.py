@@ -57,6 +57,7 @@ from schemas.dialog_state import (
     infer_dialog_state_from_history,
     should_clarify_before_planning,
 )
+from schemas.refinement import build_refinement_suggestions
 
 logger = get_logger(__name__)
 
@@ -323,6 +324,8 @@ class MusicRecommendationGraph:
                     "clarification": clarification.model_dump(),
                     "clarification_options": list(clarification.options),
                     "dialog_delta": clarification_delta,
+                    "intent_confidence": 0.0,
+                    "refinement_options": [],
                     "final_response": clarification.question,
                     "step_count": state.get("step_count", 0) + 1,
                     "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
@@ -404,6 +407,12 @@ class MusicRecommendationGraph:
             dialog_state, dialog_delta = apply_plan_delta_with_report(previous_dialog_state, plan, user_input)
             plan = apply_dialog_state_to_plan(plan, dialog_state)
             plan = coerce_followup_general_chat_to_retrieval(plan, dialog_state, user_input)
+            refinement = build_refinement_suggestions(
+                user_input=user_input,
+                plan=plan,
+                dialog_state=dialog_state,
+                user_profile=_profile_text,
+            )
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(
                 f"识别到意图: {plan.intent_type} | "
@@ -431,6 +440,8 @@ class MusicRecommendationGraph:
                 "retrieval_plan": retrieval_plan_dict,
                 "dialog_state": dialog_state.model_dump(),
                 "dialog_delta": dialog_delta.model_dump(),
+                "intent_confidence": refinement.confidence,
+                "refinement_options": [option.model_dump() for option in refinement.options],
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
             }

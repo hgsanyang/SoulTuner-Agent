@@ -499,6 +499,8 @@ def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
         "dialog_state": result.get("dialog_state", {}),
         "dialog_delta": result.get("dialog_delta", {}),
         "clarification_options": result.get("clarification_options", []),
+        "intent_confidence": result.get("intent_confidence", 1.0),
+        "refinement_options": result.get("refinement_options", []),
         "sample": [f'{s.get("title")} - {s.get("artist")}' for s in songs[:5]],
         "sample_songs": [{
             "title": s.get("title"),

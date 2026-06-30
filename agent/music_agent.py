@@ -128,6 +128,8 @@ class MusicRecommendationAgent:
                 "dialog_state": result.get("dialog_state", {}),
                 "dialog_delta": result.get("dialog_delta", {}),
                 "clarification_options": result.get("clarification_options", []),
+                "intent_confidence": result.get("intent_confidence", 1.0),
+                "refinement_options": result.get("refinement_options", []),
             }
             
         except Exception as e:
@@ -318,6 +320,8 @@ class MusicRecommendationAgent:
                 "dialog_state": result.get("dialog_state", {}),
                 "dialog_delta": result.get("dialog_delta", {}),
                 "clarification_options": result.get("clarification_options", []),
+                "intent_confidence": result.get("intent_confidence", 1.0),
+                "refinement_options": result.get("refinement_options", []),
             }
             logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")
             
