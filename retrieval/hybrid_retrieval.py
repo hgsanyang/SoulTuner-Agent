@@ -18,7 +18,11 @@ from retrieval.retrieval_fusion import (
     recall_weights_for_intent,
     weighted_rrf,
 )
-from retrieval.post_recall_adjustments import apply_post_recall_adjustments
+from retrieval.post_recall_adjustments import (
+    DEFAULT_CONFIG as DEFAULT_POST_RECALL_CONFIG,
+    PostRecallAdjustmentConfig,
+    apply_post_recall_adjustments,
+)
 from config.logging_config import get_logger
 from schemas.music_state import ToolOutput
 
@@ -32,6 +36,31 @@ MIN_DIVERSE_RESULTS = 6               # 多样性过滤后的最少结果数
 
 # ---- Neo4j 图距离加权参数（从 settings 读取，此处为 fallback 默认值） ----
 GRAPH_AFFINITY_USER_ID = "local_admin" # 图距离计算的用户 ID
+
+
+def _post_recall_config_for_user(user_id: str = GRAPH_AFFINITY_USER_ID) -> PostRecallAdjustmentConfig:
+    """Apply only bounded, validation-gated feedback multipliers."""
+    try:
+        from services.ranking_policy import runtime_policy_for_user
+
+        policy = runtime_policy_for_user(user_id)
+        multipliers = (policy or {}).get("post_recall_multipliers") or {}
+        return PostRecallAdjustmentConfig(
+            personal_weight=DEFAULT_POST_RECALL_CONFIG.personal_weight
+            * float(multipliers.get("personal", 1.0)),
+            freshness_weight=DEFAULT_POST_RECALL_CONFIG.freshness_weight
+            * float(multipliers.get("freshness", 1.0)),
+            longtail_weight=DEFAULT_POST_RECALL_CONFIG.longtail_weight
+            * float(multipliers.get("longtail", 1.0)),
+            exposure_penalty_weight=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_weight
+            * float(multipliers.get("exposure_penalty", 1.0)),
+            delta_limit=DEFAULT_POST_RECALL_CONFIG.delta_limit,
+            freshness_half_life_days=DEFAULT_POST_RECALL_CONFIG.freshness_half_life_days,
+            exposure_half_life_days=DEFAULT_POST_RECALL_CONFIG.exposure_half_life_days,
+            exposure_penalty_pivot=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_pivot,
+        )
+    except Exception:
+        return DEFAULT_POST_RECALL_CONFIG
 
 # ---- soft_intent.avoid 软否定排序参数 ----
 _SOFT_AVOID_GROUPS = {
@@ -461,6 +490,7 @@ class MusicHybridRetrieval:
         graph_song_entities = list(hard_constraints.get("song_entities") or [])
         graph_entities = list(dict.fromkeys(graph_artist_entities + graph_song_entities))
         intent_type = str(plan.get("_intent_type") or "hybrid_search")
+        user_id = str(plan.get("_user_id") or GRAPH_AFFINITY_USER_ID)
         recall_weights = recall_weights_for_intent(
             intent_type,
             query=query,
@@ -468,6 +498,19 @@ class MusicHybridRetrieval:
             soft_intent=soft_intent,
             hints=hints,
         )
+        try:
+            from services.ranking_policy import apply_multipliers, runtime_policy_for_user
+
+            runtime_policy = runtime_policy_for_user(user_id)
+            if runtime_policy:
+                recall_weights = apply_multipliers(
+                    recall_weights,
+                    runtime_policy.get("rrf_multipliers"),
+                    normalise=False,
+                )
+                logger.info("[A3] 使用已验证反馈策略调整三路 RRF 权重: %s", recall_weights)
+        except Exception as policy_error:
+            logger.debug("[A3] 反馈策略不可用，保留默认 RRF 权重: %s", policy_error)
         need_web_search = bool(plan.get("use_web_search"))
         search_keyword = str(plan.get("web_search_keywords") or query)
 
@@ -696,6 +739,7 @@ class MusicHybridRetrieval:
             graph_entities=graph_entities,
             final_limit=limit,
             timings=timings,
+            user_id=user_id,
         )
         result.metadata.setdefault("timings", timings)
         result.metadata["timings"]["retrieval_total_ms"] = round(
@@ -802,24 +846,25 @@ class MusicHybridRetrieval:
         return merged
 
     # ================================================================
-    # 三锚归一化精排（替代双锚，语义+声学+个性化三维融合）
+    # 内容双锚精排（语义 + 声学）；个性化只在限幅 post-recall 层生效
     # ================================================================
     @staticmethod
     def _tri_anchor_rerank(
         candidates: List[dict],
         query_text: str,
+        user_id: str = GRAPH_AFFINITY_USER_ID,
     ) -> List[dict]:
         """
-        三锚归一化精排 = 语义相关性 + 声学风格 + 个性化偏好
+        内容双锚精排 = 语义相关性 + 声学风格
 
         所有分数归一化到 [0, 1] 后加权融合：
-        final_score = α×semantic + β×acoustic + γ×personalize
+        final_score = α×semantic + β×acoustic
 
         - semantic:   M2D-CLAP cosine(song_emb, query_text_emb) → (x+1)/2
         - acoustic:   OMAR-RQ cosine(song_emb, centroid) → (x+1)/2
-        - personalize: graph_affinity (已在 Step 4 计算) → MinMax 归一化
 
-        权重从 settings 读取，自动归一化使 α+β+γ=1。
+        个性化、新鲜度、长尾和过曝只通过 +/-0.08 的召回后校正层影响
+        已召回候选，避免用户画像压过当前查询的内容相关性。
         """
         if not candidates:
             return candidates
@@ -827,29 +872,32 @@ class MusicHybridRetrieval:
         from config.settings import settings as _s
         w_sem = _s.tri_anchor_w_semantic
         w_aco = _s.tri_anchor_w_acoustic
-        w_per = _s.tri_anchor_w_personal
         try:
-            from services.feedback_logger import load_learned_tri_anchor_weights
-            learned_weights = load_learned_tri_anchor_weights()
-            if learned_weights:
-                w_sem = learned_weights["semantic"]
-                w_aco = learned_weights["acoustic"]
-                w_per = learned_weights["personal"]
+            from services.ranking_policy import apply_multipliers, runtime_policy_for_user
+
+            runtime_policy = runtime_policy_for_user(user_id)
+            if runtime_policy:
+                content_weights = apply_multipliers(
+                    {"semantic": w_sem, "acoustic": w_aco},
+                    runtime_policy.get("content_anchor_multipliers"),
+                    normalise=True,
+                )
+                w_sem = content_weights["semantic"]
+                w_aco = content_weights["acoustic"]
                 logger.info(
-                    "[TriAnchor] 使用离线学习权重: sem=%.2f, aco=%.2f, per=%.2f",
+                    "[ContentAnchor] 使用已验证反馈策略: sem=%.2f, aco=%.2f",
                     w_sem,
                     w_aco,
-                    w_per,
                 )
         except Exception as e:
-            logger.debug("[TriAnchor] 学习权重不可用，使用配置权重: %s", e)
+            logger.debug("[ContentAnchor] 反馈策略不可用，使用配置权重: %s", e)
 
         # 自动归一化权重
-        w_total = w_sem + w_aco + w_per
+        w_total = w_sem + w_aco
         if w_total > 0:
-            w_sem, w_aco, w_per = w_sem / w_total, w_aco / w_total, w_per / w_total
+            w_sem, w_aco = w_sem / w_total, w_aco / w_total
         else:
-            w_sem, w_aco, w_per = 0.45, 0.30, 0.25
+            w_sem, w_aco = 0.6, 0.4
 
         try:
             import numpy as np
@@ -918,13 +966,7 @@ class MusicHybridRetrieval:
                 """cosine [-1, 1] → [0, 1]"""
                 return (score + 1.0) / 2.0
 
-            # ── 收集 personalize 原始值用于 MinMax 归一化 ──
-            raw_personalize = [c.get("_graph_affinity", 0.0) for c in candidates]
-            p_min = min(raw_personalize) if raw_personalize else 0
-            p_max = max(raw_personalize) if raw_personalize else 0
-            p_range = p_max - p_min if p_max > p_min else 1.0
-
-            # ── 三锚融合评分 ──
+            # ── 内容双锚融合评分 ──
             for c in candidates:
                 title = c.get("song", {}).get("title", "")
 
@@ -944,27 +986,21 @@ class MusicHybridRetrieval:
                 else:
                     acoustic = 0.5
 
-                # 维度 3: 个性化分（MinMax 归一化到 [0,1]）
-                raw_p = c.get("_graph_affinity", 0.0)
-                personalize = (raw_p - p_min) / p_range if p_range > 0 else 0.5
-
-                # 动态权重（缺 OMAR 时重分配声学权重）
+                # 缺 OMAR 时只使用语义锚；个性化不在这里重复计分。
                 if omar_emb is None or omar_centroid is None:
-                    _w_sem = w_sem / (w_sem + w_per) if (w_sem + w_per) > 0 else 0.6
-                    _w_per = w_per / (w_sem + w_per) if (w_sem + w_per) > 0 else 0.4
-                    final = _w_sem * semantic + _w_per * personalize
+                    final = semantic
                 else:
-                    final = w_sem * semantic + w_aco * acoustic + w_per * personalize
+                    final = w_sem * semantic + w_aco * acoustic
 
                 c["similarity_score"] = round(final, 6)
                 c["_semantic_score"] = round(semantic, 4)
                 c["_acoustic_score"] = round(acoustic, 4)
-                c["_personal_score"] = round(personalize, 4)
+                c["_personal_score"] = round(float(c.get("_post_personal_score", 0.5)), 4)
 
             candidates.sort(key=lambda x: x["similarity_score"], reverse=True)
 
             logger.info(
-                f"[TriAnchor] 三锚精排完成 (sem={w_sem:.2f}, aco={w_aco:.2f}, per={w_per:.2f}) | "
+                f"[ContentAnchor] 双锚精排完成 (sem={w_sem:.2f}, aco={w_aco:.2f}) | "
                 f"Top3: {[(c['song']['title'], round(c['similarity_score'], 4)) for c in candidates[:3]]}"
             )
             return candidates
@@ -1207,6 +1243,7 @@ class MusicHybridRetrieval:
         graph_entities: List[str] = None,
         final_limit: int = 15,
         timings: Dict[str, float] = None,
+        user_id: str = GRAPH_AFFINITY_USER_ID,
     ) -> ToolOutput:
         """
         合并各召回源并执行统一过滤与排序。
@@ -1346,13 +1383,14 @@ class MusicHybridRetrieval:
         post_metadata_by_title = {}
         if _settings.graph_affinity_enabled and final_list:
             total_before = len(final_list)
-            final_list, cand_tag_map = self._compute_graph_affinity(final_list)
+            final_list, cand_tag_map = self._compute_graph_affinity(final_list, user_id=user_id)
             post_metadata_by_title = self._fetch_post_recall_metadata(final_list)
             final_list = apply_post_recall_adjustments(
                 final_list,
                 metadata_by_title=post_metadata_by_title,
                 score_field="_rrf_score",
                 output_score_field="_post_coarse_score",
+                config=_post_recall_config_for_user(user_id),
             )
 
             # ── Phase A: 内容 RRF 分 + 召回后小幅加减分（粗排）──
@@ -1425,7 +1463,7 @@ class MusicHybridRetrieval:
         hyde_text = getattr(self, '_current_hyde_text', '') or ''
         rerank_query = hyde_text if hyde_text else (getattr(self, '_current_query', '') or '')
         if rerank_query and final_list:
-            final_list = self._tri_anchor_rerank(final_list, rerank_query)
+            final_list = self._tri_anchor_rerank(final_list, rerank_query, user_id=user_id)
 
         if cand_tag_map:
             for item in final_list:
@@ -1493,6 +1531,7 @@ class MusicHybridRetrieval:
                 score_field="similarity_score",
                 output_score_field="_post_final_score",
                 apply_to_similarity=True,
+                config=_post_recall_config_for_user(user_id),
             )
             final_list.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
             logger.info(

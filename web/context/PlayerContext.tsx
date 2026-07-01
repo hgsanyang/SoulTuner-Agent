@@ -9,6 +9,7 @@
  * 3. 供 GlobalPlayer 吸底全局控制器和全屏歌词卡片调用与订阅状态变化。
  */
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
+import { sendUserEvent } from '@/lib/api';
 
 export interface Song {
     title: string;
@@ -17,6 +18,8 @@ export interface Song {
     preview_url?: string;
     coverUrl?: string;
     lrc_url?: string;
+    exposure_id?: string;
+    exposure_rank?: number;
 }
 
 export type PlayMode = 'sequence' | 'random' | 'loop';
@@ -61,6 +64,37 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const [isExpanded, setExpanded] = useState(false);
 
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const sessionIdRef = useRef(
+        typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `session-${Date.now()}`
+    );
+
+    const playbackMetrics = (audio: HTMLAudioElement | null) => {
+        const playedSeconds = Math.max(0, Number(audio?.currentTime || 0));
+        const durationSeconds = Number(audio?.duration || 0);
+        const progressRatio = Number.isFinite(durationSeconds) && durationSeconds > 0
+            ? Math.max(0, Math.min(1, playedSeconds / durationSeconds))
+            : 0;
+        return {
+            playDurationMs: Math.round(playedSeconds * 1000),
+            progressRatio,
+            sessionId: sessionIdRef.current,
+        };
+    };
+
+    const reportPlayback = (
+        eventType: 'play_start' | 'skip' | 'full_play' | 'repeat',
+        song: Song,
+        audio: HTMLAudioElement | null,
+    ) => {
+        const metrics = playbackMetrics(audio);
+        sendUserEvent(eventType, song.title, song.artist, {
+            exposureId: song.exposure_id,
+            position: song.exposure_rank,
+            ...metrics,
+        });
+    };
 
     const handlePlaybackError = (error: unknown) => {
         console.warn('Audio playback was blocked or failed:', error);
@@ -79,19 +113,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         const updateTime = () => setCurrentTime(audio.currentTime);
         const updateDuration = () => setDuration(audio.duration);
-        const onEnded = () => {
-            // Auto-play according to mode
-            handlePlayNext(true);
-        };
-
         audio.addEventListener('timeupdate', updateTime);
         audio.addEventListener('loadedmetadata', updateDuration);
-        audio.addEventListener('ended', onEnded);
 
         return () => {
             audio.removeEventListener('timeupdate', updateTime);
             audio.removeEventListener('loadedmetadata', updateDuration);
-            audio.removeEventListener('ended', onEnded);
             audio.pause();
         };
     }, []); // Only init once
@@ -123,7 +150,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const audio = audioRef.current;
         if (!audio) return;
 
-        audio.onended = () => handlePlayNext(true);
+        audio.onended = () => {
+            if (currentSong) {
+                reportPlayback(playMode === 'loop' ? 'repeat' : 'full_play', currentSong, audio);
+            }
+            handlePlayNext(true);
+        };
     }, [currentSong, queue, playMode]);
 
     const playSong = (song: Song, newQueue?: Song[]) => {
@@ -140,6 +172,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             return;
         }
 
+        if (currentSong && audio && !audio.ended) {
+            const metrics = playbackMetrics(audio);
+            if (metrics.playDurationMs >= 1000 && metrics.progressRatio < 0.8) {
+                reportPlayback('skip', currentSong, audio);
+            }
+        }
+
         setCurrentSong(song);
         setIsPlaying(true);
 
@@ -152,6 +191,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (audioRef.current && song.preview_url) {
             audioRef.current.src = song.preview_url;
             startAudio(audioRef.current);
+            reportPlayback('play_start', song, audioRef.current);
         } else if (audioRef.current && !song.preview_url) {
             // Stop audio if no preview
             audioRef.current.pause();

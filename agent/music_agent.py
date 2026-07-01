@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, List
 
 
 from config.logging_config import get_logger
+from config.settings import settings
 from agent.music_graph import MusicRecommendationGraph
 from schemas.music_state import MusicAgentState
 from services.feedback_logger import log_exposure
@@ -33,6 +34,7 @@ class MusicRecommendationAgent:
         chat_history: Optional[List[Dict[str, str]]] = None,
         user_preferences: Optional[Dict[str, Any]] = None,
         dialog_state: Optional[Dict[str, Any]] = None,
+        user_id: str = "local_admin",
     ) -> Dict[str, Any]:
         """
         获取音乐推荐
@@ -76,7 +78,7 @@ class MusicRecommendationAgent:
                 "playlist": None,
                 "step_count": 0,
                 "error_log": [],
-                "metadata": {},
+                "metadata": {"user_id": user_id},
                 "timings": {},
                 "retrieval_meta": {},
                 "dialog_state": dialog_state or {},
@@ -98,10 +100,15 @@ class MusicRecommendationAgent:
             timings["agent_total_ms"] = round((time.perf_counter() - request_started) * 1000, 3)
             raw_recommendations = result.get("recommendations", [])
             recommendations_for_log = getattr(raw_recommendations, "data", raw_recommendations)
-            if isinstance(recommendations_for_log, list):
+            if (
+                isinstance(recommendations_for_log, list)
+                and recommendations_for_log
+                and not settings.eval_disable_side_effects
+            ):
                 try:
                     log_exposure(
                         query=query,
+                        user_id=user_id,
                         request_id=thread_id,
                         recommendations=recommendations_for_log,
                         intent_type=result.get("intent_type", ""),
@@ -153,6 +160,7 @@ class MusicRecommendationAgent:
         chat_history: Optional[List[Dict[str, str]]] = None,
         user_preferences: Optional[Dict[str, Any]] = None,
         dialog_state: Optional[Dict[str, Any]] = None,
+        user_id: str = "local_admin",
     ):
         """
         流式获取推荐结果（异步生成器）
@@ -205,7 +213,7 @@ class MusicRecommendationAgent:
                 "playlist": None,
                 "step_count": 0,
                 "error_log": [],
-                "metadata": {"request_id": _request_id},
+                "metadata": {"request_id": _request_id, "user_id": user_id},
                 "timings": {},
                 "retrieval_meta": {},
                 "dialog_state": dialog_state or {},
@@ -242,6 +250,7 @@ class MusicRecommendationAgent:
             # 从队列读取流式解释文本（歌曲数据也会通过队列提前到达）
             accumulated_text = ""
             songs_already_sent = False
+            clarification_already_sent = False
             # Docker 环境冷启动可能需要较长时间（GraphZep + LLM + 检索 + 精排串行叠加）
             # 180s 给予充足的首次请求余量，热缓存时通常 20-40s 内即可收到首 chunk
             _STREAM_TIMEOUT = 180
@@ -262,9 +271,19 @@ class MusicRecommendationAgent:
                 # ★ 处理歌曲数据（在解释文本之前到达）
                 if isinstance(chunk, dict) and "__songs__" in chunk:
                     songs_list = chunk["__songs__"]
-                    yield {"type": "recommendations_start", "count": len(songs_list)}
+                    yield {
+                        "type": "recommendations_start",
+                        "count": len(songs_list),
+                        "exposure_id": _request_id,
+                    }
                     for item in songs_list:
-                        yield {"type": "song", "song": item["song"], "index": item["index"], "total": len(songs_list)}
+                        yield {
+                            "type": "song",
+                            "song": item["song"],
+                            "index": item["index"],
+                            "total": len(songs_list),
+                            "exposure_id": _request_id,
+                        }
                     yield {"type": "recommendations_complete"}
                     songs_already_sent = True
                     continue
@@ -272,6 +291,7 @@ class MusicRecommendationAgent:
                 if isinstance(chunk, dict) and "__clarification__" in chunk:
                     clarification = chunk["__clarification__"]
                     accumulated_text = str(clarification.get("question") or "")
+                    clarification_already_sent = True
                     yield {
                         "type": "clarification_required",
                         "text": accumulated_text,
@@ -284,7 +304,7 @@ class MusicRecommendationAgent:
                 yield {"type": "response", "text": accumulated_text, "is_complete": False}
             
             # 发送完整文本
-            if accumulated_text:
+            if accumulated_text and not clarification_already_sent:
                 yield {"type": "response", "text": accumulated_text, "is_complete": True}
             
             # 等待图执行完毕
@@ -297,10 +317,15 @@ class MusicRecommendationAgent:
             result = result_holder.get("result", {})
             raw_for_log = result.get("recommendations", [])
             recommendations_for_log = getattr(raw_for_log, "data", raw_for_log)
-            if isinstance(recommendations_for_log, list):
+            if (
+                isinstance(recommendations_for_log, list)
+                and recommendations_for_log
+                and not settings.eval_disable_side_effects
+            ):
                 try:
                     log_exposure(
                         query=query,
+                        user_id=user_id,
                         request_id=_request_id,
                         recommendations=recommendations_for_log,
                         intent_type=result.get("intent_type", ""),
@@ -316,11 +341,21 @@ class MusicRecommendationAgent:
                 raw_recommendations = result.get("recommendations", [])
                 recommendations = getattr(raw_recommendations, "data", raw_recommendations)
                 if isinstance(recommendations, list) and recommendations:
-                    yield {"type": "recommendations_start", "count": len(recommendations)}
+                    yield {
+                        "type": "recommendations_start",
+                        "count": len(recommendations),
+                        "exposure_id": _request_id,
+                    }
                     for i, rec in enumerate(recommendations):
                         song = rec.get("song", rec) if isinstance(rec, dict) else rec
                         if isinstance(song, dict) and song.get("title"):
-                            yield {"type": "song", "song": song, "index": i, "total": len(recommendations)}
+                            yield {
+                                "type": "song",
+                                "song": song,
+                                "index": i,
+                                "total": len(recommendations),
+                                "exposure_id": _request_id,
+                            }
                     yield {"type": "recommendations_complete"}
             
             yield {

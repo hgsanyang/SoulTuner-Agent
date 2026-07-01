@@ -318,7 +318,7 @@ class GlobalSettings(BaseSettings):
         description="小众歌曲曝光度（从尾部按此比例捞回冷门歌进入精排）",
     )
 
-    # --- 三锚精排权重（语义 + 声学 + 个性化，自动归一化）---
+    # --- 内容双锚精排权重（语义 + 声学，自动归一化）---
     tri_anchor_w_semantic: float = Field(
         default=0.45,
         description="三锚精排: M2D-CLAP 语义相关性权重",
@@ -328,8 +328,8 @@ class GlobalSettings(BaseSettings):
         description="三锚精排: OMAR-RQ 声学风格一致性权重",
     )
     tri_anchor_w_personal: float = Field(
-        default=0.25,
-        description="三锚精排: 个性化偏好（图距离+Jaccard）权重",
+        default=0.0,
+        description="已弃用；个性化仅通过限幅 post-recall adjustment 生效",
     )
 
     # --- Artist 多样性 & MMR ---

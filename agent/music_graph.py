@@ -363,6 +363,7 @@ class MusicRecommendationGraph:
         
         user_input = state.get("input", "")
         chat_history = state.get("chat_history", [])
+        user_id = str((state.get("metadata") or {}).get("user_id") or "local_admin")
         
         try:
             previous_dialog_state = state.get("dialog_state") or infer_dialog_state_from_history(chat_history)
@@ -396,7 +397,7 @@ class MusicRecommendationGraph:
                     "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
                 }
 
-            _profile_text = self._load_user_profile_for_prompt()
+            _profile_text = self._load_user_profile_for_prompt(user_id)
             if is_followup_turn(user_input, previous_dialog_state):
                 try:
                     plan_delta = await self.intent_delta_planner.plan(
@@ -446,6 +447,7 @@ class MusicRecommendationGraph:
                         retrieval_plan_dict["_intent_type"] = plan.intent_type
                         retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
                         retrieval_plan_dict["_user_profile"] = _profile_text
+                        retrieval_plan_dict["_user_id"] = user_id
                         logger.info(
                             "[DST] PlanDelta 已确定性应用: mode=%s operations=%d",
                             plan_delta.planner_mode,
@@ -570,6 +572,7 @@ class MusicRecommendationGraph:
             retrieval_plan_dict["_intent_type"] = plan.intent_type
             retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
             retrieval_plan_dict["_user_profile"] = _profile_text  # 画像文本供 HyDE 参考
+            retrieval_plan_dict["_user_id"] = user_id
             
             return {
                 "intent_type": plan.intent_type,

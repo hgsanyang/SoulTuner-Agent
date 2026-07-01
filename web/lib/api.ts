@@ -41,6 +41,8 @@ export interface SSEEvent {
     text?: string;
     is_complete?: boolean;
     song?: { title: string; artist: string; [key: string]: any };
+    index?: number;
+    total?: number;
     error?: string;
     // Journey-specific fields
     segment?: JourneySegment;
@@ -67,6 +69,7 @@ export interface StreamParams {
     query: string;
     chatHistory?: { role: string; content: string }[];
     dialogState?: Record<string, any>;
+    userId?: string;
     llmProvider?: string;       // 模型供应商
     webSearchEnabled?: boolean; // 联网搜索开关
 }
@@ -89,6 +92,7 @@ export function streamRecommendations(
                     query: params.query,
                     chat_history: params.chatHistory || [],
                     dialog_state: params.dialogState || {},
+                    user_id: params.userId || 'local_admin',
                     web_search_enabled: params.webSearchEnabled !== false,  // 默认 true
                 }),
                 signal: controller.signal,
@@ -155,9 +159,16 @@ export function streamRecommendations(
 
 // ---- 用户行为事件上报 ----
 export async function sendUserEvent(
-    eventType: 'like' | 'unlike' | 'save' | 'skip' | 'dislike' | 'full_play' | 'repeat',
+    eventType: 'like' | 'unlike' | 'save' | 'skip' | 'dislike' | 'full_play' | 'repeat' | 'play_start',
     songTitle: string,
     artist: string,
+    options: {
+        exposureId?: string;
+        position?: number;
+        playDurationMs?: number;
+        progressRatio?: number;
+        sessionId?: string;
+    } = {},
 ): Promise<void> {
     try {
         await fetch('http://localhost:8501/api/user-event', {
@@ -167,6 +178,13 @@ export async function sendUserEvent(
                 event_type: eventType,
                 song_title: songTitle,
                 artist: artist,
+                exposure_id: options.exposureId,
+                extra: {
+                    position: options.position,
+                    play_duration_ms: options.playDurationMs,
+                    progress_ratio: options.progressRatio,
+                    session_id: options.sessionId,
+                },
             }),
         });
     } catch (err) {

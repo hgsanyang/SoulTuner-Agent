@@ -42,3 +42,12 @@ python start.py --mode api
 | `error` | 错误信息 |
 
 **依赖**：`agent/`、`config/`、`retrieval/`
+# Feedback and ranking policy
+
+- `POST /api/user-event` records an attributed behavior event. Recommendation
+  clients should send the `exposure_id` and displayed position returned by the
+  SSE stream. `play_start` is neutral; `skip` and `dislike` are explicit
+  negatives; `full_play`, `like`, `save`, and `repeat` are positives.
+- `GET /api/ranking-policy/status` returns non-sensitive exposure/event counts
+  and active/candidate policy status. Training, promotion, and rollback remain
+  offline CLI operations through `scripts/replay_feedback.py`.

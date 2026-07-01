@@ -83,6 +83,8 @@ services:
       MUSIC_M2D_MODEL_WARMUP: ${MUSIC_M2D_MODEL_WARMUP:-true}
       MUSIC_AUDIO_DATA_DIR: /app/data/processed_audio/audio
       MUSIC_DATA_ROOT: /app/data
+      MUSIC_FEEDBACK_DIR: /app/data/feedback
+      FEEDBACK_LOG_RAW_QUERY: ${FEEDBACK_LOG_RAW_QUERY:-0}
       MUSIC_WEB_SEARCH_ENABLED: "1"
       MUSIC_INLINE_INGEST_ENABLED: "0"
       MUSIC_INGEST_QUEUE_DIR: /app/data/ingest_queue

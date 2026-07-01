@@ -150,7 +150,7 @@ Both CPU and GPU modes start the complete product workflow. The difference is mu
 │                            ▼                                        │
 │              Thompson Sampling (cold-start exploration slots)        │
 │                            ▼                                        │
-│              Tri-Anchor Rerank (Semantic+Acoustic+Personal norm.)    │
+│              Content-Anchor Rerank (Semantic+Acoustic normalized)   │
 │                            ▼                                        │
 │              MMR Multi-dim Diversity (λ=0.7)                       │
 └─────────────────────────────────────────────────────────────────────┘
@@ -173,7 +173,7 @@ Both CPU and GPU modes start the complete product workflow. The difference is mu
 | **LLMs** | Default `dashscope / qwen3.7-plus`; other providers are advanced overrides |
 | **Long-term Memory**| GraphZep temporal memory (Dual-stage recall) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
-| **Ranking Algorithm**| Tri-Anchor Normalized Rerank (Semantic+Acoustic+Personal) + Graph Affinity Coarse Rank + Thompson Sampling + MMR |
+| **Ranking Algorithm**| Content-anchor rerank (Semantic+Acoustic) + bounded post-recall adjustments + Thompson Sampling + MMR |
 | **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
 | **Containerization** | Docker Compose CPU/GPU entrypoints; CPU includes the full online stack, GPU adds the ingestion worker |
 
@@ -202,7 +202,7 @@ User Query → Planner (LLM) outputs a layered plan
                ▼
    Step 5: Post-recall Adjust + Explore  ← Personal/fresh/long-tail boosts, time-decayed exposure penalty
                ▼
-   Step 6: Tri-Anchor Normalized Rerank   ← Auxiliary semantic(M2D-CLAP) + Acoustic(OMAR-RQ) + Personal
+   Step 6: Content-Anchor Normalized Rerank ← Auxiliary semantic(M2D-CLAP) + Acoustic(OMAR-RQ)
                ▼
    Step 7: MMR Multi-dim Diversity + FinalCut
 ```
@@ -213,10 +213,10 @@ User Query → Planner (LLM) outputs a layered plan
 - **Three Content Recall Paths**: Graph entities/tags, MuQ-MuLan text-to-music search, and BM25 lexical search always run; `intent_type` plus query profile only adjust these content-source weights.
 - **Weighted RRF Fusion**: Candidates are merged with `weight / (60 + rank)`, preserving source rank and source metadata instead of equal merging.
 - **Three-model roles**: MuQ-MuLan is the default text-to-music anchor; M2D-CLAP remains available for recall fallback and semantic reranking; OMAR-RQ supplies text-independent acoustic similarity.
-- **Personalization and cold-start are post-recall score adjustments**: User profile affects already-recalled candidates through Graph Affinity / the tri-anchor personal score; long-tail, new-song, and over-exposure penalties are handled with TS/exposure parameters, not exposed as independent recall sources.
+- **Personalization and cold-start are post-recall score adjustments**: User profile, long-tail, freshness, and time-decayed exposure affect only content-recalled candidates. They are neither independent recall sources nor duplicated inside the content anchor.
 - **Unified adjustment scale**: Personalization, freshness, long-tail, and exposure fatigue are normalized to `[0,1]` and merged into a clipped delta (default `±0.08`) so content relevance remains dominant.
 - **Coarse Rank + Thompson Sampling**: Content RRF plus the clipped adjustment delta is used for cutoff (`coarse_cut_ratio=65%`), while tail candidates are rescued via TS sampling (`Beta(α,β)` distribution) for long-tail/new-song exploration.
-- **Tri-Anchor Normalized Reranking**: Auxiliary semantic anchor `(cosine+1)/2` (M2D-CLAP) + acoustic anchor `(cosine+1)/2` (OMAR-RQ centroid) + personal anchor `MinMax` (Graph Affinity), normalized to [0,1] before weighted fusion.
+- **Content-Anchor Normalized Reranking**: Auxiliary semantic `(cosine+1)/2` (M2D-CLAP) and acoustic `(cosine+1)/2` (OMAR-RQ centroid) anchors are normalized before fusion. Personalization is applied only through the bounded post-recall layer instead of a 25% ranking anchor.
 - **Deployable fallback**: `DENSE_TEXT_AUDIO_BACKEND=muq|m2d|both`; a missing MuQ model/index or encoding failure automatically falls back to M2D, while lazy loading keeps the default memory footprint bounded.
 - **Explicit DST + PlanDelta**: First turns and topic resets use the full planner. Established follow-ups emit only whitelisted `add/replace/remove/clear_topic` operations, while deterministic code preserves untouched slots. Unresolved references, missing key entities, or severe conflicts return a clarification question with options; delta failures fall back to the full planner.
 - **MMR Jaccard**: Re-ranking using the `{genre, mood, theme, scenario}` multidimensional tags for candidate diversity.
@@ -284,21 +284,23 @@ User search → Discover new song → Download to "Pending" staging area → Fro
 
 ### Feedback Loop
 
-Every recommendation slate is appended to `data/feedback/exposures.jsonl` with query, intent, recall provenance, rank, and tri-anchor scores. User events such as like, save, skip, full play, repeat, and dislike still write to Neo4j, and are also appended to `data/feedback/events.jsonl`. Offline replay can estimate reversible tri-anchor ranking weights:
+Every recommendation slate is written under `${MUSIC_DATA_PATH}/feedback` with a query hash, intent, source ranks, content-anchor scores, post-recall components, and final position; raw queries are disabled by default. The frontend returns the exact `exposure_id` and position with like/save/skip/full-play/repeat/dislike events. Play-start is neutral, and untouched impressions are never mislabeled as negatives.
 
 ```powershell
 python scripts/replay_feedback.py
-python scripts/replay_feedback.py --write
+python scripts/replay_feedback.py --write-candidate
+python scripts/replay_feedback.py --promote
+python scripts/replay_feedback.py --rollback
 ```
 
-Replay uses `logistic_tri_anchor_v1` by default and prints matched events, positive/negative counts, feature coverage, and baseline/learned log-loss. If explicit positive/negative feedback is insufficient, the report returns `insufficient_data` and `--write` refuses to create weights, preventing fake learning from empty data. When `data/feedback/ranking_weights.json` exists, tri-anchor reranking reads it first; missing or invalid files fall back to settings/UI weights.
+Replay uses `explicit_feedback_logistic_v2`: strict exposure attribution, chronological train/validation splitting, baseline-vs-candidate metrics, and same-exposure preference pairs. A candidate must pass validation before promotion; active and previous versions support rollback. Learned policies are bounded to `0.8~1.2` multipliers for RRF, content anchors, and post-recall terms while preserving the `±0.08` adjustment cap. Global and sufficiently supported per-user policies remain isolated. Insufficient real positive/negative feedback returns `insufficient_data` and never activates fake weights.
 
 ### Engineering Quality
 
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 199 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, feedback logs, alignment calibration, and more |
+| **Unit Testing** | 204 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, alignment calibration, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 57 dev cases and 34 holdout cases |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
@@ -449,7 +451,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 ├── config/settings.py          # Global Pydantic configs (Runtime patchable)
 │
 ├── retrieval/                  # Engine abstractions
-│   ├── hybrid_retrieval.py     # Multi-path Fusion + Coarse Rank(Graph Affinity+TS) + Tri-Anchor Rerank + MMR
+│   ├── hybrid_retrieval.py     # Multi-path Fusion + bounded adjustment/TS + Content-Anchor Rerank + MMR
 │   ├── gssc_context_builder.py # GSSC pipeline (Budgeting + Abstract Context mapping)
 │   ├── muq_embedder.py         # MuQ-MuLan 24kHz audio/text encoder (lazy-loaded)
 │   ├── audio_embedder.py       # M2D-CLAP fallback and semantic rerank encoder
@@ -508,6 +510,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 | `MUSIC_DENSE_QUERY_VARIANTS` | Multi-view HyDE vector ensemble | `0` (set `1` to average acoustic/emotional/context query views) |
 | `MUSIC_ALIGNMENT_CALIBRATION_PATH` | Optional text/audio gap calibration JSON | empty (scale/bias per backend; missing file is no-op) |
 | `MUSIC_FEEDBACK_DIR` | Exposure/event feedback log directory | `data/feedback` |
+| `FEEDBACK_LOG_RAW_QUERY` | Store raw queries in feedback logs (hash-only by default) | `0` |
 | `RECALL_SOURCE_TIMEOUT_SECONDS` | Per-recall timeout | `60` (covers MuQ cold loading) |
 | `TAVILY_API_KEY` | Cloud indexing rules | Optional |
 

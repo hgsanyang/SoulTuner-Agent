@@ -503,15 +503,14 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         </>
       )}
 
-      {/* ═══ 三锚精排权重 ═══ */}
+      {/* ═══ 内容双锚精排权重 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>三锚精排权重（语义 + 声学 + 个性化）</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>内容双锚权重（语义 + 声学）</span>
       </div>
       {renderSlider('tri_anchor_w_semantic', '语义相关性（M2D-CLAP）', 0, 1, 0.05)}
       {renderSlider('tri_anchor_w_acoustic', '声学风格（OMAR-RQ）', 0, 1, 0.05)}
-      {renderSlider('tri_anchor_w_personal', '个性化偏好（图距离+Jaccard）', 0, 1, 0.05)}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        权重会自动归一化，无需手动凑和为 1
+        权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分
       </div>
 
       {/* ═══ 多样性 ═══ */}
