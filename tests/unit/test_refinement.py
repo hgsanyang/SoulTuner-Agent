@@ -25,6 +25,7 @@ def test_lofi_rainy_query_gets_non_blocking_refinement_chips():
 
     assert suggestion.confidence < 0.75
     assert labels[:4] == ["更安静", "更有雨天感", "更偏 lo-fi beat", "少人声"]
+    assert len(labels) == 6
 
 
 def test_focus_context_predicts_sparse_vocal_chip():
@@ -53,4 +54,4 @@ def test_concrete_artist_request_still_offers_non_blocking_refinement_chips():
     suggestion = build_refinement_suggestions(user_input="周杰伦的歌", plan=plan)
 
     assert suggestion.confidence >= 0.85
-    assert [option.label for option in suggestion.options] == ["更安静", "更有节奏", "更小众", "少人声"]
+    assert [option.label for option in suggestion.options] == ["更安静", "更有节奏", "更小众", "少人声", "偏抒情", "更明亮"]

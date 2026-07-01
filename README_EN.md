@@ -68,7 +68,7 @@ Both CPU and GPU modes start the complete product workflow. The difference is mu
 
 | Feature | Description |
 |---|---|
-| 🔀 **Hybrid RAG** | Parallel graph / dense / BM25 / personal / cold-start recall, weighted RRF fusion + tri-anchor reranking |
+| 🔀 **Hybrid RAG** | Three content recall paths (graph / dense / BM25), weighted RRF fusion; personalization and long-tail exploration are post-recall score adjustments |
 | 🎵 **Multimodal Text-to-Music** | MuQ-MuLan is the Chinese-strong primary recall model, M2D-CLAP is the fallback, and OMAR-RQ adds acoustic similarity |
 | 🧠 **Long-term Memory** | GraphZep dual-stage recall with circuit-breaker fallback, retaining user preferences across sessions |
 | 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
@@ -188,11 +188,11 @@ Both CPU and GPU modes start the complete product workflow. The difference is mu
 ```text
 User Query → Planner (LLM) outputs a layered plan
                ↓  hard_constraints + soft_intent + hints + intent_type
-    ┌──────────┬──────────┬──────────┬──────────┬──────────┐
-    ▼          ▼          ▼          ▼          ▼
- GraphRAG   Dense KNN    BM25     Personal   Cold-start    ← Step 1: parallel recall
- (Neo4j)   (MuQ+OMAR) (title/artist/lyrics) (profile/logs) (explore)
-    └──────────┴──────────┴──────────┴──────────┴──────────┘
+    ┌──────────┬──────────┬──────────┐
+    ▼          ▼          ▼
+ GraphRAG   Dense KNN    BM25               ← Step 1: content recall
+ (Neo4j)   (MuQ+OMAR) (title/artist/lyrics)
+    └──────────┴──────────┴──────────┘
                ▼
    Step 2: Weighted RRF fusion            ← Preserves per-source rank and source metadata
                ▼
@@ -200,7 +200,7 @@ User Query → Planner (LLM) outputs a layered plan
                ▼
    Step 4: Artist Diversity Filter        ← ≤ N songs per artist (exception for specific queries)
                ▼
-   Step 5: Coarse Rank + TS Explore       ← Graph Affinity + Thompson Sampling long-tail rescue
+   Step 5: Post-recall Adjust + Explore  ← Personal/fresh/long-tail boosts, time-decayed exposure penalty
                ▼
    Step 6: Tri-Anchor Normalized Rerank   ← Auxiliary semantic(M2D-CLAP) + Acoustic(OMAR-RQ) + Personal
                ▼
@@ -210,10 +210,12 @@ User Query → Planner (LLM) outputs a layered plan
 **Key Design Decisions**:
 
 - **Layered Intent Plan**: The Planner outputs `hard_constraints / soft_intent / hints`. Entities, language, and instrumental constraints are hard filters; mood, scenario, and vibe are ranking signals.
-- **Five Parallel Recall Paths**: Graph entities/tags, MuQ-MuLan text-to-music search, BM25 lexical search, personalization, and cold-start exploration always run; `intent_type` only adjusts weights.
+- **Three Content Recall Paths**: Graph entities/tags, MuQ-MuLan text-to-music search, and BM25 lexical search always run; `intent_type` plus query profile only adjust these content-source weights.
 - **Weighted RRF Fusion**: Candidates are merged with `weight / (60 + rank)`, preserving source rank and source metadata instead of equal merging.
 - **Three-model roles**: MuQ-MuLan is the default text-to-music anchor; M2D-CLAP remains available for recall fallback and semantic reranking; OMAR-RQ supplies text-independent acoustic similarity.
-- **Coarse Rank + Thompson Sampling**: Graph Affinity scored cutoff (`coarse_cut_ratio=65%`), tail candidates rescued via TS sampling (`Beta(α,β)` distribution) for exploration-exploitation balance.
+- **Personalization and cold-start are post-recall score adjustments**: User profile affects already-recalled candidates through Graph Affinity / the tri-anchor personal score; long-tail, new-song, and over-exposure penalties are handled with TS/exposure parameters, not exposed as independent recall sources.
+- **Unified adjustment scale**: Personalization, freshness, long-tail, and exposure fatigue are normalized to `[0,1]` and merged into a clipped delta (default `±0.08`) so content relevance remains dominant.
+- **Coarse Rank + Thompson Sampling**: Content RRF plus the clipped adjustment delta is used for cutoff (`coarse_cut_ratio=65%`), while tail candidates are rescued via TS sampling (`Beta(α,β)` distribution) for long-tail/new-song exploration.
 - **Tri-Anchor Normalized Reranking**: Auxiliary semantic anchor `(cosine+1)/2` (M2D-CLAP) + acoustic anchor `(cosine+1)/2` (OMAR-RQ centroid) + personal anchor `MinMax` (Graph Affinity), normalized to [0,1] before weighted fusion.
 - **Deployable fallback**: `DENSE_TEXT_AUDIO_BACKEND=muq|m2d|both`; a missing MuQ model/index or encoding failure automatically falls back to M2D, while lazy loading keeps the default memory footprint bounded.
 - **DST Multi-turn Inheritance**: Planner preserves the previous layered plan across turns and adds new constraints from follow-up queries.
@@ -234,12 +236,12 @@ stateDiagram-v2
     route_intent --> gen_recommendations: recommend_by_favorites
 
     search_songs --> web_fallback: Auto-fallback on local miss
-    search_songs --> explain_results: Direct on local hit
+    search_songs --> explain_results: Push songs first on local hit
     web_fallback --> explain_results: Online Music API live search
     acquire_music --> explain_results
     gen_recommendations --> explain_results
 
-    explain_results --> extract_preferences: LLM Recommendation Explanation
+    explain_results --> extract_preferences: Async tuner-style response
     extract_preferences --> persist_memory: LLM Preference Extraction (Async)
 
     chat_response --> persist_memory: General chat skips preference extraction
@@ -247,7 +249,7 @@ stateDiagram-v2
     persist_memory --> [*]: GraphZep Async Write
 ```
 
-> Intent recognition, HyDE, and explanation generation default to `dashscope / qwen3.7-plus`. Other providers should be changed only through `.env` or the frontend Advanced Settings.
+> Intent recognition, HyDE, and the async tuner-style response default to `dashscope / qwen3.7-plus`. Recommended songs are streamed first; the default `EXPLANATION_MODE=tuner_async` then generates a short conversational response plus follow-up chips. The legacy per-song explanation mode remains available via `EXPLANATION_MODE=song_detail`, but is not recommended as the default because the system should not invent detailed listening impressions.
 
 > `web_search` intent now routes **directly to the `web_fallback` node** (Online Music API live search), bypassing HybridRetrieval entirely. Supports Chinese-first query extraction, multi-level fallback query resolution, and 30-second preview detection.
 
@@ -294,7 +296,7 @@ Replay uses `logistic_tri_anchor_v1` by default and prints matched events, posit
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 168 tests covering settings loading, Planner cache, outcome eval, fusion filters, DST, feedback logs, alignment calibration, and more |
+| **Unit Testing** | 190 tests covering settings loading, Planner cache, outcome eval, fusion filters, DST, feedback logs, alignment calibration, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 57 dev cases and 34 holdout cases |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |

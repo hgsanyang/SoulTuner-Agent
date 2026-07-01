@@ -597,29 +597,29 @@ export default function RecommendationsPage() {
                                   disabled={loading}
                                   title={option.reason || option.prompt}
                                   style={{
-                                    padding: '0.42rem 0.72rem',
+                                    padding: '0.44rem 0.78rem',
                                     borderRadius: '999px',
-                                    border: '1px solid rgba(255,255,255,0.13)',
-                                    backgroundColor: option.source === 'profile' ? 'rgba(99,102,241,0.13)' : 'rgba(255,255,255,0.06)',
-                                    color: 'rgba(255,255,255,0.74)',
-                                    fontSize: '0.8rem',
+                                    border: '1px solid rgba(91, 214, 170, 0.34)',
+                                    backgroundColor: 'rgba(42, 170, 130, 0.16)',
+                                    color: 'rgba(238, 255, 248, 0.9)',
+                                    fontSize: '0.81rem',
+                                    fontWeight: 520,
                                     cursor: loading ? 'not-allowed' : 'pointer',
                                     transition: 'all 0.18s ease',
                                     whiteSpace: 'nowrap',
+                                    boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
                                   }}
                                   onMouseEnter={e => {
                                     if (!loading) {
-                                      e.currentTarget.style.backgroundColor = option.source === 'profile'
-                                        ? 'rgba(99,102,241,0.22)'
-                                        : 'rgba(255,255,255,0.1)';
+                                      e.currentTarget.style.backgroundColor = 'rgba(54, 190, 146, 0.24)';
+                                      e.currentTarget.style.borderColor = 'rgba(112, 235, 190, 0.48)';
                                       e.currentTarget.style.color = '#fff';
                                     }
                                   }}
                                   onMouseLeave={e => {
-                                    e.currentTarget.style.backgroundColor = option.source === 'profile'
-                                      ? 'rgba(99,102,241,0.13)'
-                                      : 'rgba(255,255,255,0.06)';
-                                    e.currentTarget.style.color = 'rgba(255,255,255,0.74)';
+                                    e.currentTarget.style.backgroundColor = 'rgba(42, 170, 130, 0.16)';
+                                    e.currentTarget.style.borderColor = 'rgba(91, 214, 170, 0.34)';
+                                    e.currentTarget.style.color = 'rgba(238, 255, 248, 0.9)';
                                   }}
                                 >
                                   {option.label}

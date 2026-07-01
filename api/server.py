@@ -721,6 +721,7 @@ async def get_settings_endpoint():
         "explain_llm_model": settings.explain_llm_model,
         "compress_llm_provider": settings.compress_llm_provider,
         "compress_llm_model": settings.compress_llm_model,
+        "explanation_mode": settings.explanation_mode,
         "explanation_fast_mode": settings.explanation_fast_mode,
         "context_total_budget": settings.context_total_budget,
         "intent_max_tokens": settings.intent_max_tokens,
@@ -767,6 +768,7 @@ class SettingsUpdateRequest(BaseModel):
     compress_llm_model: str | None = None
     explain_llm_provider: str | None = None
     explain_llm_model: str | None = None
+    explanation_mode: str | None = None
     explanation_fast_mode: bool | None = None
     context_total_budget: int | None = None
     intent_max_tokens: int | None = None
@@ -902,6 +904,7 @@ async def reset_settings_endpoint():
             "compress_llm_model": fresh.compress_llm_model,
             "explain_llm_provider": fresh.explain_llm_provider,
             "explain_llm_model": fresh.explain_llm_model,
+            "explanation_mode": fresh.explanation_mode,
             "explanation_fast_mode": fresh.explanation_fast_mode,
             "context_total_budget": fresh.context_total_budget,
             "intent_max_tokens": fresh.intent_max_tokens,

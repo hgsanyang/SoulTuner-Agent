@@ -138,6 +138,18 @@ def _fallback_options(options: list[RefinementOption]) -> None:
         prompt="少人声一点，更适合专注听",
         reason="通用偏好微调",
     )
+    _add_unique(
+        options,
+        label="偏抒情",
+        prompt="偏抒情一点，让旋律和情绪更突出",
+        reason="通用偏好微调",
+    )
+    _add_unique(
+        options,
+        label="更明亮",
+        prompt="更明亮一点，别太低落",
+        reason="通用偏好微调",
+    )
 
 
 def build_refinement_suggestions(
@@ -146,7 +158,7 @@ def build_refinement_suggestions(
     plan: MusicQueryPlan | None,
     dialog_state: DialogMusicState | dict[str, Any] | None = None,
     user_profile: str = "",
-    max_options: int = 4,
+    max_options: int = 6,
 ) -> RefinementSuggestion:
     """Return non-blocking refinement chips plus a conservative confidence.
 
@@ -211,7 +223,7 @@ def build_refinement_suggestions(
 
     _profile_options(user_profile, options)
 
-    if should_offer and len(options) < 3:
+    if should_offer and len(options) < 5:
         _fallback_options(options)
 
     confidence = 0.86

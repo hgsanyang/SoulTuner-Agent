@@ -366,7 +366,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 DashScope API 部署
               </div>
               <div style={{ color: theme.colors.text.muted, fontSize: '0.74rem', lineHeight: 1.5, marginTop: '0.25rem' }}>
-                默认由通义千问驱动意图分析、HyDE 与推荐解释。Key 请放在项目 .env 中，前端不会展示密钥。
+                默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。
               </div>
             </div>
             <span style={{
@@ -413,9 +413,13 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           )}
         </div>
 
-        {renderToggle('explanation_fast_mode', '低延迟解释模式')}
+        {renderSelect('explanation_mode', '推荐后回应方式', [
+          { value: 'tuner_async', label: '调音师异步回应（默认）' },
+          { value: 'off', label: '关闭 LLM 文本，只返回歌单' },
+          { value: 'song_detail', label: '旧版逐首推荐解释' },
+        ])}
         <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.7rem', marginBottom: '1rem', lineHeight: 1.5 }}>
-          开启后跳过长篇流式解释，只返回简短确定性说明，适合快速体验和评测。
+          默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。
         </div>
 
         <button
@@ -455,10 +459,11 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             {renderModelPicker('hyde_llm_provider', 'hyde_llm_model', 'HyDE 提供商', 'HyDE 模型', true)}
 
             <div style={sectionTitleStyle}>解释与上下文压缩</div>
-            {renderModelPicker('explain_llm_provider', 'explain_llm_model', '解释模型提供商', '解释模型', true)}
+            {renderModelPicker('explain_llm_provider', 'explain_llm_model', '调音师回应模型提供商', '调音师回应模型', true)}
             {renderModelPicker('compress_llm_provider', 'compress_llm_model', '压缩模型提供商', '压缩模型', true)}
 
             <div style={sectionTitleStyle}>调用预算</div>
+            {renderToggle('explanation_fast_mode', '兼容低延迟模式（覆盖为关闭文本）')}
             {renderSlider('llm_timeout', 'LLM 超时', 10, 120, 5, '秒')}
             {renderSlider('intent_max_tokens', '意图分析最大输出 Token', 512, 4096, 256, ' tokens')}
             {renderSlider('context_total_budget', '上下文窗口预算', 2000, 16000, 500, ' tokens')}
