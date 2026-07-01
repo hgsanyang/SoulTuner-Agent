@@ -25,6 +25,7 @@ from langchain_core.output_parsers import StrOutputParser
 from config.logging_config import get_logger
 from config.settings import settings
 from agent.explanation import emit_fast_explanation
+from agent.intent.delta_planner import IntentDeltaPlanner
 from agent.intent.planner import IntentPlanner
 from agent.netease_query import (
     artist_matches,
@@ -57,10 +58,16 @@ from llms.prompts import (
 from schemas.query_plan import MusicQueryPlan, RetrievalPlan
 from schemas.dialog_state import (
     apply_dialog_state_to_plan,
+    apply_plan_delta_operations,
     apply_plan_delta_with_report,
+    clarification_from_delta,
     coerce_followup_general_chat_to_retrieval,
+    compile_dialog_state_to_plan,
     infer_dialog_state_from_history,
+    is_followup_turn,
+    load_dialog_state,
     should_clarify_before_planning,
+    update_dialog_result_anchors,
 )
 from schemas.refinement import build_refinement_suggestions
 
@@ -193,6 +200,7 @@ class MusicRecommendationGraph:
         # 每个请求创建独立的 queue，避免并发请求间的数据交叉污染
         self._explanation_queues: dict = {}
         self.intent_planner = IntentPlanner(get_intent_llm)
+        self.intent_delta_planner = IntentDeltaPlanner(get_intent_llm)
         self.workflow = self._build_graph()
     
     def get_app(self) -> CompiledStateGraph:
@@ -361,6 +369,8 @@ class MusicRecommendationGraph:
             clarification = should_clarify_before_planning(user_input, previous_dialog_state)
             if clarification.required:
                 logger.info("[DST] 触发澄清反问: %s", clarification.reason)
+                clarified_state = load_dialog_state(previous_dialog_state).model_copy(deep=True)
+                clarified_state.pending_clarification = clarification
                 clarification_delta = {
                     "followup": False,
                     "topic_shift": False,
@@ -377,6 +387,7 @@ class MusicRecommendationGraph:
                     "intent_context": clarification.reason,
                     "clarification": clarification.model_dump(),
                     "clarification_options": list(clarification.options),
+                    "dialog_state": clarified_state.model_dump(),
                     "dialog_delta": clarification_delta,
                     "intent_confidence": 0.0,
                     "refinement_options": [],
@@ -384,6 +395,79 @@ class MusicRecommendationGraph:
                     "step_count": state.get("step_count", 0) + 1,
                     "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
                 }
+
+            _profile_text = self._load_user_profile_for_prompt()
+            if is_followup_turn(user_input, previous_dialog_state):
+                try:
+                    plan_delta = await self.intent_delta_planner.plan(
+                        user_input=user_input,
+                        dialog_state=previous_dialog_state,
+                    )
+                    delta_clarification = clarification_from_delta(
+                        plan_delta,
+                        confidence_threshold=settings.dst_clarification_confidence_threshold,
+                    )
+                    if delta_clarification.required:
+                        pending_state, _ = apply_plan_delta_operations(
+                            previous_dialog_state,
+                            plan_delta,
+                            user_input,
+                        )
+                        pending_state.pending_clarification = delta_clarification
+                        return {
+                            "intent_type": "clarification",
+                            "intent_parameters": {"query": user_input},
+                            "intent_context": delta_clarification.reason,
+                            "clarification": delta_clarification.model_dump(),
+                            "clarification_options": list(delta_clarification.options),
+                            "dialog_state": pending_state.model_dump(),
+                            "dialog_delta": pending_state.last_delta.model_dump(),
+                            "intent_confidence": plan_delta.confidence,
+                            "refinement_options": [],
+                            "final_response": delta_clarification.question,
+                            "step_count": state.get("step_count", 0) + 1,
+                            "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                        }
+                    if plan_delta.operations:
+                        dialog_state, dialog_delta = apply_plan_delta_operations(
+                            previous_dialog_state,
+                            plan_delta,
+                            user_input,
+                        )
+                        plan = compile_dialog_state_to_plan(dialog_state, user_input)
+                        dialog_state.last_complete_plan = plan.model_dump()
+                        refinement = build_refinement_suggestions(
+                            user_input=user_input,
+                            plan=plan,
+                            dialog_state=dialog_state,
+                            user_profile=_profile_text,
+                        )
+                        retrieval_plan_dict = plan.retrieval_plan.model_dump()
+                        retrieval_plan_dict["_intent_type"] = plan.intent_type
+                        retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
+                        retrieval_plan_dict["_user_profile"] = _profile_text
+                        logger.info(
+                            "[DST] PlanDelta 已确定性应用: mode=%s operations=%d",
+                            plan_delta.planner_mode,
+                            len(plan_delta.operations),
+                        )
+                        return {
+                            "intent_type": plan.intent_type,
+                            "intent_parameters": plan.parameters,
+                            "intent_context": plan.context,
+                            "retrieval_plan": retrieval_plan_dict,
+                            "dialog_state": dialog_state.model_dump(),
+                            "dialog_delta": dialog_delta.model_dump(),
+                            "intent_confidence": refinement.confidence,
+                            "refinement_options": [
+                                option.model_dump() for option in refinement.options
+                            ],
+                            "step_count": state.get("step_count", 0) + 1,
+                            "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                        }
+                    logger.info("[DST] Delta 无有效操作，回退 full planner")
+                except Exception as delta_error:
+                    logger.warning("[DST] Delta planner 失败，回退 full planner: %s", delta_error)
 
             # 格式化对话历史
             context_manager = MusicContextManager()
@@ -442,7 +526,6 @@ class MusicRecommendationGraph:
             logger.info(f"--- [步骤 1] 统一意图分析与检索规划 (Structured Output) | 🤖 {_intent_provider} / {_intent_model_name} ---")
             
             # ── 统一构建用户偏好上下文（用户画像 + GraphZep 长期记忆）──
-            _profile_text = self._load_user_profile_for_prompt()
             _graphzep = state.get("graphzep_facts", "")
             _pref_parts = []
             if _profile_text:
@@ -461,6 +544,7 @@ class MusicRecommendationGraph:
             dialog_state, dialog_delta = apply_plan_delta_with_report(previous_dialog_state, plan, user_input)
             plan = apply_dialog_state_to_plan(plan, dialog_state)
             plan = coerce_followup_general_chat_to_retrieval(plan, dialog_state, user_input)
+            dialog_state.last_complete_plan = plan.model_dump()
             refinement = build_refinement_suggestions(
                 user_input=user_input,
                 plan=plan,
@@ -567,7 +651,15 @@ class MusicRecommendationGraph:
         request_id = (state.get("metadata") or {}).get("request_id")
         explanation_queue = self._explanation_queues.get(request_id) if request_id else None
         if explanation_queue is not None:
-            await explanation_queue.put(question)
+            await explanation_queue.put(
+                {
+                    "__clarification__": {
+                        "question": question,
+                        "options": options,
+                        "reason": clarification.get("reason"),
+                    }
+                }
+            )
             await explanation_queue.put(None)
         return {
             "final_response": question,
@@ -633,6 +725,10 @@ class MusicRecommendationGraph:
                     fallback_decision.reason,
                     fallback_decision.inventory_count,
                 )
+            dialog_state = update_dialog_result_anchors(
+                state.get("dialog_state"),
+                search_results,
+            )
 
             return {
                 "search_results": search_results,
@@ -646,6 +742,7 @@ class MusicRecommendationGraph:
                     "degraded": fallback_decision.required,
                     "degraded_reason": fallback_decision.reason or None,
                 },
+                "dialog_state": dialog_state.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": timings,
             }
@@ -904,6 +1001,7 @@ class MusicRecommendationGraph:
             logger.info(f"[web_fallback] 联网返回 {len(results)} 首歌曲，{matched} 首可播放，{trial_count} 首为试听版")
 
             from schemas.music_state import ToolOutput
+            dialog_state = update_dialog_result_anchors(state.get("dialog_state"), results)
             return {
                 "search_results": [r["song"] for r in results],
                 "recommendations": ToolOutput(
@@ -913,6 +1011,7 @@ class MusicRecommendationGraph:
                 ),
                 "_need_web_fallback": False,
                 "retrieval_meta": _web_meta(len(results)),
+                "dialog_state": dialog_state.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
             }

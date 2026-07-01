@@ -211,6 +211,12 @@ export default function RecommendationsPage() {
               }
               break;
             case 'recommendations_complete':
+              break;
+            case 'clarification_required':
+              currentMsg.content = event.text || '我需要再确认一下你的意思。';
+              currentMsg.clarificationOptions = event.clarification_options || [];
+              currentMsg.thinkingMessage = undefined;
+              break;
             case 'complete':
               currentMsg.thinkingMessage = undefined;
               if (event.type === 'complete') {

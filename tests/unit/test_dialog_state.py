@@ -1,10 +1,19 @@
+import pytest
+
 from schemas.dialog_state import (
+    DeltaOperation,
+    DialogMusicState,
+    PlanDelta,
     apply_dialog_state_to_plan,
+    apply_plan_delta_operations,
     apply_plan_delta,
     apply_plan_delta_with_report,
+    build_deterministic_plan_delta,
+    compile_dialog_state_to_plan,
     coerce_followup_general_chat_to_retrieval,
     infer_dialog_state_from_history,
     should_clarify_before_planning,
+    update_dialog_result_anchors,
 )
 from schemas.query_plan import HardConstraints, IntentHints, MusicQueryPlan, RetrievalPlan, SoftIntent
 
@@ -168,3 +177,101 @@ def test_dialog_state_syncs_back_to_legacy_plan_fields():
     assert plan.retrieval_plan.graph_language_filter == "Japanese"
     assert plan.retrieval_plan.graph_genre_filter == "city pop"
     assert plan.retrieval_plan.soft_intent.vibe == "city pop at night"
+
+
+def test_plan_delta_add_replace_and_remove_are_deterministic():
+    initial = DialogMusicState(
+        hard_constraints=HardConstraints(language="English"),
+        soft_intent=SoftIntent(vibe="dreamy", avoid=["aggressive"]),
+        hints=IntentHints(genres=["dream pop"]),
+        turn_count=1,
+    )
+    delta = PlanDelta(
+        operations=[
+            DeltaOperation(op="replace", path="hard_constraints.language", value="Chinese"),
+            DeltaOperation(op="add", path="soft_intent.vibe", value="quieter"),
+            DeltaOperation(op="remove", path="soft_intent.avoid", value="aggressive"),
+        ],
+        confidence=0.96,
+    )
+
+    updated, report = apply_plan_delta_operations(initial, delta, "同样氛围，换中文并安静一点")
+
+    assert updated.hard_constraints.language == "Chinese"
+    assert updated.soft_intent.vibe == "dreamy; quieter"
+    assert updated.soft_intent.avoid == []
+    assert report.replaced["hard_constraints.language"] == "Chinese"
+    assert report.planner_mode == "delta_llm"
+
+
+def test_clear_topic_removes_inherited_music_state():
+    initial = DialogMusicState(
+        hard_constraints=HardConstraints(language="English", artist_entities=["A"]),
+        soft_intent=SoftIntent(vibe="dreamy"),
+        turn_count=2,
+    )
+    updated, report = apply_plan_delta_operations(
+        initial,
+        PlanDelta(operations=[DeltaOperation(op="clear_topic")]),
+        "换个话题",
+    )
+
+    assert updated.hard_constraints.artist_entities == []
+    assert updated.hard_constraints.language is None
+    assert updated.soft_intent.vibe == ""
+    assert report.topic_shift is True
+
+
+def test_invalid_delta_path_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported dialogue delta path"):
+        DeltaOperation(op="replace", path="retrieval_plan.use_web_search", value=True)
+
+
+def test_common_followup_builds_small_delta_instead_of_full_plan():
+    state = DialogMusicState(
+        hard_constraints=HardConstraints(language="English"),
+        soft_intent=SoftIntent(vibe="ethereal"),
+        turn_count=1,
+    )
+    delta = build_deterministic_plan_delta("同样氛围，换成中文并更安静", state)
+
+    assert delta is not None
+    assert delta.planner_mode == "deterministic"
+    assert {operation.path for operation in delta.operations} == {
+        "hard_constraints.language",
+        "soft_intent.vibe",
+    }
+
+
+def test_compile_delta_state_preserves_unmentioned_constraints():
+    state = DialogMusicState(
+        hard_constraints=HardConstraints(language="Chinese"),
+        soft_intent=SoftIntent(vibe="ethereal; quieter"),
+        hints=IntentHints(genres=["dream pop"]),
+        turn_count=2,
+    )
+    plan = compile_dialog_state_to_plan(state, "再来一点")
+
+    assert plan.intent_type == "hybrid_search"
+    assert plan.retrieval_plan.hard_constraints.language == "Chinese"
+    assert plan.retrieval_plan.hints.genres == ["dream pop"]
+    assert "ethereal" in (plan.retrieval_plan.vector_acoustic_query or "")
+
+
+def test_severe_conflict_uses_high_precision_clarification():
+    clarification = should_clarify_before_planning("想要非常安静助眠但又炸裂蹦迪的歌", None)
+
+    assert clarification.required is True
+    assert clarification.reason == "severe_conflict"
+    assert len(clarification.options) == 3
+
+
+def test_result_anchors_enable_later_song_references():
+    state = update_dialog_result_anchors(
+        DialogMusicState(turn_count=1),
+        [{"song": {"title": "Anchor", "artist": "Singer"}}],
+    )
+
+    assert state.last_result_titles == ["Anchor"]
+    assert state.last_result_artists == ["Singer"]
+    assert should_clarify_before_planning("刚才那首歌类似的", state).required is False

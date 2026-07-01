@@ -133,6 +133,7 @@ async def plan_with_dashscope(
     max_tokens: int,
     timeout: float,
     base_url: str,
+    temperature: float = 0.0,
 ) -> MusicQueryPlan:
     if not api_key:
         raise RuntimeError("DASHSCOPE_API_KEY is not configured")
@@ -147,7 +148,7 @@ async def plan_with_dashscope(
             },
             {"role": "user", "content": human_prompt.format(**payload.as_dict())},
         ],
-        "temperature": 0.3,
+        "temperature": float(temperature),
         "max_tokens": max_tokens,
         "enable_thinking": False,
         "response_format": {"type": "json_object"},

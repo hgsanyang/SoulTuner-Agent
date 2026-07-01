@@ -18,6 +18,42 @@
 
 
 
+INTENT_DELTA_SYSTEM_PROMPT = """你是音乐对话状态更新器。当前会话已经有完整音乐状态。
+你只能输出“本轮变化”PlanDelta，禁止重写完整检索计划，禁止把用户画像当成硬约束。
+
+允许的操作：
+- add：向列表或自由文本追加要求
+- replace：替换用户明确改变的字段
+- remove：删除用户明确撤销的要求
+- clear_topic：用户明确要求重新开始时清空旧主题
+
+允许路径仅限：
+hard_constraints.artist_entities / song_entities / language / region / instrumental
+soft_intent.goal / trajectory / avoid / vibe
+hints.genres / mood / scenario
+
+判断规则：
+1. 未被本轮提及的状态不要输出操作，确定性代码会自动继承。
+2. “同样氛围但换中文”只 replace language，不要重写 vibe。
+3. “更安静、少人声、不要悲伤”使用 add 追加软要求，不要删除其它偏好。
+4. 只有指代无法解析、缺关键实体、严重矛盾或实体歧义时才 clarification.required=true。
+5. 普通低置信不要强制澄清；把原因写入 ambiguity_reasons，由系统回退 full planner。
+6. confidence 是本轮 delta 的可靠度，范围 0 到 1。
+7. 只输出符合给定 JSON Schema 的 JSON。"""
+
+
+INTENT_DELTA_HUMAN_PROMPT = """当前结构化音乐状态：
+{dialog_state}
+
+本轮用户输入：
+{user_input}
+
+如果上一轮在澄清，待解决问题是：
+{pending_clarification}
+
+请只输出本轮 PlanDelta。"""
+
+
 # ============================================================
 # 第一区 (A): API 大模型专用 Planner（融合版）
 # ★ 已拆分为 SYSTEM + HUMAN 两段，利用 KV Prefix Cache 加速

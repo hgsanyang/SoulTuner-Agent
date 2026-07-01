@@ -218,7 +218,7 @@ User Query → Planner (LLM) outputs a layered plan
 - **Coarse Rank + Thompson Sampling**: Content RRF plus the clipped adjustment delta is used for cutoff (`coarse_cut_ratio=65%`), while tail candidates are rescued via TS sampling (`Beta(α,β)` distribution) for long-tail/new-song exploration.
 - **Tri-Anchor Normalized Reranking**: Auxiliary semantic anchor `(cosine+1)/2` (M2D-CLAP) + acoustic anchor `(cosine+1)/2` (OMAR-RQ centroid) + personal anchor `MinMax` (Graph Affinity), normalized to [0,1] before weighted fusion.
 - **Deployable fallback**: `DENSE_TEXT_AUDIO_BACKEND=muq|m2d|both`; a missing MuQ model/index or encoding failure automatically falls back to M2D, while lazy loading keeps the default memory footprint bounded.
-- **DST Multi-turn Inheritance**: Planner preserves the previous layered plan across turns and adds new constraints from follow-up queries.
+- **Explicit DST + PlanDelta**: First turns and topic resets use the full planner. Established follow-ups emit only whitelisted `add/replace/remove/clear_topic` operations, while deterministic code preserves untouched slots. Unresolved references, missing key entities, or severe conflicts return a clarification question with options; delta failures fall back to the full planner.
 - **MMR Jaccard**: Re-ranking using the `{genre, mood, theme, scenario}` multidimensional tags for candidate diversity.
 
 ### Agent Workflow
@@ -234,6 +234,7 @@ stateDiagram-v2
     route_intent --> chat_response: general_chat
     route_intent --> acquire_music: acquire_music
     route_intent --> gen_recommendations: recommend_by_favorites
+    route_intent --> clarify: clarification_required
 
     search_songs --> web_fallback: Auto-fallback on local miss
     search_songs --> explain_results: Push songs first on local hit
@@ -245,6 +246,7 @@ stateDiagram-v2
     extract_preferences --> persist_memory: LLM Preference Extraction (Async)
 
     chat_response --> persist_memory: General chat skips preference extraction
+    clarify --> persist_memory: Persist pending clarification state
 
     persist_memory --> [*]: GraphZep Async Write
 ```
@@ -296,7 +298,7 @@ Replay uses `logistic_tri_anchor_v1` by default and prints matched events, posit
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 190 tests covering settings loading, Planner cache, outcome eval, fusion filters, DST, feedback logs, alignment calibration, and more |
+| **Unit Testing** | 199 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, feedback logs, alignment calibration, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 57 dev cases and 34 holdout cases |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |

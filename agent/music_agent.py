@@ -268,6 +268,17 @@ class MusicRecommendationAgent:
                     yield {"type": "recommendations_complete"}
                     songs_already_sent = True
                     continue
+
+                if isinstance(chunk, dict) and "__clarification__" in chunk:
+                    clarification = chunk["__clarification__"]
+                    accumulated_text = str(clarification.get("question") or "")
+                    yield {
+                        "type": "clarification_required",
+                        "text": accumulated_text,
+                        "clarification_options": clarification.get("options") or [],
+                        "clarification_reason": clarification.get("reason"),
+                    }
+                    continue
                 
                 accumulated_text += chunk
                 yield {"type": "response", "text": accumulated_text, "is_complete": False}
