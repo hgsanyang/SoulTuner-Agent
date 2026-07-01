@@ -13,8 +13,6 @@ SOURCE_LABELS = {
     "graph": "图谱检索",
     "dense": "向量检索",
     "lexical": "词法检索",
-    "personal": "个性化",
-    "cold": "冷启动",
     "web": "联网",
 }
 
@@ -22,8 +20,6 @@ DEFAULT_RECALL_WEIGHTS = {
     "graph": 1.0,
     "dense": 1.0,
     "lexical": 1.0,
-    "personal": 0.45,
-    "cold": 0.25,
 }
 
 INTENT_RECALL_WEIGHTS = {
@@ -31,24 +27,70 @@ INTENT_RECALL_WEIGHTS = {
         "graph": 1.45,
         "dense": 0.70,
         "lexical": 1.50,
-        "personal": 0.35,
-        "cold": 0.20,
     },
     "hybrid_search": {
         "graph": 1.10,
         "dense": 1.20,
         "lexical": 1.10,
-        "personal": 0.50,
-        "cold": 0.30,
     },
     "vector_search": {
         "graph": 0.60,
         "dense": 1.50,
         "lexical": 0.70,
-        "personal": 0.70,
-        "cold": 0.45,
     },
 }
+
+SIMILARITY_TERMS = (
+    "类似",
+    "相似",
+    "听感",
+    "像",
+    "同类",
+    "same vibe",
+    "sounds like",
+    "like this",
+    "similar",
+)
+
+SCENE_ACOUSTIC_TERMS = (
+    "安静",
+    "温柔",
+    "柔软",
+    "雨天",
+    "雨夜",
+    "专注",
+    "学习",
+    "工作",
+    "睡前",
+    "助眠",
+    "放松",
+    "治愈",
+    "平静",
+    "轻柔",
+    "lo-fi",
+    "lofi",
+    "quiet",
+    "soft",
+    "rainy",
+    "focus",
+    "study",
+    "sleep",
+    "calm",
+    "gentle",
+    "relax",
+    "healing",
+    "late night",
+)
+
+PERSONAL_REQUEST_TERMS = (
+    "按我的口味",
+    "我喜欢的",
+    "我的偏好",
+    "根据我",
+    "personalized",
+    "my taste",
+    "for me",
+)
 
 
 def normalize_text(value: Any) -> str:
@@ -60,9 +102,67 @@ def normalize_song_key(title: str, artist: str) -> str:
     return f"{normalize_text(title)}_{normalize_text(artist)}"
 
 
-def recall_weights_for_intent(intent_type: str | None) -> Dict[str, float]:
+def _collect_context_text(*values: Any) -> str:
+    parts: List[str] = []
+
+    def _visit(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, Mapping):
+            for item in value.values():
+                _visit(item)
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                _visit(item)
+            return
+        parts.append(str(value))
+
+    for value in values:
+        _visit(value)
+    return " ".join(parts)
+
+
+def _contains_any(context: str, terms: Iterable[str]) -> bool:
+    normalized = normalize_text(context)
+    return any(normalize_text(term) in normalized for term in terms)
+
+
+def recall_weights_for_intent(
+    intent_type: str | None,
+    *,
+    query: str = "",
+    hard_constraints: Mapping[str, Any] | None = None,
+    soft_intent: Mapping[str, Any] | None = None,
+    hints: Mapping[str, Any] | None = None,
+) -> Dict[str, float]:
+    """Return content-recall weights.
+
+    Personalization and cold-start are post-recall score adjustments, not
+    independent recall channels.  This keeps provenance labels honest while
+    still allowing later graph-affinity and exploration stages to shape order.
+    """
     weights = dict(DEFAULT_RECALL_WEIGHTS)
     weights.update(INTENT_RECALL_WEIGHTS.get(str(intent_type or ""), {}))
+
+    hard = dict(hard_constraints or {})
+    has_entity = bool(hard.get("artist_entities") or hard.get("song_entities"))
+    context = _collect_context_text(query, soft_intent or {}, hints or {})
+    is_similarity = _contains_any(context, SIMILARITY_TERMS)
+    is_scene_acoustic = _contains_any(context, SCENE_ACOUSTIC_TERMS)
+    asks_personal = _contains_any(context, PERSONAL_REQUEST_TERMS)
+
+    if asks_personal:
+        # "按我的口味" still relies on the final personal score; recall should
+        # remain content-grounded so it cannot invent a separate personal pool.
+        weights.update({"graph": 0.90, "dense": 1.00, "lexical": 0.45})
+    elif has_entity and not is_similarity:
+        weights.update({"graph": 1.65, "dense": 0.45, "lexical": 1.45})
+    elif is_similarity:
+        weights.update({"graph": 0.75, "dense": 1.65, "lexical": 0.50})
+    elif is_scene_acoustic:
+        weights.update({"graph": 1.20, "dense": 1.45, "lexical": 1.10})
+
     return weights
 
 

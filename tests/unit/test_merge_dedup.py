@@ -24,10 +24,10 @@ def _item(title: str, artist: str, rank: int = 0, **song_fields) -> dict:
     }
 
 
-def test_all_local_recall_sources_remain_enabled_for_every_intent():
+def test_content_recall_sources_remain_enabled_for_every_intent():
     for intent_type in ("graph_search", "hybrid_search", "vector_search", "unknown"):
         weights = recall_weights_for_intent(intent_type)
-        assert set(weights) == {"graph", "dense", "lexical", "personal", "cold"}
+        assert set(weights) == {"graph", "dense", "lexical"}
         assert all(weight > 0 for weight in weights.values())
 
 
@@ -37,6 +37,43 @@ def test_intent_only_changes_recall_weights():
 
     assert graph["lexical"] > graph["dense"]
     assert vector["dense"] > vector["lexical"]
+
+
+def test_entity_query_prioritizes_graph_and_lexical_content_recall():
+    weights = recall_weights_for_intent(
+        "hybrid_search",
+        query="我想听周杰伦的歌",
+        hard_constraints={"artist_entities": ["周杰伦"], "song_entities": []},
+    )
+
+    assert weights["graph"] > weights["dense"]
+    assert weights["lexical"] > weights["dense"]
+
+
+def test_scene_query_keeps_lexical_available_for_tag_and_lyric_matches():
+    weights = recall_weights_for_intent(
+        "hybrid_search",
+        query="需要偏柔软安静的雨天专注歌单",
+        soft_intent={"goal": "柔软安静，适合雨天专注"},
+        hints={"mood": "Calm", "scenario": "Study"},
+    )
+
+    assert weights["dense"] > weights["graph"]
+    assert weights["lexical"] >= 1.0
+    assert "personal" not in weights
+    assert "cold" not in weights
+
+
+def test_similarity_seed_keeps_dense_ahead_of_entity_exactness():
+    weights = recall_weights_for_intent(
+        "hybrid_search",
+        query="有没有类似 Running Up That Hill 听感的歌",
+        hard_constraints={"song_entities": ["Running Up That Hill"]},
+        soft_intent={"vibe": "similar sound"},
+    )
+
+    assert weights["dense"] > weights["graph"]
+    assert weights["dense"] > weights["lexical"]
 
 
 def test_weighted_rrf_rewards_cross_source_hits():

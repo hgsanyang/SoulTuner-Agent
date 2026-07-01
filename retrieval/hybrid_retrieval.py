@@ -9,10 +9,8 @@ from typing import List, Dict, Any
 from tools.semantic_search import semantic_search
 from tools.web_search_aggregator import _federated_search_async
 from retrieval.recall_sources import (
-    cold_start_recall,
     graph_candidate_recall,
     lexical_bm25_recall,
-    personalized_recall,
 )
 from retrieval.retrieval_fusion import (
     apply_hard_filters,
@@ -20,6 +18,7 @@ from retrieval.retrieval_fusion import (
     recall_weights_for_intent,
     weighted_rrf,
 )
+from retrieval.post_recall_adjustments import apply_post_recall_adjustments
 from config.logging_config import get_logger
 from schemas.music_state import ToolOutput
 
@@ -412,7 +411,7 @@ class MusicHybridRetrieval:
 
     async def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
         """
-        主检索入口：五路并行召回 → RRF → 硬过滤 → 统一排序。
+        主检索入口：内容三路并行召回 → RRF → 硬过滤 → 统一排序。
 
         Args:
             query: 用户查询
@@ -462,7 +461,13 @@ class MusicHybridRetrieval:
         graph_song_entities = list(hard_constraints.get("song_entities") or [])
         graph_entities = list(dict.fromkeys(graph_artist_entities + graph_song_entities))
         intent_type = str(plan.get("_intent_type") or "hybrid_search")
-        recall_weights = recall_weights_for_intent(intent_type)
+        recall_weights = recall_weights_for_intent(
+            intent_type,
+            query=query,
+            hard_constraints=hard_constraints,
+            soft_intent=soft_intent,
+            hints=hints,
+        )
         need_web_search = bool(plan.get("use_web_search"))
         search_keyword = str(plan.get("web_search_keywords") or query)
 
@@ -562,7 +567,8 @@ class MusicHybridRetrieval:
                     3,
                 )
 
-        # 2. 五路召回永远一起运行；intent_type 只改变 RRF 权重。
+        # 2. 内容召回永远一起运行；intent_type/query profile 只改变 RRF 权重。
+        # 个性化与冷启动不是独立召回源，分别在 Graph Affinity 与探索槽中作为召回后加分/减分项。
         recall_tasks = {
             "graph": timed_recall("graph", run_sync_in_executor(
                 graph_candidate_recall,
@@ -577,15 +583,6 @@ class MusicHybridRetrieval:
             "lexical": timed_recall("lexical", run_sync_in_executor(
                 lexical_bm25_recall,
                 lexical_query,
-                limit=recall_limit,
-            )),
-            "personal": timed_recall("personal", run_sync_in_executor(
-                personalized_recall,
-                GRAPH_AFFINITY_USER_ID,
-                limit=recall_limit,
-            )),
-            "cold": timed_recall("cold", run_sync_in_executor(
-                cold_start_recall,
                 limit=recall_limit,
             )),
         }
@@ -798,7 +795,7 @@ class MusicHybridRetrieval:
             1 for item in merged if len(item.get("_recall_sources", [])) > 1
         )
         logger.info(
-            "[RRF] 五路融合完成: %d 首，多路交叉命中=%d",
+            "[RRF] 内容召回融合完成: %d 首，多路交叉命中=%d",
             len(merged),
             multi_source_count,
         )
@@ -984,6 +981,46 @@ class MusicHybridRetrieval:
     # 优化版本：1 次合并 Cypher 查询（图距离 + 候选标签）+ 缓存用户偏好
     #          延迟从 ~100-150ms 降至 ~40-60ms
     # ================================================================
+
+    @staticmethod
+    def _fetch_post_recall_metadata(candidates: List[dict]) -> Dict[str, dict]:
+        """Fetch score-adjustment metadata for already-recalled candidates."""
+        titles = [
+            item.get("song", {}).get("title", "")
+            for item in candidates
+            if item.get("song", {}).get("title")
+        ]
+        if not titles:
+            return {}
+        try:
+            from retrieval.neo4j_client import get_neo4j_client
+            neo4j = get_neo4j_client()
+            if not neo4j or not neo4j.driver:
+                return {}
+            query = """
+            UNWIND $titles AS t
+            MATCH (s:Song {title: t})
+            WITH s, properties(s) AS props
+            RETURN s.title AS title,
+                   coalesce(s.updated_at, 0) AS updated_at,
+                   coalesce(s.ts_alpha, 1) AS ts_alpha,
+                   coalesce(s.ts_beta, 1) AS ts_beta,
+                   coalesce(props['ts_last_exposed_at'], 0) AS ts_last_exposed_at
+            """
+            rows = neo4j.execute_query(query, {"titles": titles}) or []
+            return {
+                str(row.get("title") or ""): {
+                    "updated_at": row.get("updated_at", 0),
+                    "ts_alpha": row.get("ts_alpha", 1),
+                    "ts_beta": row.get("ts_beta", 1),
+                    "ts_last_exposed_at": row.get("ts_last_exposed_at", 0),
+                }
+                for row in rows
+                if row.get("title")
+            }
+        except Exception as e:
+            logger.warning(f"[PostRecallAdjust] 元数据读取失败（降级为中性加权）: {e}")
+            return {}
 
     @staticmethod
     def _compute_graph_affinity(
@@ -1175,7 +1212,7 @@ class MusicHybridRetrieval:
         合并各召回源并执行统一过滤与排序。
 
         排序管线（R1）:
-          1. 解析五路召回结果并保留各路排名
+          1. 解析内容召回结果并保留各路排名
           2. 加权 RRF 融合
           3. hard_constraints + DISLIKES 唯一硬过滤
           3. Artist 多样性初筛（每个歌手最多 N 首）
@@ -1304,14 +1341,22 @@ class MusicHybridRetrieval:
             logger.info(f"[ArtistDiversity] 指定歌手豁免: {exempt_artists}")
         logger.info(f"[ArtistDiversity] 初筛完成 (max={max_per_artist}/artist)，剩余 {len(final_list)} 首，艺术家分布: {dict(artist_count)}")
 
-        # ---- Step 4: Graph Affinity 粗排 + Thompson Sampling 探索槽 ----
+        # ---- Step 4: 召回后加分/减分 + 粗排 + Thompson Sampling 探索槽 ----
         cand_tag_map = {}
+        post_metadata_by_title = {}
         if _settings.graph_affinity_enabled and final_list:
             total_before = len(final_list)
             final_list, cand_tag_map = self._compute_graph_affinity(final_list)
+            post_metadata_by_title = self._fetch_post_recall_metadata(final_list)
+            final_list = apply_post_recall_adjustments(
+                final_list,
+                metadata_by_title=post_metadata_by_title,
+                score_field="_rrf_score",
+                output_score_field="_post_coarse_score",
+            )
 
-            # ── Phase A: 按 graph_affinity 排序并截断（粗排）──
-            final_list.sort(key=lambda x: x.get("_graph_affinity", 0), reverse=True)
+            # ── Phase A: 内容 RRF 分 + 召回后小幅加减分（粗排）──
+            final_list.sort(key=lambda x: x.get("_post_coarse_score", 0), reverse=True)
 
             coarse_cut = max(int(total_before * _settings.coarse_cut_ratio), 10)
             coarse_cut = min(coarse_cut, len(final_list))  # 不能超过实际数量
@@ -1320,7 +1365,7 @@ class MusicHybridRetrieval:
             tail_candidates = final_list[coarse_cut:]
 
             # ── Phase B: Thompson Sampling 探索槽 ──
-            # 从尾部捞回冷门歌，用 TS 采样决定哪些冷门歌有机会进入精排
+            # 从尾部捞回冷门/新歌，同时压制近期过曝歌曲。
             import random
             n_explore = max(int(coarse_cut * _settings.exploration_ratio), 1)
 
@@ -1328,27 +1373,19 @@ class MusicHybridRetrieval:
             if tail_candidates:
                 try:
                     import numpy as np
-                    from retrieval.neo4j_client import get_neo4j_client
-                    neo4j = get_neo4j_client()
-
-                    # 批量读取尾部歌曲的 TS 参数 (ts_alpha, ts_beta)
-                    tail_titles = [c.get("song", {}).get("title", "") for c in tail_candidates]
-                    ts_query = """
-                    UNWIND $titles AS t
-                    MATCH (s:Song {title: t})
-                    RETURN s.title AS title,
-                           coalesce(s.ts_alpha, 1) AS alpha,
-                           coalesce(s.ts_beta, 1) AS beta
-                    """
-                    ts_rows = neo4j.execute_query(ts_query, {"titles": tail_titles}) if neo4j and neo4j.driver else []
-                    ts_map = {r["title"]: (r["alpha"], r["beta"]) for r in (ts_rows or [])}
 
                     # TS 采样：为尾部每首歌采样一个分数
                     ts_scores = []
                     for c in tail_candidates:
-                        title = c.get("song", {}).get("title", "")
-                        alpha, beta = ts_map.get(title, (1, 1))
-                        ts_score = float(np.random.beta(alpha, beta))
+                        alpha = max(float(c.get("_post_ts_alpha", 1.0)), 0.1)
+                        beta = max(1.0 + float(c.get("_post_effective_exposure", 0.0)), 0.1)
+                        ts_sample = float(np.random.beta(alpha, beta))
+                        ts_score = (
+                            ts_sample
+                            + 0.12 * float(c.get("_post_freshness_score", 0.0))
+                            + 0.08 * float(c.get("_post_longtail_score", 0.0))
+                            - 0.10 * float(c.get("_post_exposure_penalty", 0.0))
+                        )
                         c["_ts_score"] = round(ts_score, 4)
                         ts_scores.append(ts_score)
 
@@ -1446,6 +1483,29 @@ class MusicHybridRetrieval:
                 final_list = reranker.rerank(rerank_query, final_list)
             except Exception as e:
                 logger.warning(f"[Reranker] Cross-Encoder 精排异常（降级跳过）: {e}")
+
+        if final_list:
+            if not post_metadata_by_title:
+                post_metadata_by_title = self._fetch_post_recall_metadata(final_list)
+            final_list = apply_post_recall_adjustments(
+                final_list,
+                metadata_by_title=post_metadata_by_title,
+                score_field="similarity_score",
+                output_score_field="_post_final_score",
+                apply_to_similarity=True,
+            )
+            final_list.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
+            logger.info(
+                "[PostRecallAdjust] 完成最终加减分: Top3=%s",
+                [
+                    (
+                        item.get("song", {}).get("title", ""),
+                        round(item.get("similarity_score", 0), 4),
+                        item.get("_post_recall_delta", 0),
+                    )
+                    for item in final_list[:3]
+                ],
+            )
 
         # ---- Step 6: MMR 多维多样性重排（genre + mood + theme + scenario）----
         def _build_rich_tags(item: dict, tag_map: dict) -> set:
@@ -1586,9 +1646,8 @@ class MusicHybridRetrieval:
         if not raw_markdown:
             raw_markdown = "抱歉，没有找到合适的音乐推荐。"
 
-        # ---- Step 8: 异步更新 Thompson Sampling 曝光衰减 ----
-        # 每推荐一次，ts_beta += 1.0，使该歌在未来探索槽中的采样分数自然降低
-        # Beta(alpha, beta) 中 beta 越大，采样值越倾向于低值
+        # ---- Step 8: 异步更新曝光疲劳参数 ----
+        # 每推荐一次，ts_beta += 0.3，并记录最后曝光时间。后续排序会按时间半衰恢复。
         recommended_titles = [
             item.get("song", {}).get("title", "")
             for item in final_list
@@ -1605,12 +1664,13 @@ class MusicHybridRetrieval:
                             ts_update_query = """
                             UNWIND $titles AS t
                             MATCH (s:Song {title: t})
-                            SET s.ts_beta = coalesce(s.ts_beta, 1) + 0.3
+                            SET s.ts_beta = coalesce(s.ts_beta, 1) + 0.3,
+                                s.ts_last_exposed_at = timestamp()
                             """
                             neo4j.execute_query(ts_update_query, {"titles": titles})
-                            logger.info(f"[TS] 曝光衰减更新: {len(titles)} 首歌 ts_beta += 0.3")
+                            logger.info(f"[Exposure] 曝光疲劳更新: {len(titles)} 首歌 ts_beta += 0.3")
                     except Exception as e:
-                        logger.warning(f"[TS] 曝光衰减更新失败（不影响推荐）: {e}")
+                        logger.warning(f"[Exposure] 曝光疲劳更新失败（不影响推荐）: {e}")
 
                 # fire-and-forget: 异步更新，不阻塞返回
                 try:

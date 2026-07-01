@@ -643,7 +643,7 @@ async def run(
         preferred_order = [
             "end_to_end_ms", "agent_total_ms", "graphzep_ms", "intent_ms",
             "retrieval_total_ms", "recall_graph_ms", "recall_dense_ms",
-            "recall_lexical_ms", "recall_personal_ms", "recall_cold_ms",
+            "recall_lexical_ms",
             "fusion_filter_ms", "ranking_ms", "web_fallback_ms", "explanation_ms",
         ]
         stages = timing_summary["stages"]
