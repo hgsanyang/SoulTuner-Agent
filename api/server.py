@@ -248,6 +248,7 @@ class RecommendationRequest(BaseModel):
     user_preferences: Optional[Dict[str, Any]] = None
     chat_history: Optional[List[Dict[str, str]]] = None
     dialog_state: Optional[Dict[str, Any]] = None
+    user_id: str = "local_admin"
     llm_provider: str = "dashscope"            # 模型供应商: dashscope / siliconflow / google / ...
     web_search_enabled: bool = True           # 是否开启联网搜索
 
@@ -323,6 +324,7 @@ async def stream_recommendations(
     user_preferences: Optional[Dict[str, Any]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     dialog_state: Optional[Dict[str, Any]] = None,
+    user_id: str = "local_admin",
     web_search_enabled: bool = True,
     is_disconnected=None,
 ) -> AsyncGenerator[str, None]:
@@ -382,6 +384,7 @@ async def stream_recommendations(
             chat_history=chat_history,
             user_preferences=user_preferences,
             dialog_state=dialog_state,
+            user_id=user_id,
         ):
             # ★ 检测客户端是否已断开（用户点击了"停止生成"）
             if is_disconnected:
@@ -419,6 +422,9 @@ async def stream_recommendations(
                     await asyncio.sleep(0.1)
                     
             elif event_type == "recommendations_complete":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            elif event_type == "clarification_required":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 
             elif event_type == "complete":
@@ -541,6 +547,7 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
             user_preferences=request.user_preferences,
             chat_history=request.chat_history,
             dialog_state=request.dialog_state,
+            user_id=request.user_id,
             web_search_enabled=request.web_search_enabled,
             is_disconnected=raw_request.is_disconnected,
         ),
@@ -599,6 +606,7 @@ async def get_recommendations(request: RecommendationRequest):
             user_preferences=request.user_preferences,
             chat_history=request.chat_history,
             dialog_state=request.dialog_state,
+            user_id=request.user_id,
         )
         return result
     except Exception as e:
@@ -936,12 +944,12 @@ async def reset_settings_endpoint():
 # ---- 新增:行为事件请求模型 ----
 class UserEventRequest(BaseModel):
     """用户行为事件"""
-    event_type: str           # like / unlike / save / unsave / skip / full_play / repeat
+    event_type: str           # like/save/skip/full_play/repeat/dislike/play_start...
     song_title: str           # 歌曲名
     artist: str = "未知"      # 歌手
     user_id: str = "local_admin"
     exposure_id: Optional[str] = None
-    extra: Optional[str] = None  # 额外信息(如播放时长)
+    extra: Optional[Any] = None  # position/play_duration_ms/progress_ratio/session_id
 
 
 # ---- 新增:行为事件转自然语言 ----
@@ -954,7 +962,10 @@ EVENT_TEMPLATES = {
     "full_play": "用户完整听完了《{title}》{artist},表示认可",
     "repeat":    "用户反复播放了《{title}》{artist},非常喜欢这首歌",
     "dislike":   "用户明确表示不喜欢《{title}》{artist}",
+    "play_start": "用户开始播放《{title}》{artist}",
 }
+
+SUPPORTED_USER_EVENTS = set(EVENT_TEMPLATES) | {"unsave"}
 
 
 @app.post("/api/user-event")
@@ -973,6 +984,8 @@ async def capture_user_event(request: UserEventRequest):
       full_play→ LISTENED_TO (count++) 完整播放 = 隐式正向
     """
     try:
+        if request.event_type not in SUPPORTED_USER_EVENTS:
+            raise HTTPException(status_code=422, detail="Unsupported user event type")
         from retrieval.user_memory import UserMemoryManager
         memory = UserMemoryManager()
         memory.ensure_user_exists(request.user_id)
@@ -1003,7 +1016,7 @@ async def capture_user_event(request: UserEventRequest):
         # ② 本地 JSONL 事件日志：供离线重放、排序权重学习和未来 DPO/SFT 数据构建。
         try:
             from services.feedback_logger import log_user_event
-            log_user_event(
+            feedback_event_id = log_user_event(
                 event_type=event,
                 song_title=title,
                 artist=artist,
@@ -1013,6 +1026,7 @@ async def capture_user_event(request: UserEventRequest):
             )
         except Exception as log_error:
             logger.warning(f"[Feedback] 行为事件日志写入失败: {log_error}")
+            feedback_event_id = None
 
         # ③ GraphZep 异步写入（仅作为补充上下文，不作为主记忆源）
         template = EVENT_TEMPLATES.get(
@@ -1021,17 +1035,61 @@ async def capture_user_event(request: UserEventRequest):
         )
         description = template.format(title=title, artist=artist)
 
-        from services.graphzep_client import get_graphzep_client
-        client = get_graphzep_client()
-        asyncio.create_task(
-            client.add_user_event(event_description=description)
-        )
+        if event != "play_start":
+            from services.graphzep_client import get_graphzep_client
+            client = get_graphzep_client()
+            asyncio.create_task(
+                client.add_user_event(event_description=description)
+            )
 
-        return {"success": True, "event_recorded": description}
+        return {
+            "success": True,
+            "event_recorded": description,
+            "feedback_event_id": feedback_event_id,
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"行为事件记录失败: {e}")
         return {"success": False, "error": str(e)}
+
+
+@app.get("/api/ranking-policy/status")
+async def ranking_policy_status():
+    """Return non-sensitive A3 policy state for diagnostics and UI tooling."""
+    from services.feedback_logger import load_jsonl
+    from services.ranking_policy import ACTIVE_FILE, CANDIDATE_FILE, feedback_dir, policy_path
+
+    root = feedback_dir()
+    exposures = load_jsonl(root / "exposures.jsonl")
+    events = load_jsonl(root / "events.jsonl")
+
+    def _summary(path: Path) -> Dict[str, Any] | None:
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            global_model = payload.get("global") or {}
+            return {
+                "schema_version": payload.get("schema_version"),
+                "status": payload.get("status"),
+                "gate_passed": payload.get("gate_passed"),
+                "created_at": payload.get("created_at"),
+                "global_status": global_model.get("status"),
+                "events": global_model.get("events"),
+                "validation_events": global_model.get("validation_events"),
+            }
+        except Exception:
+            return {"status": "invalid"}
+
+    return {
+        "feedback_dir": str(root),
+        "num_exposures": len(exposures),
+        "num_events": len(events),
+        "active": _summary(policy_path(ACTIVE_FILE)),
+        "candidate": _summary(policy_path(CANDIDATE_FILE)),
+    }
 
 
 # ================================================================

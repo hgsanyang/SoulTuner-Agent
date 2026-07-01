@@ -17,6 +17,7 @@ def test_exposure_and_event_jsonl_roundtrip(tmp_path, monkeypatch):
                 "_semantic_score": 0.8,
                 "_acoustic_score": 0.7,
                 "_personal_score": 0.6,
+                "_source_ranks": {"dense": 1},
             }
         ],
     )
@@ -31,7 +32,10 @@ def test_exposure_and_event_jsonl_roundtrip(tmp_path, monkeypatch):
     events = feedback_logger.load_jsonl(tmp_path / "events.jsonl")
 
     assert exposures[0]["exposure_id"] == "req-1"
+    assert "query" not in exposures[0]
+    assert len(exposures[0]["query_hash"]) == 64
     assert exposures[0]["items"][0]["semantic_score"] == 0.8
+    assert exposures[0]["items"][0]["source_ranks"] == {"dense": 1}
     assert events[0]["event_type"] == "like"
 
 

@@ -4,7 +4,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `hybrid_retrieval.py` | 三路内容召回（GraphRAG + MuQ/Vector + BM25 词法）+ Web 兜底，个性化/冷启动作为召回后加分/减分项，粗排 + 三锚精排 + MMR 重排 |
+| `hybrid_retrieval.py` | 三路内容召回（GraphRAG + MuQ/Vector + BM25 词法）+ Web 兜底，个性化/冷启动作为限幅召回后加分/减分项，内容双锚精排 + MMR 重排 |
 | `post_recall_adjustments.py` | 召回后统一加分/减分层：个性化、新鲜度、冷门度、过曝时间衰减惩罚，输出限幅 delta |
 | `audio_embedder.py` | M2D-CLAP 跨模态 + OMAR-RQ 声学双模型编码（含文本 embedding 缓存） |
 | `portable_m2d.py` | M2D-CLAP 模型权重加载器（第三方） |

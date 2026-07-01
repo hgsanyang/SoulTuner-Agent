@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import time
@@ -19,6 +20,13 @@ FEATURE_FIELDS = {
     "acoustic": "acoustic_score",
     "personal": "personal_score",
 }
+
+
+def _first_present(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in item and item.get(key) is not None:
+            return item.get(key)
+    return None
 
 
 def _feedback_dir() -> Path:
@@ -47,16 +55,28 @@ def _song_identity(song: dict[str, Any]) -> dict[str, str]:
 def _feature_snapshot(item: dict[str, Any], rank: int) -> dict[str, Any]:
     song = item.get("song") if isinstance(item.get("song"), dict) else item
     identity = _song_identity(song)
+    source_ranks = (
+        item.get("_source_ranks")
+        or song.get("_source_ranks")
+        or {}
+    )
     return {
         **identity,
         "rank": rank,
         "music_id": song.get("music_id") or song.get("id"),
         "source": song.get("source") or song.get("recall_source") or item.get("source") or item.get("recall_source"),
         "recall_sources": song.get("recall_sources") or song.get("_recall_sources") or item.get("_recall_sources") or [],
-        "score": song.get("similarity_score") or item.get("similarity_score"),
-        "semantic_score": song.get("_semantic_score") or item.get("_semantic_score"),
-        "acoustic_score": song.get("_acoustic_score") or item.get("_acoustic_score"),
-        "personal_score": song.get("_personal_score") or item.get("_personal_score"),
+        "score": _first_present(item, "similarity_score", "_post_final_score"),
+        "rrf_score": _first_present(item, "_rrf_score"),
+        "source_ranks": source_ranks,
+        "semantic_score": _first_present(item, "_semantic_score"),
+        "acoustic_score": _first_present(item, "_acoustic_score"),
+        "personal_score": _first_present(item, "_post_personal_score", "_personal_score"),
+        "freshness_score": _first_present(item, "_post_freshness_score"),
+        "longtail_score": _first_present(item, "_post_longtail_score"),
+        "exposure_penalty": _first_present(item, "_post_exposure_penalty"),
+        "post_recall_delta": _first_present(item, "_post_recall_delta"),
+        "is_exploration": bool(item.get("_is_exploration")),
         "language": song.get("language"),
         "genres": song.get("genres") or song.get("genre"),
         "moods": song.get("moods"),
@@ -86,7 +106,7 @@ def log_exposure(
         "exposure_id": exposure_id,
         "ts": int(time.time() * 1000),
         "user_id": user_id,
-        "query": query,
+        "query_hash": hashlib.sha256(str(query or "").encode("utf-8")).hexdigest(),
         "intent_type": intent_type,
         "count": len(rows),
         "items": rows,
@@ -94,6 +114,8 @@ def log_exposure(
         "dialog_state": dialog_state or {},
         "timings": timings or {},
     }
+    if os.getenv("FEEDBACK_LOG_RAW_QUERY", "0").lower() in {"1", "true", "yes"}:
+        payload["query"] = query
     _append_jsonl(_jsonl_path("exposures.jsonl"), payload)
     return exposure_id
 
@@ -106,19 +128,26 @@ def log_user_event(
     user_id: str = "local_admin",
     exposure_id: str | None = None,
     extra: Any = None,
-) -> None:
+) -> str:
+    extra_payload = extra if isinstance(extra, dict) else {"value": extra} if extra is not None else {}
+    event_id = str(uuid.uuid4())
     payload = {
         "type": "event",
-        "event_id": str(uuid.uuid4()),
+        "event_id": event_id,
         "ts": int(time.time() * 1000),
         "user_id": user_id,
         "event_type": event_type,
         "title": str(song_title or "").strip(),
         "artist": str(artist or "").strip(),
         "exposure_id": exposure_id,
-        "extra": extra,
+        "extra": extra_payload,
+        "position": extra_payload.get("position"),
+        "play_duration_ms": extra_payload.get("play_duration_ms"),
+        "progress_ratio": extra_payload.get("progress_ratio"),
+        "session_id": extra_payload.get("session_id"),
     }
     _append_jsonl(_jsonl_path("events.jsonl"), payload)
+    return event_id
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:

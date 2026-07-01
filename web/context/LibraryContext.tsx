@@ -11,6 +11,8 @@ export interface LikedSong {
     preview_url?: string;
     coverUrl?: string;
     lrc_url?: string;
+    exposure_id?: string;
+    exposure_rank?: number;
     addedAt: number;
 }
 
@@ -168,11 +170,17 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         setLikedSongs(prev => {
             const existing = prev.find(s => s.id === id);
             if (existing) {
-                sendUserEvent('unlike', song.title, song.artist);
+                sendUserEvent('unlike', song.title, song.artist, {
+                    exposureId: song.exposure_id,
+                    position: song.exposure_rank,
+                });
                 return prev.filter(s => s.id !== id);
             }
             showToast(`♥ 已添加到「我的喜欢」`);
-            sendUserEvent('like', song.title, song.artist);
+            sendUserEvent('like', song.title, song.artist, {
+                exposureId: song.exposure_id,
+                position: song.exposure_rank,
+            });
             return [{ ...song, id, addedAt: Date.now() }, ...prev];
         });
     };
@@ -217,7 +225,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             if (c.id !== collectionId) return c;
             if (c.songs.some(s => s.id === id)) return c; // already in
             showToast(`✓ 已添加到「${c.name}」`);
-            sendUserEvent('save', song.title, song.artist);
+            sendUserEvent('save', song.title, song.artist, {
+                exposureId: song.exposure_id,
+                position: song.exposure_rank,
+            });
             return { ...c, songs: [{ ...song, id, addedAt: Date.now() }, ...c.songs] };
         }));
     };

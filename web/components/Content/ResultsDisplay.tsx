@@ -15,6 +15,8 @@ interface Song {
   preview_url?: string;
   cover_url?: string;
   lrc_url?: string;
+  exposure_id?: string;
+  exposure_rank?: number;
 }
 
 interface ResultsDisplayProps {
@@ -36,6 +38,8 @@ export default function ResultsDisplay({ response, songs, onRemoveSong }: Result
       preview_url: s.preview_url,
       coverUrl: s.cover_url,
       lrc_url: s.lrc_url,
+      exposure_id: s.exposure_id,
+      exposure_rank: s.exposure_rank,
     }));
 
   const handleAddAllToQueue = () => {

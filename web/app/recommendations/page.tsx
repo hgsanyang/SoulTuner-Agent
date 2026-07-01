@@ -23,6 +23,7 @@ export interface ChatMessage {
   clarificationOptions?: string[];
   refinementOptions?: RefinementOption[];
   intentConfidence?: number;
+  exposureId?: string;
   error?: string;
 }
 
@@ -135,6 +136,8 @@ export default function RecommendationsPage() {
       preview_url: s.song.preview_url,
       coverUrl: s.song.cover_url,
       lrc_url: s.song.lrc_url,
+      exposure_id: s.song.exposure_id,
+      exposure_rank: s.song.exposure_rank,
     }));
 
   // 当最新推荐歌曲变化时，右侧面板自动滚到顶部
@@ -202,12 +205,22 @@ export default function RecommendationsPage() {
             case 'recommendations_start':
               currentMsg.thinkingMessage = '正在获取推荐歌曲...';
               currentMsg.songs = [];
+              currentMsg.exposureId = event.exposure_id;
               break;
             case 'song':
               if (event.song) {
                 const prevSongs = currentMsg.songs || [];
                 const exists = prevSongs.some(s => s.title === event.song?.title && s.artist === event.song?.artist);
-                if (!exists) currentMsg.songs = [...prevSongs, event.song];
+                if (!exists) {
+                  currentMsg.songs = [
+                    ...prevSongs,
+                    {
+                      ...event.song,
+                      exposure_id: event.exposure_id || currentMsg.exposureId,
+                      exposure_rank: typeof event.index === 'number' ? event.index + 1 : prevSongs.length + 1,
+                    },
+                  ];
+                }
               }
               break;
             case 'recommendations_complete':
@@ -224,6 +237,7 @@ export default function RecommendationsPage() {
                   setDialogState(event.dialog_state);
                   try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
                 }
+                if (event.exposure_id) currentMsg.exposureId = event.exposure_id;
                 if (typeof event.intent_confidence === 'number') {
                   currentMsg.intentConfidence = event.intent_confidence;
                 }

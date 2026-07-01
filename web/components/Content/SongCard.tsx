@@ -21,6 +21,8 @@ interface SongCardProps {
   recall_source_labels?: string[];
   retrieval_sources?: string[];
   retrieval_source_labels?: string[];
+  exposure_id?: string;
+  exposure_rank?: number;
   queueContext?: {
     title: string;
     artist: string;
@@ -28,6 +30,8 @@ interface SongCardProps {
     preview_url?: string;
     coverUrl?: string;
     lrc_url?: string;
+    exposure_id?: string;
+    exposure_rank?: number;
   }[];
   onRemove?: () => void;  // 从当前结果列表中删除
 }
@@ -57,6 +61,8 @@ export default function SongCard({
   recall_source_labels,
   retrieval_sources,
   retrieval_source_labels,
+  exposure_id,
+  exposure_rank,
   queueContext,
   onRemove,
 }: SongCardProps) {
@@ -96,17 +102,26 @@ export default function SongCard({
     e.stopPropagation();
     if (!preview_url) return;
     if (isThisActive) globalToggle();
-    else playSong({ title, artist, genre, preview_url, coverUrl: cover_url, lrc_url }, queueContext);
+    else playSong({
+      title, artist, genre, preview_url, coverUrl: cover_url, lrc_url,
+      exposure_id, exposure_rank,
+    }, queueContext);
   };
 
   const handleLike = (e: React.MouseEvent) => {
     e.stopPropagation();
-    toggleLike({ title, artist, genre, preview_url, coverUrl: cover_url, lrc_url });
+    toggleLike({
+      title, artist, genre, preview_url, coverUrl: cover_url, lrc_url,
+      exposure_id, exposure_rank,
+    });
   };
 
   const handleDislike = (e: React.MouseEvent) => {
     e.stopPropagation();
-    sendUserEvent('dislike', title, artist);
+    sendUserEvent('dislike', title, artist, {
+      exposureId: exposure_id,
+      position: exposure_rank,
+    });
     showToast('👎 已标记为不喜欢');
     onRemove?.();
   };
@@ -117,7 +132,10 @@ export default function SongCard({
       removeFromQueue(title, artist);
       showToast('已从播放列表移除');
     } else {
-      addToQueue({ title, artist, genre, preview_url, coverUrl: cover_url, lrc_url });
+      addToQueue({
+        title, artist, genre, preview_url, coverUrl: cover_url, lrc_url,
+        exposure_id, exposure_rank,
+      });
       showToast('✚ 已加入播放列表');
     }
   };
@@ -271,7 +289,7 @@ export default function SongCard({
                   <div style={{ padding: '1rem', fontSize: '0.85rem', color: theme.colors.text.muted, textAlign: 'center' }}>暂无歌单</div>
                 ) : (
                   collections.map(col => (
-                    <button key={col.id} onClick={e => { e.stopPropagation(); addToCollection(col.id, { title, artist, genre, preview_url }); setShowFolderPicker(false); }} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '100%', padding: '0.65rem 0.85rem', background: 'none', border: 'none', cursor: 'pointer', color: theme.colors.text.primary, fontSize: '0.88rem', textAlign: 'left', transition: 'background-color 0.12s' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
+                    <button key={col.id} onClick={e => { e.stopPropagation(); addToCollection(col.id, { title, artist, genre, preview_url, exposure_id, exposure_rank }); setShowFolderPicker(false); }} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '100%', padding: '0.65rem 0.85rem', background: 'none', border: 'none', cursor: 'pointer', color: theme.colors.text.primary, fontSize: '0.88rem', textAlign: 'left', transition: 'background-color 0.12s' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
                       <div style={{ width: '26px', height: '26px', borderRadius: '4px', backgroundColor: col.coverColor, flexShrink: 0 }} />
                       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col.name}</span>
                     </button>
