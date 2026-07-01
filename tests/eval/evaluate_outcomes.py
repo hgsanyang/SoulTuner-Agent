@@ -499,6 +499,8 @@ def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
         "dialog_state": result.get("dialog_state", {}),
         "dialog_delta": result.get("dialog_delta", {}),
         "clarification_options": result.get("clarification_options", []),
+        "intent_confidence": result.get("intent_confidence", 1.0),
+        "refinement_options": result.get("refinement_options", []),
         "sample": [f'{s.get("title")} - {s.get("artist")}' for s in songs[:5]],
         "sample_songs": [{
             "title": s.get("title"),
@@ -641,7 +643,7 @@ async def run(
         preferred_order = [
             "end_to_end_ms", "agent_total_ms", "graphzep_ms", "intent_ms",
             "retrieval_total_ms", "recall_graph_ms", "recall_dense_ms",
-            "recall_lexical_ms", "recall_personal_ms", "recall_cold_ms",
+            "recall_lexical_ms",
             "fusion_filter_ms", "ranking_ms", "web_fallback_ms", "explanation_ms",
         ]
         stages = timing_summary["stages"]

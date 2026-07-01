@@ -125,23 +125,28 @@ class GlobalSettings(BaseSettings):
         description="上下文压缩专用模型名（空则复用主模型）",
     )
 
-    # --- 解释生成专用 LLM（generate_explanation 节点）---
-    # ★ 负责生成推荐理由和最终呈现给用户的解释文本（流式输出）
-    # ★ 建议使用表达能力强的模型（如 DeepSeek-V3.2 / Qwen3.5-35B）
+    # --- 调音师式回应专用 LLM（generate_explanation 节点）---
+    # ★ 默认不做逐首歌曲听感解释；歌曲先返回，调音师式对话异步流式输出。
+    # ★ song_detail 仅作为用户主动询问“为什么推荐这首歌”时的旧解释模式备用。
     explain_llm_provider: str = Field(
         default="",
         validation_alias="EXPLAIN_LLM_PROVIDER",
-        description="解释生成专用 LLM 提供商（空则复用主模型）",
+        description="调音师回应专用 LLM 提供商（空则复用主模型）",
     )
     explain_llm_model: str = Field(
         default="",
         validation_alias="EXPLAIN_LLM_MODEL",
-        description="解释生成专用模型名（空则复用主模型）",
+        description="调音师回应专用模型名（空则复用主模型）",
+    )
+    explanation_mode: str = Field(
+        default="tuner_async",
+        validation_alias="EXPLANATION_MODE",
+        description="推荐后文本模式: tuner_async/off/song_detail；默认异步生成调音师式回应",
     )
     explanation_fast_mode: bool = Field(
         default=False,
         validation_alias="EXPLANATION_FAST_MODE",
-        description="跳过解释 LLM，返回确定性简短说明；评测或低延迟部署可显式启用",
+        description="兼容开关：开启时等价于 EXPLANATION_MODE=off，跳过 LLM 文本生成",
     )
     eval_disable_side_effects: bool = Field(
         default=False,
@@ -419,7 +424,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
         "intent_temperature",
         "hyde_llm_provider", "hyde_llm_model",
         "compress_llm_provider", "compress_llm_model",
-        "explain_llm_provider", "explain_llm_model", "explanation_fast_mode",
+        "explain_llm_provider", "explain_llm_model", "explanation_mode", "explanation_fast_mode",
         "intent_max_tokens",
         "context_total_budget",
         "finetuned_model_path", "llm_timeout", "llm_temperature",

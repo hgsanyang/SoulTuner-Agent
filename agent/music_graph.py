@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import json
 import os
 from datetime import date
 from typing import Dict, Any
@@ -48,7 +49,11 @@ from tools.acquire_music import acquire_online_music
 from retrieval.hybrid_retrieval import MusicHybridRetrieval
 from retrieval.user_memory import UserMemoryManager
 from retrieval.history import MusicContextManager
-from llms.prompts import MUSIC_RECOMMENDATION_EXPLAINER_PROMPT, MUSIC_CHAT_RESPONSE_PROMPT
+from llms.prompts import (
+    MUSIC_CHAT_RESPONSE_PROMPT,
+    MUSIC_RECOMMENDATION_EXPLAINER_PROMPT,
+    MUSIC_TUNER_RESPONSE_PROMPT,
+)
 from schemas.query_plan import MusicQueryPlan, RetrievalPlan
 from schemas.dialog_state import (
     apply_dialog_state_to_plan,
@@ -57,6 +62,7 @@ from schemas.dialog_state import (
     infer_dialog_state_from_history,
     should_clarify_before_planning,
 )
+from schemas.refinement import build_refinement_suggestions
 
 logger = get_logger(__name__)
 
@@ -65,6 +71,55 @@ def _record_timing(state: MusicAgentState, name: str, elapsed_seconds: float) ->
     timings = dict(state.get("timings") or {})
     timings[name] = round(max(0.0, elapsed_seconds) * 1000, 3)
     return timings
+
+
+def _song_field(song: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = song.get(key)
+        if value not in (None, "", []):
+            return value
+    return None
+
+
+def _list_field(song: Dict[str, Any], *keys: str, limit: int = 4) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        raw = song.get(key)
+        if isinstance(raw, str):
+            parts = [part.strip() for part in raw.replace("|", "/").split("/") if part.strip()]
+        elif isinstance(raw, list):
+            parts = [str(part).strip() for part in raw if str(part).strip()]
+        else:
+            parts = []
+        for part in parts:
+            if part and part not in values:
+                values.append(part)
+            if len(values) >= limit:
+                return values
+    return values
+
+
+def _build_tuner_recommendation_overview(recommendations: list[Dict[str, Any]], limit: int = 8) -> str:
+    rows: list[str] = []
+    for index, rec in enumerate(recommendations[:limit], 1):
+        song = rec.get("song", rec) if isinstance(rec, dict) else rec
+        if not isinstance(song, dict):
+            continue
+        title = _song_field(song, "title") or "未知歌曲"
+        artist = _song_field(song, "artist", "artist_name") or "未知歌手"
+        tags = _list_field(song, "genres", "moods", "themes", "scenarios", "tags", "genre", limit=5)
+        language = _song_field(song, "language")
+        source_labels = _list_field(song, "retrieval_sources", "source", limit=3)
+        details = []
+        if language:
+            details.append(f"language={language}")
+        if tags:
+            details.append("tags=" + "/".join(tags))
+        if source_labels:
+            details.append("sources=" + "/".join(source_labels))
+        detail_text = f" ({'; '.join(details)})" if details else ""
+        rows.append(f"{index}. {title} - {artist}{detail_text}")
+    return "\n".join(rows) or "本轮已生成可播放推荐歌单。"
 
 # 延迟初始化 llm，避免在模块导入时配置未加载
 _llm = None
@@ -323,6 +378,8 @@ class MusicRecommendationGraph:
                     "clarification": clarification.model_dump(),
                     "clarification_options": list(clarification.options),
                     "dialog_delta": clarification_delta,
+                    "intent_confidence": 0.0,
+                    "refinement_options": [],
                     "final_response": clarification.question,
                     "step_count": state.get("step_count", 0) + 1,
                     "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
@@ -404,6 +461,12 @@ class MusicRecommendationGraph:
             dialog_state, dialog_delta = apply_plan_delta_with_report(previous_dialog_state, plan, user_input)
             plan = apply_dialog_state_to_plan(plan, dialog_state)
             plan = coerce_followup_general_chat_to_retrieval(plan, dialog_state, user_input)
+            refinement = build_refinement_suggestions(
+                user_input=user_input,
+                plan=plan,
+                dialog_state=dialog_state,
+                user_profile=_profile_text,
+            )
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(
                 f"识别到意图: {plan.intent_type} | "
@@ -431,6 +494,8 @@ class MusicRecommendationGraph:
                 "retrieval_plan": retrieval_plan_dict,
                 "dialog_state": dialog_state.model_dump(),
                 "dialog_delta": dialog_delta.model_dump(),
+                "intent_confidence": refinement.confidence,
+                "refinement_options": [option.model_dump() for option in refinement.options],
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
             }
@@ -1281,9 +1346,19 @@ class MusicRecommendationGraph:
                 "timings": _record_timing(state, "explanation_ms", _time.time() - _t0),
             }
 
+        explanation_mode = str(getattr(settings, "explanation_mode", "tuner_async") or "tuner_async").strip().lower()
         if settings.explanation_fast_mode:
-            response = await emit_fast_explanation(recommendations, explanation_queue)
-            logger.info("[Explanation] fast-mode 跳过解释 LLM")
+            explanation_mode = "off"
+
+        try:
+            await _push_song_cards()
+        except Exception as e:
+            logger.warning(f"推送歌曲到队列失败: {e}")
+
+        if explanation_mode in {"off", "none", "disabled", "fast"}:
+            response = await emit_fast_explanation(recommendations, None)
+            await _finish_queue(response)
+            logger.info("[Explanation] mode=off 跳过解释 LLM")
             return {
                 "explanation": response,
                 "final_response": response,
@@ -1294,12 +1369,12 @@ class MusicRecommendationGraph:
         _explain = get_explain_llm()
         _explain_model_name = getattr(_explain, 'model_name', '?')
         _explain_provider = (settings.explain_llm_provider or settings.llm_default_provider or '?').lower()
-        logger.info(f"--- [步骤 3] 生成推荐解释 | 🤖 {_explain_provider} / {_explain_model_name} ---")
+        logger.info(
+            f"--- [步骤 3] 生成推荐文本({explanation_mode}) | 🤖 "
+            f"{_explain_provider} / {_explain_model_name} ---"
+        )
         
         try:
-            memory_manager = UserMemoryManager()
-            default_user_id = settings.default_user_id
-            
             # 格式化推荐结果 (ToolOutput 已提供 raw_markdown)
             songs_text = ""
             if hasattr(raw_recommendations, "raw_markdown"):
@@ -1335,25 +1410,30 @@ class MusicRecommendationGraph:
                     if reason:
                         songs_text += f"   推荐理由: {reason}\n"
             
-            # [LCEL 1.2 优化] 构建 LCEL 执行管道，生成推荐结果的解释
-            # 将原来手动格式化字符串和接收 AIMessage 对象的两步操作合并为优雅的链式调用。
-            chain = (
-                ChatPromptTemplate.from_template(MUSIC_RECOMMENDATION_EXPLAINER_PROMPT)
-                | get_explain_llm()
-                | StrOutputParser()
-            )
-            
-            # ★ 先把歌曲数据推入队列，让前端立刻渲染歌曲卡片
-            try:
-                await _push_song_cards()
-            except Exception as e:
-                logger.warning(f"推送歌曲到队列失败: {e}")
+            if explanation_mode == "song_detail":
+                prompt_template = MUSIC_RECOMMENDATION_EXPLAINER_PROMPT
+                prompt_payload = {
+                    "user_query": user_query,
+                    "recommended_songs": songs_text,
+                }
+            else:
+                if explanation_mode != "tuner_async":
+                    logger.warning(f"[Explanation] 未知模式 {explanation_mode!r}，降级为 tuner_async")
+                retrieval_plan = state.get("retrieval_plan", {}) or {}
+                refinement_options = state.get("refinement_options", []) or []
+                prompt_template = MUSIC_TUNER_RESPONSE_PROMPT
+                prompt_payload = {
+                    "user_query": user_query,
+                    "intent_context": state.get("intent_context", ""),
+                    "retrieval_plan": json.dumps(retrieval_plan, ensure_ascii=False, default=str)[:2400],
+                    "recommendation_overview": _build_tuner_recommendation_overview(recommendations),
+                    "refinement_options": json.dumps(refinement_options, ensure_ascii=False, default=str),
+                }
+
+            chain = ChatPromptTemplate.from_template(prompt_template) | get_explain_llm() | StrOutputParser()
             
             explanation = ""
-            async for chunk in chain.astream({
-                "user_query": user_query,
-                "recommended_songs": songs_text
-            }):
+            async for chunk in chain.astream(prompt_payload):
                 explanation += chunk
                 if explanation_queue:
                     try:
@@ -1371,7 +1451,7 @@ class MusicRecommendationGraph:
             # 构建完整的最终回复
             final_response = explanation
             
-            logger.info(f"成功生成推荐解释, 耗时 {_time.time()-_t0:.1f}s")
+            logger.info(f"成功生成推荐文本({explanation_mode}), 耗时 {_time.time()-_t0:.1f}s")
             
             # 偏好提取已解耦为独立节点 extract_preferences_node
             

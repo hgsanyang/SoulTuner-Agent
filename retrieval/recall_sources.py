@@ -10,7 +10,7 @@ import threading
 import time
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Iterable, List, Mapping
 from urllib.parse import quote
 
 from config.logging_config import get_logger
@@ -76,7 +76,6 @@ def _records_to_json(records: Iterable[Mapping[str, Any]], score_field: str) -> 
         item["similarity_score"] = float(record.get(score_field) or 0.0)
         results.append(item)
     return json.dumps(results, ensure_ascii=False)
-
 
 def graph_candidate_recall(
     hard_constraints: Mapping[str, Any],
@@ -360,86 +359,3 @@ def lexical_bm25_recall(query: str, *, limit: int) -> str:
         item["similarity_score"] = float(score)
         results.append(item)
     return json.dumps(results, ensure_ascii=False)
-
-
-def personalized_recall(user_id: str, *, limit: int) -> str:
-    client = get_neo4j_client()
-    preference_query = """
-    MATCH (u:User {id: $user_id})-[:LIKES|SAVES]->(seed:Song)
-    OPTIONAL MATCH (seed)-[:BELONGS_TO_GENRE]->(g:Genre)
-    OPTIONAL MATCH (seed)-[:HAS_MOOD]->(m:Mood)
-    OPTIONAL MATCH (seed)-[:HAS_THEME]->(t:Theme)
-    OPTIONAL MATCH (seed)-[:FITS_SCENARIO]->(sc:Scenario)
-    RETURN collect(DISTINCT g.name) AS genres,
-           collect(DISTINCT m.name) AS moods,
-           collect(DISTINCT t.name) AS themes,
-           collect(DISTINCT sc.name) AS scenarios
-    """
-    pref_rows = client.execute_query(preference_query, {"user_id": user_id})
-    if not pref_rows:
-        return "[]"
-    prefs = pref_rows[0]
-    if not any(prefs.get(field) for field in ("genres", "moods", "themes", "scenarios")):
-        return "[]"
-
-    recall_query = """
-    MATCH (s:Song)
-    OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
-    OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
-    OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
-    OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
-    OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
-    WITH s, a,
-         collect(DISTINCT g.name) AS genres,
-         collect(DISTINCT m.name) AS moods,
-         collect(DISTINCT t.name) AS themes,
-         collect(DISTINCT sc.name) AS scenarios
-    WITH s, a, genres, moods, themes, scenarios,
-         size([x IN genres WHERE x IN $genres]) * 1.2
-         + size([x IN moods WHERE x IN $moods])
-         + size([x IN themes WHERE x IN $themes]) * 0.6
-         + size([x IN scenarios WHERE x IN $scenarios]) * 0.8 AS personal_score
-    RETURN s.title AS title, a.name AS artist, s.album AS album,
-           s.audio_url AS audio_url, s.cover_url AS cover_url, s.lrc_url AS lrc_url,
-           coalesce(s.language, 'Unknown') AS language,
-           coalesce(s.region, 'Unknown') AS region,
-           genres, moods, themes, scenarios, personal_score
-    ORDER BY personal_score DESC, coalesce(s.updated_at, 0) DESC, s.title ASC
-    LIMIT $limit
-    """
-    rows = client.execute_query(
-        recall_query,
-        {
-            "genres": _clean_list(prefs.get("genres")),
-            "moods": _clean_list(prefs.get("moods")),
-            "themes": _clean_list(prefs.get("themes")),
-            "scenarios": _clean_list(prefs.get("scenarios")),
-            "limit": limit,
-        },
-    )
-    return _records_to_json(rows, "personal_score")
-
-
-def cold_start_recall(*, limit: int) -> str:
-    query = """
-    MATCH (s:Song)
-    OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
-    OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
-    OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
-    OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
-    OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
-    RETURN s.title AS title, a.name AS artist, s.album AS album,
-           s.audio_url AS audio_url, s.cover_url AS cover_url, s.lrc_url AS lrc_url,
-           coalesce(s.language, 'Unknown') AS language,
-           coalesce(s.region, 'Unknown') AS region,
-           collect(DISTINCT g.name) AS genres,
-           collect(DISTINCT m.name) AS moods,
-           collect(DISTINCT t.name) AS themes,
-           collect(DISTINCT sc.name) AS scenarios,
-           1.0 / coalesce(s.ts_beta, 1.0) AS cold_score,
-           coalesce(s.updated_at, 0) AS updated_at
-    ORDER BY cold_score DESC, updated_at DESC, title ASC
-    LIMIT $limit
-    """
-    rows = get_neo4j_client().execute_query(query, {"limit": limit})
-    return _records_to_json(rows, "cold_score")

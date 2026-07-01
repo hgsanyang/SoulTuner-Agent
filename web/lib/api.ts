@@ -25,6 +25,13 @@ export interface MusicCardResponse {
     hashtags?: string[];
 }
 
+export interface RefinementOption {
+    label: string;
+    prompt: string;
+    reason?: string;
+    source?: string;
+}
+
 export interface SSEEvent {
     type: 'start' | 'thinking' | 'response' | 'recommendations_start' | 'song'
         | 'recommendations_complete' | 'complete' | 'error'
@@ -50,7 +57,9 @@ export interface SSEEvent {
     exposure_id?: string;
     dialog_state?: Record<string, any>;
     dialog_delta?: Record<string, any>;
+    intent_confidence?: number;
     clarification_options?: string[];
+    refinement_options?: RefinementOption[];
 }
 
 export interface StreamParams {

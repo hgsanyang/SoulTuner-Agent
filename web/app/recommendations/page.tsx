@@ -9,7 +9,7 @@ import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
 import SongCard from '@/components/Content/SongCard';
-import { streamRecommendations, type SSEEvent } from '@/lib/api';
+import { streamRecommendations, type RefinementOption, type SSEEvent } from '@/lib/api';
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -20,6 +20,9 @@ export interface ChatMessage {
   content: string;
   songs?: any[];
   thinkingMessage?: string;
+  clarificationOptions?: string[];
+  refinementOptions?: RefinementOption[];
+  intentConfidence?: number;
   error?: string;
 }
 
@@ -41,7 +44,10 @@ export default function RecommendationsPage() {
   const searchParams = useSearchParams();
   const seedPrompt = searchParams?.get('prompt');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const autoFollowMessagesRef = useRef(true);
   const songListRef = useRef<HTMLDivElement>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   // 联网搜索开关状态（持久化到 localStorage）
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
@@ -88,10 +94,30 @@ export default function RecommendationsPage() {
     } catch { /* 忽略 */ }
   }, [messages]);
 
-  // ── 自动滚动到最新消息 ──
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const nearBottom = distanceFromBottom < 120;
+    autoFollowMessagesRef.current = nearBottom;
+    setShowJumpToLatest(!nearBottom);
+  }, []);
+
+  const jumpToLatest = useCallback(() => {
+    autoFollowMessagesRef.current = true;
+    setShowJumpToLatest(false);
+    scrollMessagesToBottom();
+  }, [scrollMessagesToBottom]);
+
+  // ── 自动滚动到最新消息：用户主动上滑后暂停跟随 ──
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages]);
+    if (!autoFollowMessagesRef.current) return;
+    requestAnimationFrame(() => scrollMessagesToBottom());
+  }, [messages, scrollMessagesToBottom]);
 
   // ── 只显示最新一条 assistant 消息的歌曲 ──
   const latestAssistantWithSongs = [...messages]
@@ -124,6 +150,9 @@ export default function RecommendationsPage() {
     const newMessageId = Date.now().toString();
     const userMsgId = `user-${newMessageId}`;
     const assistantMsgId = `assistant-${newMessageId}`;
+
+    autoFollowMessagesRef.current = true;
+    setShowJumpToLatest(false);
 
     // ① 先取当前历史（在更新 state 之前读）
     const chatHistorySnapshot = messages
@@ -189,8 +218,15 @@ export default function RecommendationsPage() {
                   setDialogState(event.dialog_state);
                   try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
                 }
+                if (typeof event.intent_confidence === 'number') {
+                  currentMsg.intentConfidence = event.intent_confidence;
+                }
                 if (event.clarification_options && event.clarification_options.length > 0) {
                   currentMsg.content = currentMsg.content || '我需要再确认一下你的意思。';
+                  currentMsg.clarificationOptions = event.clarification_options;
+                }
+                if (event.refinement_options && event.refinement_options.length > 0) {
+                  currentMsg.refinementOptions = event.refinement_options;
                 }
                 setLoading(false);
               }
@@ -291,6 +327,12 @@ export default function RecommendationsPage() {
     setShowWelcome(false);
     return handleSubmit(value);
   }, [handleSubmit]);
+
+  const handleChipSubmit = useCallback((prompt: string) => {
+    if (!prompt.trim() || loading) return;
+    setShowWelcome(false);
+    handleSubmit(prompt);
+  }, [handleSubmit, loading]);
 
   const toolbar = (
     <div style={{
@@ -433,6 +475,7 @@ export default function RecommendationsPage() {
               border: `1px solid ${theme.colors.border.default}`,
               overflow: 'hidden',
               minHeight: 0,
+              position: 'relative',
             }}>
               {/* 对话标题栏 */}
               <div style={{
@@ -447,7 +490,10 @@ export default function RecommendationsPage() {
                 </h2>
               </div>
               {/* 对话滚动区 */}
-              <div style={{
+              <div
+                ref={messagesScrollRef}
+                onScroll={handleMessagesScroll}
+                style={{
                 flex: 1,
                 overflowY: 'auto',
                 padding: '1rem 1.25rem',
@@ -501,12 +547,118 @@ export default function RecommendationsPage() {
                           </p>
                         </div>
                       )}
+
+                      {(msg.clarificationOptions?.length || msg.refinementOptions?.length) && (
+                        <div style={{
+                          marginTop: '0.75rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.6rem',
+                          maxWidth: '100%',
+                        }}>
+                          {msg.clarificationOptions && msg.clarificationOptions.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                              {msg.clarificationOptions.map((option) => (
+                                <button
+                                  key={option}
+                                  onClick={() => handleChipSubmit(option)}
+                                  disabled={loading}
+                                  style={{
+                                    padding: '0.45rem 0.75rem',
+                                    borderRadius: '999px',
+                                    border: '1px solid rgba(29,185,84,0.35)',
+                                    backgroundColor: 'rgba(29,185,84,0.12)',
+                                    color: 'rgba(245,255,248,0.92)',
+                                    fontSize: '0.82rem',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.18s ease',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  onMouseEnter={e => { if (!loading) e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.2)'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.12)'; }}
+                                >
+                                  {option}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {msg.refinementOptions && msg.refinementOptions.length > 0 && (
+                            <div style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              gap: '0.5rem',
+                              paddingLeft: '0.1rem',
+                            }}>
+                              {msg.refinementOptions.map((option) => (
+                                <button
+                                  key={`${option.label}-${option.prompt}`}
+                                  onClick={() => handleChipSubmit(option.prompt || option.label)}
+                                  disabled={loading}
+                                  title={option.reason || option.prompt}
+                                  style={{
+                                    padding: '0.44rem 0.78rem',
+                                    borderRadius: '999px',
+                                    border: '1px solid rgba(91, 214, 170, 0.34)',
+                                    backgroundColor: 'rgba(42, 170, 130, 0.16)',
+                                    color: 'rgba(238, 255, 248, 0.9)',
+                                    fontSize: '0.81rem',
+                                    fontWeight: 520,
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    transition: 'all 0.18s ease',
+                                    whiteSpace: 'nowrap',
+                                    boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
+                                  }}
+                                  onMouseEnter={e => {
+                                    if (!loading) {
+                                      e.currentTarget.style.backgroundColor = 'rgba(54, 190, 146, 0.24)';
+                                      e.currentTarget.style.borderColor = 'rgba(112, 235, 190, 0.48)';
+                                      e.currentTarget.style.color = '#fff';
+                                    }
+                                  }}
+                                  onMouseLeave={e => {
+                                    e.currentTarget.style.backgroundColor = 'rgba(42, 170, 130, 0.16)';
+                                    e.currentTarget.style.borderColor = 'rgba(91, 214, 170, 0.34)';
+                                    e.currentTarget.style.color = 'rgba(238, 255, 248, 0.9)';
+                                  }}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               ))}
               <div ref={messagesEndRef} />
               </div>
+              {showJumpToLatest && (
+                <button
+                  onClick={jumpToLatest}
+                  style={{
+                    position: 'absolute',
+                    right: '1rem',
+                    bottom: '1rem',
+                    zIndex: 4,
+                    padding: '0.45rem 0.75rem',
+                    borderRadius: '999px',
+                    border: '1px solid rgba(29,185,84,0.3)',
+                    backgroundColor: 'rgba(20,20,20,0.86)',
+                    color: 'rgba(245,255,248,0.9)',
+                    fontSize: '0.78rem',
+                    cursor: 'pointer',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.28)',
+                    backdropFilter: 'blur(10px)',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.18)')}
+                  onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(20,20,20,0.86)')}
+                >
+                  跳到最新
+                </button>
+              )}
             </div>
 
             {/* ── 右栏：歌曲列表（可滚动） ── */}

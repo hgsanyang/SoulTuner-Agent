@@ -38,8 +38,6 @@ const SOURCE_LABELS: Record<string, string> = {
   vector: '向量检索',
   lexical: '词法检索',
   bm25: '词法检索',
-  personal: '个性化',
-  cold: '冷启动',
   web: '联网',
   online_search: '联网',
 };

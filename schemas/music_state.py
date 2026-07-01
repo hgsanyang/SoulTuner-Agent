@@ -54,6 +54,8 @@ class MusicAgentState(TypedDict, total=False):
     dialog_delta: Dict[str, Any]  # A7: 本轮状态更新报告（继承/替换/新增）
     clarification: Dict[str, Any]  # A7: 澄清反问数据
     clarification_options: List[str]  # A7: 前端 chips 预留
+    intent_confidence: float  # B3: 软意图操作置信度，低于强澄清但可提示细化
+    refinement_options: List[Dict[str, Any]]  # B3: 非阻塞细化 chips
 
     # GraphZep 记忆上下文（新增）
     graphzep_facts: str           # 从 GraphZep 召回的事实文本
