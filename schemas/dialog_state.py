@@ -9,9 +9,9 @@ triggers for follow-up queries that cannot be resolved safely.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from schemas.query_plan import HardConstraints, IntentHints, MusicQueryPlan, SoftIntent
 
@@ -76,6 +76,51 @@ class ClarificationRequest(BaseModel):
     reason: str = ""
     question: str = ""
     options: list[str] = Field(default_factory=list)
+    unresolved_paths: list[str] = Field(default_factory=list)
+
+
+ALLOWED_DELTA_PATHS = {
+    "hard_constraints.artist_entities",
+    "hard_constraints.song_entities",
+    "hard_constraints.language",
+    "hard_constraints.region",
+    "hard_constraints.instrumental",
+    "soft_intent.goal",
+    "soft_intent.trajectory",
+    "soft_intent.avoid",
+    "soft_intent.vibe",
+    "hints.genres",
+    "hints.mood",
+    "hints.scenario",
+}
+
+
+class DeltaOperation(BaseModel):
+    """One validated mutation against the session-local music state."""
+
+    op: Literal["add", "replace", "remove", "clear_topic"]
+    path: str = ""
+    value: Any = None
+
+    @model_validator(mode="after")
+    def validate_path(self) -> "DeltaOperation":
+        if self.op == "clear_topic":
+            self.path = ""
+            return self
+        if self.path not in ALLOWED_DELTA_PATHS:
+            raise ValueError(f"Unsupported dialogue delta path: {self.path}")
+        return self
+
+
+class PlanDelta(BaseModel):
+    """The only structure an LLM may produce for an established follow-up."""
+
+    operations: list[DeltaOperation] = Field(default_factory=list)
+    resolved_references: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    ambiguity_reasons: list[str] = Field(default_factory=list)
+    clarification: ClarificationRequest | None = None
+    planner_mode: Literal["deterministic", "delta_llm", "full_fallback"] = "delta_llm"
 
 
 class DialogStateDelta(BaseModel):
@@ -89,6 +134,10 @@ class DialogStateDelta(BaseModel):
     added: dict[str, Any] = Field(default_factory=dict)
     replaced: dict[str, Any] = Field(default_factory=dict)
     removed: list[str] = Field(default_factory=list)
+    operations: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_references: list[str] = Field(default_factory=list)
+    ambiguity_reasons: list[str] = Field(default_factory=list)
+    planner_mode: str = "full_planner"
 
 
 class DialogMusicState(BaseModel):
@@ -100,6 +149,10 @@ class DialogMusicState(BaseModel):
     last_intent_type: str = ""
     last_query: str = ""
     last_vector_acoustic_query: str = ""
+    last_complete_plan: dict[str, Any] = Field(default_factory=dict)
+    last_result_titles: list[str] = Field(default_factory=list)
+    last_result_artists: list[str] = Field(default_factory=list)
+    pending_clarification: ClarificationRequest | None = None
     last_delta: DialogStateDelta = Field(default_factory=DialogStateDelta)
     turn_count: int = 0
 
@@ -156,6 +209,312 @@ def _plan_value_map(plan: MusicQueryPlan) -> dict[str, Any]:
             hints=plan.retrieval_plan.hints,
         )
     )
+
+
+def is_followup_turn(
+    user_input: str,
+    dialog_state: DialogMusicState | dict[str, Any] | None,
+) -> bool:
+    """Return whether a turn should mutate an established music state."""
+    state = load_dialog_state(dialog_state)
+    if state.pending_clarification is not None:
+        return True
+    if state.turn_count <= 0:
+        return False
+    if _has_any(user_input, ("换个话题", "重新开始", "不要管上面", "from scratch", "new topic")):
+        return False
+    return _has_any(user_input, FOLLOWUP_CUES)
+
+
+def _get_state_path(state: DialogMusicState, path: str) -> Any:
+    section, field = path.split(".", 1)
+    return getattr(getattr(state, section), field)
+
+
+def _set_state_path(state: DialogMusicState, path: str, value: Any) -> None:
+    section, field = path.split(".", 1)
+    container = getattr(state, section)
+    current = getattr(container, field)
+    if isinstance(current, list):
+        values = value if isinstance(value, list) else [value]
+        setattr(container, field, _merge_unique([], values))
+    elif isinstance(current, bool):
+        setattr(container, field, bool(value))
+    else:
+        setattr(container, field, value)
+
+
+def _clear_state_path(state: DialogMusicState, path: str) -> None:
+    current = _get_state_path(state, path)
+    if isinstance(current, list):
+        _set_state_path(state, path, [])
+    elif isinstance(current, bool):
+        _set_state_path(state, path, False)
+    elif path.startswith("soft_intent."):
+        _set_state_path(state, path, "")
+    else:
+        _set_state_path(state, path, None)
+
+
+def _operation_report(
+    previous: DialogMusicState,
+    updated: DialogMusicState,
+    delta: PlanDelta,
+) -> DialogStateDelta:
+    prev_values = _state_value_map(previous)
+    new_values = _state_value_map(updated)
+    added: dict[str, Any] = {}
+    replaced: dict[str, Any] = {}
+    removed: list[str] = []
+    inherited: list[str] = []
+    touched = {operation.path for operation in delta.operations if operation.path}
+
+    for path, new_value in new_values.items():
+        old_value = prev_values.get(path)
+        if path not in touched and _non_empty(old_value) and old_value == new_value:
+            inherited.append(path)
+        elif not _non_empty(old_value) and _non_empty(new_value):
+            added[path] = new_value
+        elif _non_empty(old_value) and _non_empty(new_value) and old_value != new_value:
+            replaced[path] = new_value
+        elif _non_empty(old_value) and not _non_empty(new_value):
+            removed.append(path)
+
+    return DialogStateDelta(
+        followup=True,
+        topic_shift=any(operation.op == "clear_topic" for operation in delta.operations),
+        confidence=delta.confidence,
+        reason="delta_applied",
+        inherited=inherited,
+        added=added,
+        replaced=replaced,
+        removed=removed,
+        operations=[operation.model_dump() for operation in delta.operations],
+        resolved_references=list(delta.resolved_references),
+        ambiguity_reasons=list(delta.ambiguity_reasons),
+        planner_mode=delta.planner_mode,
+    )
+
+
+def apply_plan_delta_operations(
+    previous: DialogMusicState | dict[str, Any] | None,
+    delta: PlanDelta,
+    user_input: str,
+) -> tuple[DialogMusicState, DialogStateDelta]:
+    """Apply a whitelisted PlanDelta without asking an LLM to rewrite state."""
+    prev = load_dialog_state(previous)
+    updated = prev.model_copy(deep=True)
+
+    for operation in delta.operations:
+        if operation.op == "clear_topic":
+            updated.hard_constraints = HardConstraints()
+            updated.soft_intent = SoftIntent()
+            updated.hints = IntentHints()
+            updated.last_vector_acoustic_query = ""
+            updated.last_complete_plan = {}
+            continue
+
+        current = _get_state_path(updated, operation.path)
+        if operation.op == "add":
+            if isinstance(current, list):
+                values = operation.value if isinstance(operation.value, list) else [operation.value]
+                _set_state_path(updated, operation.path, _merge_unique(current, values))
+            elif not _non_empty(current):
+                _set_state_path(updated, operation.path, operation.value)
+            elif str(operation.value or "").strip() and str(operation.value) not in str(current):
+                _set_state_path(updated, operation.path, f"{current}; {operation.value}")
+        elif operation.op == "replace":
+            _set_state_path(updated, operation.path, operation.value)
+        elif operation.op == "remove":
+            if isinstance(current, list) and operation.value not in (None, "", []):
+                removals = operation.value if isinstance(operation.value, list) else [operation.value]
+                folded = {_norm(value) for value in removals}
+                _set_state_path(
+                    updated,
+                    operation.path,
+                    [value for value in current if _norm(value) not in folded],
+                )
+            else:
+                _clear_state_path(updated, operation.path)
+
+    updated.last_query = user_input
+    updated.turn_count = prev.turn_count + 1
+    updated.pending_clarification = None
+    report = _operation_report(prev, updated, delta)
+    updated.last_delta = report
+    return updated, report
+
+
+def build_deterministic_plan_delta(
+    user_input: str,
+    dialog_state: DialogMusicState | dict[str, Any] | None,
+) -> PlanDelta | None:
+    """Resolve common unambiguous follow-ups without another network call."""
+    state = load_dialog_state(dialog_state)
+    if state.turn_count <= 0:
+        return None
+    text = _norm(user_input)
+    operations: list[DeltaOperation] = []
+    resolved: list[str] = []
+
+    language_map = (
+        (r"中文|国语|华语|mandarin|chinese", "Chinese"),
+        (r"英文|英语|english", "English"),
+        (r"日语|日文|japanese", "Japanese"),
+        (r"韩语|韩文|korean", "Korean"),
+        (r"粤语|cantonese", "Cantonese"),
+    )
+    for pattern, language in language_map:
+        if re.search(pattern, text):
+            operations.append(DeltaOperation(op="replace", path="hard_constraints.language", value=language))
+            break
+
+    if re.search(r"无人声|没人声|纯音乐|instrumental|no vocals?", text):
+        operations.append(DeltaOperation(op="replace", path="hard_constraints.instrumental", value=True))
+    elif re.search(r"要人声|有人声|with vocals?", text):
+        operations.append(DeltaOperation(op="replace", path="hard_constraints.instrumental", value=False))
+
+    if re.search(r"更安静|安静一点|quiet(er)?|softer?", text):
+        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="quieter, softer, low energy"))
+    if re.search(r"更有精神|更明亮|振作|uplift|brighter", text):
+        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="uplifting, hopeful, brighter energy"))
+    if re.search(r"更有节奏|更带劲|more rhythmic|more energetic", text):
+        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="more rhythmic, energetic"))
+    if re.search(r"少人声|人声少|less vocals?", text):
+        operations.append(DeltaOperation(op="add", path="soft_intent.avoid", value=["prominent vocals"]))
+    if re.search(r"不要.*伤|别.*伤|别太丧|not sad|less sad", text):
+        operations.append(DeltaOperation(op="add", path="soft_intent.avoid", value=["sad", "melancholy", "悲伤", "丧"]))
+
+    if operations and _has_any(text, FOLLOWUP_CUES):
+        if _has_any(text, ("同样", "类似", "这种", "那种", "same vibe", "like that")):
+            resolved.append("previous_music_state")
+        return PlanDelta(
+            operations=operations,
+            resolved_references=resolved,
+            confidence=0.98,
+            planner_mode="deterministic",
+        )
+    return None
+
+
+def clarification_from_delta(
+    delta: PlanDelta,
+    *,
+    confidence_threshold: float,
+) -> ClarificationRequest:
+    """Honor only high-precision clarification reasons."""
+    clarification = delta.clarification
+    high_precision = {
+        "unresolved_reference",
+        "missing_key_slot",
+        "severe_conflict",
+        "entity_ambiguity",
+    }
+    reasons = {_norm(reason).replace(" ", "_") for reason in delta.ambiguity_reasons}
+    if clarification and clarification.required and (
+        _norm(clarification.reason).replace(" ", "_") in high_precision
+        or reasons.intersection(high_precision)
+    ):
+        return clarification
+    if delta.confidence < confidence_threshold and reasons.intersection(high_precision):
+        return ClarificationRequest(
+            required=True,
+            reason=next(iter(reasons.intersection(high_precision))),
+            question="我还不能可靠地确定你想保留或替换哪一部分。你想按哪个方向继续？",
+            options=["保留上一轮氛围", "只按这句话重新推荐", "告诉我一首参考歌"],
+        )
+    return ClarificationRequest()
+
+
+def compile_dialog_state_to_plan(
+    dialog_state: DialogMusicState,
+    user_input: str,
+) -> MusicQueryPlan:
+    """Compile session state into the existing executable MusicQueryPlan."""
+    if dialog_state.last_complete_plan:
+        try:
+            plan = MusicQueryPlan.model_validate(dialog_state.last_complete_plan)
+        except Exception:
+            plan = MusicQueryPlan(intent_type="hybrid_search")
+    else:
+        plan = MusicQueryPlan(intent_type="hybrid_search")
+
+    updated = plan.model_copy(deep=True)
+    updated.parameters = {
+        "query": user_input,
+        "entities": _merge_unique(
+            dialog_state.hard_constraints.artist_entities,
+            dialog_state.hard_constraints.song_entities,
+        ),
+    }
+    updated.context = "基于结构化对话状态继续推荐"
+    updated.reasoning = "A7 PlanDelta 经白名单校验后确定性应用"
+    updated.retrieval_plan.hard_constraints = dialog_state.hard_constraints.model_copy(deep=True)
+    updated.retrieval_plan.soft_intent = dialog_state.soft_intent.model_copy(deep=True)
+    updated.retrieval_plan.hints = dialog_state.hints.model_copy(deep=True)
+    updated.retrieval_plan.use_graph = True
+    updated.retrieval_plan.use_vector = True
+    updated.retrieval_plan.use_web_search = False
+
+    has_entities = bool(
+        dialog_state.hard_constraints.artist_entities
+        or dialog_state.hard_constraints.song_entities
+    )
+    has_soft = bool(
+        dialog_state.soft_intent.goal
+        or dialog_state.soft_intent.trajectory
+        or dialog_state.soft_intent.vibe
+        or dialog_state.soft_intent.avoid
+    )
+    updated.intent_type = "hybrid_search" if has_entities or has_soft else "graph_search"
+
+    vector_parts: list[str] = []
+    for part in (
+        dialog_state.soft_intent.goal,
+        dialog_state.soft_intent.trajectory,
+        dialog_state.soft_intent.vibe,
+        ", ".join(dialog_state.soft_intent.avoid),
+        ", ".join(dialog_state.hints.genres),
+        dialog_state.hints.mood,
+        dialog_state.hints.scenario,
+        dialog_state.last_vector_acoustic_query,
+        user_input,
+    ):
+        value = str(part or "").strip()
+        if value and value not in vector_parts:
+            vector_parts.append(value)
+    updated.retrieval_plan.vector_acoustic_query = " ; ".join(vector_parts)
+    updated.retrieval_plan = type(updated.retrieval_plan).model_validate(
+        updated.retrieval_plan.model_dump()
+    )
+    return updated
+
+
+def update_dialog_result_anchors(
+    dialog_state: DialogMusicState | dict[str, Any] | None,
+    recommendations: list[dict[str, Any]],
+    *,
+    limit: int = 12,
+) -> DialogMusicState:
+    """Persist only compact session-local result anchors for later references."""
+    state = load_dialog_state(dialog_state).model_copy(deep=True)
+    titles: list[str] = []
+    artists: list[str] = []
+    for item in recommendations:
+        song = item.get("song", item) if isinstance(item, dict) else {}
+        if not isinstance(song, dict):
+            continue
+        title = str(song.get("title") or "").strip()
+        artist = str(song.get("artist") or "").strip()
+        if title and title not in titles:
+            titles.append(title)
+        if artist and artist not in artists:
+            artists.append(artist)
+        if len(titles) >= limit and len(artists) >= limit:
+            break
+    state.last_result_titles = titles[:limit]
+    state.last_result_artists = artists[:limit]
+    return state
 
 
 def _build_delta_report(
@@ -215,7 +574,22 @@ def should_clarify_before_planning(
 ) -> ClarificationRequest:
     """Ask only for unresolved references that cannot be grounded."""
     state = load_dialog_state(dialog_state)
+    if state.pending_clarification is not None:
+        return ClarificationRequest()
     has_state = state.turn_count > 0
+    text = _norm(user_input)
+    severe_conflict = (
+        re.search(r"安静|助眠|睡前|quiet|sleep", text)
+        and re.search(r"炸裂|蹦迪|狂暴|extremely loud|raging party", text)
+    )
+    if severe_conflict:
+        return ClarificationRequest(
+            required=True,
+            reason="severe_conflict",
+            question="“安静助眠”和“炸裂蹦迪”是两个相反方向。你希望这次更偏哪一边？",
+            options=["安静助眠", "有节奏但不吵", "直接来高能量"],
+            unresolved_paths=["soft_intent.vibe", "hints.scenario"],
+        )
     if _has_any(user_input, PRIVATE_MEMORY_REFERENCE_CUES) and not has_state:
         return ClarificationRequest(
             required=True,
@@ -228,6 +602,24 @@ def should_clarify_before_planning(
             ],
         )
     if has_state:
+        asks_song = _has_any(text, ("那首歌", "刚才那首", "上一首"))
+        asks_artist = _has_any(text, ("那个歌手", "他的歌", "她的歌"))
+        if asks_song and not (state.last_result_titles or state.hard_constraints.song_entities):
+            return ClarificationRequest(
+                required=True,
+                reason="missing_key_slot",
+                question="你指的是哪一首歌？告诉我歌名，或从刚才的结果里点一首作为参考。",
+                options=["告诉我歌名", "描述那首歌的感觉", "按上一轮氛围继续"],
+                unresolved_paths=["hard_constraints.song_entities"],
+            )
+        if asks_artist and not (state.last_result_artists or state.hard_constraints.artist_entities):
+            return ClarificationRequest(
+                required=True,
+                reason="missing_key_slot",
+                question="你指的是哪位歌手？告诉我名字后，我会保留其余音乐偏好继续推荐。",
+                options=["告诉我歌手名", "按上一轮氛围继续", "重新开始推荐"],
+                unresolved_paths=["hard_constraints.artist_entities"],
+            )
         return ClarificationRequest()
     if not _has_any(user_input, UNRESOLVED_REFERENCE_CUES):
         return ClarificationRequest()
@@ -427,6 +819,7 @@ def apply_plan_delta_with_report(
         last_intent_type=plan.intent_type,
         last_query=user_input,
         last_vector_acoustic_query=rp.vector_acoustic_query or base.last_vector_acoustic_query,
+        last_complete_plan=plan.model_dump(),
         turn_count=prev.turn_count + 1,
     )
     delta = _build_delta_report(

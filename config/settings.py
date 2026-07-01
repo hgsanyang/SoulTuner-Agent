@@ -180,6 +180,11 @@ class GlobalSettings(BaseSettings):
         default=0.3,
         description="意图分析 LLM 温度；离线评测会强制设为 0 以提升可复现性",
     )
+    dst_clarification_confidence_threshold: float = Field(
+        default=0.45,
+        validation_alias="DST_CLARIFICATION_CONFIDENCE_THRESHOLD",
+        description="A7 delta 低置信阈值；仅配合高精度歧义原因触发澄清",
+    )
 
     finetuned_model_path: str = Field(
         default="",
@@ -422,6 +427,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
         "llm_default_provider", "llm_default_model",
         "intent_llm_provider", "intent_llm_model",
         "intent_temperature",
+        "dst_clarification_confidence_threshold",
         "hyde_llm_provider", "hyde_llm_model",
         "compress_llm_provider", "compress_llm_model",
         "explain_llm_provider", "explain_llm_model", "explanation_mode", "explanation_fast_mode",

@@ -218,7 +218,7 @@ GraphRAG   Dense KNN   BM25              ← Step 1: 三路内容召回
 - **粗排 + Thompson Sampling**：内容 RRF 分叠加限幅 `delta` 后截断（`coarse_cut_ratio=65%`），尾部候选通过 TS 采样（`Beta(α,β)` 分布）以概率方式捞回冷门/新歌进入精排，实现探索-利用平衡。
 - **三锚归一化精排**：辅助语义锚 `(cosine+1)/2`（M2D-CLAP）+ 声学锚 `(cosine+1)/2`（OMAR-RQ 质心）+ 个性化锚 `MinMax`（Graph Affinity），三维度归一化到 [0,1] 后加权融合（权重前端可调，自动归一化使 α+β+γ=1）。
 - **可回退部署**：`DENSE_TEXT_AUDIO_BACKEND=muq|m2d|both`；MuQ 缺权重、索引或编码失败时自动回退到 M2D，默认按需加载以控制内存。
-- **DST 多轮继承**：Planner 保持上轮分层计划，追问时继承硬约束并叠加新的软意图。
+- **显式 DST + PlanDelta**：首轮/换话题走 full planner；已建立上下文的追问只产出白名单 `add/replace/remove/clear_topic` 操作，由确定性代码继承未提及槽位。无锚指代、缺关键实体或严重矛盾才返回澄清问题与 options，delta 失败可回退 full planner。
 - **MMR Jaccard**：利用候选歌的 `{genre, mood, theme, scenario}` 多维标签计算 Jaccard 相似度实现多样性重排
 
 ### Agent 工作流
@@ -234,6 +234,7 @@ stateDiagram-v2
     route_intent --> chat_response: general_chat
     route_intent --> acquire_music: acquire_music
     route_intent --> gen_recommendations: recommend_by_favorites
+    route_intent --> clarify: clarification_required
 
     search_songs --> web_fallback: 本地库未命中时自动降级
     search_songs --> explain_results: 命中时先推送歌单
@@ -245,6 +246,7 @@ stateDiagram-v2
     extract_preferences --> persist_memory: LLM 偏好提取（异步）
 
     chat_response --> persist_memory: 闲聊无推荐，跳过偏好提取
+    clarify --> persist_memory: 保存待澄清状态
 
     persist_memory --> [*]: GraphZep 异步写入
 ```
@@ -297,7 +299,7 @@ python scripts/replay_feedback.py --write
 | 维度                 | 说明                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | **CI/CD**      | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
-| **单元测试**   | 190 tests（设置加载、Planner 缓存、结果评测、融合过滤、DST、反馈日志、对齐校准等） |
+| **单元测试**   | 199 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、反馈日志、对齐校准等） |
 | **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；当前 dev 57 条、holdout 34 条 |
 | **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比）              |
 | **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres）         |

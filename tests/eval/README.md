@@ -92,7 +92,10 @@ outcomes are the acceptance signals.
 
 ## DST And Clarification Checks
 
-A7 adds explicit session-local dialogue state. Outcome cases may provide an
+A7 adds explicit session-local dialogue state and whitelisted PlanDelta
+operations. Established follow-ups update state deterministically; full-plan
+generation is retained only for first turns, topic resets, and fallback.
+Outcome cases may provide an
 initial `dialog_state` next to `chat_history`; the harness passes it to the
 agent and records the returned `dialog_state` plus `dialog_delta`.
 

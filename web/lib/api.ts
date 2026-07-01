@@ -34,7 +34,7 @@ export interface RefinementOption {
 
 export interface SSEEvent {
     type: 'start' | 'thinking' | 'response' | 'recommendations_start' | 'song'
-        | 'recommendations_complete' | 'complete' | 'error'
+        | 'recommendations_complete' | 'clarification_required' | 'complete' | 'error'
         | 'journey_start' | 'journey_info' | 'journey_complete'
         | 'segment_start' | 'segment_complete' | 'transition_point';
     message?: string;
@@ -59,6 +59,7 @@ export interface SSEEvent {
     dialog_delta?: Record<string, any>;
     intent_confidence?: number;
     clarification_options?: string[];
+    clarification_reason?: string;
     refinement_options?: RefinementOption[];
 }
 

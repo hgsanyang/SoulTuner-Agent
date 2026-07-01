@@ -215,6 +215,7 @@ class IntentPlanner:
                     "DASHSCOPE_BASE_URL",
                     "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 ),
+                temperature=settings.intent_temperature,
             )
         else:
             plan = await plan_with_generic_structured_output(
