@@ -361,10 +361,29 @@ def test_evaluate_case_keeps_category_and_history_flag():
     case = {
         "id": "ctx",
         "category": "multi_turn_context",
+        "goal_category": "interaction_refinement",
+        "specificity": "LH",
         "query": "换安静点",
         "chat_history": [{"role": "user", "content": "太吵了"}],
         "checks": {"min_results": 1},
     }
     rep = evaluate_case(case, _result([_song("A", "x")]))
     assert rep["category"] == "multi_turn_context"
+    assert rep["goal_category"] == "interaction_refinement"
+    assert rep["specificity"] == "LH"
     assert rep["has_chat_history"] is True
+
+
+def test_load_context_case_splits_are_available():
+    dev, dev_meta = _load_cases(split="context_dev")
+    holdout, holdout_meta = _load_cases(split="context_holdout")
+    all_cases, all_meta = _load_cases(split="context_all")
+
+    assert dev_meta["split"] == "context_dev"
+    assert holdout_meta["split"] == "context_holdout"
+    assert all_meta["split"] == "context_all"
+    assert len(dev) >= 40
+    assert len(holdout) >= 12
+    assert len(all_cases) == len(dev) + len(holdout)
+    assert {case.get("goal_category") for case in all_cases}
+    assert {case.get("specificity") for case in all_cases} <= {"LL", "HL", "LH", "HH"}

@@ -76,6 +76,8 @@ CASE_SPLITS = {
     "smoke": EVAL_DIR / "outcome_test_cases.json",
     "dev": CASES_DIR / "outcome_dev.json",
     "holdout": CASES_DIR / "outcome_holdout.json",
+    "context_dev": CASES_DIR / "context_dev.json",
+    "context_holdout": CASES_DIR / "context_holdout.json",
 }
 
 HARD_CATEGORIES = {
@@ -221,6 +223,18 @@ def _load_cases(cases_file: str | None = None, split: str = "smoke") -> Tuple[Li
                 case["difficulty"] = _case_difficulty(case)
             cases.extend(loaded)
         return cases, {"split": "all", "case_files": files}
+    if split == "context_all":
+        cases = []
+        files = []
+        for name in ("context_dev", "context_holdout"):
+            path = CASE_SPLITS[name]
+            files.append(str(path))
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            for case in loaded:
+                case.setdefault("split", name)
+                case["difficulty"] = _case_difficulty(case)
+            cases.extend(loaded)
+        return cases, {"split": "context_all", "case_files": files}
     if split in {"dev_easy", "dev_hard", "holdout_easy", "holdout_hard"}:
         base_split, difficulty = split.rsplit("_", 1)
         path = CASE_SPLITS[base_split]
@@ -560,6 +574,8 @@ def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
     return {
         "id": case.get("id"),
         "category": case.get("category", "uncategorized"),
+        "goal_category": case.get("goal_category") or case.get("category", "uncategorized"),
+        "specificity": case.get("specificity", "unspecified"),
         "difficulty": case.get("difficulty") or _case_difficulty(case),
         "split": case.get("split"),
         "query": case.get("query"),
@@ -695,6 +711,8 @@ async def run(
     # 按 check 类型聚合
     by_check = defaultdict(lambda: {"pass": 0, "fail": 0, "skip": 0})
     by_category = defaultdict(lambda: {"pass": 0, "fail": 0, "indeterminate": 0, "total": 0})
+    by_goal_category = defaultdict(lambda: {"pass": 0, "fail": 0, "indeterminate": 0, "total": 0})
+    by_specificity = defaultdict(lambda: {"pass": 0, "fail": 0, "indeterminate": 0, "total": 0})
     by_difficulty = defaultdict(lambda: {"pass": 0, "fail": 0, "indeterminate": 0, "total": 0})
     by_dimension = {
         "intent": {"pass": 0, "fail": 0, "indeterminate": 0},
@@ -704,6 +722,12 @@ async def run(
         cat = r.get("category", "uncategorized")
         by_category[cat][r["case_status"]] += 1
         by_category[cat]["total"] += 1
+        goal_category = r.get("goal_category", cat)
+        by_goal_category[goal_category][r["case_status"]] += 1
+        by_goal_category[goal_category]["total"] += 1
+        specificity = r.get("specificity", "unspecified")
+        by_specificity[specificity][r["case_status"]] += 1
+        by_specificity[specificity]["total"] += 1
         difficulty = r.get("difficulty", "unknown")
         by_difficulty[difficulty][r["case_status"]] += 1
         by_difficulty[difficulty]["total"] += 1
@@ -761,6 +785,18 @@ async def run(
     for name, c in sorted(by_category.items()):
         print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d} {c['total']:>6d}")
 
+    print("\n按上下文目标类别:")
+    print(f"  {'goal_category':28s} {'pass':>6s} {'fail':>6s} {'indet':>6s} {'total':>6s}")
+    print(f"  {'-'*56}")
+    for name, c in sorted(by_goal_category.items()):
+        print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d} {c['total']:>6d}")
+
+    print("\n按具体度:")
+    print(f"  {'specificity':28s} {'pass':>6s} {'fail':>6s} {'indet':>6s} {'total':>6s}")
+    print(f"  {'-'*56}")
+    for name, c in sorted(by_specificity.items()):
+        print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d} {c['total']:>6d}")
+
     print("\n按难度:")
     print(f"  {'difficulty':28s} {'pass':>6s} {'fail':>6s} {'indet':>6s} {'total':>6s}")
     print(f"  {'-'*56}")
@@ -802,6 +838,8 @@ async def run(
         "decided_pass_rate": round(n_pass / decided, 4) if decided else None,
         "by_check": dict(by_check),
         "by_category": dict(by_category),
+        "by_goal_category": dict(by_goal_category),
+        "by_specificity": dict(by_specificity),
         "by_difficulty": dict(by_difficulty),
         "by_dimension": by_dimension,
         "cases": reports,
@@ -823,6 +861,7 @@ def main():
     p.add_argument("--split", choices=[
         "smoke", "dev", "dev_easy", "dev_hard",
         "holdout", "holdout_easy", "holdout_hard", "all",
+        "context_dev", "context_holdout", "context_all",
     ], default="smoke",
                    help="评测切分。holdout 是冻结集，日常迭代不要频繁看详情")
     p.add_argument("--cases", default=None, help="自定义 cases JSON；传入时覆盖 --split")
