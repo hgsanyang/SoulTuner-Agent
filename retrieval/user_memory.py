@@ -54,6 +54,40 @@ class UserMemoryManager:
         """
         result = self.neo4j_client.execute_query(query, {"title": song_title, "artist": artist})
         return result[0]["song_id"] if result else None
+
+    def _delete_user_song_relations(
+        self,
+        user_id: str,
+        song_title: str,
+        artist: str,
+        rel_types: tuple[str, ...],
+    ) -> None:
+        """Delete user-song relations with elementId precision when possible."""
+        if not self.neo4j_client or not rel_types:
+            return
+
+        rel_pattern = "|".join(rel_types)
+        song_id = self._find_or_create_song(song_title, artist)
+        if song_id is not None:
+            query = f"""
+            MATCH (u:User {{id: $user_id}})-[r:{rel_pattern}]->(s:Song)
+            WHERE elementId(s) = $song_id
+            DELETE r
+            """
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_id": song_id})
+            return
+
+        fallback_query = f"""
+        MATCH (u:User {{id: $user_id}})-[r:{rel_pattern}]->(s:Song {{title: $song_title}})
+        WHERE s.artist = $artist
+              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {{name: $artist}}))
+        DELETE r
+        """
+        self.neo4j_client.execute_query(
+            fallback_query,
+            {"user_id": user_id, "song_title": song_title, "artist": artist},
+        )
+
     def record_liked_song(self, user_id: str, song_title: str, artist: str):
         """记录用户收藏/红心歌曲（优先关联已有 Song，避免创建裸副本）"""
         if not song_title or not artist or artist == "未知":
@@ -149,15 +183,7 @@ class UserMemoryManager:
             return
         if self.neo4j_client:
             # ① 先清理矛盾关系：删除可能存在的 LIKES / SAVES
-            cleanup_query = """
-            MATCH (u:User {id: $user_id})-[r:LIKES|SAVES]->(s:Song {title: $song_title})
-            WHERE s.artist = $artist
-                  OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
-            DELETE r
-            """
-            self.neo4j_client.execute_query(cleanup_query, {
-                "user_id": user_id, "song_title": song_title, "artist": artist
-            })
+            self._delete_user_song_relations(user_id, song_title, artist, ("LIKES", "SAVES"))
 
             # ② 创建 DISLIKES 关系
             existing_id = self._find_or_create_song(song_title, artist)
@@ -212,28 +238,14 @@ class UserMemoryManager:
         """取消点赞 → 删除 LIKES 关系"""
         if not song_title or not artist:
             return
-        query = """
-        MATCH (u:User {id: $user_id})-[r:LIKES]->(s:Song {title: $song_title})
-        WHERE s.artist = $artist
-              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
-        DELETE r
-        """
-        if self.neo4j_client:
-            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
-            logger.info(f"用户 {user_id} 取消点赞: {song_title}")
+        self._delete_user_song_relations(user_id, song_title, artist, ("LIKES",))
+        logger.info(f"用户 {user_id} 取消点赞: {song_title}")
     def remove_save(self, user_id: str, song_title: str, artist: str):
         """取消收藏 → 删除 SAVES 关系"""
         if not song_title or not artist:
             return
-        query = """
-        MATCH (u:User {id: $user_id})-[r:SAVES]->(s:Song {title: $song_title})
-        WHERE s.artist = $artist
-              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
-        DELETE r
-        """
-        if self.neo4j_client:
-            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
-            logger.info(f"用户 {user_id} 取消收藏: {song_title}")
+        self._delete_user_song_relations(user_id, song_title, artist, ("SAVES",))
+        logger.info(f"用户 {user_id} 取消收藏: {song_title}")
     def get_liked_songs(self, user_id: str, limit: int = 20) -> list:
         """
         查询用户点赞的歌曲（仅 LIKES），按时间衰减权重排序。
