@@ -24,7 +24,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger
 from config.settings import settings
-from agent.catalog_gap import analyze_catalog_gap, interleave_online_results
+from agent.catalog_gap import analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
 from agent.explanation import emit_fast_explanation
 from agent.intent.delta_planner import IntentDeltaPlanner
 from agent.intent.planner import IntentPlanner
@@ -907,6 +907,41 @@ class MusicRecommendationGraph:
         discovery_required = bool(state.get("_web_discovery_required"))
         catalog_gap = dict(state.get("_catalog_gap") or {})
 
+        def _local_preserve_payload(reason: str) -> Dict[str, Any] | None:
+            local_items = unwrap_recommendation_items(state.get("recommendations", []))
+            if not local_items:
+                return None
+            from schemas.music_state import ToolOutput
+
+            logger.info(
+                "[web_fallback] 联网未补到结果，保留本地候选: reason=%s, local=%d",
+                reason,
+                len(local_items),
+            )
+            local_meta = {
+                **prior_retrieval_meta,
+                "inventory_count": int(prior_retrieval_meta.get("inventory_count") or len(local_items)),
+                "result_count": len(local_items),
+                "source": "local",
+                "degraded": False,
+                "degraded_reason": prior_retrieval_meta.get("degraded_reason"),
+                "web_failure_reason": reason,
+                "online_result_count": 0,
+                "local_result_count": len(local_items),
+                "web_action": web_action,
+                "web_target_count": target_count,
+                "web_discovery_required": discovery_required,
+                "catalog_gap": catalog_gap,
+            }
+            return {
+                "search_results": [r.get("song", r) if isinstance(r, dict) else r for r in local_items],
+                "recommendations": ToolOutput(success=True, data=local_items, raw_markdown=""),
+                "_need_web_fallback": False,
+                "retrieval_meta": local_meta,
+                "step_count": state.get("step_count", 0) + 1,
+                "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
+            }
+
         def _web_meta(result_count: int, failure_reason: str | None = None) -> Dict[str, Any]:
             degraded = bool(prior_retrieval_meta.get("degraded")) or bool(failure_reason)
             return {
@@ -1071,26 +1106,9 @@ class MusicRecommendationGraph:
 
                 if not songs:
                     logger.warning(f"[web_fallback] 联网搜索无结果: {query}")
-                    if web_action == "mix_in":
-                        local_raw = state.get("recommendations", [])
-                        local_items = getattr(local_raw, "data", local_raw)
-                        if isinstance(local_items, list) and local_items:
-                            from schemas.music_state import ToolOutput
-                            local_meta = {
-                                **_web_meta(len(local_items), "web_search_empty"),
-                                "source": "local",
-                                "degraded": False,
-                                "online_result_count": 0,
-                                "local_result_count": len(local_items),
-                            }
-                            return {
-                                "search_results": [r.get("song", r) if isinstance(r, dict) else r for r in local_items],
-                                "recommendations": ToolOutput(success=True, data=local_items, raw_markdown=""),
-                                "_need_web_fallback": False,
-                                "retrieval_meta": local_meta,
-                                "step_count": state.get("step_count", 0) + 1,
-                                "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
-                            }
+                    preserved = _local_preserve_payload("web_search_empty")
+                    if preserved:
+                        return preserved
                     return {"search_results": [], "recommendations": [],
                             "_need_web_fallback": False,
                             "retrieval_meta": _web_meta(0, "web_search_empty"),
@@ -1194,9 +1212,8 @@ class MusicRecommendationGraph:
             final_results = results
             final_meta = _web_meta(len(results))
             if web_action == "mix_in":
-                local_raw = state.get("recommendations", [])
-                local_items = getattr(local_raw, "data", local_raw)
-                if isinstance(local_items, list) and local_items:
+                local_items = unwrap_recommendation_items(state.get("recommendations", []))
+                if local_items:
                     final_results = interleave_online_results(
                         local_items,
                         results,
@@ -1229,6 +1246,9 @@ class MusicRecommendationGraph:
 
         except Exception as e:
             logger.error(f"[web_fallback] 联网搜索失败: {e}")
+            preserved = _local_preserve_payload("web_search_error")
+            if preserved:
+                return preserved
             return {
                 "search_results": [], "recommendations": [],
                 "_need_web_fallback": False,

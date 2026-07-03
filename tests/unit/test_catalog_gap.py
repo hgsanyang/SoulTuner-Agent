@@ -1,4 +1,4 @@
-from agent.catalog_gap import analyze_catalog_gap, interleave_online_results
+from agent.catalog_gap import analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
 from agent.retrieval_fallback import FallbackDecision
 from agent.web_discovery import build_web_discovery_query, extract_song_candidates
 
@@ -63,6 +63,17 @@ def test_interleave_online_results_keeps_target_length_and_dedupes():
     assert len(merged) == len(local)
     assert any(row["song"]["title"] == "W1" for row in merged)
     assert any(row["song"].get("source") == "online_search" for row in merged)
+
+
+def test_unwrap_recommendation_items_accepts_raw_list_and_tool_output_like_object():
+    rows = [{"song": {"title": "A"}}]
+
+    class ToolOutputLike:
+        data = rows
+
+    assert unwrap_recommendation_items(rows) == rows
+    assert unwrap_recommendation_items(ToolOutputLike()) == rows
+    assert unwrap_recommendation_items({"not": "a list"}) == []
 
 
 def test_extract_song_candidates_from_web_snippets():

@@ -272,3 +272,9 @@ def interleave_online_results(
         result.append(online_queue[online_index])
         online_index += 1
     return result[:target] if target else result
+
+
+def unwrap_recommendation_items(recommendations: Any) -> list[Any]:
+    """Return recommendation rows from either a ToolOutput-like object or a raw list."""
+    items = getattr(recommendations, "data", recommendations)
+    return list(items) if isinstance(items, list) else []
