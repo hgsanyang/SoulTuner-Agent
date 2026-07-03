@@ -66,6 +66,19 @@ When experimenting with `MUSIC_DENSE_QUERY_VARIANTS=1` or
 `MUSIC_ALIGNMENT_CALIBRATION_PATH`, compare this attribute ruler before and
 after the change, then confirm the end-to-end outcome eval does not regress.
 
+CLaMP3 can be included as an optional offline bake-off backend after its 768d
+vectors have been backfilled into Neo4j. It is not part of the default online
+retrieval path:
+
+```powershell
+$env:CLAMP3_REPO_DIR = "C:\path\to\clamp3"
+python data/pipeline/backfill_clamp3_embeddings.py --limit 100
+python -m tests.eval.evaluate_alignment_attribute --k 10 --include-clamp3
+```
+
+If `clamp3_embedding` is absent, the report keeps the M2D/MuQ baseline and marks
+CLaMP3 as `missing_corpus`.
+
 To train and validate the reversible text/audio gap calibration:
 
 ```powershell

@@ -81,6 +81,8 @@ def _git_info() -> dict[str, Any]:
 
 
 def _normalise_matrix(vectors: list[list[float]]) -> np.ndarray:
+    if not vectors:
+        return np.zeros((0, 0), dtype=np.float32)
     matrix = np.asarray(vectors, dtype=np.float32)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
@@ -118,7 +120,7 @@ def precision_at_k(ranked_ids: list[str], labels_by_id: dict[str, dict[str, Any]
     return hits / len(top)
 
 
-def _fetch_common_corpus() -> tuple[list[str], dict[str, dict[str, Any]], np.ndarray, np.ndarray]:
+def _fetch_common_corpus() -> tuple[list[str], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     _load_env_file(REPO_ROOT / ".env")
     from neo4j import GraphDatabase
 
@@ -140,7 +142,8 @@ def _fetch_common_corpus() -> tuple[list[str], dict[str, dict[str, Any]], np.nda
            collect(DISTINCT m.name) AS moods,
            collect(DISTINCT sc.name) AS scenarios,
            s.m2d2_embedding AS m2d2_embedding,
-           s.muq_embedding AS muq_embedding
+           s.muq_embedding AS muq_embedding,
+           properties(s)['clamp3_embedding'] AS clamp3_embedding
     ORDER BY s.music_id
     """
     with GraphDatabase.driver(uri, auth=(user, password)) as driver:
@@ -158,9 +161,17 @@ def _fetch_common_corpus() -> tuple[list[str], dict[str, dict[str, Any]], np.nda
         }
         for row in rows
     }
-    m2d_matrix = _normalise_matrix([row["m2d2_embedding"] for row in rows])
-    muq_matrix = _normalise_matrix([row["muq_embedding"] for row in rows])
-    return ids, labels_by_id, m2d_matrix, muq_matrix
+    corpora = {
+        "m2d": {"ids": ids, "matrix": _normalise_matrix([row["m2d2_embedding"] for row in rows])},
+        "muq": {"ids": ids, "matrix": _normalise_matrix([row["muq_embedding"] for row in rows])},
+    }
+    clamp3_rows = [row for row in rows if row.get("clamp3_embedding")]
+    if clamp3_rows:
+        corpora["clamp3"] = {
+            "ids": [str(row["music_id"]) for row in clamp3_rows],
+            "matrix": _normalise_matrix([row["clamp3_embedding"] for row in clamp3_rows]),
+        }
+    return ids, labels_by_id, corpora
 
 
 def _rank_ids(query_vector: list[float], matrix: np.ndarray, ids: list[str]) -> list[str]:
@@ -170,7 +181,12 @@ def _rank_ids(query_vector: list[float], matrix: np.ndarray, ids: list[str]) -> 
     return [ids[int(index)] for index in order]
 
 
-def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "", query_variants: bool = False) -> dict[str, Any]:
+def evaluate_attribute_alignment(
+    k: int = 10,
+    calibration_path: str = "",
+    query_variants: bool = False,
+    include_clamp3: bool = False,
+) -> dict[str, Any]:
     from retrieval.audio_embedder import encode_text_to_embedding
     from retrieval.alignment_calibration import apply_alignment_calibration
     from retrieval.muq_embedder import MUQ_REPO_ID, encode_text_to_muq
@@ -179,12 +195,39 @@ def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "", query_
     previous_calibration_path = os.environ.get("MUSIC_ALIGNMENT_CALIBRATION_PATH")
     if calibration_path:
         os.environ["MUSIC_ALIGNMENT_CALIBRATION_PATH"] = calibration_path
-    ids, labels_by_id, m2d_matrix, muq_matrix = _fetch_common_corpus()
+    ids, labels_by_id, corpora = _fetch_common_corpus()
     rows = []
     grouped: dict[str, dict[str, list[float]]] = {}
+    backends = ["m2d", "muq"]
+    clamp3_status = "not_requested"
+    clamp3_model = ""
+    encode_text_to_clamp3 = None
+    if include_clamp3:
+        if "clamp3" not in corpora:
+            clamp3_status = "missing_corpus"
+        else:
+            try:
+                from retrieval.clamp3_embedder import (
+                    CLAMP3_REPO_URL,
+                    clamp3_repo_dir,
+                    encode_text_to_clamp3 as _encode_text_to_clamp3,
+                )
+
+                clamp3_repo_dir()
+                encode_text_to_clamp3 = _encode_text_to_clamp3
+                clamp3_status = "available"
+                clamp3_model = CLAMP3_REPO_URL
+                backends.append("clamp3")
+            except Exception as exc:
+                clamp3_status = f"unavailable: {exc}"
 
     def _encode_text(text: str, backend: str) -> list[float]:
-        encoder = encode_text_to_muq if backend == "muq" else encode_text_to_embedding
+        if backend == "clamp3":
+            if encode_text_to_clamp3 is None:
+                raise RuntimeError("CLaMP3 text encoder is unavailable")
+            encoder = encode_text_to_clamp3
+        else:
+            encoder = encode_text_to_muq if backend == "muq" else encode_text_to_embedding
         if not query_variants:
             return encoder(text)
         variants = build_dense_query_variants(text)
@@ -193,27 +236,30 @@ def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "", query_
 
     try:
         for query in FROZEN_ATTRIBUTE_QUERIES:
-            m2d_query_vector = apply_alignment_calibration(
-                _encode_text(query["text"], "m2d"),
-                "m2d",
-            )
-            muq_query_vector = apply_alignment_calibration(
-                _encode_text(query["text"], "muq"),
-                "muq",
-            )
-            m2d_ranked = _rank_ids(m2d_query_vector, m2d_matrix, ids)
-            muq_ranked = _rank_ids(muq_query_vector, muq_matrix, ids)
-            m2d_p = precision_at_k(m2d_ranked, labels_by_id, query["target"], k)
-            muq_p = precision_at_k(muq_ranked, labels_by_id, query["target"], k)
             lang = query["query_language"]
-            grouped.setdefault(lang, {"m2d": [], "muq": []})
-            grouped[lang]["m2d"].append(m2d_p)
-            grouped[lang]["muq"].append(muq_p)
+            precision_by_backend: dict[str, float | None] = {}
+            top_ids_by_backend: dict[str, list[str]] = {}
+            grouped.setdefault(lang, {backend: [] for backend in backends})
+            for backend in backends:
+                corpus = corpora.get(backend)
+                if not corpus or not len(corpus["ids"]):
+                    precision_by_backend[backend] = None
+                    top_ids_by_backend[backend] = []
+                    continue
+                query_vector = apply_alignment_calibration(
+                    _encode_text(query["text"], backend),
+                    backend,
+                )
+                ranked = _rank_ids(query_vector, corpus["matrix"], corpus["ids"])
+                precision = precision_at_k(ranked, labels_by_id, query["target"], k)
+                precision_by_backend[backend] = precision
+                top_ids_by_backend[backend] = ranked[:k]
+                grouped[lang].setdefault(backend, []).append(precision)
             rows.append(
                 {
                     **query,
-                    "precision_at_k": {"m2d": m2d_p, "muq": muq_p},
-                    "top_ids": {"m2d": m2d_ranked[:k], "muq": muq_ranked[:k]},
+                    "precision_at_k": precision_by_backend,
+                    "top_ids": top_ids_by_backend,
                 }
             )
     finally:
@@ -227,27 +273,37 @@ def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "", query_
         return float(sum(values) / len(values)) if values else 0.0
 
     by_language = {
-        lang: {"m2d": mean(scores["m2d"]), "muq": mean(scores["muq"])}
+        lang: {backend: mean(values) for backend, values in scores.items()}
         for lang, scores in sorted(grouped.items())
     }
-    all_m2d = [row["precision_at_k"]["m2d"] for row in rows]
-    all_muq = [row["precision_at_k"]["muq"] for row in rows]
+    all_scores = {
+        backend: [
+            row["precision_at_k"][backend]
+            for row in rows
+            if row["precision_at_k"].get(backend) is not None
+        ]
+        for backend in backends
+    }
     return {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "git": _git_info(),
         "models": {
             "m2d": "M2D-CLAP",
             "muq": MUQ_REPO_ID,
+            "clamp3": clamp3_model,
         },
         "corpus": {
             "common_m2d_muq_songs": len(ids),
+            "clamp3_songs": len(corpora.get("clamp3", {}).get("ids", [])),
         },
         "calibration_path": calibration_path or "",
         "query_variants": bool(query_variants),
+        "include_clamp3": bool(include_clamp3),
+        "clamp3_status": clamp3_status,
         "k": k,
         "query_count": len(FROZEN_ATTRIBUTE_QUERIES),
         "metrics": {
-            "overall": {"m2d": mean(all_m2d), "muq": mean(all_muq)},
+            "overall": {backend: mean(values) for backend, values in all_scores.items()},
             "by_query_language": by_language,
         },
         "queries": rows,
@@ -260,12 +316,14 @@ def main() -> None:
     parser.add_argument("--output", default="")
     parser.add_argument("--calibration-path", default="", help="Optional alignment calibration JSON")
     parser.add_argument("--query-variants", action="store_true", help="Evaluate multi-view dense query variants")
+    parser.add_argument("--include-clamp3", action="store_true", help="Include optional CLaMP3 backend if clamp3_embedding exists")
     args = parser.parse_args()
 
     report = evaluate_attribute_alignment(
         k=args.k,
         calibration_path=args.calibration_path,
         query_variants=args.query_variants,
+        include_clamp3=args.include_clamp3,
     )
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = Path(args.output) if args.output else RESULTS_DIR / (
@@ -283,14 +341,16 @@ def main() -> None:
     print("=" * 72)
     print(f"Git: {report['git']['branch']} @ {report['git']['sha']} | dirty={report['git']['dirty']}")
     print(f"Corpus common M2D/MuQ songs: {report['corpus']['common_m2d_muq_songs']}")
+    if report.get("include_clamp3"):
+        print(f"CLaMP3 corpus songs: {report['corpus']['clamp3_songs']} | status={report['clamp3_status']}")
     print(f"Queries: {report['query_count']} | P@{report['k']}")
     if report.get("calibration_path"):
         print(f"Calibration: {report['calibration_path']}")
     if report.get("query_variants"):
         print("Query variants: enabled")
-    print(f"Overall: M2D={metrics['overall']['m2d']:.3f} | MuQ={metrics['overall']['muq']:.3f}")
+    print("Overall: " + " | ".join(f"{name.upper()}={value:.3f}" for name, value in metrics["overall"].items()))
     for lang, values in metrics["by_query_language"].items():
-        print(f"{lang}: M2D={values['m2d']:.3f} | MuQ={values['muq']:.3f}")
+        print(f"{lang}: " + " | ".join(f"{name.upper()}={value:.3f}" for name, value in values.items()))
     print(f"Report: {out}")
 
 
