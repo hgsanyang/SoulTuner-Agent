@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-168_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-223_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -31,7 +31,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 - 🗣️ **Describe what you want to hear in natural language** — "I'm feeling really down today, I just want some quiet time alone." The system automatically identifies your emotion and scenario to recommend music that fits your current state.
 - 🧠 **Understands you better the more you use it** — Every like, save, skip, and conversation silently builds your personalized music profile, making the next recommendation more accurate over time.
-- 🌐 **Local library not enough? Real-time web search fallback** — Automatically searches the web for the latest music info when the local library falls short.
+- 🌐 **Local library not enough? Real-time web search fallback** — The Catalog Gap Detector decides when local inventory or metadata is insufficient and supplements candidates online.
 - 🗺️ **Immersive Music Journey** — Describe a story or scenario, and the AI will orchestrate a complete music journey with emotional arcs.
 - ♻️ **Discover → Stage → Ingest** — Found a good song? It downloads to a "Pending" staging area first. Preview, then confirm ingestion with automatic acoustic analysis.
 
@@ -51,6 +51,8 @@ Copy-Item .env.example .env
 ```
 
 Both CPU and GPU modes start the complete product workflow. The difference is multimodal quality and ingestion throughput: `up cpu` defaults to the lighter M2D text-to-music fallback while Neo4j, recommendation, web fallback, and the frontend remain fully available; with an NVIDIA GPU, use `.\soultuner.ps1 up gpu` to enable MuQ-MuLan fp16 as the primary text-to-music anchor and start the separate ingestion worker.
+
+Do not expose a personal music library directly as a public demo. Set `PUBLIC_DEMO_MODE=true` and configure `ADMIN_API_KEY` in `.env`; download, ingest, and delete operations are disabled or require `X-API-Key`. Public demos should use CC/open catalogs or mock audio.
 
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
@@ -74,7 +76,7 @@ Both CPU and GPU modes start the complete product workflow. The difference is mu
 | 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
 | 🤖 **Smart Intent Recognition** | Layered intent plan: `hard_constraints / soft_intent / hints` + multi-turn inheritance |
 | 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j + GraphZep dual write |
-| 🌐 **Web Search Fallback** | SearxNG federated search + LLM summarization when the local library is insufficient |
+| 🌐 **Web Search Fallback** | Enabled by default; mixes a few online candidates when local results are healthy, and triggers SearxNG/Tavily/Zhipu discovery + Netease playable resolution when the catalog falls short |
 | 🎼 **Music Journey** | LLM Story → Emotion breakdown → Step-by-step retrieval, real-time SSE streaming |
 | ♻️ **Data Flywheel** | Download → Stage → Preview → Confirm Ingest → Tag extraction → Vector encoding → Neo4j |
 | 📋 **Library Mgmt** | Pending staging area + My Library full-graph management (search/play/delete) |
@@ -141,7 +143,7 @@ Both CPU and GPU modes start the complete product workflow. The difference is mu
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  Hybrid Retrieval Engine                                            │
 │                                                                     │
-│  GraphRAG · Dense KNN · BM25 · Personal · Cold-start · Web Fallback│
+│  GraphRAG · Dense KNN · BM25 · Catalog Gap / Web Fallback          │
 │         └──────────────────┬───────────────────┘                   │
 │                            ▼                                        │
 │              Weighted RRF Fusion (keeps per-source ranks)            │
@@ -202,7 +204,7 @@ User Query → Planner (LLM) outputs a layered plan
                ▼
    Step 5: Post-recall Adjust + Explore  ← Personal/fresh/long-tail boosts, time-decayed exposure penalty
                ▼
-   Step 6: Content-Anchor Normalized Rerank ← Auxiliary semantic(M2D-CLAP) + Acoustic(OMAR-RQ)
+   Step 6: Content-Anchor Normalized Rerank ← Primary text-to-music anchor(MuQ/M2D fallback) + seed acoustic anchor(OMAR-RQ)
                ▼
    Step 7: MMR Multi-dim Diversity + FinalCut
 ```
@@ -212,11 +214,13 @@ User Query → Planner (LLM) outputs a layered plan
 - **Layered Intent Plan**: The Planner outputs `hard_constraints / soft_intent / hints`. Entities, language, and instrumental constraints are hard filters; mood, scenario, and vibe are ranking signals.
 - **Three Content Recall Paths**: Graph entities/tags, MuQ-MuLan text-to-music search, and BM25 lexical search always run; `intent_type` plus query profile only adjust these content-source weights.
 - **Weighted RRF Fusion**: Candidates are merged with `weight / (60 + rank)`, preserving source rank and source metadata instead of equal merging.
-- **Three-model roles**: MuQ-MuLan is the default text-to-music anchor; M2D-CLAP remains available for recall fallback and semantic reranking; OMAR-RQ supplies text-independent acoustic similarity.
+- **Three-model roles**: MuQ-MuLan is the default text-to-music anchor and the preferred semantic rerank anchor; M2D-CLAP remains available as recall/rerank fallback; OMAR-RQ is used for seed-based acoustic similarity when the user asks for songs similar to a reference track.
 - **Personalization and cold-start are post-recall score adjustments**: User profile, long-tail, freshness, and time-decayed exposure affect only content-recalled candidates. They are neither independent recall sources nor duplicated inside the content anchor.
 - **Unified adjustment scale**: Personalization, freshness, long-tail, and exposure fatigue are normalized to `[0,1]` and merged into a clipped delta (default `±0.08`) so content relevance remains dominant.
+- **Catalog Gap Detector**: Web search is enabled by default. Healthy local results get a small online mix-in (default `WEB_MIX_IN_COUNT=4`) to expand the library. Era/latest/external-knowledge requests or weak local inventory switch to fallback mode (default `WEB_FALLBACK_COUNT=10`). If web search is disabled, the agent does not go online; it explains the local catalog boundary and asks the user to enable web search for broader results.
+- **Two-stage online candidate resolution**: For knowledge-heavy gaps, SearxNG/Tavily/Zhipu first discover context-relevant title/artist candidates, then the Netease proxy resolves playable songs. Liking or saving an online song downloads it to the Pending staging area for user-confirmed ingestion.
 - **Coarse Rank + Thompson Sampling**: Content RRF plus the clipped adjustment delta is used for cutoff (`coarse_cut_ratio=65%`), while tail candidates are rescued via TS sampling (`Beta(α,β)` distribution) for long-tail/new-song exploration.
-- **Content-Anchor Normalized Reranking**: Auxiliary semantic `(cosine+1)/2` (M2D-CLAP) and acoustic `(cosine+1)/2` (OMAR-RQ centroid) anchors are normalized before fusion. Personalization is applied only through the bounded post-recall layer instead of a 25% ranking anchor.
+- **Content-Anchor Normalized Reranking**: Semantic reranking follows the configured primary dense backend (MuQ by default, M2D fallback). The acoustic anchor no longer uses the candidate-set centroid; OMAR-RQ only aligns to explicit seed tracks. Personalization is applied only through the bounded post-recall layer instead of a 25% ranking anchor.
 - **Deployable fallback**: `DENSE_TEXT_AUDIO_BACKEND=muq|m2d|both`; a missing MuQ model/index or encoding failure automatically falls back to M2D, while lazy loading keeps the default memory footprint bounded.
 - **Explicit DST + PlanDelta**: First turns and topic resets use the full planner. Established follow-ups emit only whitelisted `add/replace/remove/clear_topic` operations, while deterministic code preserves untouched slots. Unresolved references, missing key entities, or severe conflicts return a clarification question with options; delta failures fall back to the full planner.
 - **MMR Jaccard**: Re-ranking using the `{genre, mood, theme, scenario}` multidimensional tags for candidate diversity.
@@ -236,7 +240,7 @@ stateDiagram-v2
     route_intent --> gen_recommendations: recommend_by_favorites
     route_intent --> clarify: clarification_required
 
-    search_songs --> web_fallback: Auto-fallback on local miss
+    search_songs --> web_fallback: Catalog Gap fallback / online mix-in
     search_songs --> explain_results: Push songs first on local hit
     web_fallback --> explain_results: Online Music API live search
     acquire_music --> explain_results
@@ -253,7 +257,7 @@ stateDiagram-v2
 
 > Intent recognition, HyDE, and the async tuner-style response default to `dashscope / qwen3.7-plus`. Recommended songs are streamed first; the default `EXPLANATION_MODE=tuner_async` then generates a short conversational response plus follow-up chips. The legacy per-song explanation mode remains available via `EXPLANATION_MODE=song_detail`, but is not recommended as the default because the system should not invent detailed listening impressions.
 
-> `web_search` intent now routes **directly to the `web_fallback` node** (Online Music API live search), bypassing HybridRetrieval entirely. Supports Chinese-first query extraction, multi-level fallback query resolution, and 30-second preview detection.
+> `web_search` intent now routes **directly to the `web_fallback` node** (Online Music API live search), bypassing HybridRetrieval entirely. Normal recommendation can still use the Catalog Gap Detector to mix in a few online songs, while era/latest/external-knowledge gaps or weak local inventory trigger fallback. Supports Chinese-first query extraction, multi-level fallback query resolution, 30-second preview detection, and a two-stage "web evidence discovery → Netease playable resolution" path.
 
 > Preference extraction is governed by a decoupled `extract_preferences` node; general chat intents automatically bypass it.
 
@@ -301,7 +305,7 @@ Replay uses `explicit_feedback_logistic_v2`: strict exposure attribution, chrono
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
 | **Unit Testing** | 204 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, alignment calibration, and more |
-| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 57 dev cases and 34 holdout cases |
+| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 57 dev cases and 34 holdout cases, with `*_easy` / `*_hard` views and intent/ranking layer summaries |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
 | **Code Standards** | Enforced by Ruff static analysis + pyproject.toml |
@@ -312,6 +316,8 @@ Replay uses `explicit_feedback_logistic_v2`: strict exposure attribution, chrono
 ```powershell
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast
 python -m tests.eval.evaluate_outcomes --split holdout --planner-temperature 0 --fast
+python -m tests.eval.evaluate_outcomes --split holdout_hard --planner-temperature 0 --fast
+python -m tests.eval.evaluate_outcomes --split holdout_easy --planner-temperature 0 --fast --require-no-failures
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
 ```
 
@@ -507,7 +513,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 | `NEO4J_URI` | Neo4j bindings | `neo4j://127.0.0.1:7687` |
 | `NEO4J_PASSWORD` | Neo4j security parameters | — |
 | `DENSE_TEXT_AUDIO_BACKEND` | Text-to-music backend | `muq` (Docker CPU automatically uses `m2d`; `both` optional) |
-| `MUSIC_DENSE_QUERY_VARIANTS` | Multi-view HyDE vector ensemble | `0` (set `1` to average acoustic/emotional/context query views) |
+| `MUSIC_DENSE_QUERY_VARIANTS` | Multi-view HyDE vector ensemble | `auto` (scene/mood/similarity queries use acoustic/emotional/context views; exact artist/title queries stay single-vector) |
 | `MUSIC_ALIGNMENT_CALIBRATION_PATH` | Optional text/audio gap calibration JSON | empty (scale/bias per backend; missing file is no-op) |
 | `MUSIC_FEEDBACK_DIR` | Exposure/event feedback log directory | `data/feedback` |
 | `FEEDBACK_LOG_RAW_QUERY` | Store raw queries in feedback logs (hash-only by default) | `0` |

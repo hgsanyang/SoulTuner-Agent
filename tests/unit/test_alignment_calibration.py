@@ -2,7 +2,7 @@ import json
 import math
 
 from retrieval.alignment_calibration import apply_alignment_calibration, build_bias_calibration
-from tools.semantic_search import build_dense_query_variants, _mean_vectors
+from tools.semantic_search import build_dense_query_variants, _mean_vectors, _should_use_dense_query_variants
 
 
 def test_dense_query_variants_are_deterministic():
@@ -12,6 +12,11 @@ def test_dense_query_variants_are_deterministic():
     assert variants[0] == "ethereal female vocals"
     assert "instrumentation" in variants[1]
     assert "mood trajectory" in variants[2]
+
+
+def test_dense_query_variants_auto_targets_scene_not_precision():
+    assert _should_use_dense_query_variants("需要安静温柔的雨天歌")
+    assert not _should_use_dense_query_variants("歌手周杰伦")
 
 
 def test_mean_vectors_normalizes_average():

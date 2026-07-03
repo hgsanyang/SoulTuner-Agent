@@ -39,6 +39,25 @@ def test_exposure_and_event_jsonl_roundtrip(tmp_path, monkeypatch):
     assert events[0]["event_type"] == "like"
 
 
+def test_log_slate_feedback_jsonl_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUSIC_FEEDBACK_DIR", str(tmp_path))
+
+    feedback_id = feedback_logger.log_slate_feedback(
+        exposure_id="exp-1",
+        rating="too_familiar",
+        reasons=["太像我的旧歌单", "想发现更多新歌"],
+        note="少一点已收藏的民谣",
+    )
+
+    rows = feedback_logger.load_jsonl(tmp_path / feedback_logger.SLATE_FEEDBACK_FILE)
+
+    assert rows[0]["feedback_id"] == feedback_id
+    assert rows[0]["exposure_id"] == "exp-1"
+    assert rows[0]["rating"] == "too_familiar"
+    assert rows[0]["reasons"] == ["太像我的旧歌单", "想发现更多新歌"]
+    assert rows[0]["note"] == "少一点已收藏的民谣"
+
+
 def test_estimate_tri_anchor_weights_prefers_positive_features():
     exposures = [
         {

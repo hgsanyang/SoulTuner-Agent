@@ -15,6 +15,7 @@ from typing import Any
 POSITIVE_EVENTS = {"like", "save", "full_play", "repeat"}
 NEGATIVE_EVENTS = {"skip", "dislike"}
 WEIGHTS_FILE = "ranking_weights.json"
+SLATE_FEEDBACK_FILE = "slate_feedback.jsonl"
 FEATURE_FIELDS = {
     "semantic": "semantic_score",
     "acoustic": "acoustic_score",
@@ -148,6 +149,37 @@ def log_user_event(
     }
     _append_jsonl(_jsonl_path("events.jsonl"), payload)
     return event_id
+
+
+def log_slate_feedback(
+    *,
+    exposure_id: str,
+    rating: str,
+    reasons: list[str] | None = None,
+    note: str = "",
+    user_id: str = "local_admin",
+    extra: dict[str, Any] | None = None,
+) -> str:
+    """Persist feedback for an entire recommendation slate.
+
+    Song-level feedback tells us which item worked.  Slate-level feedback tells
+    us whether the whole ranked list satisfied the current intent, which is the
+    signal needed for offline replay and future ranking-policy learning.
+    """
+    feedback_id = str(uuid.uuid4())
+    payload = {
+        "type": "slate_feedback",
+        "feedback_id": feedback_id,
+        "ts": int(time.time() * 1000),
+        "user_id": user_id,
+        "exposure_id": str(exposure_id or "").strip(),
+        "rating": str(rating or "").strip(),
+        "reasons": [str(item).strip() for item in (reasons or []) if str(item).strip()],
+        "note": str(note or "").strip()[:1000],
+        "extra": extra or {},
+    }
+    _append_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE), payload)
+    return feedback_id
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:

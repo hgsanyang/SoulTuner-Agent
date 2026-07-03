@@ -170,10 +170,11 @@ def _rank_ids(query_vector: list[float], matrix: np.ndarray, ids: list[str]) -> 
     return [ids[int(index)] for index in order]
 
 
-def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "") -> dict[str, Any]:
+def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "", query_variants: bool = False) -> dict[str, Any]:
     from retrieval.audio_embedder import encode_text_to_embedding
     from retrieval.alignment_calibration import apply_alignment_calibration
     from retrieval.muq_embedder import MUQ_REPO_ID, encode_text_to_muq
+    from tools.semantic_search import build_dense_query_variants, _mean_vectors
 
     previous_calibration_path = os.environ.get("MUSIC_ALIGNMENT_CALIBRATION_PATH")
     if calibration_path:
@@ -181,14 +182,23 @@ def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "") -> dic
     ids, labels_by_id, m2d_matrix, muq_matrix = _fetch_common_corpus()
     rows = []
     grouped: dict[str, dict[str, list[float]]] = {}
+
+    def _encode_text(text: str, backend: str) -> list[float]:
+        encoder = encode_text_to_muq if backend == "muq" else encode_text_to_embedding
+        if not query_variants:
+            return encoder(text)
+        variants = build_dense_query_variants(text)
+        vectors = [encoder(variant) for variant in variants if variant]
+        return _mean_vectors(vectors) if len(vectors) > 1 else vectors[0]
+
     try:
         for query in FROZEN_ATTRIBUTE_QUERIES:
             m2d_query_vector = apply_alignment_calibration(
-                encode_text_to_embedding(query["text"]),
+                _encode_text(query["text"], "m2d"),
                 "m2d",
             )
             muq_query_vector = apply_alignment_calibration(
-                encode_text_to_muq(query["text"]),
+                _encode_text(query["text"], "muq"),
                 "muq",
             )
             m2d_ranked = _rank_ids(m2d_query_vector, m2d_matrix, ids)
@@ -233,6 +243,7 @@ def evaluate_attribute_alignment(k: int = 10, calibration_path: str = "") -> dic
             "common_m2d_muq_songs": len(ids),
         },
         "calibration_path": calibration_path or "",
+        "query_variants": bool(query_variants),
         "k": k,
         "query_count": len(FROZEN_ATTRIBUTE_QUERIES),
         "metrics": {
@@ -248,9 +259,14 @@ def main() -> None:
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--output", default="")
     parser.add_argument("--calibration-path", default="", help="Optional alignment calibration JSON")
+    parser.add_argument("--query-variants", action="store_true", help="Evaluate multi-view dense query variants")
     args = parser.parse_args()
 
-    report = evaluate_attribute_alignment(k=args.k, calibration_path=args.calibration_path)
+    report = evaluate_attribute_alignment(
+        k=args.k,
+        calibration_path=args.calibration_path,
+        query_variants=args.query_variants,
+    )
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = Path(args.output) if args.output else RESULTS_DIR / (
         "alignment_attribute_eval_"
@@ -270,6 +286,8 @@ def main() -> None:
     print(f"Queries: {report['query_count']} | P@{report['k']}")
     if report.get("calibration_path"):
         print(f"Calibration: {report['calibration_path']}")
+    if report.get("query_variants"):
+        print("Query variants: enabled")
     print(f"Overall: M2D={metrics['overall']['m2d']:.3f} | MuQ={metrics['overall']['muq']:.3f}")
     for lang, values in metrics["by_query_language"].items():
         print(f"{lang}: M2D={values['m2d']:.3f} | MuQ={values['muq']:.3f}")
