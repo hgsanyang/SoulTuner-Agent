@@ -98,5 +98,38 @@
     "specificity": "HH",
     "query": "既要完全无歌词又要中文说唱，最好还能突出人声",
     "checks": {"expected_clarification": true}
+  },
+  {
+    "id": "ctx_holdout_audio_hh_02_rainy_soft_no_driving",
+    "category": "context_audio_attribute",
+    "goal_category": "audio_attribute",
+    "specificity": "HH",
+    "query": "雨天，柔软安静，少鼓，别给我 driving 或 party 的歌",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["rainy", "soft", "peaceful", "relaxing", "late night"], "negative_any": ["driving", "party", "dance", "energetic", "workout"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.38, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_holdout_refine_lh_02_keep_rain_more_quiet",
+    "category": "context_interaction_refinement",
+    "goal_category": "interaction_refinement",
+    "specificity": "LH",
+    "query": "再安静一点，但雨天感不要丢",
+    "chat_history": [{"role": "user", "content": "下雨天通勤，给我一些不太吵的歌"}, {"role": "assistant", "content": "推荐了一些雨天通勤和独立流行歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["rainy", "soft", "peaceful", "relaxing", "mellow"], "negative_any": ["energetic", "driving", "party", "workout"], "min_positive_ratio": 0.28, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_holdout_neg_hh_02_no_dance_party",
+    "category": "context_negative_refinement",
+    "goal_category": "negative_refinement",
+    "specificity": "HH",
+    "query": "要一点律动，但不要 dance、EDM、夜店感，适合一个人散步",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["walk", "travel", "mellow", "chill", "indie"], "negative_any": ["dance", "edm", "party", "club"], "min_positive_ratio": 0.2, "max_negative_ratio": 0.42, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_holdout_scene_hh_02_focus_low_dynamic",
+    "category": "context_scenario",
+    "goal_category": "scenario",
+    "specificity": "HH",
+    "query": "夜里专注写东西，低动态、别吵、不要过度悲伤",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["study", "focus", "late night", "soft", "peaceful", "relaxing"], "negative_any": ["party", "workout", "aggressive", "heartbreak"], "min_positive_ratio": 0.28, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.45}}
   }
 ]
