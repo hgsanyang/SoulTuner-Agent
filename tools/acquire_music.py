@@ -452,13 +452,15 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                         embed_query = """
                         MATCH (s:Song {title: $title, artist: $artist_name})
                         SET s.m2d2_embedding = $m2d2_embedding,
-                            s.omar_embedding = $omar_embedding
+                            s.omar_embedding = $omar_embedding,
+                            s.muq_embedding = $muq_embedding
                         """
                         client.execute_query(embed_query, {
                             "title": song["title"],
                             "artist_name": song["artist"],
                             "m2d2_embedding": embeddings.get("m2d2_embedding", []),
                             "omar_embedding": embeddings.get("omar_embedding", []),
+                            "muq_embedding": embeddings.get("muq_embedding", []),
                         })
                         logger.info(f"🧠 [后台飞轮] 向量入库: {song['title']}")
                 except Exception as e:
@@ -549,6 +551,7 @@ def _sync_extract_embeddings(audio_path: str) -> Dict[str, List[float]]:
     """同步版本的向量提取"""
     import librosa
     from retrieval.audio_embedder import encode_audio_to_embedding, extract_audio_representation
+    from retrieval.muq_embedder import encode_audio_to_muq
 
     MAX_SECONDS = 300
     file_duration = librosa.get_duration(path=audio_path)
@@ -556,11 +559,17 @@ def _sync_extract_embeddings(audio_path: str) -> Dict[str, List[float]]:
 
     audio_np, sr = librosa.load(audio_path, sr=None, mono=True, duration=load_duration)
     audio_16k = librosa.resample(audio_np, orig_sr=sr, target_sr=16000)
+    audio_24k = librosa.resample(audio_np, orig_sr=sr, target_sr=24000)
 
     m2d2_emb = encode_audio_to_embedding(audio_16k, sample_rate=16000)
     omar_emb = extract_audio_representation(audio_16k, sample_rate=16000)
+    try:
+        muq_emb = encode_audio_to_muq(audio_24k, sample_rate=24000)
+    except Exception as exc:
+        logger.warning("MuQ embedding 提取失败，在线歌曲将暂时缺少主文搜音锚: %s", exc)
+        muq_emb = []
 
-    return {"m2d2_embedding": m2d2_emb, "omar_embedding": omar_emb}
+    return {"m2d2_embedding": m2d2_emb, "omar_embedding": omar_emb, "muq_embedding": muq_emb}
 
 
 # ---- 全局单例 ----

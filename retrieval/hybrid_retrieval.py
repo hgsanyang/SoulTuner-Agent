@@ -559,7 +559,9 @@ class MusicHybridRetrieval:
             ]
         ).casefold()
         filter_hard_constraints = dict(hard_constraints)
+        reference_song_entities = []
         if graph_song_entities and any(term in similarity_context for term in similarity_seed_terms):
+            reference_song_entities = list(graph_song_entities)
             filter_hard_constraints["song_entities"] = []
             logger.info(
                 "[Retrieval] song_entities=%s 作为相似听感参考种子，不进入最终硬过滤",
@@ -726,6 +728,7 @@ class MusicHybridRetrieval:
         self._current_query = query
         self._current_hyde_text = vector_desc
         self._current_hard_constraints = filter_hard_constraints
+        self._current_reference_song_entities = reference_song_entities
         self._current_soft_intent = soft_intent
 
         result = self._format_results(
@@ -848,8 +851,8 @@ class MusicHybridRetrieval:
     # ================================================================
     # 内容双锚精排（语义 + 声学）；个性化只在限幅 post-recall 层生效
     # ================================================================
-    @staticmethod
     def _tri_anchor_rerank(
+        self,
         candidates: List[dict],
         query_text: str,
         user_id: str = GRAPH_AFFINITY_USER_ID,
@@ -860,8 +863,8 @@ class MusicHybridRetrieval:
         所有分数归一化到 [0, 1] 后加权融合：
         final_score = α×semantic + β×acoustic
 
-        - semantic:   M2D-CLAP cosine(song_emb, query_text_emb) → (x+1)/2
-        - acoustic:   OMAR-RQ cosine(song_emb, centroid) → (x+1)/2
+        - semantic:   主文搜音锚 cosine(song_emb, query_text_emb) → (x+1)/2
+        - acoustic:   OMAR-RQ 仅在有参考种子歌时对齐种子，否则保持中性
 
         个性化、新鲜度、长尾和过曝只通过 +/-0.08 的召回后校正层影响
         已召回候选，避免用户画像压过当前查询的内容相关性。
@@ -902,12 +905,23 @@ class MusicHybridRetrieval:
         try:
             import numpy as np
             from retrieval.neo4j_client import get_neo4j_client
-            from retrieval.audio_embedder import encode_text_to_embedding
 
             neo4j = get_neo4j_client()
             if not neo4j or not neo4j.driver:
                 logger.warning("[TriAnchor] Neo4j 不可用，跳过三锚精排")
                 return candidates
+
+            configured_backend = str(getattr(_s, "dense_text_audio_backend", "muq") or "muq").lower()
+            semantic_backend = "muq" if configured_backend in {"muq", "both"} else "m2d"
+
+            def _encode_query(backend: str):
+                if backend == "muq":
+                    from retrieval.muq_embedder import encode_text_to_muq
+
+                    return encode_text_to_muq(query_text)
+                from retrieval.audio_embedder import encode_text_to_embedding
+
+                return encode_text_to_embedding(query_text)
 
             # ── 语义锚：query → text embedding ──
             # 首次启动时 HuggingFace 文本编码器可能仍在下载，不能让精排阻塞整条推荐链。
@@ -915,47 +929,74 @@ class MusicHybridRetrieval:
             query_emb = None
             executor = None
             try:
-                logger.info("[TriAnchor] 编码 query text embedding...")
+                logger.info("[TriAnchor] 编码 query text embedding backend=%s...", semantic_backend)
                 executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                future = executor.submit(encode_text_to_embedding, query_text)
+                future = executor.submit(_encode_query, semantic_backend)
                 query_emb = np.array(future.result(timeout=tri_text_timeout))
             except concurrent.futures.TimeoutError:
                 logger.warning(
                     "[TriAnchor] query text embedding 超时 %.1fs，跳过语义锚，保留声学/个性化排序",
                     tri_text_timeout,
                 )
+            except Exception as encode_error:
+                if semantic_backend == "muq":
+                    logger.warning("[TriAnchor] MuQ 精排编码失败，尝试 M2D fallback: %s", encode_error)
+                    try:
+                        future = executor.submit(_encode_query, "m2d") if executor else None
+                        query_emb = np.array(future.result(timeout=tri_text_timeout)) if future else None
+                        semantic_backend = "m2d"
+                    except Exception as fallback_error:
+                        logger.warning("[TriAnchor] M2D fallback 也失败，跳过语义锚: %s", fallback_error)
+                else:
+                    logger.warning("[TriAnchor] query text embedding 失败，跳过语义锚: %s", encode_error)
             finally:
                 if executor is not None:
                     executor.shutdown(wait=False, cancel_futures=True)
 
-            # ── 批量获取候选歌曲的 M2D + OMAR embedding ──
+            # ── 批量获取候选歌曲的 MuQ/M2D + OMAR embedding ──
             titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
             emb_cypher = """
             UNWIND $titles AS t
             MATCH (s:Song {title: t})
             RETURN s.title AS title,
+                   s.muq_embedding AS muq_emb,
                    s.m2d2_embedding AS m2d_emb,
                    s.omar_embedding AS omar_emb
             """
             emb_rows = neo4j.execute_query(emb_cypher, {"titles": titles})
 
-            m2d_map, omar_map = {}, {}
+            muq_map, m2d_map, omar_map = {}, {}, {}
             for row in (emb_rows or []):
                 t = row.get("title", "")
+                if row.get("muq_emb"):
+                    muq_map[t] = np.array(row["muq_emb"])
                 if row.get("m2d_emb"):
                     m2d_map[t] = np.array(row["m2d_emb"])
                 if row.get("omar_emb"):
                     omar_map[t] = np.array(row["omar_emb"])
 
             logger.info(
-                f"[TriAnchor] embedding 命中: M2D={len(m2d_map)}/{len(titles)}, "
+                f"[TriAnchor] embedding 命中: MuQ={len(muq_map)}/{len(titles)}, M2D={len(m2d_map)}/{len(titles)}, "
                 f"OMAR={len(omar_map)}/{len(titles)}"
             )
 
-            # ── 声学锚：OMAR 质心 ──
-            omar_centroid = None
-            if omar_map:
-                omar_centroid = np.mean(list(omar_map.values()), axis=0)
+            # ── 声学锚：只在有明确相似种子歌时使用种子 OMAR，不再用候选集质心 ──
+            acoustic_anchor = None
+            reference_songs = list(getattr(self, "_current_reference_song_entities", []) or [])
+            if reference_songs:
+                seed_rows = neo4j.execute_query(
+                    """
+                    UNWIND $titles AS t
+                    MATCH (s:Song {title: t})
+                    WHERE s.omar_embedding IS NOT NULL
+                    RETURN s.omar_embedding AS omar_emb
+                    """,
+                    {"titles": reference_songs},
+                )
+                seed_vectors = [np.array(row["omar_emb"]) for row in (seed_rows or []) if row.get("omar_emb")]
+                if seed_vectors:
+                    acoustic_anchor = np.mean(seed_vectors, axis=0)
+                    logger.info("[TriAnchor] OMAR 声学锚使用参考种子歌: %s", reference_songs)
 
             def _cosine(a, b):
                 dot = np.dot(a, b)
@@ -971,23 +1012,23 @@ class MusicHybridRetrieval:
                 title = c.get("song", {}).get("title", "")
 
                 # 维度 1: 语义分（归一化到 [0,1]）
-                m2d_emb = m2d_map.get(title)
-                if query_emb is not None and m2d_emb is not None:
-                    raw_semantic = _cosine(m2d_emb, query_emb)
+                semantic_emb = muq_map.get(title) if semantic_backend == "muq" else m2d_map.get(title)
+                if query_emb is not None and semantic_emb is not None:
+                    raw_semantic = _cosine(semantic_emb, query_emb)
                     semantic = _normalize_cosine(raw_semantic)
                 else:
                     semantic = 0.5  # 无 embedding 时给中位分
 
                 # 维度 2: 声学分（归一化到 [0,1]）
                 omar_emb = omar_map.get(title)
-                if omar_emb is not None and omar_centroid is not None:
-                    raw_acoustic = _cosine(omar_emb, omar_centroid)
+                if omar_emb is not None and acoustic_anchor is not None:
+                    raw_acoustic = _cosine(omar_emb, acoustic_anchor)
                     acoustic = _normalize_cosine(raw_acoustic)
                 else:
                     acoustic = 0.5
 
-                # 缺 OMAR 时只使用语义锚；个性化不在这里重复计分。
-                if omar_emb is None or omar_centroid is None:
+                # 没有可靠声学锚时只使用语义锚；个性化不在这里重复计分。
+                if omar_emb is None or acoustic_anchor is None:
                     final = semantic
                 else:
                     final = w_sem * semantic + w_aco * acoustic
@@ -995,6 +1036,7 @@ class MusicHybridRetrieval:
                 c["similarity_score"] = round(final, 6)
                 c["_semantic_score"] = round(semantic, 4)
                 c["_acoustic_score"] = round(acoustic, 4)
+                c["_semantic_backend"] = semantic_backend
                 c["_personal_score"] = round(float(c.get("_post_personal_score", 0.5)), 4)
 
             candidates.sort(key=lambda x: x["similarity_score"], reverse=True)

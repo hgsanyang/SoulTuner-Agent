@@ -38,8 +38,7 @@ class UserMemoryManager:
         匹配策略（按优先级）：
           1. 精确匹配 title + artist 属性
           2. 匹配 title + PERFORMED_BY Artist 节点名称
-          3. 仅匹配 title（有 embedding 的优先）
-          4. 以上都找不到时才 MERGE 新节点
+          3. 以上都找不到时才 MERGE 新节点
         """
         query = """
         // 策略1: 精确匹配 title + artist 属性
@@ -47,11 +46,8 @@ class UserMemoryManager:
         // 策略2: 匹配 title + Artist 节点 (CONTAINS 支持 "G.E.M.邓紫棋" 等)
         OPTIONAL MATCH (s2:Song {title: $title})-[:PERFORMED_BY]->(a:Artist)
             WHERE a.name CONTAINS $artist OR $artist CONTAINS a.name
-        // 策略3: 仅匹配 title（有 embedding 的优先）
-        OPTIONAL MATCH (s3:Song {title: $title})
-            WHERE s3.m2d2_embedding IS NOT NULL
         // 选择最佳匹配
-        WITH coalesce(s1, s2, s3) AS existing
+        WITH coalesce(s1, s2) AS existing
         WITH existing WHERE existing IS NOT NULL
         RETURN elementId(existing) AS song_id
         LIMIT 1
@@ -155,10 +151,12 @@ class UserMemoryManager:
             # ① 先清理矛盾关系：删除可能存在的 LIKES / SAVES
             cleanup_query = """
             MATCH (u:User {id: $user_id})-[r:LIKES|SAVES]->(s:Song {title: $song_title})
+            WHERE s.artist = $artist
+                  OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
             DELETE r
             """
             self.neo4j_client.execute_query(cleanup_query, {
-                "user_id": user_id, "song_title": song_title
+                "user_id": user_id, "song_title": song_title, "artist": artist
             })
 
             # ② 创建 DISLIKES 关系
@@ -212,25 +210,29 @@ class UserMemoryManager:
             logger.info(f"记录用户 {user_id} 跳过歌曲: {song_title} - {artist}")
     def remove_like(self, user_id: str, song_title: str, artist: str):
         """取消点赞 → 删除 LIKES 关系"""
-        if not song_title:
+        if not song_title or not artist:
             return
         query = """
         MATCH (u:User {id: $user_id})-[r:LIKES]->(s:Song {title: $song_title})
+        WHERE s.artist = $artist
+              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
         DELETE r
         """
         if self.neo4j_client:
-            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title})
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
             logger.info(f"用户 {user_id} 取消点赞: {song_title}")
     def remove_save(self, user_id: str, song_title: str, artist: str):
         """取消收藏 → 删除 SAVES 关系"""
-        if not song_title:
+        if not song_title or not artist:
             return
         query = """
         MATCH (u:User {id: $user_id})-[r:SAVES]->(s:Song {title: $song_title})
+        WHERE s.artist = $artist
+              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
         DELETE r
         """
         if self.neo4j_client:
-            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title})
+            self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
             logger.info(f"用户 {user_id} 取消收藏: {song_title}")
     def get_liked_songs(self, user_id: str, limit: int = 20) -> list:
         """
