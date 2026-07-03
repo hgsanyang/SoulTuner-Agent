@@ -20,6 +20,10 @@ class NeteaseQueryPlan:
         """Return primary query followed by bounded fallbacks."""
         return _dedupe([self.query, *self.alternate_queries])
 
+    def artist_query_candidates(self) -> tuple[str, ...]:
+        """Return artist-search candidates before broader natural-language queries."""
+        return _dedupe([*self.artist_terms, self.query, *self.alternate_queries])
+
 
 def _dedupe(items: list[str]) -> tuple[str, ...]:
     seen = set()
@@ -69,6 +73,42 @@ def artist_matches(artist_text: str, artist_terms: tuple[str, ...]) -> bool:
         if needle and (needle in haystack or haystack in needle):
             return True
     return False
+
+
+def extract_artist_id(
+    payload: dict[str, Any] | None,
+    artist_terms: tuple[str, ...],
+    *,
+    allow_top_result: bool = False,
+) -> str:
+    """Choose a Netease artist id from an artist-search response."""
+    artists = (payload or {}).get("result", {}).get("artists", []) or []
+    for artist in artists:
+        name = str(artist.get("name") or "")
+        if artist.get("id") and artist_matches(name, artist_terms):
+            return str(artist["id"])
+    if allow_top_result and artists and artists[0].get("id"):
+        return str(artists[0]["id"])
+    return ""
+
+
+def normalize_artist_catalog_songs(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Normalize /artist/songs and /artist/top/song rows into /search-like rows."""
+    songs = []
+    for row in rows or []:
+        song_id = row.get("id")
+        if not song_id:
+            continue
+        artists = row.get("artists") or row.get("ar") or []
+        album = row.get("album") or row.get("al") or {}
+        songs.append({
+            "id": song_id,
+            "name": row.get("name", "Unknown"),
+            "artists": artists,
+            "album": album,
+            "_artist_catalog": True,
+        })
+    return songs
 
 
 def parse_play_url_payload(payload: dict[str, Any] | None) -> tuple[dict[str, str], dict[str, bool]]:

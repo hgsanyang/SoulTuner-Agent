@@ -31,7 +31,9 @@ from agent.intent.planner import IntentPlanner
 from agent.netease_query import (
     artist_matches,
     build_netease_query_plan,
+    extract_artist_id,
     fetch_json_with_retry,
+    normalize_artist_catalog_songs,
     parse_play_url_payload,
 )
 from agent.retrieval_fallback import (
@@ -1098,6 +1100,83 @@ class MusicRecommendationGraph:
                             songs = candidate_songs
                             break
                         logger.info("[web_fallback] 查询候选无结果: %s", clean_query)
+
+                    if not songs and netease_plan.artist_terms and not netease_plan.song_terms:
+                        artist_search_limit = max(search_limit, 20)
+
+                        async def _fetch_artist_catalog():
+                            for artist_query in netease_plan.artist_query_candidates():
+                                clean_artist_query = _re.sub(r'[《》\[\]【】]', ' ', artist_query).strip()
+                                if not clean_artist_query:
+                                    continue
+
+                                artist_id = ""
+                                for endpoint in ("cloudsearch", "search"):
+                                    artist_url = (
+                                        f"{api_base}/{endpoint}?keywords={_url_quote(clean_artist_query)}"
+                                        f"&type=100&limit=5"
+                                    )
+                                    try:
+                                        artist_payload = await fetch_json_with_retry(
+                                            session,
+                                            artist_url,
+                                            timeout=timeout,
+                                            attempts=1,
+                                        )
+                                    except Exception as exc:
+                                        logger.info(
+                                            "[web_fallback] 歌手搜索端点失败: endpoint=%s query=%s error=%s",
+                                            endpoint,
+                                            clean_artist_query,
+                                            type(exc).__name__,
+                                        )
+                                        continue
+                                    artist_id = extract_artist_id(
+                                        artist_payload,
+                                        netease_plan.artist_terms,
+                                        allow_top_result=clean_artist_query in netease_plan.artist_terms,
+                                    )
+                                    if artist_id:
+                                        break
+
+                                if not artist_id:
+                                    logger.info("[web_fallback] 歌手候选未命中: %s", clean_artist_query)
+                                    continue
+
+                                for endpoint in (
+                                    f"artist/songs?id={artist_id}&limit={artist_search_limit}",
+                                    f"artist/top/song?id={artist_id}",
+                                ):
+                                    catalog_url = f"{api_base}/{endpoint}"
+                                    try:
+                                        catalog_payload = await fetch_json_with_retry(
+                                            session,
+                                            catalog_url,
+                                            timeout=timeout,
+                                            attempts=1,
+                                        )
+                                    except Exception as exc:
+                                        logger.info(
+                                            "[web_fallback] 歌手曲库端点失败: %s error=%s",
+                                            endpoint,
+                                            type(exc).__name__,
+                                        )
+                                        continue
+                                    catalog_rows = catalog_payload.get("songs") or catalog_payload.get("hotSongs") or []
+                                    catalog_songs = normalize_artist_catalog_songs(catalog_rows)
+                                    if catalog_songs:
+                                        for row in catalog_songs:
+                                            row["_artist_catalog_query"] = clean_artist_query
+                                        logger.info(
+                                            "[web_fallback] 歌手曲库兜底命中: query=%s artist_id=%s songs=%d",
+                                            clean_artist_query,
+                                            artist_id,
+                                            len(catalog_songs),
+                                        )
+                                        return catalog_songs
+                            return []
+
+                        songs = await _fetch_artist_catalog()
 
                 songs, excluded_by_avoid = filter_results_by_avoid(
                     songs,
