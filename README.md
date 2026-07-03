@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-223_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-244_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -53,6 +53,19 @@ Copy-Item .env.example .env
 CPU 和 GPU 都能启动完整产品功能。区别只在多模态质量与入库吞吐：`up cpu` 默认用资源更轻的 M2D 文搜音回退，Neo4j / 推荐 / 联网 / 前端全可用；有 NVIDIA GPU 时，把第三行改成 `.\soultuner.ps1 up gpu`，后端会启用 MuQ-MuLan fp16 文搜音主锚，并同时启动独立入库 Worker。
 
 公开演示请不要直接暴露个人曲库服务。将 `.env` 里的 `PUBLIC_DEMO_MODE=true` 并配置 `ADMIN_API_KEY` 后，下载、入库、删除等本地破坏性操作会被禁用或要求 `X-API-Key`；公开 Demo 仍建议只使用 CC/open 曲库或 mock 音频。
+
+### CC-only Gradio 公开演示
+
+如果只想做作品展示，不暴露个人曲库，可以启动一个轻量 Gradio demo。它默认读取仓库外的 MTG-Jamendo CC sample，只做标签/场景推荐，不连接私人 Neo4j 曲库，也不会执行下载、入库或删除。
+
+```powershell
+python -m pip install -r requirements-demo.txt
+$env:PUBLIC_DEMO_MODE = "1"
+$env:PUBLIC_DEMO_DATA_DIR = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\mtg_sample"
+python demos/public_gradio_app.py
+```
+
+这个 demo 适合 Hugging Face Spaces / 魔搭作品页的公开展示；完整产品体验仍使用上面的 Docker + Next.js / FastAPI 入口。
 
 <details>
 <summary>本地开发 / GPU 入库 / 手动分步</summary>
@@ -305,8 +318,8 @@ python scripts/replay_feedback.py --rollback
 | 维度                 | 说明                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | **CI/CD**      | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
-| **单元测试**   | 204 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、对齐校准等） |
-| **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；当前 dev 57 条、holdout 34 条，并支持 `*_easy` / `*_hard` 与 intent/ranking 分层报表 |
+| **单元测试**   | 244 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、对齐校准、公开 demo、教师日志等） |
+| **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；另有 `context_dev/context_holdout` 中文上下文匹配尺子，覆盖 11 类目标与 4 档具体度 |
 | **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比）              |
 | **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres）         |
 | **代码规范**   | Ruff 静态检查 + pyproject.toml 统一配置                                      |
@@ -319,14 +332,27 @@ python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fas
 python -m tests.eval.evaluate_outcomes --split holdout --planner-temperature 0 --fast
 python -m tests.eval.evaluate_outcomes --split holdout_hard --planner-temperature 0 --fast
 python -m tests.eval.evaluate_outcomes --split holdout_easy --planner-temperature 0 --fast --require-no-failures
+python -m tests.eval.evaluate_outcomes --split context_dev --planner-temperature 0 --fast --case-timeout 75
+python -m tests.eval.evaluate_outcomes --split context_holdout --planner-temperature 0 --fast --case-timeout 75
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
 ```
 
-当前尺子不只看路由标签，而是检查返回歌曲是否满足歌手、歌名、语言、可播放、否定约束、软意图和降级行为。Holdout 已扩展到 34 条，覆盖英文镜像、多轮上下文、否定约束和软意图；评测必须使用 `--planner-temperature 0`。
+当前尺子不只看路由标签，而是检查返回歌曲是否满足歌手、歌名、语言、可播放、否定约束、软意图和降级行为。`context_*` 是新的非饱和中文上下文尺子，用来衡量“读懂此刻状态并选出契合歌曲”的能力；评测必须使用 `--planner-temperature 0`。
 
 旧的 `evaluate_intent.py` 只作为路由标签回归参考，不再作为推荐质量证明。运行评测详情见 `tests/eval/README.md`。
 
 </details>
+
+### 蒸馏教师日志
+
+Planner、HyDE 与调音师式解释都可以本地落盘为后续 SFT/蒸馏语料。默认关闭；开启后默认只保存文本 hash，不会把用户原文写入日志：
+
+```powershell
+$env:TEACHER_LOG = "1"
+$env:TEACHER_LOG_DIR = "data/teacher"
+```
+
+只有在个人本地构造私有训练集时，才显式设置 `TEACHER_LOG_STORE_TEXT=1` 保存完整文本；不要把 `data/teacher/` 提交到远程仓库。
 
 ---
 
@@ -498,7 +524,7 @@ python startup_all.py
 │
 ├── graphzep_service/           # GraphZep 微服务
 ├── tests/                      # 测试与评测
-│   ├── unit/                   # 单元测试 (204 tests, pytest)
+│   ├── unit/                   # 单元测试 (244 tests, pytest)
 │   │   ├── test_normalize_key.py
 │   │   ├── test_gssc_token_budget.py
 │   │   ├── test_tag_expansion.py

@@ -11,6 +11,11 @@ It is not an intent-label accuracy test.
 - `holdout`: 34 frozen cases, including English mirrors, multi-turn context,
   negative constraints, and soft-intent cases. Do not tune
   directly against this set.
+- `context_dev`: 44 Chinese context-matching cases, written against this
+  catalog and bucketed by context goal plus specificity.
+- `context_holdout`: 12 frozen context-matching cases. Use only as a milestone
+  regression check.
+- `context_all`: context_dev + context_holdout, for explicit milestone checks.
 - `dev_easy` / `dev_hard` and `holdout_easy` / `holdout_hard`: derived views
   over the same frozen JSON files. `hard` currently covers negation,
   soft-intent, scenario, catalog-gap/web-fallback, and multi-turn cases.
@@ -23,6 +28,7 @@ python -m tests.eval.evaluate_outcomes --split smoke
 python -m tests.eval.evaluate_outcomes --split dev
 python -m tests.eval.evaluate_outcomes --split holdout
 python -m tests.eval.evaluate_outcomes --split holdout_hard
+python -m tests.eval.evaluate_outcomes --split context_dev --fast --case-timeout 75
 python -m tests.eval.calibrate_soft_judge --min-accuracy 0.95
 ```
 
@@ -49,6 +55,24 @@ The timing report covers GraphZep, intent planning, each recall source,
 fusion/filter, ranking, web fallback, explanation, Agent total, and end to end.
 `--case-timeout` is useful for slow dev profiling: a stuck case is marked
 `TIMEOUT`, the run continues, and the JSON report includes `slow_cases`.
+
+### Context matching ruler
+
+The `context_*` splits are the non-saturated Chinese ruler for the current
+product direction: "understand this moment and pick fitting songs from a liked
+library."  They borrow the TalkPlayData taxonomy shape, but not its data or
+target songs.
+
+Each case carries:
+
+- `goal_category`: one of `audio_attribute`, `lyrics_theme`, `emotion`,
+  `scenario`, `artist_entity`, `song_entity`, `language_region`, `era_style`,
+  `negative_refinement`, `interaction_refinement`, or `clarification`.
+- `specificity`: `LL`, `HL`, `LH`, or `HH`, used to spot whether broad or highly
+  constrained requests are weaker.
+
+Reports include pass/fail buckets by `goal_category` and `specificity`. This
+split is expected to expose failures; do not tune against `context_holdout`.
 
 ## Text-To-Audio Alignment Eval
 

@@ -1,0 +1,102 @@
+[
+  {
+    "id": "ctx_holdout_audio_hh_01",
+    "category": "context_audio_attribute",
+    "goal_category": "audio_attribute",
+    "specificity": "HH",
+    "query": "低动态、少鼓、夜里听不刺耳的英文女声",
+    "checks": {"min_results": 3, "language_any_of": ["English"], "language_match_min_ratio": 0.4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["soft", "peaceful", "late night", "dreamy"], "negative_any": ["energetic", "party", "workout"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.45}, "manual_review": ["确认女声和低动态"]} 
+  },
+  {
+    "id": "ctx_holdout_lyrics_hl_01",
+    "category": "context_lyrics_theme",
+    "goal_category": "lyrics_theme",
+    "specificity": "HL",
+    "query": "歌词像是在回忆一段关系，但不要苦情到崩溃",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["nostalgic", "romantic", "melancholy", "mellow"], "negative_any": ["angry", "party"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.45}, "manual_review": ["确认歌词主题，而非仅情绪标签"]} 
+  },
+  {
+    "id": "ctx_holdout_emotion_lh_01",
+    "category": "context_emotion",
+    "goal_category": "emotion",
+    "specificity": "LH",
+    "query": "这次别救我了，就让我安静地难过一会儿",
+    "chat_history": [{"role": "user", "content": "想听能让我从 emo 里走出来的歌"}, {"role": "assistant", "content": "推荐了一些逐渐释怀的歌。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["sad", "melancholy", "lonely", "late night"], "negative_any": ["happy", "party", "workout"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_holdout_scene_hh_01",
+    "category": "context_scenario",
+    "goal_category": "scenario",
+    "specificity": "HH",
+    "query": "周日傍晚收拾房间听的中文歌，轻松但不要吵",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["relaxing", "warm", "happy", "mellow"], "negative_any": ["party", "metal", "workout"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_holdout_artist_hl_01",
+    "category": "context_artist_entity",
+    "goal_category": "artist_entity",
+    "specificity": "HL",
+    "query": "周杰伦，但避开情歌，想要更酷一点",
+    "checks": {"min_results": 3, "artist_any_of": ["周杰伦", "Jay Chou"], "artist_match_min_ratio": 0.45, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["energetic", "cool", "hip hop", "rap"], "negative_any": ["sad", "romantic", "ballad"], "min_positive_ratio": 0.2, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}, "manual_review": ["确认避开情歌"]} 
+  },
+  {
+    "id": "ctx_holdout_song_lh_01",
+    "category": "context_song_entity",
+    "goal_category": "song_entity",
+    "specificity": "LH",
+    "query": "和刚才第一首相似，但别再那么热闹",
+    "chat_history": [{"role": "user", "content": "推荐一些跑步有劲的歌"}, {"role": "assistant", "content": "第一首是心要野，整体很有劲。"}],
+    "checks": {"min_results": 3, "must_exclude": [{"title": "心要野"}], "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["mellow", "soft", "relaxing"], "negative_any": ["energetic", "driving", "party"], "min_positive_ratio": 0.2, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_holdout_lang_hh_01",
+    "category": "context_language_region",
+    "goal_category": "language_region",
+    "specificity": "HH",
+    "query": "日语，但不要燃系，要像夜里散步一样轻",
+    "checks": {"min_results": 3, "language_any_of": ["Japanese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["late night", "mellow", "dreamy", "peaceful"], "negative_any": ["energetic", "party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_holdout_era_lh_01",
+    "category": "context_era_style",
+    "goal_category": "era_style",
+    "specificity": "LH",
+    "query": "保留港乐怀旧感，但不要那么苦",
+    "chat_history": [{"role": "user", "content": "给我一些粤语苦情老歌"}, {"role": "assistant", "content": "推荐了一些粤语怀旧慢歌。"}],
+    "checks": {"min_results": 3, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.35, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["nostalgic", "classic", "mellow"], "negative_any": ["sad", "heartbreak"], "min_positive_ratio": 0.2, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_holdout_neg_hh_01",
+    "category": "context_negative_refinement",
+    "goal_category": "negative_refinement",
+    "specificity": "HH",
+    "query": "适合健身，但不要 EDM，也不要土嗨，最好是摇滚或嘻哈的力量感",
+    "checks": {"min_results": 3, "genre_any_of": ["rock", "hip hop", "rap", "metal"], "genre_match_min_ratio": 0.25, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["workout", "energetic", "powerful", "rock"], "negative_any": ["edm", "dance", "party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_holdout_refine_hh_01",
+    "category": "context_interaction_refinement",
+    "goal_category": "interaction_refinement",
+    "specificity": "HH",
+    "query": "把雨天感保留，但换成更偏 lo-fi beat，少人声",
+    "chat_history": [{"role": "user", "content": "今天下雨天，给我一点温柔安静的歌"}, {"role": "assistant", "content": "推荐了一些雨天温柔歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["rainy", "lo-fi", "chill", "relaxing"], "negative_any": ["energetic", "party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.4}, "manual_review": ["确认少人声"]} 
+  },
+  {
+    "id": "ctx_holdout_clarify_ll_01",
+    "category": "context_clarification",
+    "goal_category": "clarification",
+    "specificity": "LL",
+    "query": "来点类似的",
+    "checks": {"expected_clarification": true}
+  },
+  {
+    "id": "ctx_holdout_clarify_hh_01",
+    "category": "context_clarification",
+    "goal_category": "clarification",
+    "specificity": "HH",
+    "query": "既要完全无歌词又要中文说唱，最好还能突出人声",
+    "checks": {"expected_clarification": true}
+  }
+]

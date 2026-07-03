@@ -230,7 +230,9 @@ def main() -> int:
         _git_info,
     )
 
-    ids, labels_by_id, m2d_matrix, muq_matrix = _fetch_common_corpus()
+    ids, labels_by_id, corpora = _fetch_common_corpus()
+    m2d_matrix = corpora["m2d"]["matrix"]
+    muq_matrix = corpora["muq"]["matrix"]
     train_queries, validation_queries = split_calibration_queries(FROZEN_ATTRIBUTE_QUERIES)
     backends = ["muq", "m2d"] if args.backend == "both" else [args.backend]
 

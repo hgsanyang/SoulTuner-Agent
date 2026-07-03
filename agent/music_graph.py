@@ -1885,6 +1885,20 @@ class MusicRecommendationGraph:
             final_response = explanation
             
             logger.info(f"成功生成推荐文本({explanation_mode}), 耗时 {_time.time()-_t0:.1f}s")
+            try:
+                from services.teacher_log import log_teacher_example
+
+                log_teacher_example(
+                    "explain",
+                    inputs={
+                        "mode": explanation_mode,
+                        "prompt_payload": prompt_payload,
+                    },
+                    output={"final_response": final_response},
+                    metadata={"provider": _explain_provider, "model": _explain_model_name},
+                )
+            except Exception:
+                pass
             
             # 偏好提取已解耦为独立节点 extract_preferences_node
             

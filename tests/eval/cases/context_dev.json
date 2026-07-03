@@ -1,0 +1,379 @@
+[
+  {
+    "id": "ctx_dev_audio_ll_01",
+    "category": "context_audio_attribute",
+    "goal_category": "audio_attribute",
+    "specificity": "LL",
+    "query": "来点柔软一点的歌，别太硬",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["soft", "mellow", "relaxing", "peaceful"], "negative_any": ["energetic", "metal", "intense", "party"], "min_positive_ratio": 0.34, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_audio_hl_01",
+    "category": "context_audio_attribute",
+    "goal_category": "audio_attribute",
+    "specificity": "HL",
+    "query": "想听贝斯线明显、鼓点稳一点的歌",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认低频/鼓点存在感，而非只按流派随机"]}
+  },
+  {
+    "id": "ctx_dev_audio_lh_01",
+    "category": "context_audio_attribute",
+    "goal_category": "audio_attribute",
+    "specificity": "LH",
+    "query": "刚才那组太亮了，换成暗一点、低饱和的听感",
+    "chat_history": [{"role": "user", "content": "给我一些明亮轻快的英文歌"}, {"role": "assistant", "content": "推荐了一些明亮、节奏轻快的英文歌。"}],
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["melancholy", "late night", "dreamy", "dark"], "negative_any": ["happy", "party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_audio_hh_01",
+    "category": "context_audio_attribute",
+    "goal_category": "audio_attribute",
+    "specificity": "HH",
+    "query": "要女声、低动态、鼓不要太重，适合夜里小声放",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["late night", "peaceful", "dreamy", "soft"], "negative_any": ["energetic", "workout", "party"], "min_positive_ratio": 0.34, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.45}, "manual_review": ["确认女声与低动态要求"]} 
+  },
+
+  {
+    "id": "ctx_dev_lyrics_ll_01",
+    "category": "context_lyrics_theme",
+    "goal_category": "lyrics_theme",
+    "specificity": "LL",
+    "query": "想听歌词有画面感一点的歌",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["当前曲库无稳定歌词语义索引，记录歌词主题类表现"]} 
+  },
+  {
+    "id": "ctx_dev_lyrics_hl_01",
+    "category": "context_lyrics_theme",
+    "goal_category": "lyrics_theme",
+    "specificity": "HL",
+    "query": "歌词里有旅行、远方、离开的感觉",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["travel", "journey", "nostalgic"], "negative_any": ["party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}, "manual_review": ["确认歌词主题而非仅场景标签"]} 
+  },
+  {
+    "id": "ctx_dev_lyrics_lh_01",
+    "category": "context_lyrics_theme",
+    "goal_category": "lyrics_theme",
+    "specificity": "LH",
+    "query": "不要再给分手歌了，换成写生活细节的",
+    "chat_history": [{"role": "user", "content": "给我一些伤感情歌"}, {"role": "assistant", "content": "推荐了一些失恋和伤感歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"negative_any": ["sad", "heartbreak", "loss", "melancholy"], "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}, "manual_review": ["确认从分手主题切走"]} 
+  },
+  {
+    "id": "ctx_dev_lyrics_hh_01",
+    "category": "context_lyrics_theme",
+    "goal_category": "lyrics_theme",
+    "specificity": "HH",
+    "query": "中文歌，歌词像在写青春回忆，但不要校园口水歌",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["nostalgic", "youth", "mellow"], "negative_any": ["party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}, "manual_review": ["确认青春回忆主题"]} 
+  },
+
+  {
+    "id": "ctx_dev_emotion_ll_01",
+    "category": "context_emotion",
+    "goal_category": "emotion",
+    "specificity": "LL",
+    "query": "现在心里有点空，想被托住一下",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["healing", "melancholy", "peaceful", "warm"], "negative_any": ["party", "workout"], "min_positive_ratio": 0.34, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_emotion_hl_01",
+    "category": "context_emotion",
+    "goal_category": "emotion",
+    "specificity": "HL",
+    "query": "从焦虑慢慢变稳定，不要突然鸡血",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["peaceful", "healing", "relaxing", "calm"], "negative_any": ["energetic", "party", "workout"], "min_positive_ratio": 0.34, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.45}, "manual_review": ["确认情绪轨迹而非单点情绪"]} 
+  },
+  {
+    "id": "ctx_dev_emotion_lh_01",
+    "category": "context_emotion",
+    "goal_category": "emotion",
+    "specificity": "LH",
+    "query": "这轮别那么丧，给一点点希望感就好",
+    "chat_history": [{"role": "user", "content": "想听特别伤感的歌"}, {"role": "assistant", "content": "推荐了一些悲伤、低落的歌。"}],
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["hopeful", "warm", "happy", "healing"], "negative_any": ["sad", "melancholy", "lonely"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_emotion_hh_01",
+    "category": "context_emotion",
+    "goal_category": "emotion",
+    "specificity": "HH",
+    "query": "中文，失落但别绝望，最后要能松一口气",
+    "checks": {"min_results": 4, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["melancholy", "healing", "warm", "peaceful"], "negative_any": ["angry", "party"], "min_positive_ratio": 0.34, "max_negative_ratio": 0.34, "min_coverage_ratio": 0.45}, "manual_review": ["确认失落到释怀的轨迹"]} 
+  },
+
+  {
+    "id": "ctx_dev_scene_ll_01",
+    "category": "context_scenario",
+    "goal_category": "scenario",
+    "specificity": "LL",
+    "query": "今天下雨，给我点适合雨天的",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["rainy", "late night", "melancholy", "peaceful"], "negative_any": ["party", "workout"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_scene_hl_01",
+    "category": "context_scenario",
+    "goal_category": "scenario",
+    "specificity": "HL",
+    "query": "雨天通勤，在车窗边发呆的感觉",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["rainy", "commute", "late night", "melancholy"], "negative_any": ["party", "workout"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_scene_lh_01",
+    "category": "context_scenario",
+    "goal_category": "scenario",
+    "specificity": "LH",
+    "query": "不跑步了，换成晚上散步听的",
+    "chat_history": [{"role": "user", "content": "推荐跑步节奏强的歌"}, {"role": "assistant", "content": "推荐了一些运动节奏强的歌曲。"}],
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["late night", "travel", "walking", "mellow"], "negative_any": ["workout", "energetic"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_scene_hh_01",
+    "category": "context_scenario",
+    "goal_category": "scenario",
+    "specificity": "HH",
+    "query": "凌晨写代码，少人声，不要太催眠，最好有一点律动",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["focus", "study", "late night", "electronic"], "negative_any": ["sleep", "party"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.45}, "manual_review": ["确认少人声和轻律动"]} 
+  },
+
+  {
+    "id": "ctx_dev_artist_ll_01",
+    "category": "context_artist_entity",
+    "goal_category": "artist_entity",
+    "specificity": "LL",
+    "query": "来点周杰伦那种感觉，但不要一定是他",
+    "checks": {"min_results": 4, "max_per_artist": 3, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认相似风格而非硬锁歌手"]} 
+  },
+  {
+    "id": "ctx_dev_artist_hl_01",
+    "category": "context_artist_entity",
+    "goal_category": "artist_entity",
+    "specificity": "HL",
+    "query": "林俊杰，但不要大抒情，想要轻快一点",
+    "checks": {"min_results": 3, "artist_any_of": ["林俊杰", "JJ Lin"], "artist_match_min_ratio": 0.45, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["happy", "upbeat", "bright", "energetic"], "negative_any": ["sad", "ballad", "melancholy"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_artist_lh_01",
+    "category": "context_artist_entity",
+    "goal_category": "artist_entity",
+    "specificity": "LH",
+    "query": "换成王菲那种空一点的女声",
+    "chat_history": [{"role": "user", "content": "给我一些华语女声"}, {"role": "assistant", "content": "推荐了一些华语女声歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "manual_review": ["确认王菲式空灵女声倾向"]} 
+  },
+  {
+    "id": "ctx_dev_artist_hh_01",
+    "category": "context_artist_entity",
+    "goal_category": "artist_entity",
+    "specificity": "HH",
+    "query": "陈奕迅的粤语，别太苦情，适合夜里走路",
+    "checks": {"min_results": 3, "artist_any_of": ["陈奕迅", "Eason"], "artist_match_min_ratio": 0.45, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["late night", "mellow", "nostalgic"], "negative_any": ["sad", "heartbreak"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
+  },
+
+  {
+    "id": "ctx_dev_song_ll_01",
+    "category": "context_song_entity",
+    "goal_category": "song_entity",
+    "specificity": "LL",
+    "query": "有没有和 Running Up That Hill 类似听感的",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认走文搜音/相似听感，而非只查标题"]} 
+  },
+  {
+    "id": "ctx_dev_song_hl_01",
+    "category": "context_song_entity",
+    "goal_category": "song_entity",
+    "specificity": "HL",
+    "query": "像晴天那样有青春回忆感，但不要周杰伦",
+    "checks": {"min_results": 3, "must_exclude": [{"artist": "周杰伦"}], "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["nostalgic", "youth", "mellow"], "negative_any": ["party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_song_lh_01",
+    "category": "context_song_entity",
+    "goal_category": "song_entity",
+    "specificity": "LH",
+    "query": "类似第一首，但更安静",
+    "chat_history": [{"role": "user", "content": "想听 Running Up That Hill"}, {"role": "assistant", "content": "推荐了 Running Up That Hill 和几首相似歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["soft", "peaceful", "late night", "dreamy"], "negative_any": ["energetic", "party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_song_hh_01",
+    "category": "context_song_entity",
+    "goal_category": "song_entity",
+    "specificity": "HH",
+    "query": "Love Story 原唱附近的乡村流行感，但不要翻唱",
+    "checks": {"min_results": 3, "must_exclude": [{"artist": "cover"}], "genre_any_of": ["country", "pop", "folk"], "genre_match_min_ratio": 0.25, "min_playable_ratio": 0.4, "not_degraded": true, "manual_review": ["确认原唱附近风格，而非标题翻唱"]} 
+  },
+
+  {
+    "id": "ctx_dev_lang_ll_01",
+    "category": "context_language_region",
+    "goal_category": "language_region",
+    "specificity": "LL",
+    "query": "换成不是英文的",
+    "chat_history": [{"role": "user", "content": "给我几首英文摇滚"}, {"role": "assistant", "content": "推荐了一些英文摇滚。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "manual_review": ["确认从英文切走"]} 
+  },
+  {
+    "id": "ctx_dev_lang_hl_01",
+    "category": "context_language_region",
+    "goal_category": "language_region",
+    "specificity": "HL",
+    "query": "安静一点的日语歌，别太动漫燃",
+    "checks": {"min_results": 3, "language_any_of": ["Japanese"], "language_match_min_ratio": 0.55, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["peaceful", "mellow", "dreamy", "soft"], "negative_any": ["energetic", "party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_lang_lh_01",
+    "category": "context_language_region",
+    "goal_category": "language_region",
+    "specificity": "LH",
+    "query": "同样的轻松感，换成粤语",
+    "chat_history": [{"role": "user", "content": "来点轻松的中文歌"}, {"role": "assistant", "content": "推荐了一些轻松华语歌。"}],
+    "checks": {"min_results": 3, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.35, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}}
+  },
+  {
+    "id": "ctx_dev_lang_hh_01",
+    "category": "context_language_region",
+    "goal_category": "language_region",
+    "specificity": "HH",
+    "query": "韩语抒情慢歌，女声可以，但不要舞曲",
+    "checks": {"min_results": 3, "language_any_of": ["Korean", "韩语"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["ballad", "romantic", "mellow", "sad"], "negative_any": ["dance", "party", "energetic"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.4}}
+  },
+
+  {
+    "id": "ctx_dev_era_ll_01",
+    "category": "context_era_style",
+    "goal_category": "era_style",
+    "specificity": "LL",
+    "query": "来点有年代感的",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["nostalgic", "classic", "retro", "mellow"], "negative_any": ["party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_era_hl_01",
+    "category": "context_era_style",
+    "goal_category": "era_style",
+    "specificity": "HL",
+    "query": "90 年代港乐那种怀旧感，不要太苦",
+    "checks": {"min_results": 3, "language_any_of": ["Cantonese", "粤语"], "language_match_min_ratio": 0.3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["nostalgic", "classic", "mellow"], "negative_any": ["sad", "heartbreak"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_era_lh_01",
+    "category": "context_era_style",
+    "goal_category": "era_style",
+    "specificity": "LH",
+    "query": "保留复古感，但这次要更轻快",
+    "chat_history": [{"role": "user", "content": "想听老歌怀旧一点"}, {"role": "assistant", "content": "推荐了一些怀旧慢歌。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["nostalgic", "happy", "upbeat", "classic"], "negative_any": ["sleep"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_era_hh_01",
+    "category": "context_era_style",
+    "goal_category": "era_style",
+    "specificity": "HH",
+    "query": "复古合成器、夜晚城市感，最好不要中文",
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"positive_any": ["electronic", "synth", "late night", "city pop"], "negative_any": ["chinese"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.6, "min_coverage_ratio": 0.4}, "manual_review": ["确认复古合成器/城市夜晚感"]} 
+  },
+
+  {
+    "id": "ctx_dev_neg_ll_01",
+    "category": "context_negative_refinement",
+    "goal_category": "negative_refinement",
+    "specificity": "LL",
+    "query": "不要太吵，也不要太丧",
+    "checks": {"min_results": 4, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"negative_any": ["energetic", "party", "metal", "sad", "melancholy"], "max_negative_ratio": 0.5, "min_coverage_ratio": 0.45}}
+  },
+  {
+    "id": "ctx_dev_neg_hl_01",
+    "category": "context_negative_refinement",
+    "goal_category": "negative_refinement",
+    "specificity": "HL",
+    "query": "中文歌，但不要苦情、不要大合唱",
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.5, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"negative_any": ["sad", "ballad", "melancholy"], "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}, "manual_review": ["确认避开大合唱"]} 
+  },
+  {
+    "id": "ctx_dev_neg_lh_01",
+    "category": "context_negative_refinement",
+    "goal_category": "negative_refinement",
+    "specificity": "LH",
+    "query": "可以保留雨天感，但别再那么摇滚",
+    "chat_history": [{"role": "user", "content": "下雨天想听点有劲的摇滚"}, {"role": "assistant", "content": "推荐了雨天氛围里的摇滚歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["rainy", "late night", "melancholy"], "negative_any": ["rock", "metal", "energetic"], "min_positive_ratio": 0.2, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_neg_hh_01",
+    "category": "context_negative_refinement",
+    "goal_category": "negative_refinement",
+    "specificity": "HH",
+    "query": "英文 indie，别太甜、别太炸、不要 EDM",
+    "checks": {"min_results": 3, "language_any_of": ["English"], "language_match_min_ratio": 0.45, "genre_any_of": ["indie", "alternative", "rock", "pop"], "genre_match_min_ratio": 0.25, "min_playable_ratio": 0.4, "not_degraded": true, "objective_soft_judge": {"negative_any": ["party", "edm", "energetic"], "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+
+  {
+    "id": "ctx_dev_refine_ll_01",
+    "category": "context_interaction_refinement",
+    "goal_category": "interaction_refinement",
+    "specificity": "LL",
+    "query": "再安静一点",
+    "chat_history": [{"role": "user", "content": "给我几首雨天听的歌"}, {"role": "assistant", "content": "推荐了一些雨天氛围歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true, "operations.0.path": "soft_intent.vibe"}, "objective_soft_judge": {"positive_any": ["peaceful", "relaxing", "soft", "late night"], "negative_any": ["energetic", "party"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_refine_hl_01",
+    "category": "context_interaction_refinement",
+    "goal_category": "interaction_refinement",
+    "specificity": "HL",
+    "query": "保留节奏，但少一点人声",
+    "chat_history": [{"role": "user", "content": "想听适合写代码的节奏歌"}, {"role": "assistant", "content": "推荐了一些有节奏的人声歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "manual_review": ["确认少人声但保留律动"]} 
+  },
+  {
+    "id": "ctx_dev_refine_lh_01",
+    "category": "context_interaction_refinement",
+    "goal_category": "interaction_refinement",
+    "specificity": "LH",
+    "query": "不要这首，换同类但更柔和",
+    "chat_history": [{"role": "user", "content": "播放 心要野"}, {"role": "assistant", "content": "正在播放后海大鲨鱼的心要野。"}],
+    "checks": {"min_results": 3, "must_exclude": [{"title": "心要野", "artist": "后海大鲨鱼"}], "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["soft", "mellow", "relaxing"], "negative_any": ["energetic", "driving", "rock"], "min_positive_ratio": 0.2, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
+  },
+  {
+    "id": "ctx_dev_refine_hh_01",
+    "category": "context_interaction_refinement",
+    "goal_category": "interaction_refinement",
+    "specificity": "HH",
+    "query": "把刚才那种雨天感保留，换中文、慢一点、不要摇滚",
+    "chat_history": [{"role": "user", "content": "warm lo-fi beats for a rainy sunday afternoon"}, {"role": "assistant", "content": "推荐了一些温暖、雨天、lo-fi 的歌。"}],
+    "checks": {"min_results": 3, "language_any_of": ["Chinese"], "language_match_min_ratio": 0.45, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["rainy", "warm", "relaxing", "mellow"], "negative_any": ["rock", "energetic"], "min_positive_ratio": 0.25, "max_negative_ratio": 0.45, "min_coverage_ratio": 0.4}}
+  },
+
+  {
+    "id": "ctx_dev_clarify_ll_01",
+    "category": "context_clarification",
+    "goal_category": "clarification",
+    "specificity": "LL",
+    "query": "有没有类似听感的",
+    "checks": {"expected_clarification": true}
+  },
+  {
+    "id": "ctx_dev_clarify_hl_01",
+    "category": "context_clarification",
+    "goal_category": "clarification",
+    "specificity": "HL",
+    "query": "你知道我上次最喜欢但后来拉黑的那首吗",
+    "checks": {"expected_clarification": true}
+  },
+  {
+    "id": "ctx_dev_clarify_lh_01",
+    "category": "context_clarification",
+    "goal_category": "clarification",
+    "specificity": "LH",
+    "query": "这种再来一点",
+    "chat_history": [{"role": "user", "content": "我想听点能救我的歌"}, {"role": "assistant", "content": "推荐了一些治愈歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}}
+  },
+  {
+    "id": "ctx_dev_clarify_hh_01",
+    "category": "context_clarification",
+    "goal_category": "clarification",
+    "specificity": "HH",
+    "query": "我要无歌词的说唱，越纯音乐越好",
+    "checks": {"expected_clarification": true, "manual_review": ["严重矛盾应先澄清，不硬猜"]} 
+  }
+]
