@@ -66,6 +66,20 @@ It currently covers six slate-feedback mappings, including noisy/sad/quiet,
 over-familiar, niche discovery, and seed-closeness feedback. It does not call
 Neo4j, GraphZep, Mem0, or LLMs.
 
+A3 ranking policy readiness is exposed through the API and a lightweight smoke
+script. It is not a quality ruler; it answers the operational question "what is
+safe to do next with the collected feedback?"
+
+```powershell
+python scripts/p7_smoke.py
+python scripts/p7_smoke.py --api-base http://localhost:8501
+```
+
+The smoke check verifies that public-demo safety guards, path validation,
+ranking-policy readiness, dense-backend configuration, optional calibration
+configuration, and selected API endpoints are wired correctly without calling an
+LLM or consuming outcome-eval budget.
+
 ### Context matching ruler
 
 The `context_*` splits are the non-saturated Chinese ruler for the current
@@ -124,6 +138,20 @@ The current centroid-bias calibration is deliberately conservative: it performs
 a train split shrink search and may choose `shrink=0` when validation would not
 improve. In that case the calibration file is a safe no-op and should not be
 enabled in production unless a later frozen validation report shows a gain.
+
+The next, stronger but still reversible, option is a text-side linear adapter
+trained from frozen `(caption, audio vector)` pairs:
+
+```powershell
+python scripts/train_alignment_adapter.py --backend muq --output data/alignment_adapter.json
+python -m tests.eval.evaluate_alignment_attribute --k 10 --adapter-path data/alignment_adapter.json
+```
+
+`MUSIC_ALIGNMENT_ADAPTER_PATH` applies the adapter to query text vectors before
+Neo4j KNN and before the tri-anchor semantic rerank. Stored audio vectors remain
+unchanged. Missing files, unknown backends, and dimension mismatches are no-op,
+so rollout is reversible. Treat the adapter as accepted only if attribute P@10
+and outcome/context eval do not regress.
 
 `evaluate_alignment` isolates M2D-CLAP text-to-audio alignment from the
 end-to-end Agent. It uses a frozen metadata/tag caption set and does not call

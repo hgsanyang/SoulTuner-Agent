@@ -1,4 +1,4 @@
-"""Optional text/audio embedding gap calibration for dense retrieval."""
+"""Optional text/audio embedding adjustments for dense retrieval."""
 
 from __future__ import annotations
 
@@ -58,29 +58,96 @@ def _load_payload(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def apply_alignment_calibration(vector: list[float], backend: str) -> list[float]:
-    """Apply optional calibration from MUSIC_ALIGNMENT_CALIBRATION_PATH.
+def _apply_linear_adapter(vector: list[float], spec: dict[str, Any]) -> list[float]:
+    matrix = spec.get("matrix")
+    bias = spec.get("bias", [])
+    if not isinstance(matrix, list) or not matrix:
+        return vector
+    if not all(isinstance(row, list) and len(row) == len(vector) for row in matrix):
+        return vector
+    if bias and (not isinstance(bias, list) or len(bias) != len(matrix)):
+        return vector
+
+    adjusted = []
+    for row_index, row in enumerate(matrix):
+        value = sum(float(weight) * float(source) for weight, source in zip(row, vector))
+        if bias:
+            value += float(bias[row_index])
+        adjusted.append(value)
+
+    mix = float(spec.get("mix", 1.0))
+    mix = max(0.0, min(1.0, mix))
+    if len(adjusted) == len(vector) and mix < 1.0:
+        adjusted = [
+            (1.0 - mix) * float(original) + mix * float(mapped)
+            for original, mapped in zip(vector, adjusted)
+        ]
+    return _normalize(adjusted) if spec.get("normalize", True) else adjusted
+
+
+def apply_alignment_adapter(vector: list[float], backend: str) -> list[float]:
+    """Apply an optional learned text-side adapter.
 
     Expected JSON shape:
+    {
+      "backends": {
+        "muq": {
+          "type": "linear",
+          "input_dim": 512,
+          "output_dim": 512,
+          "matrix": [[...], ...],
+          "bias": [...],
+          "normalize": true,
+          "mix": 1.0
+        }
+      }
+    }
+
+    Missing files, unknown backends, non-linear types, or dimension mismatches
+    are no-ops. This keeps adapter rollout reversible and safe by default.
+    """
+    path = os.getenv("MUSIC_ALIGNMENT_ADAPTER_PATH", "").strip()
+    if not path:
+        return vector
+    try:
+        payload = _load_payload(Path(path))
+        backends = payload.get("backends") if isinstance(payload.get("backends"), dict) else payload
+        spec = (backends or {}).get(str(backend).lower()) or {}
+        if spec.get("type", "linear") != "linear":
+            return vector
+        input_dim = int(spec.get("input_dim", len(vector)))
+        output_dim = int(spec.get("output_dim", len(vector)))
+        if input_dim != len(vector) or output_dim <= 0:
+            return vector
+        return _apply_linear_adapter(vector, spec)
+    except Exception:
+        return vector
+
+
+def apply_alignment_calibration(vector: list[float], backend: str) -> list[float]:
+    """Apply optional calibration and adapter for a backend.
+
+    Calibration JSON shape:
     {
       "muq": {"scale": 1.0, "bias": [..512 floats..], "normalize": true},
       "m2d": {"scale": 1.0, "bias": [..768 floats..], "normalize": true}
     }
 
-    Missing files, missing backend keys, or dimension mismatch are treated as a
-    no-op so production retrieval remains safely reversible.
+    Adapter JSON is read from MUSIC_ALIGNMENT_ADAPTER_PATH and applied after
+    calibration. Missing files, missing backend keys, or dimension mismatch are
+    treated as no-ops so production retrieval remains safely reversible.
     """
     path = os.getenv("MUSIC_ALIGNMENT_CALIBRATION_PATH", "").strip()
-    if not path:
-        return vector
+    adjusted = vector
     try:
-        payload = _load_payload(Path(path))
-        spec = payload.get(str(backend).lower()) or {}
-        bias = spec.get("bias")
-        scale = float(spec.get("scale", 1.0))
-        if not isinstance(bias, list) or len(bias) != len(vector):
-            return vector
-        adjusted = [float(value) * scale + float(delta) for value, delta in zip(vector, bias)]
-        return _normalize(adjusted) if spec.get("normalize", True) else adjusted
+        if path:
+            payload = _load_payload(Path(path))
+            spec = payload.get(str(backend).lower()) or {}
+            bias = spec.get("bias")
+            scale = float(spec.get("scale", 1.0))
+            if isinstance(bias, list) and len(bias) == len(vector):
+                adjusted = [float(value) * scale + float(delta) for value, delta in zip(vector, bias)]
+                adjusted = _normalize(adjusted) if spec.get("normalize", True) else adjusted
     except Exception:
-        return vector
+        adjusted = vector
+    return apply_alignment_adapter(adjusted, backend)
