@@ -58,7 +58,6 @@ def build_clamp3_embedding_command(repo_dir: Path, input_dir: Path, output_dir: 
 
 def _run_clamp3(input_dir: Path, output_dir: Path) -> None:
     repo = clamp3_repo_dir()
-    output_dir.mkdir(parents=True, exist_ok=True)
     command = build_clamp3_embedding_command(repo, input_dir, output_dir)
     subprocess.run(command, cwd=repo, check=True)
 
