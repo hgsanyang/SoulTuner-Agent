@@ -267,6 +267,11 @@ class GlobalSettings(BaseSettings):
         validation_alias="DENSE_TEXT_AUDIO_BACKEND",
         description="文搜音稠密召回后端：muq / m2d / both；MuQ 失败时自动回退 M2D",
     )
+    dense_query_variant_mode: str = Field(
+        default="auto",
+        validation_alias="MUSIC_DENSE_QUERY_VARIANTS",
+        description="多描述文搜音集成：off / auto / on；auto 仅对场景、情绪、听感类查询启用",
+    )
     graph_search_limit: int = Field(
         default=24,
         description="仅图谱检索时的返回条数（GraphRAG）",
@@ -284,8 +289,23 @@ class GlobalSettings(BaseSettings):
         description="联网搜索每个引擎最大返回条数",
     )
     netease_search_limit: int = Field(
-        default=3,
+        default=10,
         description="网易云 API 搜歌时每次搜索返回候选数",
+    )
+    web_mix_in_count: int = Field(
+        default=4,
+        validation_alias="WEB_MIX_IN_COUNT",
+        description="联网开启且本地结果足够时，默认穿插的联网候选数量",
+    )
+    web_fallback_count: int = Field(
+        default=10,
+        validation_alias="WEB_FALLBACK_COUNT",
+        description="本地曲库缺口触发联网兜底时返回的联网候选数量",
+    )
+    catalog_gap_min_local_results: int = Field(
+        default=8,
+        validation_alias="CATALOG_GAP_MIN_LOCAL_RESULTS",
+        description="低于该数量且存在可执行约束时，视为本地库存不足",
     )
     user_preference_limit: int = Field(
         default=20,
@@ -387,6 +407,25 @@ class GlobalSettings(BaseSettings):
     default_user_id: str = Field(default="local_admin", description="默认用户 ID（单用户模式）")
 
     # ================================================================
+    # 7. 安全 / 公开演示模式
+    # ================================================================
+    public_demo_mode: bool = Field(
+        default=False,
+        validation_alias="PUBLIC_DEMO_MODE",
+        description="公开演示模式：禁用下载/入库/删除等本地破坏性操作",
+    )
+    admin_api_key: str = Field(
+        default="",
+        validation_alias="ADMIN_API_KEY",
+        description="后台管理接口 X-API-Key；公开部署或配置后会保护删除等操作",
+    )
+    api_key_required: bool = Field(
+        default=False,
+        validation_alias="API_KEY_REQUIRED",
+        description="是否强制后台管理接口必须携带 X-API-Key",
+    )
+
+    # ================================================================
     # 8. 网络请求超时（秒）
     # ================================================================
     web_search_timeout: int = Field(default=12, description="联网搜索 HTTP 超时（智谱/Tavily）")
@@ -436,7 +475,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
         "finetuned_model_path", "llm_timeout", "llm_temperature",
         "audio_data_dir", "mtg_audio_dir", "online_acquired_dir",
         "graph_search_limit", "semantic_search_limit",
-        "dense_text_audio_backend",
+        "dense_text_audio_backend", "dense_query_variant_mode",
         "mixed_retrieval_limit", "hybrid_retrieval_limit", "web_search_max_results",
         "graph_affinity_enabled", "graph_affinity_max_hops",
         "coarse_cut_ratio", "exploration_ratio",

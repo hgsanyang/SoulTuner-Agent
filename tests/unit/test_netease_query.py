@@ -4,7 +4,9 @@ from agent.netease_query import (
     artist_matches,
     build_netease_query_plan,
     clean_natural_query,
+    extract_artist_id,
     fetch_json_with_retry,
+    normalize_artist_catalog_songs,
     parse_play_url_payload,
 )
 
@@ -18,6 +20,24 @@ def test_artist_only_query_prefers_chinese_artist_entity():
     assert plan.mode == "search"
     assert plan.query == "周杰伦"
     assert plan.artist_terms == ("周杰伦", "Jay Chou")
+
+
+def test_artist_only_query_keeps_alias_and_natural_fallbacks():
+    plan = build_netease_query_plan(
+        user_input="give me some Jay Chou but more upbeat, not the sad ballads",
+        fallback_query="周杰伦 upbeat not sad ballads",
+        retrieval_plan={
+            "graph_artist_entities": ["周杰伦", "Jay Chou"],
+            "graph_song_entities": [],
+            "web_search_keywords": "Jay Chou upbeat songs",
+        },
+    )
+
+    assert plan.query == "周杰伦"
+    assert "Jay Chou" in plan.query_candidates()
+    assert "Jay Chou upbeat songs" in plan.query_candidates()
+    assert "give me some Jay Chou but more upbeat, not the sad ballads" in plan.query_candidates()
+    assert plan.artist_query_candidates()[:2] == ("周杰伦", "Jay Chou")
 
 
 def test_artist_song_query_prefers_chinese_artist_and_song():
@@ -43,6 +63,38 @@ def test_artist_matches_tolerates_punctuation_and_aliases():
     assert artist_matches("周杰伦-", ("周杰伦", "Jay Chou"))
     assert artist_matches("Jay Chou", ("周杰伦", "Jay Chou"))
     assert not artist_matches("蔡依林", ("周杰伦", "Jay Chou"))
+
+
+def test_extract_artist_id_prefers_matching_artist_and_can_allow_top_result():
+    payload = {
+        "result": {
+            "artists": [
+                {"id": 1, "name": "周杰伦"},
+                {"id": 2, "name": "周深"},
+            ]
+        }
+    }
+
+    assert extract_artist_id(payload, ("周深",)) == "2"
+    assert extract_artist_id(payload, ("Jay Chou",)) == ""
+    assert extract_artist_id(payload, ("Jay Chou",), allow_top_result=True) == "1"
+
+
+def test_normalize_artist_catalog_songs_accepts_artist_endpoint_shape():
+    rows = [
+        {"id": 1, "name": "晴天", "ar": [{"name": "周杰伦"}], "al": {"name": "叶惠美"}},
+        {"name": "missing id"},
+    ]
+
+    assert normalize_artist_catalog_songs(rows) == [
+        {
+            "id": 1,
+            "name": "晴天",
+            "artists": [{"name": "周杰伦"}],
+            "album": {"name": "叶惠美"},
+            "_artist_catalog": True,
+        }
+    ]
 
 
 def test_parse_play_url_payload_keeps_only_playable_rows_and_trial_flags():
