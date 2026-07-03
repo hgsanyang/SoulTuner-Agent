@@ -11,9 +11,9 @@ It is not an intent-label accuracy test.
 - `holdout`: 34 frozen cases, including English mirrors, multi-turn context,
   negative constraints, and soft-intent cases. Do not tune
   directly against this set.
-- `context_dev`: 45 Chinese context-matching cases, written against this
+- `context_dev`: 52 Chinese context-matching cases, written against this
   catalog and bucketed by context goal plus specificity.
-- `context_holdout`: 12 frozen context-matching cases. Use only as a milestone
+- `context_holdout`: 16 frozen context-matching cases. Use only as a milestone
   regression check.
 - `context_all`: context_dev + context_holdout, for explicit milestone checks.
 - `dev_easy` / `dev_hard` and `holdout_easy` / `holdout_hard`: derived views
@@ -143,7 +143,7 @@ The next, stronger but still reversible, option is a text-side linear adapter
 trained from frozen `(caption, audio vector)` pairs:
 
 ```powershell
-python scripts/train_alignment_adapter.py --backend muq --output data/alignment_adapter.json
+python scripts/train_alignment_adapter.py --backend muq --caption-style acoustic --output data/alignment_adapter.json
 python -m tests.eval.evaluate_alignment_attribute --k 10 --adapter-path data/alignment_adapter.json
 ```
 
@@ -152,6 +152,12 @@ Neo4j KNN and before the tri-anchor semantic rerank. Stored audio vectors remain
 unchanged. Missing files, unknown backends, and dimension mismatches are no-op,
 so rollout is reversible. Treat the adapter as accepted only if attribute P@10
 and outcome/context eval do not regress.
+
+`--caption-style metadata` preserves the original A4.1 tag-sentence captions.
+`--caption-style acoustic` deterministically rewrites the same frozen tags into
+instrumentation/dynamics/texture/context captions, which is usually a better
+fit for MuQ-style text-to-audio training. It still must pass frozen validation;
+do not enable an adapter just because training completed.
 
 `evaluate_alignment` isolates M2D-CLAP text-to-audio alignment from the
 end-to-end Agent. It uses a frozen metadata/tag caption set and does not call

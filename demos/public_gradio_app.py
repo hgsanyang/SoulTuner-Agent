@@ -17,6 +17,15 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DEMO_DATA_DIR = PROJECT_ROOT.parent / "data" / "mtg_sample"
+PRIVATE_CATALOG_PATH_MARKERS = {
+    "processed_audio",
+    "online_audio",
+    "yt_dlp_manual",
+    "download",
+    "raw_audio",
+    "neteasecloudmusicapi",
+}
+PUBLIC_DEMO_MAX_QUERY_CHARS = 240
 
 QUERY_TAGS = {
     "rain": ["Rainy", "Relaxing", "Mellow", "Soft"],
@@ -51,6 +60,8 @@ class DemoTrack:
     themes: tuple[str, ...]
     scenarios: tuple[str, ...]
     source: str
+    license: str = "CC sample"
+    source_url: str = ""
 
     @property
     def tags(self) -> tuple[str, ...]:
@@ -62,14 +73,69 @@ def demo_data_dir() -> Path:
     return Path(configured).expanduser() if configured else DEFAULT_DEMO_DATA_DIR
 
 
+def validate_demo_root(root: Path) -> Path:
+    """Reject private catalog-like paths before the public demo reads files."""
+
+    resolved = root.expanduser().resolve()
+    lower_parts = {part.casefold() for part in resolved.parts}
+    blocked = lower_parts & PRIVATE_CATALOG_PATH_MARKERS
+    if blocked:
+        raise ValueError(
+            "PUBLIC_DEMO_DATA_DIR points at a private/runtime catalog path: "
+            + ", ".join(sorted(blocked))
+        )
+    return resolved
+
+
 def _as_tuple(values: Any) -> tuple[str, ...]:
     if isinstance(values, list):
         return tuple(str(item) for item in values if item)
     return (str(values),) if values else ()
 
 
-def load_demo_tracks(root: Path | None = None, limit: int = 4000) -> list[DemoTrack]:
-    root = root or demo_data_dir()
+def _artist_name(meta: dict[str, Any]) -> str:
+    artist = meta.get("artist") or meta.get("artists")
+    if isinstance(artist, list) and artist:
+        first = artist[0]
+        if isinstance(first, list) and first:
+            return str(first[0])
+        return str(first)
+    if isinstance(artist, str) and artist.strip():
+        return artist.strip()
+    return "MTG-Jamendo Artist"
+
+
+def _license_text(meta: dict[str, Any]) -> str:
+    raw = (
+        meta.get("license")
+        or meta.get("licence")
+        or meta.get("license_url")
+        or meta.get("licence_url")
+        or ""
+    )
+    text = str(raw or "").strip()
+    source = str(meta.get("source") or "").casefold()
+    if not text and ("mtg" in source or "jamendo" in source):
+        return "Creative Commons sample"
+    return text
+
+
+def is_public_cc_track(meta: dict[str, Any]) -> bool:
+    source = str(meta.get("source") or "").casefold()
+    license_text = _license_text(meta).casefold()
+    if "mtg" in source or "jamendo" in source:
+        return True
+    return "creative commons" in license_text or "cc-" in license_text or license_text.startswith("cc ")
+
+
+def sanitize_query(query: str) -> str:
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", " ", str(query or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:PUBLIC_DEMO_MAX_QUERY_CHARS]
+
+
+def load_demo_tracks(root: Path | None = None, limit: int = 4000, strict_cc: bool = True) -> list[DemoTrack]:
+    root = validate_demo_root(root or demo_data_dir())
     metadata_dir = root / "metadata"
     audio_dir = root / "audio"
     tracks: list[DemoTrack] = []
@@ -82,6 +148,8 @@ def load_demo_tracks(root: Path | None = None, limit: int = 4000) -> list[DemoTr
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             continue
+        if strict_cc and not is_public_cc_track(meta):
+            continue
         base = meta_path.name.removesuffix("_meta.json")
         audio_path = audio_dir / f"{base}.mp3"
         if not audio_path.exists():
@@ -89,19 +157,21 @@ def load_demo_tracks(root: Path | None = None, limit: int = 4000) -> list[DemoTr
         tracks.append(
             DemoTrack(
                 title=str(meta.get("musicName") or base),
-                artist=str((meta.get("artist") or [["MTG-Jamendo Artist"]])[0][0]),
+                artist=_artist_name(meta),
                 audio_path=audio_path,
                 moods=_as_tuple(meta.get("moods")),
                 themes=_as_tuple(meta.get("themes")),
                 scenarios=_as_tuple(meta.get("scenarios")),
                 source=str(meta.get("source") or "mtg"),
+                license=_license_text(meta),
+                source_url=str(meta.get("source_url") or meta.get("url") or ""),
             )
         )
     return tracks
 
 
 def query_terms(query: str) -> list[str]:
-    normalized = str(query or "").casefold()
+    normalized = sanitize_query(query).casefold()
     terms = [term for term in QUERY_TAGS if term in normalized]
     terms.extend(token for token in re.split(r"[\s,，。.!?;；]+", normalized) if len(token) >= 3)
     return list(dict.fromkeys(terms))
@@ -137,7 +207,8 @@ def recommend_demo(query: str, tracks: list[DemoTrack], limit: int = 5) -> list[
 
 
 def format_recommendations(query: str, tracks: list[DemoTrack], limit: int = 5) -> tuple[str, list[str]]:
-    rows = recommend_demo(query, tracks, limit=limit)
+    safe_query = sanitize_query(query)
+    rows = recommend_demo(safe_query, tracks, limit=limit)
     if not rows:
         return "没有找到可展示的 CC 曲目。请确认 PUBLIC_DEMO_DATA_DIR 指向 MTG-Jamendo 样本。", []
     lines = [
@@ -148,7 +219,10 @@ def format_recommendations(query: str, tracks: list[DemoTrack], limit: int = 5) 
     for index, (track, score, reasons) in enumerate(rows, start=1):
         tag_text = ", ".join(reasons) if reasons else "catalog match"
         lines.append(f"{index}. **{track.title}** - {track.artist}")
-        lines.append(f"   匹配信号：{tag_text} | source={track.source} | score={score:.1f}")
+        license_text = track.license or "Creative Commons sample"
+        lines.append(
+            f"   匹配信号：{tag_text} | source={track.source} | license={license_text} | score={score:.1f}"
+        )
         audio_paths.append(str(track.audio_path))
     return "\n".join(lines), audio_paths
 

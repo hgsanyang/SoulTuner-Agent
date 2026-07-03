@@ -402,8 +402,8 @@ def test_load_context_case_splits_are_available():
     assert dev_meta["split"] == "context_dev"
     assert holdout_meta["split"] == "context_holdout"
     assert all_meta["split"] == "context_all"
-    assert len(dev) >= 40
-    assert len(holdout) >= 12
+    assert len(dev) >= 52
+    assert len(holdout) >= 16
     assert len(all_cases) == len(dev) + len(holdout)
     assert {case.get("goal_category") for case in all_cases}
     assert {case.get("specificity") for case in all_cases} <= {"LL", "HL", "LH", "HH"}
