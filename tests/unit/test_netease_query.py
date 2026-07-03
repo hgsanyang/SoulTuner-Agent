@@ -20,6 +20,23 @@ def test_artist_only_query_prefers_chinese_artist_entity():
     assert plan.artist_terms == ("周杰伦", "Jay Chou")
 
 
+def test_artist_only_query_keeps_alias_and_natural_fallbacks():
+    plan = build_netease_query_plan(
+        user_input="give me some Jay Chou but more upbeat, not the sad ballads",
+        fallback_query="周杰伦 upbeat not sad ballads",
+        retrieval_plan={
+            "graph_artist_entities": ["周杰伦", "Jay Chou"],
+            "graph_song_entities": [],
+            "web_search_keywords": "Jay Chou upbeat songs",
+        },
+    )
+
+    assert plan.query == "周杰伦"
+    assert "Jay Chou" in plan.query_candidates()
+    assert "Jay Chou upbeat songs" in plan.query_candidates()
+    assert "give me some Jay Chou but more upbeat, not the sad ballads" in plan.query_candidates()
+
+
 def test_artist_song_query_prefers_chinese_artist_and_song():
     plan = build_netease_query_plan(
         user_input="林俊杰的那首江南",

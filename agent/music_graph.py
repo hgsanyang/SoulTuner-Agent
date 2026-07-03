@@ -966,7 +966,13 @@ class MusicRecommendationGraph:
             intent_parameters=params,
         )
         query = netease_plan.query
-        logger.info(f"[web_fallback] 查询词: '{query}' | mode={netease_plan.mode}")
+        query_candidates = netease_plan.query_candidates()
+        logger.info(
+            "[web_fallback] 查询词: '%s' | mode=%s | candidates=%s",
+            query,
+            netease_plan.mode,
+            list(query_candidates),
+        )
 
         try:
             import aiohttp
@@ -1068,20 +1074,30 @@ class MusicRecommendationGraph:
                         target_count,
                         20 if netease_plan.artist_terms and not netease_plan.song_terms else settings.netease_search_limit,
                     )
-                    search_url = f"{api_base}/search?keywords={_url_quote(clean_query)}&limit={search_limit}"
-                    data = await fetch_json_with_retry(
-                        session,
-                        search_url,
-                        timeout=timeout,
-                        attempts=2,
-                        on_retry=_log_search_retry,
-                    )
-                    songs = data.get("result", {}).get("songs", [])
-                    if netease_plan.artist_terms and not netease_plan.song_terms:
-                        songs = [
-                            s for s in songs
-                            if artist_matches("、".join(a.get("name", "") for a in s.get("artists", [])), netease_plan.artist_terms)
-                        ]
+                    for candidate_query in query_candidates:
+                        clean_query = _re.sub(r'[《》\[\]【】]', ' ', candidate_query).strip()
+                        if not clean_query:
+                            continue
+                        search_url = f"{api_base}/search?keywords={_url_quote(clean_query)}&limit={search_limit}"
+                        data = await fetch_json_with_retry(
+                            session,
+                            search_url,
+                            timeout=timeout,
+                            attempts=2,
+                            on_retry=_log_search_retry,
+                        )
+                        candidate_songs = data.get("result", {}).get("songs", [])
+                        if netease_plan.artist_terms and not netease_plan.song_terms:
+                            candidate_songs = [
+                                s for s in candidate_songs
+                                if artist_matches("、".join(a.get("name", "") for a in s.get("artists", [])), netease_plan.artist_terms)
+                            ]
+                        if candidate_songs:
+                            if clean_query != query:
+                                logger.info("[web_fallback] 查询候选命中: %s", clean_query)
+                            songs = candidate_songs
+                            break
+                        logger.info("[web_fallback] 查询候选无结果: %s", clean_query)
 
                 songs, excluded_by_avoid = filter_results_by_avoid(
                     songs,
