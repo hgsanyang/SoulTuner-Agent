@@ -56,7 +56,7 @@ Do not expose a personal music library directly as a public demo. Set `PUBLIC_DE
 
 ### CC-only Gradio Public Demo
 
-For public showcases, use the lightweight Gradio demo instead of exposing a personal library. It reads the MTG-Jamendo CC sample outside the repository by default, recommends by tags/scenarios, and never connects to the private Neo4j catalog or performs download/ingest/delete actions.
+For public showcases, use the lightweight Gradio demo instead of exposing a personal library. It reads the MTG-Jamendo CC sample outside the repository by default, recommends by tags/scenarios, and never connects to the private Neo4j catalog or performs download/ingest/delete actions. The demo only loads CC / Jamendo / MTG metadata and rejects private/runtime catalog paths such as `processed_audio`, `online_audio`, or `download`.
 
 ```powershell
 python -m pip install -r requirements-demo.txt
@@ -559,14 +559,14 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 
 MuQ-MuLan processes 24kHz audio and loads on demand. This project measured about 2.75GB peak VRAM in fp32 and about 1.4GB in fp16. `up gpu` exposes the GPU to the backend and enables fp16, while `up cpu` selects M2D to avoid an unresponsive CPU container during MuQ cold loading. MuQ weights use **CC-BY-NC 4.0** and therefore are restricted to non-commercial use unless separately licensed.
 
-The local-catalog text-to-music adapter is optional and off by default:
+The local-catalog text-to-music adapter is optional and off by default. Prefer the acoustic-caption training path first, then enable it only after the attribute ruler and outcome/context rulers do not regress:
 
 ```powershell
-python scripts/train_alignment_adapter.py --backend muq --output data/alignment_adapter.json
+python scripts/train_alignment_adapter.py --backend muq --caption-style acoustic --output data/alignment_adapter.json
 python -m tests.eval.evaluate_alignment_attribute --k 10 --adapter-path data/alignment_adapter.json
 ```
 
-Only set `MUSIC_ALIGNMENT_ADAPTER_PATH=data/alignment_adapter.json` after the attribute ruler and end-to-end outcome/context rulers do not regress.
+Only set `MUSIC_ALIGNMENT_ADAPTER_PATH=data/alignment_adapter.json` after validation passes.
 
 ---
 
