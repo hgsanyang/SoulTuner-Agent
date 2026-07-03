@@ -27,8 +27,14 @@ FOLLOWUP_CUES = (
     "上一首",
     "前面",
     "换成",
+    "保留",
     "再",
     "更",
+    "一点",
+    "偏",
+    "少一点",
+    "别再",
+    "不要再",
     "不要这种",
     "similar",
     "same vibe",
@@ -374,8 +380,12 @@ def build_deterministic_plan_delta(
     elif re.search(r"要人声|有人声|with vocals?", text):
         operations.append(DeltaOperation(op="replace", path="hard_constraints.instrumental", value=False))
 
-    if re.search(r"更安静|安静一点|quiet(er)?|softer?", text):
-        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="quieter, softer, low energy"))
+    if re.search(r"更安静|安静一点|柔软|温柔|低动态|不刺耳|不吵|quiet(er)?|softer?|low dynamic|not loud", text):
+        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="quieter, softer, low dynamic, low energy"))
+        operations.append(DeltaOperation(op="add", path="soft_intent.avoid", value=["energetic", "driving", "party", "edm", "aggressive"]))
+    if re.search(r"雨天|下雨|雨声|rainy|rain", text):
+        operations.append(DeltaOperation(op="replace", path="hints.scenario", value="Rainy Day"))
+        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="rainy, indoor, gentle"))
     if re.search(r"更有精神|更明亮|振作|uplift|brighter", text):
         operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="uplifting, hopeful, brighter energy"))
     if re.search(r"更有节奏|更带劲|more rhythmic|more energetic", text):
@@ -705,6 +715,10 @@ def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMus
         if re.search(r"工作|写代码|coding|focus|专注", text):
             hints.scenario = "工作"
             extracted = True
+        if re.search(r"雨天|下雨|雨声|rainy|rain", text):
+            hints.scenario = "Rainy Day"
+            soft.vibe = soft.vibe or "rainy, indoor, gentle"
+            extracted = True
         if re.search(r"放松|relax|calm", text):
             hints.mood = "放松"
             extracted = True
@@ -725,8 +739,8 @@ def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMus
         if re.search(r"摇滚|rock", text):
             hints.genres = _merge_unique(hints.genres, ["rock"])
             extracted = True
-        if re.search(r"安静|quiet|低动态", text):
-            soft.vibe = soft.vibe or "quiet, low energy"
+        if re.search(r"安静|quiet|低动态|柔软|温柔|不刺耳|不吵", text):
+            soft.vibe = soft.vibe or "quiet, soft, low dynamic, low energy"
             extracted = True
         artist_match = re.search(r"([\w\u4e00-\u9fff·・\-. ]{2,32})的歌", text)
         if artist_match:
@@ -799,9 +813,19 @@ def apply_plan_delta_with_report(
 
     if re.search(r"无人声|没人声|纯音乐|instrumental|no vocals?", text):
         hard.instrumental = True
+    if re.search(r"雨天|下雨|雨声|rainy|rain", text):
+        hints.scenario = "Rainy Day"
+        soft.vibe = soft.vibe or "rainy, indoor, gentle"
     if re.search(r"人声再少|人声少|别打扰|不打扰|写代码|focus|coding", text):
         soft.vibe = soft.vibe or "unobtrusive, sparse vocals, focus-friendly"
         soft.avoid = _merge_unique(soft.avoid, ["prominent vocals", "distracting vocals"])
+    if re.search(r"柔软|温柔|低动态|不刺耳|不吵|安静一点|更安静|quiet|soft|low dynamic|not loud", text):
+        low_dynamic_vibe = "quiet, soft, low dynamic, low energy"
+        if not soft.vibe:
+            soft.vibe = low_dynamic_vibe
+        elif "low dynamic" not in _norm(soft.vibe):
+            soft.vibe = f"{soft.vibe}; {low_dynamic_vibe}"
+        soft.avoid = _merge_unique(soft.avoid, ["energetic", "driving", "party", "edm", "aggressive"])
     if re.search(r"别.*(苦情|抒情)|不要.*(苦情|抒情)|not.*sad ballad|not the sad ballads", text):
         soft.avoid = _merge_unique(soft.avoid, ["sad ballad", "melancholy ballad", "苦情", "抒情大歌"])
     if re.search(r"不要.*伤|别.*伤|别太丧|not sad|less sad", text):

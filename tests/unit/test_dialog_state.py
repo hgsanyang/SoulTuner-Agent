@@ -239,6 +239,7 @@ def test_common_followup_builds_small_delta_instead_of_full_plan():
     assert delta.planner_mode == "deterministic"
     assert {operation.path for operation in delta.operations} == {
         "hard_constraints.language",
+        "soft_intent.avoid",
         "soft_intent.vibe",
     }
 
@@ -275,3 +276,38 @@ def test_result_anchors_enable_later_song_references():
     assert state.last_result_titles == ["Anchor"]
     assert state.last_result_artists == ["Singer"]
     assert should_clarify_before_planning("刚才那首歌类似的", state).required is False
+
+
+def test_rainy_followup_inherits_scene_and_adds_soft_low_dynamic_bias():
+    first = infer_dialog_state_from_history(
+        [
+            {"role": "user", "content": "今天下雨，给我一点适合雨天的"},
+            {"role": "assistant", "content": "推荐了一些雨天氛围歌曲。"},
+        ]
+    )
+    assert first.hints.scenario == "Rainy Day"
+
+    second, delta = apply_plan_delta_with_report(
+        first,
+        _plan(vibe="soft and quiet"),
+        "偏柔软安静一点",
+    )
+
+    assert delta.followup is True
+    assert second.hints.scenario == "Rainy Day"
+    assert "low dynamic" in second.soft_intent.vibe
+    assert {"energetic", "driving", "party"}.issubset(set(second.soft_intent.avoid))
+
+
+def test_deterministic_delta_preserves_rainy_scene_for_soft_followup():
+    state = DialogMusicState(
+        soft_intent=SoftIntent(vibe="rainy, indoor, gentle"),
+        hints=IntentHints(scenario="Rainy Day"),
+        turn_count=1,
+    )
+    delta = build_deterministic_plan_delta("偏柔软安静一点", state)
+
+    assert delta is not None
+    paths = [operation.path for operation in delta.operations]
+    assert "soft_intent.vibe" in paths
+    assert "soft_intent.avoid" in paths

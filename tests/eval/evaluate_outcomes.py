@@ -454,6 +454,11 @@ def _get_path(data: Dict[str, Any], path: str) -> Any:
     for part in path.split("."):
         if isinstance(current, dict):
             current = current.get(part)
+        elif isinstance(current, list) and part.isdigit():
+            index = int(part)
+            if index >= len(current):
+                return None
+            current = current[index]
         else:
             return None
     return current
