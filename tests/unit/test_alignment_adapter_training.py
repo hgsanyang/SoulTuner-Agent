@@ -1,6 +1,11 @@
 import numpy as np
 
-from scripts.train_alignment_adapter import apply_adapter_np, split_gold_items, train_linear_adapter
+from scripts.train_alignment_adapter import (
+    apply_adapter_np,
+    caption_for_item,
+    split_gold_items,
+    train_linear_adapter,
+)
 
 
 def test_train_linear_adapter_learns_simple_swap_mapping():
@@ -25,3 +30,24 @@ def test_split_gold_items_is_deterministic_4_to_1():
 
     assert [item["music_id"] for item in validation] == ["0", "5"]
     assert len(train) == 8
+
+
+def test_caption_for_item_can_build_acoustic_training_caption():
+    item = {
+        "caption": "A Chinese folk song with a relaxing vibe.",
+        "metadata": {
+            "language": "Chinese",
+            "genres": ["Folk", "Acoustic"],
+            "moods": ["Peaceful", "Relaxing"],
+            "themes": ["Healing"],
+            "scenarios": ["Rainy Day", "Study"],
+        },
+    }
+
+    metadata_caption = caption_for_item(item, "metadata")
+    acoustic_caption = caption_for_item(item, "acoustic")
+
+    assert metadata_caption == item["caption"]
+    assert "acoustic guitar" in acoustic_caption
+    assert "gentle dynamics" in acoustic_caption
+    assert "rainy-day listening" in acoustic_caption

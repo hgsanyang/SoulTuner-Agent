@@ -102,6 +102,37 @@ def _load_gold(path: Path, max_items: int = 0) -> list[dict[str, Any]]:
     return items
 
 
+def caption_for_item(item: dict[str, Any], caption_style: str = "metadata") -> str:
+    """Return the caption used for adapter training.
+
+    `metadata` preserves the original frozen A4.1 caption. `acoustic` builds a
+    deterministic MusicCaps-like proxy from the same frozen metadata so adapter
+    v2 can learn from audio-text wording closer to timbre, dynamics, and scene.
+    """
+
+    if caption_style == "metadata":
+        return str(item.get("caption") or "").strip()
+    if caption_style != "acoustic":
+        raise ValueError(f"unsupported caption_style: {caption_style}")
+    explicit = str(item.get("acoustic_caption") or "").strip()
+    if explicit:
+        return explicit
+    from tests.eval.build_alignment_gold import acoustic_caption_from_song
+
+    metadata = dict(item.get("metadata") or {})
+    return acoustic_caption_from_song(
+        {
+            "language": metadata.get("language") or "",
+            "region": metadata.get("region") or "",
+            "vibe": metadata.get("vibe") or "",
+            "genres": metadata.get("genres") or [],
+            "moods": metadata.get("moods") or [],
+            "themes": metadata.get("themes") or [],
+            "scenarios": metadata.get("scenarios") or [],
+        }
+    )
+
+
 def _encode_text(backend: str, text: str) -> list[float]:
     if backend == "muq":
         from retrieval.muq_embedder import encode_text_to_muq
@@ -128,6 +159,7 @@ def _pairs_for_items(
     items: list[dict[str, Any]],
     ids: list[str],
     matrix: np.ndarray,
+    caption_style: str,
 ) -> tuple[list[list[float]], list[list[float]], list[str]]:
     id_to_index = {music_id: index for index, music_id in enumerate(ids)}
     sources: list[list[float]] = []
@@ -135,7 +167,7 @@ def _pairs_for_items(
     skipped: list[str] = []
     for item in items:
         music_id = str(item.get("music_id") or "")
-        caption = str(item.get("caption") or "").strip()
+        caption = caption_for_item(item, caption_style)
         index = id_to_index.get(music_id)
         if index is None or not caption:
             skipped.append(music_id)
@@ -153,11 +185,12 @@ def _rank_metrics(
     matrix: np.ndarray,
     spec: dict[str, Any] | None,
     mix: float,
+    caption_style: str,
 ) -> dict[str, Any]:
     ranks: list[int | None] = []
     for item in items:
         music_id = str(item.get("music_id") or "")
-        caption = str(item.get("caption") or "").strip()
+        caption = caption_for_item(item, caption_style)
         if not caption or music_id not in ids:
             ranks.append(None)
             continue
@@ -190,6 +223,7 @@ def _choose_mix(
     matrix: np.ndarray,
     spec: dict[str, Any],
     candidates: list[float],
+    caption_style: str,
 ) -> tuple[float, list[dict[str, Any]]]:
     reports = []
     for mix in candidates:
@@ -200,6 +234,7 @@ def _choose_mix(
             matrix=matrix,
             spec=spec if mix > 0 else None,
             mix=mix,
+            caption_style=caption_style,
         )
         reports.append({"mix": float(mix), **metrics})
     best = max(reports, key=lambda row: (row["mrr"], row["recall_at_10"], -row["mix"]))
@@ -216,6 +251,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Train a local text-side alignment adapter")
     parser.add_argument("--backend", choices=["muq", "m2d"], default="muq")
     parser.add_argument("--gold", default=str(DEFAULT_GOLD), help="Frozen caption gold JSON")
+    parser.add_argument(
+        "--caption-style",
+        choices=["metadata", "acoustic"],
+        default="metadata",
+        help="Caption wording used for adapter training.",
+    )
     parser.add_argument("--max-items", type=int, default=0)
     parser.add_argument("--alpha", type=float, default=2.0, help="Ridge regularization")
     parser.add_argument(
@@ -239,6 +280,7 @@ def main() -> int:
         items=train_items,
         ids=ids,
         matrix=matrix,
+        caption_style=args.caption_style,
     )
     spec = train_linear_adapter(sources, targets, alpha=args.alpha)
     mix_candidates = [float(value.strip()) for value in args.mix_candidates.split(",") if value.strip()]
@@ -249,12 +291,14 @@ def main() -> int:
         matrix=matrix,
         spec=spec,
         candidates=mix_candidates,
+        caption_style=args.caption_style,
     )
     spec["mix"] = best_mix
 
     payload: dict[str, Any] = {
         "schema_version": 1,
         "method": "caption_ridge_linear_adapter_v1",
+        "caption_style": args.caption_style,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "git": _git_info(),
         "gold_path": str(gold_path),
@@ -271,7 +315,15 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    before_train = _rank_metrics(backend=args.backend, items=train_items, ids=ids, matrix=matrix, spec=None, mix=0)
+    before_train = _rank_metrics(
+        backend=args.backend,
+        items=train_items,
+        ids=ids,
+        matrix=matrix,
+        spec=None,
+        mix=0,
+        caption_style=args.caption_style,
+    )
     after_train = _rank_metrics(
         backend=args.backend,
         items=train_items,
@@ -279,8 +331,17 @@ def main() -> int:
         matrix=matrix,
         spec=spec if best_mix > 0 else None,
         mix=best_mix,
+        caption_style=args.caption_style,
     )
-    before_val = _rank_metrics(backend=args.backend, items=validation_items, ids=ids, matrix=matrix, spec=None, mix=0)
+    before_val = _rank_metrics(
+        backend=args.backend,
+        items=validation_items,
+        ids=ids,
+        matrix=matrix,
+        spec=None,
+        mix=0,
+        caption_style=args.caption_style,
+    )
     after_val = _rank_metrics(
         backend=args.backend,
         items=validation_items,
@@ -288,11 +349,13 @@ def main() -> int:
         matrix=matrix,
         spec=spec if best_mix > 0 else None,
         mix=best_mix,
+        caption_style=args.caption_style,
     )
 
     report: dict[str, Any] = {
         "adapter_path": str(output),
         "backend": args.backend,
+        "caption_style": args.caption_style,
         "best_mix": best_mix,
         "mix_search": mix_reports,
         "exact_caption_retrieval": {
@@ -327,7 +390,10 @@ def main() -> int:
     print("=" * 72)
     print(f"Adapter: {output}")
     print(f"Report: {report_path}")
-    print(f"Backend: {args.backend} | train={len(train_items)} validation={len(validation_items)}")
+    print(
+        f"Backend: {args.backend} | caption_style={args.caption_style} | "
+        f"train={len(train_items)} validation={len(validation_items)}"
+    )
     print(f"Best mix: {best_mix:.2f} | pairs={spec['num_pairs']} | skipped_train={len(skipped)}")
     print(
         "Validation exact caption R@10: "
