@@ -106,7 +106,7 @@ function Start-NeteaseApi {
 }
 
 function Stop-NeteaseApi {
-    $containerId = docker compose --profile cpu --profile gpu ps -q netease 2>$null
+    $containerId = docker compose --profile cpu --profile gpu --profile memory ps -q netease 2>$null
     if ($LASTEXITCODE -eq 0 -and $containerId) {
         docker compose --profile cpu --profile gpu stop netease
         Assert-LastNativeCommand "Stopping Docker Netease proxy"
@@ -127,7 +127,7 @@ function Stop-NeteaseApi {
 }
 
 function Stop-LocalNeteaseApiForDocker {
-    $containerId = docker compose --profile cpu --profile gpu ps -q netease 2>$null
+    $containerId = docker compose --profile cpu --profile gpu --profile memory ps -q netease 2>$null
     if ($LASTEXITCODE -eq 0 -and $containerId) {
         return
     }
@@ -149,14 +149,20 @@ switch ($Action) {
     "up" {
         Stop-LocalNeteaseApiForDocker
         $ComposeFiles = @("-f", "docker-compose.yml")
+        $MemoryBackends = (($env:MEMORY_EPISODIC_BACKENDS -split ",") | ForEach-Object { $_.Trim().ToLowerInvariant() })
+        $UseGraphZep = $MemoryBackends -contains "graphzep"
         if ($Profile -eq "gpu") {
             $ComposeFiles += @("-f", "docker-compose.gpu.yml")
             $env:DENSE_TEXT_AUDIO_BACKEND = "muq"
         } else {
             $env:DENSE_TEXT_AUDIO_BACKEND = "m2d"
         }
-        docker compose @ComposeFiles --profile $Profile up -d --remove-orphans neo4j graphzep searxng netease backend
+        docker compose @ComposeFiles --profile $Profile up -d --remove-orphans neo4j searxng netease backend
         Assert-LastNativeCommand "Starting core Docker services"
+        if ($UseGraphZep) {
+            docker compose @ComposeFiles --profile memory up -d graphzep
+            Assert-LastNativeCommand "Starting optional GraphZep memory sidecar"
+        }
         docker compose @ComposeFiles --profile $Profile up -d frontend
         Assert-LastNativeCommand "Starting frontend"
         if ($Profile -eq "gpu") {
@@ -166,12 +172,16 @@ switch ($Action) {
         Write-Host "Frontend: http://localhost:3003"
         Write-Host "Backend:  http://localhost:8501"
         Write-Host "Neo4j:    http://localhost:7474"
-        Write-Host "GraphZep: http://localhost:3100"
+        if ($UseGraphZep) {
+            Write-Host "GraphZep: http://localhost:3100 (optional sidecar)"
+        } else {
+            Write-Host "Memory:   Neo4j hot path only (set MEMORY_EPISODIC_BACKENDS=graphzep to enable GraphZep)"
+        }
         Write-Host "SearxNG:  http://localhost:8888"
         Write-Host "Netease:  http://localhost:3000"
     }
     "down" {
-        docker compose --profile cpu --profile gpu down
+        docker compose --profile cpu --profile gpu --profile memory down
         Assert-LastNativeCommand "Stopping Docker services"
     }
     "doctor" {
@@ -189,7 +199,7 @@ switch ($Action) {
         }
     }
     "logs" {
-        docker compose --profile cpu --profile gpu logs -f --tail 200
+        docker compose --profile cpu --profile gpu --profile memory logs -f --tail 200
     }
     "mock" {
         Invoke-ProjectPython start.py --mock

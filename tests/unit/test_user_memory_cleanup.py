@@ -53,3 +53,58 @@ def test_record_dislike_cleans_like_and_save_by_resolved_song_id_before_dislike(
     dislike_call = client.calls[3]
     assert "MERGE (u)-[r:DISLIKES]->(s)" in dislike_call["query"]
     assert dislike_call["params"] == {"user_id": "u1", "song_id": "song-1"}
+
+
+def test_semantic_preferences_support_mood_scenario_fields_and_dedupe_query():
+    client = _Neo4jClient([])
+    manager = UserMemoryManager(neo4j_client=client)
+
+    manager.update_semantic_preferences(
+        "u1",
+        {
+            "add_moods": ["Warm"],
+            "avoid_moods": ["Energetic"],
+            "add_scenarios": ["Rainy Day"],
+            "avoid_scenarios": ["Party"],
+        },
+    )
+
+    update_call = client.calls[1]
+    assert "u.add_moods" in update_call["query"]
+    assert "u.avoid_moods" in update_call["query"]
+    assert "u.add_scenarios" in update_call["query"]
+    assert "u.avoid_scenarios" in update_call["query"]
+    assert "WHERE NOT (toLower(toString(x)) IN" in update_call["query"]
+    assert "reduce(acc = []" in update_call["query"]
+    assert update_call["params"]["add_moods"] == ["Warm"]
+
+
+def test_remove_semantic_preference_allows_only_known_list_fields():
+    client = _Neo4jClient([])
+    manager = UserMemoryManager(neo4j_client=client)
+
+    ok = manager.remove_semantic_preference("u1", "avoid_moods", "Energetic")
+    bad = manager.remove_semantic_preference("u1", "profile_free_text", "secret")
+
+    assert ok is True
+    assert bad is False
+    remove_call = client.calls[0]
+    assert "u.avoid_moods" in remove_call["query"]
+    assert "toLower(toString(x))" in remove_call["query"]
+    assert remove_call["params"] == {"user_id": "u1", "value": "Energetic"}
+
+
+def test_clear_semantic_preferences_only_resets_learned_fields():
+    client = _Neo4jClient([])
+    manager = UserMemoryManager(neo4j_client=client)
+
+    ok = manager.clear_semantic_preferences("u1")
+
+    assert ok is True
+    clear_call = client.calls[0]
+    assert "u.add_moods = []" in clear_call["query"]
+    assert "u.avoid_moods = []" in clear_call["query"]
+    assert "u.activity_contexts = []" in clear_call["query"]
+    assert "u.preferred_genres" not in clear_call["query"]
+    assert "u.mood_tendency = ''" in clear_call["query"]
+    assert clear_call["params"] == {"user_id": "u1"}

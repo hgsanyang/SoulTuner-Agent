@@ -535,7 +535,7 @@ class MusicRecommendationGraph:
             _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or '?').lower()
             logger.info(f"--- [步骤 1] 统一意图分析与检索规划 (Structured Output) | 🤖 {_intent_provider} / {_intent_model_name} ---")
             
-            # ── 统一构建用户偏好上下文（用户画像 + GraphZep 长期记忆）──
+            # ── 统一构建用户偏好上下文（用户画像 + MemoryGateway 长期记忆）──
             _graphzep = state.get("graphzep_facts", "")
             _pref_parts = []
             if _profile_text:
@@ -1418,7 +1418,7 @@ class MusicRecommendationGraph:
 
     def _build_preference_query(self, seed_songs: list, graphzep_facts: str = "") -> str:
         """
-        从种子歌曲标签 + 用户 Neo4j 画像 + GraphZep 记忆中提炼偏好文本。
+        从种子歌曲标签 + 用户 Neo4j 画像 + MemoryGateway 记忆中提炼偏好文本。
         零 LLM 调用，纯结构化数据拼装。
         """
         import re
@@ -1475,7 +1475,7 @@ class MusicRecommendationGraph:
         except Exception as e:
             logger.warning(f"[Favorites] 加载画像标签失败: {e}")
 
-        # 3. 从 GraphZep 记忆提取场景/情绪关键词
+        # 3. 从长期记忆文本提取场景/情绪关键词
         if graphzep_facts and graphzep_facts != "暂无用户长期记忆":
             # 提取场景标签（如"开车"、"深夜"、"学习"）
             scene_matches = re.findall(r'场景[：:]\s*(\S+)', graphzep_facts)
@@ -2210,15 +2210,11 @@ class MusicRecommendationGraph:
     
     async def recall_graphzep_memory(self, state: MusicAgentState) -> Dict[str, Any]:
         """
-        【P1-4 双阶段 GraphZep 记忆召回】
-        
-        Stage 1（粗召回）：search_facts(max_facts=20) — 语义广撒网
-        Stage 2（精排序）：get_memory(chat_history) — 结合对话上下文精排，取 top 5
-        
-        降级策略：
-        - 整体 8s 硬超时 → 直接返回空记忆（避免阻塞推荐主流程）
-        - Stage 2 失败 → 退回 Stage 1 结果
-        - Stage 1 也失败 → 返回空
+        MemoryGateway 长期记忆召回。
+
+        节点名保持 recall_graphzep_memory 以兼容既有 LangGraph 拓扑，
+        但内部已经不直接依赖 GraphZep。Neo4j 用户画像是热路径；
+        GraphZep/Mem0 只是可选 episodic sidecar。
         """
         import time as _time
         _t0 = _time.time()
@@ -2228,91 +2224,36 @@ class MusicRecommendationGraph:
                 "graphzep_group_id": "mock",
                 "timings": _record_timing(state, "graphzep_ms", _time.time() - _t0),
             }
-        logger.info("--- [GraphZep] 双阶段记忆召回 ---")
-        
-        # ★ 整体硬超时：GraphZep 服务可能因 LLM 调用而阻塞很久（尤其 Docker 环境）
-        # 记忆召回是锦上添花功能，不能因此阻塞推荐主流程
-        graphzep_total_timeout = max(0.5, float(settings.graphzep_total_timeout_seconds))
-        
+        logger.info("--- [MemoryGateway] 长期记忆召回 ---")
+
+        memory_total_timeout = max(0.5, float(settings.graphzep_total_timeout_seconds))
+
         async def _do_recall() -> Dict[str, Any]:
             user_input = state.get("input", "")
-            group_id = state.get("graphzep_group_id", "music-agent-memory")
-            chat_history = state.get("chat_history", [])
-            
-            from services.graphzep_client import get_graphzep_client
-            client = get_graphzep_client()
-            
-            # ---- P2-1: 按意图选择 GraphZep 搜索策略 ----
-            intent_type = state.get("intent_type", "")
-            _INTENT_SEARCH_MAP = {
-                "search":                "keyword",    # 精确搜歌手/歌名 → 关键词匹配
-                "recommend_by_mood":     "semantic",   # 情绪推荐 → 语义理解
-                "recommend_by_activity": "hybrid",     # 场景推荐 → 关键词+语义
-                "recommend_by_genre":    "hybrid",     # 流派推荐 → 关键词+语义
-                "recommend_by_favorites":"mmr",        # 基于历史 → MMR 多样化
-                "create_playlist":       "mmr",        # 歌单生成 → MMR 多样化
-            }
-            search_type = _INTENT_SEARCH_MAP.get(intent_type, "hybrid")
-            logger.info(f"[GraphZep] P2-1 意图路由: intent={intent_type} → search_type={search_type}")
-            
-            # ---- Stage 1: 粗召回（广撒网，20 条候选） ----
-            coarse_facts = await client.search_facts(
+            user_id = state.get("user_id", "local_admin")
+            from services.memory_gateway import get_memory_gateway
+
+            context = await get_memory_gateway().retrieve_context(
                 query=user_input,
-                group_ids=[group_id],
-                max_facts=20,
-                search_type=search_type,
+                user_id=user_id,
+                max_facts=8,
             )
-            logger.info(f"[GraphZep] Stage 1 粗召回: {len(coarse_facts)}chars ({_time.time()-_t0:.1f}s)")
-            
-            # ---- Stage 2: 精排序（结合最近对话做上下文感知排序） ----
-            fine_facts = coarse_facts  # 默认退回 Stage 1
-            try:
-                recent_msgs = []
-                if chat_history:
-                    for msg in chat_history[-3:]:
-                        # chat_history 可能是 LangChain Message 对象或 dict
-                        if hasattr(msg, 'content'):
-                            content = msg.content
-                            role = getattr(msg, 'type', 'human')  # 'human' or 'ai'
-                            role = 'user' if role == 'human' else 'assistant'
-                        else:
-                            content = msg.get("content", "")
-                            role = msg.get("role", "user")
-                        recent_msgs.append({
-                            "content": content,
-                            "role_type": role,
-                        })
-                # 追加当前用户输入
-                recent_msgs.append({"content": user_input, "role_type": "user"})
-                
-                fine_facts = await client.get_memory(
-                    recent_messages=recent_msgs,
-                    group_id=group_id,
-                    max_facts=5,
-                )
-                logger.info(f"[GraphZep] Stage 2 精排序: {len(fine_facts)}chars ({_time.time()-_t0:.1f}s)")
-            except Exception as stage2_err:
-                logger.warning(f"[GraphZep] Stage 2 失败，退回 Stage 1: {stage2_err}")
-            
-            # 合并两阶段结果（去重）
-            if fine_facts and fine_facts != "暂无用户长期记忆":
-                combined = fine_facts
-                # 如果 Stage 1 有额外有用信息，追加（但限制总长度）
-                if coarse_facts and coarse_facts != fine_facts and coarse_facts != "暂无用户长期记忆":
-                    extra_lines = [l for l in coarse_facts.split("\n") if l not in fine_facts]
-                    if extra_lines:
-                        combined += "\n" + "\n".join(extra_lines[:3])
-                logger.info(f"[GraphZep] 最终记忆: {combined[:120]}...")
-                return {"graphzep_facts": combined}
-            elif coarse_facts and coarse_facts != "暂无用户长期记忆":
-                return {"graphzep_facts": coarse_facts}
-            else:
-                return {"graphzep_facts": "暂无用户长期记忆"}
-        
+            facts = context.get("episodic") or "暂无用户长期记忆"
+            logger.info(
+                "[MemoryGateway] 召回完成: hot_profile=%s, sidecars=%s, chars=%s",
+                bool(context.get("profile")),
+                list((context.get("episodic_backends") or {}).keys()),
+                len(facts),
+            )
+            return {
+                "graphzep_facts": facts,
+                "memory_context": context,
+            }
+
         try:
-            result = await asyncio.wait_for(_do_recall(), timeout=graphzep_total_timeout)
+            result = await asyncio.wait_for(_do_recall(), timeout=memory_total_timeout)
             _elapsed = _time.time() - _t0
-            logger.info(f"[GraphZep] ✅ 记忆召回完成, 总耗时 {_elapsed:.1f}s")
+            logger.info(f"[MemoryGateway] ✅ 记忆召回完成, 总耗时 {_elapsed:.1f}s")
             return {
                 **result,
                 "timings": _record_timing(state, "graphzep_ms", _elapsed),
@@ -2320,7 +2261,7 @@ class MusicRecommendationGraph:
         except asyncio.TimeoutError:
             _elapsed = _time.time() - _t0
             logger.warning(
-                f"[GraphZep] ⚠️ 记忆召回超时 ({_elapsed:.1f}s > {graphzep_total_timeout}s)，"
+                f"[MemoryGateway] ⚠️ 记忆召回超时 ({_elapsed:.1f}s > {memory_total_timeout}s)，"
                 f"降级为空记忆以保证推荐流程不阻塞"
             )
             return {
@@ -2328,7 +2269,7 @@ class MusicRecommendationGraph:
                 "timings": _record_timing(state, "graphzep_ms", _elapsed),
             }
         except Exception as e:
-            logger.warning(f"[GraphZep] 记忆召回失败（降级为空）: {e}")
+            logger.warning(f"[MemoryGateway] 记忆召回失败（降级为空）: {e}")
             return {
                 "graphzep_facts": "暂无用户长期记忆",
                 "timings": _record_timing(state, "graphzep_ms", _time.time() - _t0),
@@ -2432,7 +2373,11 @@ class MusicRecommendationGraph:
                             for v in global_pref.values()
                         )
                         if has_content:
-                            memory_manager.update_semantic_preferences("local_admin", global_pref)
+                            from services.memory_gateway import get_memory_gateway
+                            get_memory_gateway().remember_preference(
+                                user_id="local_admin",
+                                preferences=global_pref,
+                            )
                             logger.info(f"[SemanticMemory] 偏好提取成功: {global_pref}")
                         
                         # 场景偏好也写入
@@ -2469,34 +2414,29 @@ class MusicRecommendationGraph:
 
     async def persist_to_graphzep(self, state: MusicAgentState) -> Dict[str, Any]:
         """
-        出口旁路节点：将本轮完整对话异步送入 GraphZep。
-        
-        执行逻辑：
-        1. 取用户本轮输入 + Bot 最终回复
-        2. 调用 GraphZep POST /messages（fire-and-forget）
-        3. GraphZep 内部会异步 LLM 抽取实体/关系并持久化到 Neo4j
-        
-        使用 asyncio.create_task 确保不阻塞返回流程。
+        出口旁路节点：将本轮完整对话异步送入 MemoryGateway sidecars。
+
+        函数名保持 persist_to_graphzep 以兼容现有图结构；实际后端由
+        MEMORY_EPISODIC_BACKENDS 配置控制，可为 graphzep/mem0/noop。
         """
-        logger.info("--- [GraphZep] 异步持久化对话 ---")
+        logger.info("--- [MemoryGateway] 异步持久化对话 ---")
 
         if settings.eval_disable_side_effects:
-            logger.info("[EvalMode] 跳过 GraphZep 持久化与画像刷新")
+            logger.info("[EvalMode] 跳过长期记忆持久化与画像刷新")
             return {}
         
         user_input = state.get("input", "")
         bot_response = state.get("final_response", "")
-        group_id = state.get("graphzep_group_id", "music-agent-memory")
+        user_id = state.get("user_id", "local_admin")
         
         if not user_input or not bot_response:
             return {}
         
         try:
-            from services.graphzep_client import get_graphzep_client
             from datetime import datetime as _dt
-            client = get_graphzep_client()
-            
-            # P1-3: 携带场景上下文，让 GraphZep 的 LLM 提取出带场景的事实
+            from services.memory_gateway import get_memory_gateway
+
+            # 携带场景上下文，让长期记忆后端可提取出带场景的事实
             retrieval_plan = state.get("retrieval_plan", {})
             scene_ctx = (
                 getattr(retrieval_plan, "graph_scenario_filter", None)
@@ -2506,23 +2446,23 @@ class MusicRecommendationGraph:
             hour = _dt.now().hour
             time_label = "凌晨" if hour < 6 else "早晨" if hour < 9 else "上午" if hour < 12 else "中午" if hour < 14 else "下午" if hour < 18 else "傍晚" if hour < 21 else "深夜"
             
-            # 将场景标签注入用户消息，让 GraphZep 的 LLM 提取事实时能感知场景
+            # 将场景标签注入用户消息，让长期记忆后端提取事实时能感知场景
             enriched_user_msg = user_input
             if scene_ctx:
                 enriched_user_msg = f"[场景: {scene_ctx} | 时间: {time_label}] {user_input}"
-            
-            # Fire-and-forget：不等 GraphZep 处理完
+
+            description = f"用户: {enriched_user_msg}\n助手: {bot_response}"
             asyncio.create_task(
-                client.add_messages(
-                    user_message=enriched_user_msg,
-                    bot_response=bot_response,
-                    group_id=group_id,
+                get_memory_gateway().remember_text(
+                    description=description,
+                    user_id=user_id,
+                    extra={"source": "agent_dialog", "scene": scene_ctx, "time": time_label},
                 )
             )
-            logger.info(f"[GraphZep] 对话已投递到异步队列 (scene={scene_ctx or '无'})")
+            logger.info(f"[MemoryGateway] 对话已投递到长期记忆旁路 (scene={scene_ctx or '无'})")
             
         except Exception as e:
-            logger.warning(f"[GraphZep] 持久化投递失败（不影响用户）: {e}")
+            logger.warning(f"[MemoryGateway] 持久化投递失败（不影响用户）: {e}")
         
         # ★ Profile Synthesizer: 对话计数 + 自动触发画像刷新
         try:
@@ -2542,7 +2482,7 @@ class MusicRecommendationGraph:
         
         workflow = StateGraph(MusicAgentState)
         
-        # ==== GraphZep 记忆节点 ====
+        # ==== MemoryGateway 记忆节点（节点名保留 graphzep 兼容旧拓扑）====
         workflow.add_node("recall_graphzep_memory", self.recall_graphzep_memory)
         workflow.add_node("persist_to_graphzep", self.persist_to_graphzep)
         
@@ -2563,7 +2503,7 @@ class MusicRecommendationGraph:
         workflow.add_node("web_disabled", self.web_disabled_node)
         workflow.add_node("generate_explanation", self.generate_explanation)
         
-        # 设置入口点为 GraphZep 记忆召回
+        # 设置入口点为 MemoryGateway 记忆召回
         workflow.set_entry_point("recall_graphzep_memory")
         
         # 召回完成后 → 意图分析

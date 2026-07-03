@@ -25,6 +25,17 @@ FEATURE_NAMES = (
 )
 POSITIVE_REWARDS = {"full_play": 1.0, "like": 2.0, "save": 2.0, "repeat": 3.0}
 NEGATIVE_REWARDS = {"skip": -1.0, "dislike": -3.0}
+SLATE_POSITIVE_RATINGS = {"great": 0.35}
+SLATE_NEGATIVE_RATINGS = {
+    "off": -0.45,
+    "wrong_context": -0.45,
+    "too_noisy": -0.35,
+    "too_sad": -0.35,
+    "too_quiet": -0.25,
+    "too_generic": -0.30,
+    "too_familiar": -0.25,
+}
+SLATE_NEUTRAL_RATINGS = {"partial", "more_discovery", "more_niche", "closer_to_seed"}
 BASELINE_COEFFICIENTS = {
     "rrf_graph": 0.30,
     "rrf_dense": 0.35,
@@ -160,6 +171,101 @@ def build_strict_labeled_rows(
             }
         )
         diagnostics["matched_events"] += 1
+    diagnostics["positive_rows"] = sum(1 for row in rows if row["label"] == 1)
+    diagnostics["negative_rows"] = sum(1 for row in rows if row["label"] == 0)
+    return rows, dict(diagnostics)
+
+
+def _slate_reward(rating: Any) -> float | None:
+    value = str(rating or "").strip()
+    if value in SLATE_POSITIVE_RATINGS:
+        return SLATE_POSITIVE_RATINGS[value]
+    if value in SLATE_NEGATIVE_RATINGS:
+        return SLATE_NEGATIVE_RATINGS[value]
+    return None
+
+
+def build_slate_feedback_rows(
+    exposures: list[dict[str, Any]],
+    slate_feedback: list[dict[str, Any]],
+    *,
+    top_k: int = 5,
+    attribution_window_ms: int = 7 * 86_400_000,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Convert high-confidence whole-slate feedback into low-weight rows.
+
+    Slate labels are weaker than song-level events, but they are still explicit
+    user feedback about the ranked list.  Ambiguous ratings such as
+    ``more_discovery`` are intentionally ignored here and handled by the
+    MemoryGateway preference layer instead.
+    """
+    exposure_map = {
+        str(exposure.get("exposure_id")): exposure
+        for exposure in exposures
+        if exposure.get("exposure_id")
+    }
+    diagnostics: defaultdict[str, int] = defaultdict(int)
+    rows: list[dict[str, Any]] = []
+
+    for feedback in sorted(slate_feedback, key=lambda row: int(row.get("ts") or 0)):
+        rating = str(feedback.get("rating") or "").strip()
+        reward = _slate_reward(rating)
+        if reward is None:
+            if rating in SLATE_NEUTRAL_RATINGS:
+                diagnostics["neutral_slate_feedback"] += 1
+            else:
+                diagnostics["unsupported_slate_rating"] += 1
+            continue
+
+        exposure_id = str(feedback.get("exposure_id") or "")
+        if not exposure_id:
+            diagnostics["missing_exposure_id"] += 1
+            continue
+        exposure = exposure_map.get(exposure_id)
+        if exposure is None:
+            diagnostics["unknown_exposure_id"] += 1
+            continue
+
+        exposure_ts = int(exposure.get("ts") or 0)
+        feedback_ts = int(feedback.get("ts") or 0)
+        if exposure_ts and feedback_ts and not (
+            exposure_ts <= feedback_ts <= exposure_ts + attribution_window_ms
+        ):
+            diagnostics["outside_attribution_window"] += 1
+            continue
+
+        items = sorted(
+            list(exposure.get("items") or []),
+            key=lambda item: int(item.get("rank") or 999_999),
+        )[: max(1, int(top_k))]
+        if not items:
+            diagnostics["exposure_without_items"] += 1
+            continue
+
+        label = 1 if reward > 0 else 0
+        for item in items:
+            rows.append(
+                {
+                    "event_id": f"slate:{feedback.get('feedback_id') or exposure_id}:{item.get('rank')}",
+                    "event_type": f"slate:{rating}",
+                    "exposure_id": exposure_id,
+                    "user_id": str(feedback.get("user_id") or exposure.get("user_id") or "local_admin"),
+                    "intent_type": str(exposure.get("intent_type") or ""),
+                    "ts": feedback_ts,
+                    "title": item.get("title"),
+                    "artist": item.get("artist"),
+                    "rank": item.get("rank"),
+                    "reward": reward,
+                    "label": label,
+                    "sample_weight": abs(reward),
+                    "features": feature_vector(item),
+                    "label_source": "slate_feedback",
+                    "slate_rating": rating,
+                }
+            )
+        diagnostics["matched_slate_feedback"] += 1
+        diagnostics["slate_rows"] += len(items)
+
     diagnostics["positive_rows"] = sum(1 for row in rows if row["label"] == 1)
     diagnostics["negative_rows"] = sum(1 for row in rows if row["label"] == 0)
     return rows, dict(diagnostics)
@@ -399,12 +505,27 @@ def _fit_scope(
 def learn_ranking_policy(
     exposures: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    slate_feedback: list[dict[str, Any]] | None = None,
     *,
     min_events: int = 20,
     per_user_min_events: int = 30,
     validation_ratio: float = 0.2,
+    slate_top_k: int = 5,
 ) -> dict[str, Any]:
-    rows, diagnostics = build_strict_labeled_rows(exposures, events)
+    explicit_rows, explicit_diagnostics = build_strict_labeled_rows(exposures, events)
+    slate_rows, slate_diagnostics = build_slate_feedback_rows(
+        exposures,
+        slate_feedback or [],
+        top_k=slate_top_k,
+    )
+    rows = explicit_rows + slate_rows
+    diagnostics = {
+        "training_rows": len(rows),
+        "explicit_rows": len(explicit_rows),
+        "slate_rows": len(slate_rows),
+        "explicit": explicit_diagnostics,
+        "slate": slate_diagnostics,
+    }
     global_model = _fit_scope(
         rows,
         min_events=min_events,
@@ -448,6 +569,11 @@ def learn_ranking_policy(
             else global_model.get("status", "rejected")
         ),
         "feature_names": list(FEATURE_NAMES),
+        "label_sources": {
+            "explicit_song_events": "exact exposure_id + title/artist joins only",
+            "slate_feedback": "low-weight top-k rows from high-confidence whole-slate ratings",
+            "ignored_slate_ratings": sorted(SLATE_NEUTRAL_RATINGS),
+        },
         "diagnostics": diagnostics,
         "strict_preference_pairs": len(build_preference_pairs(rows)),
         "global": global_model,

@@ -1,7 +1,7 @@
 """
 Profile Synthesizer — 动态用户画像聚合器
 =======================================
-从 GraphZep 长期记忆 + Neo4j 行为统计中聚合结构化用户画像。
+从 MemoryGateway 长期记忆 + Neo4j 行为统计中聚合结构化用户画像。
 
 核心能力：
   1. 情绪基线：用户常态情绪倾向
@@ -124,22 +124,25 @@ class ProfileSynthesizer:
     # ---- 数据收集 ----
 
     async def _collect_graphzep_facts(self) -> str:
-        """从 GraphZep 收集所有可用的带时间戳记忆"""
-        try:
-            from services.graphzep_client import get_graphzep_client
-            client = get_graphzep_client()
+        """从 MemoryGateway 收集所有可用的长期记忆文本。
 
-            # 用宽泛的查询检索尽可能多的用户记忆
-            facts = await client.search_facts(
+        方法名暂时保留，避免扩大调用面；实际来源可为 GraphZep、Mem0 或
+        其它 sidecar。
+        """
+        try:
+            from services.memory_gateway import get_memory_gateway
+
+            context = await get_memory_gateway().retrieve_context(
                 query="用户的音乐偏好、情绪、喜好、行为、品味",
+                user_id=self.user_id,
                 max_facts=30,
-                search_type="hybrid",
             )
+            facts = context.get("episodic", "")
             if facts == "暂无用户长期记忆" or "服务不可用" in facts:
                 return ""
             return facts
         except Exception as e:
-            logger.warning(f"[ProfileSynth] GraphZep 数据收集失败: {e}")
+            logger.warning(f"[ProfileSynth] 长期记忆数据收集失败: {e}")
             return ""
 
     async def _collect_neo4j_stats(self) -> Dict[str, Any]:

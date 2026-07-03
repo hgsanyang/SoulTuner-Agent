@@ -33,9 +33,12 @@ services:
       retries: 5
       start_period: 30s
 
-  # ---- GraphZep 记忆服务 ----
+  # ---- GraphZep 记忆旁路（可选）----
+  # 默认 CPU/GPU 启动不依赖它。需要自然语言 episodic 记忆时：
+  #   $env:MEMORY_EPISODIC_BACKENDS="graphzep"
+  #   docker compose --profile memory up -d graphzep
   graphzep:
-    profiles: ["cpu", "gpu"]
+    profiles: ["memory"]
     build: ./graphzep_service
     container_name: soultuner-graphzep
     depends_on:
@@ -77,6 +80,7 @@ services:
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"
       GRAPHZEP_BASE_URL: http://graphzep:3100
+      MEMORY_EPISODIC_BACKENDS: ${MEMORY_EPISODIC_BACKENDS:-}
       MODEL_NAME: ${MODEL_NAME:-qwen3.7-plus}
       # soultuner.ps1 按 CPU/GPU profile 注入 m2d/muq；直接 compose 时可由 .env 覆盖。
       DENSE_TEXT_AUDIO_BACKEND: ${DENSE_TEXT_AUDIO_BACKEND:-m2d}

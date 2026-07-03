@@ -35,6 +35,56 @@ def enqueue_songs(songs: list[dict[str, Any]]) -> str:
     return job_id
 
 
+def _load_job(path: Path, status: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+    stat = path.stat()
+    return {
+        "job_id": payload.get("job_id") or path.stem,
+        "status": status,
+        "songs": payload.get("songs") or [],
+        "song_count": len(payload.get("songs") or []),
+        "error": payload.get("error", ""),
+        "updated_at": int(stat.st_mtime * 1000),
+        "file": path.name,
+    }
+
+
+def list_jobs(limit: int = 50) -> list[dict[str, Any]]:
+    """Return recent queue jobs across states for UI observability."""
+    _ensure_dirs()
+    rows: list[dict[str, Any]] = []
+    for status, directory in (
+        ("processing", PROCESSING_DIR),
+        ("pending", PENDING_DIR),
+        ("failed", FAILED_DIR),
+        ("done", DONE_DIR),
+    ):
+        for path in directory.glob("*.json"):
+            rows.append(_load_job(path, status))
+    rows.sort(key=lambda row: row.get("updated_at", 0), reverse=True)
+    return rows[: max(1, int(limit))]
+
+
+def retry_failed_job(job_id: str) -> bool:
+    """Move a failed job back to pending for the worker."""
+    _ensure_dirs()
+    clean_id = str(job_id or "").strip()
+    if not clean_id:
+        return False
+    failed_path = FAILED_DIR / f"{clean_id}.json"
+    if not failed_path.exists():
+        return False
+    payload = json.loads(failed_path.read_text(encoding="utf-8"))
+    payload.pop("error", None)
+    payload["retried_at"] = int(time.time() * 1000)
+    failed_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    failed_path.replace(PENDING_DIR / failed_path.name)
+    return True
+
+
 def claim_next_job() -> tuple[Path, dict[str, Any]] | None:
     """Move one pending job to processing and return its payload."""
     _ensure_dirs()

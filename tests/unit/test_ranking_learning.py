@@ -2,6 +2,7 @@ import json
 
 from services.ranking_learning import (
     build_preference_pairs,
+    build_slate_feedback_rows,
     build_strict_labeled_rows,
     learn_ranking_policy,
 )
@@ -98,6 +99,41 @@ def test_preference_pairs_require_explicit_positive_and_negative_in_same_slate()
     assert pairs[0]["negative"]["title"] == "B"
 
 
+def test_slate_feedback_creates_low_weight_top_k_rows():
+    exposures = [_exposure("e1", 100, "A", True)]
+    slate_feedback = [{
+        "feedback_id": "s1",
+        "exposure_id": "e1",
+        "ts": 200,
+        "user_id": "u1",
+        "rating": "too_noisy",
+    }]
+
+    rows, diagnostics = build_slate_feedback_rows(exposures, slate_feedback, top_k=1)
+
+    assert diagnostics["matched_slate_feedback"] == 1
+    assert diagnostics["slate_rows"] == 1
+    assert rows[0]["label"] == 0
+    assert rows[0]["sample_weight"] < 1.0
+    assert rows[0]["label_source"] == "slate_feedback"
+
+
+def test_neutral_slate_feedback_is_not_used_as_item_label():
+    exposures = [_exposure("e1", 100, "A", True)]
+    slate_feedback = [{
+        "feedback_id": "s1",
+        "exposure_id": "e1",
+        "ts": 200,
+        "user_id": "u1",
+        "rating": "more_niche",
+    }]
+
+    rows, diagnostics = build_slate_feedback_rows(exposures, slate_feedback)
+
+    assert rows == []
+    assert diagnostics["neutral_slate_feedback"] == 1
+
+
 def test_v2_learner_uses_chronological_validation_and_accepts_clear_signal():
     exposures = []
     events = []
@@ -121,6 +157,42 @@ def test_v2_learner_uses_chronological_validation_and_accepts_clear_signal():
     assert report["global"]["validation_events"] == 10
     assert report["global"]["learned_validation"]["log_loss"] <= report["global"]["baseline_validation"]["log_loss"]
     assert report["users"]["u1"]["status"] == "accepted"
+
+
+def test_v2_learner_reports_slate_feedback_diagnostics():
+    exposures = []
+    events = []
+    slate_feedback = []
+    for index in range(40):
+        positive = index % 2 == 0
+        exposure_id = f"e{index}"
+        title = f"Song {index}"
+        exposures.append(_exposure(exposure_id, index * 1000, title, positive))
+        if index < 20:
+            events.append(_event(exposure_id, index * 1000 + 100, title, positive))
+        else:
+            slate_feedback.append({
+                "feedback_id": f"s{index}",
+                "exposure_id": exposure_id,
+                "ts": index * 1000 + 100,
+                "user_id": "u1",
+                "rating": "great" if positive else "off",
+            })
+
+    report = learn_ranking_policy(
+        exposures,
+        events,
+        slate_feedback=slate_feedback,
+        min_events=20,
+        per_user_min_events=20,
+        validation_ratio=0.25,
+        slate_top_k=1,
+    )
+
+    assert report["diagnostics"]["explicit_rows"] == 20
+    assert report["diagnostics"]["slate_rows"] == 20
+    assert report["diagnostics"]["slate"]["matched_slate_feedback"] == 20
+    assert "slate_feedback" in report["label_sources"]
 
 
 def test_policy_candidate_promotion_and_rollback(tmp_path, monkeypatch):

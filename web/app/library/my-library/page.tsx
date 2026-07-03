@@ -11,7 +11,7 @@ import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { useRouter } from 'next/navigation';
-import { fetchLibrarySongs, deleteSongFromLibrary, LibrarySong } from '@/lib/api';
+import { fetchLibrarySongs, deleteSongFromLibrary, updateLibrarySongTags, LibrarySong } from '@/lib/api';
 
 export default function MyLibraryPage() {
     const [songs, setSongs] = useState<LibrarySong[]>([]);
@@ -22,6 +22,14 @@ export default function MyLibraryPage() {
     const [languageFilter, setLanguageFilter] = useState('all');
     const [moodFilter, setMoodFilter] = useState('all');
     const [selectedSong, setSelectedSong] = useState<LibrarySong | null>(null);
+    const [tagDraft, setTagDraft] = useState({
+        genres: '',
+        moods: '',
+        themes: '',
+        scenarios: '',
+        language: '',
+    });
+    const [savingTags, setSavingTags] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
     const { playSong } = usePlayer();
     const { showToast } = useLibrary();
@@ -36,6 +44,58 @@ export default function MyLibraryPage() {
     }, []);
 
     useEffect(() => { loadSongs(); }, [loadSongs]);
+
+    useEffect(() => {
+        if (!selectedSong) return;
+        setTagDraft({
+            genres: (selectedSong.genres || []).join(', '),
+            moods: (selectedSong.moods || []).join(', '),
+            themes: (selectedSong.themes || []).join(', '),
+            scenarios: (selectedSong.scenarios || []).join(', '),
+            language: selectedSong.language || '',
+        });
+    }, [selectedSong]);
+
+    const parseTags = (value: string) => value
+        .split(/[,，/]/)
+        .map(v => v.trim())
+        .filter(Boolean)
+        .slice(0, 5);
+
+    const saveSelectedTags = async () => {
+        if (!selectedSong) return;
+        setSavingTags(true);
+        const next = {
+            music_id: selectedSong.music_id,
+            title: selectedSong.title,
+            artist: selectedSong.artist,
+            genres: parseTags(tagDraft.genres),
+            moods: parseTags(tagDraft.moods),
+            themes: parseTags(tagDraft.themes),
+            scenarios: parseTags(tagDraft.scenarios),
+            language: tagDraft.language.trim(),
+        };
+        const result = await updateLibrarySongTags(next);
+        setSavingTags(false);
+        if (result.success) {
+            const updatedSong = {
+                ...selectedSong,
+                genres: next.genres,
+                moods: next.moods,
+                themes: next.themes,
+                scenarios: next.scenarios,
+                language: next.language,
+            };
+            setSelectedSong(updatedSong);
+            setSongs(prev => prev.map(song => (
+                (selectedSong.music_id && song.music_id === selectedSong.music_id)
+                || (!selectedSong.music_id && song.title === selectedSong.title && song.artist === selectedSong.artist)
+            ) ? updatedSong : song));
+            showToast('✅ 标签已更新');
+        } else {
+            showToast(`❌ 标签更新失败: ${result.error || '未知错误'}`);
+        }
+    };
 
     const handleDelete = async (song: LibrarySong) => {
         const key = `${song.title}_${song.artist}`;
@@ -79,6 +139,29 @@ export default function MyLibraryPage() {
             default: return { text: '本地', color: theme.colors.primary.accent };
         }
     };
+
+    const tagInputStyle = {
+        width: '100%',
+        padding: '0.45rem 0.55rem',
+        background: 'rgba(255,255,255,0.045)',
+        border: `1px solid ${theme.colors.border.default}`,
+        borderRadius: theme.borderRadius.sm,
+        color: theme.colors.text.primary,
+        fontSize: '0.78rem',
+        outline: 'none',
+    };
+
+    const renderTagInput = (label: string, key: keyof typeof tagDraft, placeholder: string) => (
+        <label style={{ display: 'grid', gap: '0.3rem', fontSize: '0.74rem', color: theme.colors.text.muted }}>
+            {label}
+            <input
+                value={tagDraft[key]}
+                onChange={e => setTagDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                placeholder={placeholder}
+                style={tagInputStyle}
+            />
+        </label>
+    );
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', padding: '1rem', color: theme.colors.text.primary, minHeight: '100%' }}>
@@ -278,6 +361,22 @@ export default function MyLibraryPage() {
                         <div>语言：{selectedSong.language || '未标注'}</div>
                         <div>格式：{selectedSong.format || '未知'}</div>
                         <div>时长：{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : '未知'}</div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.6rem', padding: '0.75rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, background: 'rgba(255,255,255,0.025)' }}>
+                        {renderTagInput('流派，最多 5 个', 'genres', 'Indie, Folk')}
+                        {renderTagInput('情绪，最多 5 个', 'moods', 'Peaceful, Dreamy')}
+                        {renderTagInput('主题，最多 5 个', 'themes', 'Healing, Rainy')}
+                        {renderTagInput('场景，最多 5 个', 'scenarios', 'Late Night, Study')}
+                        {renderTagInput('语言', 'language', 'Chinese')}
+                        <div style={{ display: 'flex', alignItems: 'end' }}>
+                            <button
+                                onClick={saveSelectedTags}
+                                disabled={savingTags}
+                                style={{ width: '100%', background: savingTags ? 'rgba(255,255,255,0.08)' : theme.colors.primary.accent, border: 'none', borderRadius: theme.borderRadius.sm, color: savingTags ? theme.colors.text.muted : '#000', cursor: savingTags ? 'wait' : 'pointer', padding: '0.5rem 0.75rem', fontWeight: 700, fontSize: '0.78rem' }}
+                            >
+                                {savingTags ? '保存中...' : '保存标签'}
+                            </button>
+                        </div>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                         {[...(selectedSong.genres || []), ...(selectedSong.moods || []), ...(selectedSong.themes || []), ...(selectedSong.scenarios || [])].slice(0, 20).map(tag => (
