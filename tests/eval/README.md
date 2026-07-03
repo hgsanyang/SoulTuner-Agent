@@ -11,7 +11,7 @@ It is not an intent-label accuracy test.
 - `holdout`: 34 frozen cases, including English mirrors, multi-turn context,
   negative constraints, and soft-intent cases. Do not tune
   directly against this set.
-- `context_dev`: 44 Chinese context-matching cases, written against this
+- `context_dev`: 45 Chinese context-matching cases, written against this
   catalog and bucketed by context goal plus specificity.
 - `context_holdout`: 12 frozen context-matching cases. Use only as a milestone
   regression check.
@@ -41,8 +41,8 @@ Use `--require-no-failures` or `--min-decided-pass-rate 0.95` when running a
 full-stack quality gate in a local/remote environment that has Neo4j and model
 credentials.
 Outcome eval sets `EVAL_DISABLE_SIDE_EFFECTS=True` internally so it measures the
-recommendation path without writing preference extraction, GraphZep persistence,
-or profile-refresh side effects.
+recommendation path without writing preference extraction, MemoryGateway sidecar
+persistence, or profile-refresh side effects.
 
 Add `--timing` to include per-case stage timings and aggregate p50/p95 latency:
 
@@ -51,10 +51,20 @@ python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --tim
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
 ```
 
-The timing report covers GraphZep, intent planning, each recall source,
+The timing report covers MemoryGateway/episodic memory, intent planning, each recall source,
 fusion/filter, ranking, web fallback, explanation, Agent total, and end to end.
 `--case-timeout` is useful for slow dev profiling: a stuck case is marked
 `TIMEOUT`, the run continues, and the JSON report includes `slow_cases`.
+
+MemoryGateway feedback semantics have a separate deterministic ruler:
+
+```powershell
+python -m tests.eval.evaluate_memory
+```
+
+It currently covers six slate-feedback mappings, including noisy/sad/quiet,
+over-familiar, niche discovery, and seed-closeness feedback. It does not call
+Neo4j, GraphZep, Mem0, or LLMs.
 
 ### Context matching ruler
 

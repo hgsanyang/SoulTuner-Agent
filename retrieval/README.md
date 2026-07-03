@@ -10,7 +10,7 @@
 | `portable_m2d.py` | M2D-CLAP 模型权重加载器（第三方） |
 | `cross_encoder_reranker.py` | Cross-Encoder 可选精排（默认关闭，实验性功能） |
 | `neo4j_client.py` | Neo4j 连接与 Cypher 查询封装 |
-| `gssc_context_builder.py` | GSSC Token 预算管理（GraphZep Facts + Chat History 配额分配 + LLM 压缩） |
+| `gssc_context_builder.py` | GSSC Token 预算管理（长期记忆 + Chat History 配额分配 + LLM 压缩） |
 | `data_flywheel.py` | 数据飞轮（联网下载 → 双模型编码 → Neo4j 入库） |
 | `music_journey.py` | 音乐旅程编排器（LLM 故事→情绪拆解→逐段检索 + SSE 推送） |
 | `user_memory.py` | 用户偏好 Neo4j 图谱记忆读写 |

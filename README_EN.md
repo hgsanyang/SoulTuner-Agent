@@ -37,7 +37,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 > 📖 For full features and interaction details, please refer to [Feature_Walkthrough.md](Feature_Walkthrough.md)
 >
-> Orchestrated via a LangGraph multi-node Agent workflow, integrating Neo4j, a MuQ-MuLan text-to-music anchor, M2D-CLAP / OMAR-RQ auxiliary representations, LLMs, and GraphZep long-term memory for multi-path retrieval, weighted RRF fusion, streaming recommendations, web fallback, music journeys, and a behavior data flywheel.
+> Orchestrated via a LangGraph multi-node Agent workflow, integrating Neo4j, a MuQ-MuLan text-to-music anchor, M2D-CLAP / OMAR-RQ auxiliary representations, LLMs, and a MemoryGateway layer for multi-path retrieval, weighted RRF fusion, streaming recommendations, web fallback, music journeys, and a behavior data flywheel.
 
 ---
 
@@ -46,11 +46,11 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 ```powershell
 Copy-Item .env.example .env
 # Edit .env: at least fill NEO4J_PASSWORD and DASHSCOPE_API_KEY
-.\soultuner.ps1 up cpu        # Full CPU experience: Neo4j + Backend + Frontend + GraphZep + SearxNG + Netease proxy
+.\soultuner.ps1 up cpu        # Full CPU experience: Neo4j + Backend + Frontend + optional memory sidecar + SearxNG + Netease proxy
 .\soultuner.ps1 doctor        # Open http://localhost:3003 after health checks pass
 ```
 
-Both CPU and GPU modes start the complete product workflow. The difference is multimodal quality and ingestion throughput: `up cpu` defaults to the lighter M2D text-to-music fallback while Neo4j, recommendation, web fallback, and the frontend remain fully available; with an NVIDIA GPU, use `.\soultuner.ps1 up gpu` to enable MuQ-MuLan fp16 as the primary text-to-music anchor and start the separate ingestion worker.
+Both CPU and GPU modes start the complete product workflow. The difference is multimodal quality and ingestion throughput: `up cpu` defaults to the lighter M2D text-to-music fallback while Neo4j, recommendation, web fallback, and the frontend remain fully available; with an NVIDIA GPU, use `.\soultuner.ps1 up gpu` to enable MuQ-MuLan fp16 as the primary text-to-music anchor and start the separate ingestion worker. Memory now defaults to the Neo4j hot path and no longer starts GraphZep by default. To experiment with natural-language episodic memory sidecars, set `MEMORY_EPISODIC_BACKENDS=graphzep` or `graphzep,mem0` in `.env` before startup.
 
 Do not expose a personal music library directly as a public demo. Set `PUBLIC_DEMO_MODE=true` and configure `ADMIN_API_KEY` in `.env`; download, ingest, and delete operations are disabled or require `X-API-Key`. Public demos should use CC/open catalogs or mock audio.
 
@@ -73,7 +73,7 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 - Local development: create the `music_agent` Conda environment, install Python dependencies and `web/` dependencies, then run `python startup_all.py`.
 - Model cache: Docker allows the first run to download a missing HuggingFace text encoder so vector retrieval works out of the box. For fully offline runs, execute `python scripts/download_models.py` first and set `HF_OFFLINE=true` in `.env`.
 - GPU ingestion: online recommendation does not require a GPU; lyrics tagging, audio vectors, and batch ingestion are handled by `.\soultuner.ps1 up gpu` or `.\soultuner.ps1 ingest gpu`.
-- Manual ports: Neo4j `:7687`, GraphZep `:3100`, Backend `:8501`, Frontend `:3003`.
+- Manual ports: Neo4j `:7687`, Backend `:8501`, Frontend `:3003`; GraphZep `:3100` is only an optional MemoryGateway sidecar.
 
 </details>
 
@@ -85,14 +85,14 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 |---|---|
 | 🔀 **Hybrid RAG** | Three content recall paths (graph / dense / BM25), weighted RRF fusion; personalization and long-tail exploration are post-recall score adjustments |
 | 🎵 **Multimodal Text-to-Music** | MuQ-MuLan is the Chinese-strong primary recall model, M2D-CLAP is the fallback, and OMAR-RQ adds acoustic similarity |
-| 🧠 **Long-term Memory** | GraphZep dual-stage recall with circuit-breaker fallback, retaining user preferences across sessions |
+| 🧠 **Long-term Memory** | MemoryGateway: Neo4j behavior hot path + optional GraphZep/Mem0 sidecars, with editable and clearable learned preferences |
 | 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
 | 🤖 **Smart Intent Recognition** | Layered intent plan: `hard_constraints / soft_intent / hints` + multi-turn inheritance |
-| 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j + GraphZep dual write |
+| 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j hot path + long-term memory sidecars |
 | 🌐 **Web Search Fallback** | Enabled by default; mixes a few online candidates when local results are healthy, and triggers SearxNG/Tavily/Zhipu discovery + Netease playable resolution when the catalog falls short |
 | 🎼 **Music Journey** | LLM Story → Emotion breakdown → Step-by-step retrieval, real-time SSE streaming |
-| ♻️ **Data Flywheel** | Download → Stage → Preview → Confirm Ingest → Tag extraction → Vector encoding → Neo4j |
-| 📋 **Library Mgmt** | Pending staging area + My Library full-graph management (search/play/delete) |
+| ♻️ **Data Flywheel** | Download → Stage → Preview → Confirm Ingest → Ingest queue → Tag extraction → Vector encoding → Neo4j |
+| 📋 **Library Mgmt** | Pending staging area + queue status/retry + My Library full-graph management (search/play/tag edit/delete) |
 | 📡 **SSE Streaming** | Real-time frontend rendering: thinking process → song cards → recommendation reasons |
 | 🐳 **Docker Deployment** | `docker compose up` one-click full-stack startup |
 
@@ -143,14 +143,14 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  LangGraph Agent (StateGraph)                                       │
 │                                                                     │
-│  start → GraphZep Recall → Planner (LLM) → Intent Router          │
+│  start → MemoryGateway Recall → Planner (LLM) → Intent Router     │
 │                                                                     │
 │     ┌─────────┬─────────┬─────────┬──────────┐                     │
 │     ▼         ▼         ▼         ▼          ▼                     │
 │  search_songs  chat  acquire  gen_reco  journey                    │
 │     │                                                               │
 │     ▼                                                               │
-│  Hybrid Retrieval ──→ LLM Explainer ──→ Pref Extract ──→ GraphZep Write → end │
+│  Hybrid Retrieval ──→ LLM Explainer ──→ Pref Extract ──→ MemoryGateway Write → end │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────────┐
@@ -172,7 +172,7 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
                                │
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  Storage Layer                                                      │
-│  Neo4j (Graph + Vectors)  ·  GraphZep Memory (:3100)               │
+│  Neo4j (Graph + Vectors + Memory Hot Path) · Optional Memory Sidecars │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -186,7 +186,7 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 | **Graph Database** | Neo4j 5.x (Native Vector Index + Graph Relations + User Behavior direct-write) |
 | **Audio Embeddings** | MuQ-MuLan (primary text-to-music, 512d) + M2D-CLAP (semantic fallback/rerank, 768d) + OMAR-RQ (acoustic auxiliary, 1024d) |
 | **LLMs** | Default `dashscope / qwen3.7-plus`; other providers are advanced overrides |
-| **Long-term Memory**| GraphZep temporal memory (Dual-stage recall) |
+| **Long-term Memory**| MemoryGateway (Neo4j hot path + optional GraphZep/Mem0 episodic sidecars) |
 | **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
 | **Ranking Algorithm**| Content-anchor rerank (Semantic+Acoustic) + bounded post-recall adjustments + Thompson Sampling + MMR |
 | **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
@@ -243,7 +243,7 @@ User Query → Planner (LLM) outputs a layered plan
 ```mermaid
 stateDiagram-v2
     [*] --> recall_memory: Start
-    recall_memory --> plan_query: GraphZep Coarse/Fine Recall
+    recall_memory --> plan_query: MemoryGateway Profile/Memory Recall
     plan_query --> route_intent: LLM Structured Output (layered intent)
 
     route_intent --> search_songs: graph_search / hybrid_search / vector_search
@@ -265,7 +265,7 @@ stateDiagram-v2
     chat_response --> persist_memory: General chat skips preference extraction
     clarify --> persist_memory: Persist pending clarification state
 
-    persist_memory --> [*]: GraphZep Async Write
+    persist_memory --> [*]: MemoryGateway Async Write
 ```
 
 > Intent recognition, HyDE, and the async tuner-style response default to `dashscope / qwen3.7-plus`. Recommended songs are streamed first; the default `EXPLANATION_MODE=tuner_async` then generates a short conversational response plus follow-up chips. The legacy per-song explanation mode remains available via `EXPLANATION_MODE=song_detail`, but is not recommended as the default because the system should not invent detailed listening impressions.
@@ -278,26 +278,26 @@ stateDiagram-v2
 
 | Component | Description |
 |---|---|
-| **GraphZep Dual-stage** | Stage 1 Coarse Recall → Stage 2 Rerank (Similarity + Time Decay), retaining user preferences across sessions |
+| **MemoryGateway** | Unified memory entry point; Neo4j stores behavior/structured hot-path preferences, while GraphZep/Mem0 can dual-run as optional sidecars |
 | **GSSC Token Budget** | Dynamic memory assignment for facts + chat_history, LLM summarization + async pre-compression caching |
 | **Neo4j Preference Graph** | Auto-extract user preferences from chat, async write to Neo4j User nodes; behavior events (like/save/skip/dislike) directly write relationship edges |
-| **User Profile Dual-write** | Frontend visual profile panel → Writes to Neo4j User node properties + GraphZep long-term memory simultaneously |
+| **Editable User Profile** | Frontend profile panel edits declared preferences and can remove one learned preference or clear all learned avoid/context/discovery preferences |
 | **Profile Synthesizer** | Dynamic profile synthesis: aggregates long-term memory + behavioral stats (played/liked/skipped counts) → auto-generates a structured user portrait injected into each Planner prompt |
 
 **Memory Architecture Highlights**:
 - **Neo4j** handles precise behavioral relationships (LIKES / SAVES / LISTENED_TO / SKIPPED / DISLIKES) with fast Bolt direct-write (~100ms)
-- **GraphZep** manages fuzzy semantic memory (natural language descriptions of user preferences) retrieved via BGE-M3 vectors, supplementing Planner context
+- **GraphZep / Mem0** only manage fuzzy semantic memory sidecars. Configure `MEMORY_EPISODIC_BACKENDS=graphzep,mem0` to dual-run them; disabling sidecars does not break the recommendation hot path.
 - **Profile Synthesizer** asynchronously aggregates both memory sources per conversation turn, generating a readable `portrait` injected into the current Planner system prompt
 
 ### User Profile System
 
-The frontend profile panel saves preferences (genre/mood/scenario/language), simultaneously committing to the Neo4j `User` node and GraphZep. Graph Affinity reads these attributes during retrieval, rendering Jaccard similarity scores to bubble up favored tracks. The Profile Synthesizer automatically aggregates behavioral statistics and memory snapshots to provide personalized context injection for every conversation.
+The frontend profile panel saves preferences (genre/mood/scenario/language) to the Neo4j `User` node and sends natural-language memory to MemoryGateway sidecars. It also exposes learned avoid/context/discovery preferences for single-item deletion or full learned-memory clearing without deleting manual profile settings, likes, or saves. Graph Affinity reads these attributes during retrieval to boost favored tracks or softly demote avoided ones. The Profile Synthesizer aggregates behavior statistics and memory snapshots to provide personalized context injection.
 
 ### Data Flywheel
 
-User search → Discover new song → Download to "Pending" staging area → Frontend preview & playback → Select and confirm ingestion → LLM label extraction + MuQ/M2D/OMAR vector encoding → Neo4j ingestion → Discoverable next time.
+User search → Discover new song → Download to "Pending" staging area → Frontend preview & playback → Select and confirm ingestion → Ingest queue with pending/processing/done/failed status and retry → LLM label extraction + MuQ/M2D/OMAR vector encoding → Neo4j ingestion → Discoverable next time.
 
-> 💡 Songs acquired from the web no longer auto-ingest. Users manage ingested songs from the "My Library" page (search/play/delete).
+> 💡 Songs acquired from the web no longer auto-ingest. Users manage ingested songs from the "My Library" page (search/play/tag edit/delete).
 
 ### Feedback Loop
 
@@ -402,6 +402,7 @@ For everyday use, the 3-step Docker block near the top is enough. The commands b
 |---|---|
 | `.\soultuner.ps1 up cpu` | Full CPU online stack; text-to-music uses the M2D fallback by default to avoid heavy MuQ cold loading |
 | `.\soultuner.ps1 up gpu` | Full CPU workflow + MuQ-MuLan fp16 primary text-to-music anchor + separate ingestion worker for lyrics tags, audio vectors, and batch ingest |
+| `MEMORY_EPISODIC_BACKENDS=graphzep` | Optionally enables the GraphZep natural-language memory sidecar without changing the Neo4j hot path |
 | `.\soultuner.ps1 doctor` | Environment diagnosis and next-step hints |
 | `.\soultuner.ps1 test` | Unit tests |
 | `.\soultuner.ps1 mock` | End-to-end mock run without external services |
@@ -445,7 +446,7 @@ python startup_all.py
 | Service | Port |
 |---|---|
 | Neo4j Bolt / Browser | `7687` / `7474` |
-| GraphZep | `3100` |
+| GraphZep | `3100` (optional memory profile) |
 | Backend | `8501` |
 | Frontend | `3003` |
 | SearxNG | `8888` |
@@ -513,7 +514,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 │   └── components/Navigation/  # Nav layout views
 │   └── app/library/            # Library pages (Pending / My Library / Likes / Collections)
 │
-├── graphzep_service/           # Micro node for GraphZep
+├── graphzep_service/           # Optional GraphZep memory sidecar
 ├── tests/                      # Testing & Eval
 │   ├── unit/                   # 244 pytest tests
 │   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
