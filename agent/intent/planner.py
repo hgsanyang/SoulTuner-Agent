@@ -225,5 +225,16 @@ class IntentPlanner:
                 payload,
             )
         plan = apply_routing_guardrails(plan, user_input)
+        try:
+            from services.teacher_log import log_teacher_example
+
+            log_teacher_example(
+                "planner",
+                inputs=payload.as_dict(),
+                output=plan,
+                metadata={"provider": provider, "model": model_name, "temperature": settings.intent_temperature},
+            )
+        except Exception:
+            pass
         self._cache.put(cache_key, plan)
         return plan

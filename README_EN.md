@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-223_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-244_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -53,6 +53,19 @@ Copy-Item .env.example .env
 Both CPU and GPU modes start the complete product workflow. The difference is multimodal quality and ingestion throughput: `up cpu` defaults to the lighter M2D text-to-music fallback while Neo4j, recommendation, web fallback, and the frontend remain fully available; with an NVIDIA GPU, use `.\soultuner.ps1 up gpu` to enable MuQ-MuLan fp16 as the primary text-to-music anchor and start the separate ingestion worker.
 
 Do not expose a personal music library directly as a public demo. Set `PUBLIC_DEMO_MODE=true` and configure `ADMIN_API_KEY` in `.env`; download, ingest, and delete operations are disabled or require `X-API-Key`. Public demos should use CC/open catalogs or mock audio.
+
+### CC-only Gradio Public Demo
+
+For public showcases, use the lightweight Gradio demo instead of exposing a personal library. It reads the MTG-Jamendo CC sample outside the repository by default, recommends by tags/scenarios, and never connects to the private Neo4j catalog or performs download/ingest/delete actions.
+
+```powershell
+python -m pip install -r requirements-demo.txt
+$env:PUBLIC_DEMO_MODE = "1"
+$env:PUBLIC_DEMO_DATA_DIR = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\mtg_sample"
+python demos/public_gradio_app.py
+```
+
+Use this for Hugging Face Spaces / ModelScope showcases. The full product experience still runs through Docker + Next.js / FastAPI.
 
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
@@ -304,8 +317,8 @@ Replay uses `explicit_feedback_logistic_v2`: strict exposure attribution, chrono
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 204 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, alignment calibration, and more |
-| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; current splits are 57 dev cases and 34 holdout cases, with `*_easy` / `*_hard` views and intent/ranking layer summaries |
+| **Unit Testing** | 244 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, alignment calibration, public demo, teacher logs, and more |
+| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; `context_dev/context_holdout` add a Chinese context-matching ruler with 11 goal categories and 4 specificity levels |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
 | **Code Standards** | Enforced by Ruff static analysis + pyproject.toml |
@@ -318,14 +331,27 @@ python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fas
 python -m tests.eval.evaluate_outcomes --split holdout --planner-temperature 0 --fast
 python -m tests.eval.evaluate_outcomes --split holdout_hard --planner-temperature 0 --fast
 python -m tests.eval.evaluate_outcomes --split holdout_easy --planner-temperature 0 --fast --require-no-failures
+python -m tests.eval.evaluate_outcomes --split context_dev --planner-temperature 0 --fast --case-timeout 75
+python -m tests.eval.evaluate_outcomes --split context_holdout --planner-temperature 0 --fast --case-timeout 75
 python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
 ```
 
-The harness checks whether returned songs satisfy artist, title, language, playability, negation, soft intent, and fallback behavior. The holdout set now has 34 cases covering English mirrors, multi-turn context, negative constraints, and soft intent; run it with `--planner-temperature 0`.
+The harness checks whether returned songs satisfy artist, title, language, playability, negation, soft intent, and fallback behavior. The `context_*` splits are the new non-saturated Chinese ruler for "understand this moment and select fitting songs"; run them with `--planner-temperature 0`.
 
 The legacy `evaluate_intent.py` remains useful only as a route-label regression check; it is no longer used as evidence of recommendation quality. See `tests/eval/README.md` for details.
 
 </details>
+
+### Distillation Teacher Logs
+
+Planner, HyDE, and tuner-style explanation outputs can be written locally for later SFT/distillation. Logging is disabled by default; when enabled, text fields are hashed unless explicitly allowed:
+
+```powershell
+$env:TEACHER_LOG = "1"
+$env:TEACHER_LOG_DIR = "data/teacher"
+```
+
+Only set `TEACHER_LOG_STORE_TEXT=1` when building a private local training set. Do not commit `data/teacher/` to the remote repository.
 
 ---
 
@@ -489,7 +515,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 │
 ├── graphzep_service/           # Micro node for GraphZep
 ├── tests/                      # Testing & Eval
-│   ├── unit/                   # 168 pytest tests
+│   ├── unit/                   # 244 pytest tests
 │   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
 ├── .github/workflows/ci.yml    # GitHub Actions definitions
 ├── docker-compose.yml          # Container configuration

@@ -1823,6 +1823,20 @@ class MusicHybridRetrieval:
             logger.info(
                 f"[HyDE] 生成声学描述 ({word_count} words): {result[:100]}..."
             )
+            try:
+                from services.teacher_log import log_teacher_example
+
+                log_teacher_example(
+                    "hyde",
+                    inputs=invoke_params,
+                    output={"acoustic_caption": result},
+                    metadata={
+                        "intent_type": intent_type or "unknown",
+                        "model": getattr(llm, "model_name", ""),
+                    },
+                )
+            except Exception:
+                pass
             return result
 
         except Exception as e:
