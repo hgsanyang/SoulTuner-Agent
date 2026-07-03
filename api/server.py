@@ -17,7 +17,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -25,6 +25,13 @@ from pydantic import BaseModel
 
 from config.logging_config import get_logger
 from agent.music_agent import MusicRecommendationAgent
+from api.security import (
+    public_demo_enabled,
+    reject_public_demo_action,
+    require_admin_api_key,
+    safe_resolve_child,
+    safe_static_url_to_path,
+)
 
 logger = get_logger(__name__)
 
@@ -150,8 +157,8 @@ app.add_middleware(
         "http://localhost:31000",
         "http://127.0.0.1:31000"
     ],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=not public_demo_enabled(),
+    allow_methods=["GET", "POST", "OPTIONS"] if public_demo_enabled() else ["*"],
     allow_headers=["*"],
 )
 
@@ -207,7 +214,10 @@ from fastapi.responses import FileResponse
 @app.get("/static/mtg_audio/{filename:path}")
 async def serve_mtg_audio(filename: str):
     """提供 MTG 数据集音频文件"""
-    file_path = MTG_AUDIO_DIR / filename
+    try:
+        file_path = safe_resolve_child(MTG_AUDIO_DIR, filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid MTG audio path")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"MTG audio not found: {filename}")
     return FileResponse(str(file_path), media_type="audio/mpeg")
@@ -285,11 +295,15 @@ class AcquireSongRequest(BaseModel):
 
 
 @app.post("/api/acquire-song")
-async def acquire_song_endpoint(request: AcquireSongRequest):
+async def acquire_song_endpoint(
+    request: AcquireSongRequest,
+    _: None = Depends(require_admin_api_key),
+):
     """
     下载单首歌曲的音频/歌词/封面到本地待入库目录。
     不再自动入库 Neo4j，需要用户在待入库页面确认后才入库。
     """
+    reject_public_demo_action("acquire song")
     import aiohttp
     from tools.acquire_music import OnlineMusicAcquirer
 
@@ -952,6 +966,16 @@ class UserEventRequest(BaseModel):
     extra: Optional[Any] = None  # position/play_duration_ms/progress_ratio/session_id
 
 
+class SlateFeedbackRequest(BaseModel):
+    """一整组推荐结果的反馈。"""
+    exposure_id: str
+    rating: str
+    reasons: List[str] = []
+    note: str = ""
+    user_id: str = "local_admin"
+    extra: Optional[Dict[str, Any]] = None
+
+
 # ---- 新增:行为事件转自然语言 ----
 EVENT_TEMPLATES = {
     "like":      "用户对《{title}》{artist} 点了赞,表示喜欢这首歌",
@@ -966,6 +990,17 @@ EVENT_TEMPLATES = {
 }
 
 SUPPORTED_USER_EVENTS = set(EVENT_TEMPLATES) | {"unsave"}
+
+SUPPORTED_SLATE_RATINGS = {
+    "great",
+    "partial",
+    "off",
+    "too_familiar",
+    "more_discovery",
+    "too_noisy",
+    "too_quiet",
+    "wrong_context",
+}
 
 
 @app.post("/api/user-event")
@@ -1055,6 +1090,38 @@ async def capture_user_event(request: UserEventRequest):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/slate-feedback")
+async def capture_slate_feedback(request: SlateFeedbackRequest):
+    """Record feedback for an entire recommendation slate.
+
+    This is the A3-lite bridge between user-facing evaluation buttons and
+    offline ranking replay.  It intentionally writes local JSONL only; GraphZep
+    will be redesigned later and should not be a hard dependency here.
+    """
+    try:
+        if not request.exposure_id.strip():
+            raise HTTPException(status_code=422, detail="exposure_id is required")
+        if request.rating not in SUPPORTED_SLATE_RATINGS:
+            raise HTTPException(status_code=422, detail="Unsupported slate rating")
+
+        from services.feedback_logger import log_slate_feedback
+
+        feedback_id = log_slate_feedback(
+            exposure_id=request.exposure_id,
+            rating=request.rating,
+            reasons=request.reasons,
+            note=request.note,
+            user_id=request.user_id,
+            extra=request.extra or {},
+        )
+        return {"success": True, "feedback_id": feedback_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"歌单级反馈记录失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/api/ranking-policy/status")
 async def ranking_policy_status():
     """Return non-sensitive A3 policy state for diagnostics and UI tooling."""
@@ -1064,6 +1131,7 @@ async def ranking_policy_status():
     root = feedback_dir()
     exposures = load_jsonl(root / "exposures.jsonl")
     events = load_jsonl(root / "events.jsonl")
+    slate_feedback = load_jsonl(root / "slate_feedback.jsonl")
 
     def _summary(path: Path) -> Dict[str, Any] | None:
         if not path.exists():
@@ -1087,9 +1155,50 @@ async def ranking_policy_status():
         "feedback_dir": str(root),
         "num_exposures": len(exposures),
         "num_events": len(events),
+        "num_slate_feedback": len(slate_feedback),
         "active": _summary(policy_path(ACTIVE_FILE)),
         "candidate": _summary(policy_path(CANDIDATE_FILE)),
     }
+
+
+@app.get("/api/catalog-diagnostics")
+async def catalog_diagnostics(limit: int = 50):
+    """Return catalog-bias and recent-exposure diagnostics for the UI."""
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        from services.catalog_diagnostics import load_feedback_diagnostics, summarize_catalog_bias
+        from services.ranking_policy import feedback_dir
+
+        query = """
+        MATCH (s:Song)
+        OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
+        OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
+        OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+        OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
+        RETURN s.music_id AS music_id,
+               s.title AS title,
+               s.audio_url AS audio_url,
+               coalesce(s.language, 'Unknown') AS language,
+               coalesce(s.source, 'local') AS source,
+               s.muq_embedding IS NOT NULL AS has_muq_embedding,
+               s.m2d2_embedding IS NOT NULL AS has_m2d2_embedding,
+               collect(DISTINCT g.name) AS genres,
+               collect(DISTINCT m.name) AS moods,
+               collect(DISTINCT t.name) AS themes,
+               collect(DISTINCT sc.name) AS scenarios
+        """
+        catalog_rows = [record for record in get_neo4j_client().execute_query(query)]
+        exposures, slate_feedback = load_feedback_diagnostics(feedback_dir())
+        report = summarize_catalog_bias(
+            catalog_rows,
+            exposures,
+            slate_feedback,
+            recent_exposure_limit=max(1, min(int(limit), 200)),
+        )
+        return {"success": True, **report}
+    except Exception as e:
+        logger.error(f"曲库诊断失败: {e}")
+        return {"success": False, "error": str(e)}
 
 
 # ================================================================
@@ -1150,16 +1259,24 @@ async def get_disliked_songs(user_id: str = "local_admin", limit: int = 50):
 
 
 @app.delete("/api/disliked-songs")
-async def remove_dislike(song_title: str, artist: str, user_id: str = "local_admin"):
+async def remove_dislike(
+    song_title: str,
+    artist: str,
+    user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
+):
     """从「不喜欢」列表中移除一首歌"""
+    reject_public_demo_action("remove disliked song")
     try:
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
         query = """
         MATCH (u:User {id: $user_id})-[r:DISLIKES]->(s:Song {title: $title})
+        WHERE s.artist = $artist
+              OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
         DELETE r
         """
-        client.execute_query(query, {"user_id": user_id, "title": song_title})
+        client.execute_query(query, {"user_id": user_id, "title": song_title, "artist": artist})
         logger.info(f"用户 {user_id} 撤销不喜欢: {song_title}")
         return {"success": True}
     except Exception as e:
@@ -1172,7 +1289,11 @@ async def remove_dislike(song_title: str, artist: str, user_id: str = "local_adm
 # ================================================================
 
 @app.delete("/api/songs")
-async def delete_song_completely(song_title: str, artist: str):
+async def delete_song_completely(
+    song_title: str,
+    artist: str,
+    _: None = Depends(require_admin_api_key),
+):
     """
     从系统中彻底删除一首歌，包括：
     1. Neo4j 图谱中的 Song 节点及所有关联边（保留 Artist 节点）
@@ -1182,6 +1303,7 @@ async def delete_song_completely(song_title: str, artist: str):
     """
     deleted_files = []
     errors = []
+    reject_public_demo_action("delete song")
 
     try:
         from retrieval.neo4j_client import get_neo4j_client
@@ -1231,15 +1353,7 @@ async def delete_song_completely(song_title: str, artist: str):
 
         logger.info(f"  ✅ Neo4j: 已删除 {deleted_count} 个 Song 节点及其关联边")
 
-        # ── Step 3: 清理孤立的标签节点（不清理 Artist） ──
-        orphan_labels = ["Mood", "Theme", "Scenario", "Genre", "Language", "Region"]
-        for label in orphan_labels:
-            try:
-                client.execute_query(f"MATCH (n:{label}) WHERE NOT (n)--() DELETE n")
-            except Exception:
-                pass
-
-        # ── Step 4: 删除文件系统中的关联文件 ──
+        # ── Step 3: 删除文件系统中的关联文件 ──
         def try_delete_file(file_path: Path, desc: str):
             """尝试删除文件，记录结果"""
             if file_path.exists():
@@ -1254,21 +1368,19 @@ async def delete_song_completely(song_title: str, artist: str):
         # 根据 URL 路径推断文件系统位置
         def resolve_static_path(url: str) -> Path | None:
             """将 /static/xxx/yyy 格式的 URL 映射回文件系统路径"""
-            if not url:
+            try:
+                return (
+                    safe_static_url_to_path(url, "/static/audio/", PROCESSED_AUDIO_ROOT / "audio")
+                    or safe_static_url_to_path(url, "/static/covers/", PROCESSED_AUDIO_ROOT / "covers")
+                    or safe_static_url_to_path(url, "/static/lyrics/", PROCESSED_AUDIO_ROOT / "lyrics")
+                    or safe_static_url_to_path(url, "/static/online_audio/", ONLINE_AUDIO_ROOT / "audio")
+                    or safe_static_url_to_path(url, "/static/online_covers/", ONLINE_AUDIO_ROOT / "covers")
+                    or safe_static_url_to_path(url, "/static/online_lyrics/", ONLINE_AUDIO_ROOT / "lyrics")
+                )
+            except ValueError as e:
+                errors.append(f"忽略越界静态路径: {e}")
+                logger.warning("  ⚠️ 忽略越界静态路径: %s", url)
                 return None
-            # /static/audio/xxx.flac → processed_audio/audio/xxx.flac
-            if url.startswith("/static/audio/"):
-                return PROCESSED_AUDIO_ROOT / "audio" / url.replace("/static/audio/", "")
-            if url.startswith("/static/covers/"):
-                return PROCESSED_AUDIO_ROOT / "covers" / url.replace("/static/covers/", "")
-            if url.startswith("/static/lyrics/"):
-                return PROCESSED_AUDIO_ROOT / "lyrics" / url.replace("/static/lyrics/", "")
-            # 联网获取的音频
-            if url.startswith("/static/online_audio/"):
-                return ONLINE_AUDIO_ROOT / "audio" / url.replace("/static/online_audio/", "")
-            if url.startswith("/static/online_covers/"):
-                return ONLINE_AUDIO_ROOT / "covers" / url.replace("/static/online_covers/", "")
-            return None
 
         # 删除音频文件
         audio_path = resolve_static_path(audio_url)
@@ -1276,8 +1388,11 @@ async def delete_song_completely(song_title: str, artist: str):
             try_delete_file(audio_path, "音频文件")
             # 同时尝试删除对应的元数据文件
             basename = audio_path.stem  # 不含扩展名
-            meta_path = PROCESSED_AUDIO_ROOT / "metadata" / f"{basename}_meta.json"
-            try_delete_file(meta_path, "元数据文件")
+            try:
+                meta_path = safe_resolve_child(PROCESSED_AUDIO_ROOT / "metadata", f"{basename}_meta.json")
+                try_delete_file(meta_path, "元数据文件")
+            except ValueError:
+                errors.append("忽略越界元数据路径")
 
         # 删除封面文件
         cover_path = resolve_static_path(cover_url)
@@ -1291,8 +1406,11 @@ async def delete_song_completely(song_title: str, artist: str):
 
         # 联网获取的歌曲额外检查（可能有歌词在 online_acquired/lyrics/）
         if dataset == "online":
-            online_lrc = ONLINE_AUDIO_ROOT / "lyrics" / f"{music_id}.lrc"
-            try_delete_file(online_lrc, "联网歌词文件")
+            try:
+                online_lrc = safe_resolve_child(ONLINE_AUDIO_ROOT / "lyrics", f"{music_id}.lrc")
+                try_delete_file(online_lrc, "联网歌词文件")
+            except ValueError:
+                errors.append("忽略越界联网歌词路径")
 
         logger.info(f"🗑️ 歌曲删除完成: 《{song_title}》 - {artist}, 删除了 {len(deleted_files)} 个文件")
 
@@ -1405,10 +1523,14 @@ class PendingIngestRequest(BaseModel):
 
 
 @app.post("/api/pending-songs/ingest")
-async def ingest_pending_songs(request: PendingIngestRequest):
+async def ingest_pending_songs(
+    request: PendingIngestRequest,
+    _: None = Depends(require_admin_api_key),
+):
     """
     秒级写入歌曲元数据，并将耗时的歌词/向量增强交给独立 Worker。
     """
+    reject_public_demo_action("ingest pending songs")
     from tools.acquire_music import _quick_ingest_to_neo4j, _background_flywheel
     from services.ingest_queue import enqueue_songs
 
@@ -1462,19 +1584,30 @@ class PendingDeleteRequest(BaseModel):
 
 
 @app.delete("/api/pending-songs")
-async def delete_pending_song(file_basename: str, ext: str = "mp3"):
+async def delete_pending_song(
+    file_basename: str,
+    ext: str = "mp3",
+    _: None = Depends(require_admin_api_key),
+):
     """
     删除待入库歌曲的所有本地文件（音频、封面、歌词、元数据）。
     """
+    reject_public_demo_action("delete pending song")
     deleted = []
     errors = []
 
-    file_paths = [
-        (ONLINE_AUDIO_ROOT / "audio" / f"{file_basename}.{ext}", "音频"),
-        (ONLINE_AUDIO_ROOT / "covers" / f"{file_basename}_cover.jpg", "封面"),
-        (ONLINE_AUDIO_ROOT / "lyrics" / f"{file_basename}.lrc", "歌词"),
-        (ONLINE_AUDIO_ROOT / "metadata" / f"{file_basename}_meta.json", "元数据"),
-    ]
+    ext = ext.lower().lstrip(".")
+    if ext not in {"mp3", "flac", "wav", "m4a", "aac", "ogg"}:
+        raise HTTPException(status_code=400, detail="Unsupported audio extension")
+    try:
+        file_paths = [
+            (safe_resolve_child(ONLINE_AUDIO_ROOT / "audio", f"{file_basename}.{ext}"), "音频"),
+            (safe_resolve_child(ONLINE_AUDIO_ROOT / "covers", f"{file_basename}_cover.jpg"), "封面"),
+            (safe_resolve_child(ONLINE_AUDIO_ROOT / "lyrics", f"{file_basename}.lrc"), "歌词"),
+            (safe_resolve_child(ONLINE_AUDIO_ROOT / "metadata", f"{file_basename}_meta.json"), "元数据"),
+        ]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid pending song path")
 
     for fpath, desc in file_paths:
         if fpath.exists():
