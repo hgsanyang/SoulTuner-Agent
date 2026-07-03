@@ -140,6 +140,12 @@ def _fallback_options(options: list[RefinementOption]) -> None:
     )
     _add_unique(
         options,
+        label="低动态",
+        prompt="低动态一点，不要鼓和人声太顶",
+        reason="通用偏好微调",
+    )
+    _add_unique(
+        options,
         label="偏抒情",
         prompt="偏抒情一点，让旋律和情绪更突出",
         reason="通用偏好微调",
@@ -158,7 +164,7 @@ def build_refinement_suggestions(
     plan: MusicQueryPlan | None,
     dialog_state: DialogMusicState | dict[str, Any] | None = None,
     user_profile: str = "",
-    max_options: int = 6,
+    max_options: int = 8,
 ) -> RefinementSuggestion:
     """Return non-blocking refinement chips plus a conservative confidence.
 
@@ -205,11 +211,15 @@ def build_refinement_suggestions(
         _add_unique(options, label="更安静", prompt="更安静一点，保留松弛感", reason="lo-fi/chill 需求容易在安静度上漂移")
     if _has(text, r"rain|雨|灰灰|窗外|sunday|afternoon"):
         _add_unique(options, label="更有雨天感", prompt="更有雨天感一点，像雨天下午的室内氛围", reason="强化雨天/下午的场景意象")
+        _add_unique(options, label="保留雨天感", prompt="保留雨天感，但换一批更贴近当下心情的歌", reason="支持多轮保留场景")
     if _has(text, r"lo[- ]?fi|lofi|beats?|chill"):
         _add_unique(options, label="更偏 lo-fi beat", prompt="更偏 lo-fi beat，一点节拍但别太吵", reason="强化 lo-fi beat 这个声学锚点")
         _add_unique(options, label="少人声", prompt="少人声一点，更适合专注听", reason="lo-fi 背景听感通常需要降低人声干扰")
     if _has(text, r"人声少|无人声|写代码|focus|coding|study|看书|阅读|sleep|睡|quiet|calm|安静"):
         _add_unique(options, label="少人声", prompt="少人声一点，更适合专注听", reason="专注/安静场景通常需要降低人声干扰")
+    if _has(text, r"低动态|少鼓|不刺耳|不吵|quiet|soft|gentle|low dynamic|not loud|not noisy"):
+        _add_unique(options, label="低动态", prompt="低动态一点，不要鼓和人声太顶", reason="强化低动态/不刺耳")
+        _add_unique(options, label="更不刺耳", prompt="更不刺耳一点，高频和鼓都收住", reason="安静场景需要控制刺激感")
     if _has(text, r"warm|温暖|治愈|gentle|soft"):
         _add_unique(options, label="更温暖", prompt="更温暖治愈一点，但别太苦情", reason="强化温暖治愈取向")
     if _has(text, r"upbeat|uplift|振作|有精神|跑步|running|gym|运动|节奏"):

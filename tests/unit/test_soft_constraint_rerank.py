@@ -144,3 +144,34 @@ def test_quiet_soft_request_demotes_high_energy_conflicts():
     by_title = {item["song"]["title"]: item for item in fallback_ranked}
     assert set(by_title["wild heart"]["_soft_conflict_hits"]) >= {"dance", "energetic", "driving"}
     assert by_title["rain room"]["_soft_positive_hits"]
+
+
+def test_low_dynamic_request_demotes_noisy_and_hardcore_tags():
+    candidates = [
+        _candidate("noisy phonk", ["Phonk", "Hardcore Hip-Hop"], ["Energetic"], ["Workout"], 0.96),
+        _candidate("soft room", ["Folk", "Acoustic"], ["Mellow", "Peaceful"], ["Rainy Day"], 0.70),
+        _candidate("warm lofi", ["Lo-Fi"], ["Relaxing", "Warm"], ["Study"], 0.68),
+        _candidate("gentle night", ["Indie"], ["Soft", "Dreamy"], ["Late Night"], 0.66),
+    ]
+
+    ranked = rerank_with_soft_constraints(
+        candidates,
+        {"vibe": "低动态，不刺耳，温柔一点"},
+        {"scenario": "Rainy Day"},
+        query_text="下雨天，低动态，不刺耳，温柔一点",
+        min_keep=3,
+    )
+
+    titles = [item["song"]["title"] for item in ranked]
+    assert titles[:3] == ["soft room", "warm lofi", "gentle night"]
+    assert "noisy phonk" not in titles[:3]
+
+    fallback_ranked = rerank_with_soft_constraints(
+        candidates,
+        {"vibe": "低动态，不刺耳，温柔一点"},
+        {"scenario": "Rainy Day"},
+        query_text="下雨天，低动态，不刺耳，温柔一点",
+        min_keep=8,
+    )
+    noisy = {item["song"]["title"]: item for item in fallback_ranked}["noisy phonk"]
+    assert set(noisy["_soft_conflict_hits"]) >= {"phonk", "hardcore", "energetic", "workout"}

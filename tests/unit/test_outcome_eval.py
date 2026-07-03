@@ -331,6 +331,26 @@ def test_dialog_delta_contains_check_can_read_last_delta_fallback():
     assert rep["case_status"] == "pass"
 
 
+def test_dialog_delta_contains_check_can_read_operation_list_index():
+    case = {
+        "id": "delta-op",
+        "query": "再安静一点",
+        "checks": {"dialog_delta_contains": {"operations.0.path": "soft_intent.vibe"}},
+    }
+    result = {
+        "recommendations": [],
+        "dialog_delta": {
+            "followup": True,
+            "operations": [
+                {"op": "add", "path": "soft_intent.vibe", "value": "quiet, soft"},
+            ],
+        },
+    }
+    rep = evaluate_case(case, result)
+
+    assert rep["case_status"] == "pass"
+
+
 def test_load_cases_split_smoke():
     cases, meta = _load_cases(split="smoke")
     assert meta["split"] == "smoke"

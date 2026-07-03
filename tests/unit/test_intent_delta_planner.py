@@ -33,4 +33,8 @@ def test_delta_planner_uses_deterministic_fast_path_without_llm():
     )
 
     assert delta.planner_mode == "deterministic"
-    assert len(delta.operations) == 2
+    assert [operation.path for operation in delta.operations] == [
+        "hard_constraints.language",
+        "soft_intent.vibe",
+        "soft_intent.avoid",
+    ]
