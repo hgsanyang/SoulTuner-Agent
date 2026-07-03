@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { sendUserEvent, fetchLikedSongs, fetchDislikedSongs, removeDislike as apiRemoveDislike } from '@/lib/api';
+import { acquireSong, sendUserEvent, fetchLikedSongs, fetchDislikedSongs, removeDislike as apiRemoveDislike } from '@/lib/api';
 
 export interface LikedSong {
     id: string;
@@ -11,6 +11,9 @@ export interface LikedSong {
     preview_url?: string;
     coverUrl?: string;
     lrc_url?: string;
+    source?: string;
+    platform?: string;
+    song_id?: string;
     exposure_id?: string;
     exposure_rank?: number;
     addedAt: number;
@@ -155,6 +158,24 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         setTimeout(() => setToast(null), 2500);
     };
 
+    const stageOnlineSongIfNeeded = (song: {
+        title: string;
+        artist: string;
+        source?: string;
+        platform?: string;
+        song_id?: string;
+    }) => {
+        if (song.source !== 'online_search') return;
+        void acquireSong({
+            title: song.title,
+            artist: song.artist,
+            song_id: song.song_id,
+            platform: song.platform || 'netease',
+        })
+            .then(() => showToast('✅ 联网歌曲已下载到「待入库」'))
+            .catch(() => showToast('⚠️ 已记录喜欢，但下载到待入库失败'));
+    };
+
     const isLiked = (title: string, artist: string) => {
         const id = `${title}_${artist}`;
         return likedSongs.some(song => song.id === id);
@@ -181,6 +202,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,
             });
+            stageOnlineSongIfNeeded(song);
             return [{ ...song, id, addedAt: Date.now() }, ...prev];
         });
     };
@@ -229,6 +251,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,
             });
+            stageOnlineSongIfNeeded(song);
             return { ...c, songs: [{ ...song, id, addedAt: Date.now() }, ...c.songs] };
         }));
     };

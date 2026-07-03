@@ -15,6 +15,9 @@ interface Song {
   preview_url?: string;
   cover_url?: string;
   lrc_url?: string;
+  source?: string;
+  platform?: string;
+  song_id?: string;
   exposure_id?: string;
   exposure_rank?: number;
 }

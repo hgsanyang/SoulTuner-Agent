@@ -17,6 +17,7 @@ interface SongCardProps {
   lrc_url?: string;
   song_id?: string;
   platform?: string;
+  source?: string;
   recall_sources?: string[];
   recall_source_labels?: string[];
   retrieval_sources?: string[];
@@ -57,6 +58,7 @@ export default function SongCard({
   lrc_url,
   song_id,
   platform,
+  source,
   recall_sources,
   recall_source_labels,
   retrieval_sources,
@@ -112,6 +114,7 @@ export default function SongCard({
     e.stopPropagation();
     toggleLike({
       title, artist, genre, preview_url, coverUrl: cover_url, lrc_url,
+      source, platform, song_id,
       exposure_id, exposure_rank,
     });
   };
@@ -289,7 +292,7 @@ export default function SongCard({
                   <div style={{ padding: '1rem', fontSize: '0.85rem', color: theme.colors.text.muted, textAlign: 'center' }}>暂无歌单</div>
                 ) : (
                   collections.map(col => (
-                    <button key={col.id} onClick={e => { e.stopPropagation(); addToCollection(col.id, { title, artist, genre, preview_url, exposure_id, exposure_rank }); setShowFolderPicker(false); }} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '100%', padding: '0.65rem 0.85rem', background: 'none', border: 'none', cursor: 'pointer', color: theme.colors.text.primary, fontSize: '0.88rem', textAlign: 'left', transition: 'background-color 0.12s' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
+                    <button key={col.id} onClick={e => { e.stopPropagation(); addToCollection(col.id, { title, artist, genre, preview_url, source, platform, song_id, exposure_id, exposure_rank }); setShowFolderPicker(false); }} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '100%', padding: '0.65rem 0.85rem', background: 'none', border: 'none', cursor: 'pointer', color: theme.colors.text.primary, fontSize: '0.88rem', textAlign: 'left', transition: 'background-color 0.12s' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>
                       <div style={{ width: '26px', height: '26px', borderRadius: '4px', backgroundColor: col.coverColor, flexShrink: 0 }} />
                       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col.name}</span>
                     </button>

@@ -11,6 +11,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from tests.eval.evaluate_outcomes import (
+    _case_difficulty,
+    _dimension_status,
     _is_degraded,
     _load_cases,
     _percentile,
@@ -62,6 +64,22 @@ def test_top_slow_cases_orders_by_end_to_end_ms():
         "retrieval_total_ms": None,
         "graphzep_ms": None,
     }]
+
+
+def test_case_difficulty_views_are_derived_without_duplicate_files():
+    assert _case_difficulty({"category": "explicit_artist", "checks": {}}) == "easy"
+    assert _case_difficulty({"category": "scenario", "checks": {}}) == "hard"
+    assert _case_difficulty({"difficulty": "easy", "category": "scenario", "checks": {}}) == "easy"
+    assert _case_difficulty({"category": "explicit_song", "chat_history": [{"role": "user", "content": "x"}]}) == "hard"
+
+
+def test_dimension_status_separates_intent_and_ranking_layers():
+    outcomes = [
+        {"name": "artist_match_min_ratio", "status": "pass", "detail": ""},
+        {"name": "objective_soft_judge", "status": "fail", "detail": ""},
+    ]
+    assert _dimension_status(outcomes, "intent") == "pass"
+    assert _dimension_status(outcomes, "ranking") == "fail"
 
 
 # ---------------------------------------------------------------- _unwrap_songs

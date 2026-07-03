@@ -192,6 +192,82 @@ export async function sendUserEvent(
     }
 }
 
+export type SlateFeedbackRating =
+    | 'great'
+    | 'partial'
+    | 'off'
+    | 'too_familiar'
+    | 'more_discovery'
+    | 'too_noisy'
+    | 'too_quiet'
+    | 'wrong_context';
+
+export async function sendSlateFeedback(params: {
+    exposureId: string;
+    rating: SlateFeedbackRating;
+    reasons?: string[];
+    note?: string;
+    userId?: string;
+    extra?: Record<string, any>;
+}): Promise<{ success: boolean; feedback_id?: string; error?: string }> {
+    const resp = await fetch('http://localhost:8501/api/slate-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            exposure_id: params.exposureId,
+            rating: params.rating,
+            reasons: params.reasons || [],
+            note: params.note || '',
+            user_id: params.userId || 'local_admin',
+            extra: params.extra || {},
+        }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: '反馈失败' }));
+        throw new Error(err.detail || `反馈失败: ${resp.status}`);
+    }
+    return resp.json();
+}
+
+export interface CatalogTopItem {
+    label: string;
+    count: number;
+    ratio: number;
+}
+
+export interface CatalogDiagnostics {
+    success: boolean;
+    catalog?: {
+        total_songs: number;
+        playable_songs: number;
+        muq_embedding_songs: number;
+        m2d2_embedding_songs: number;
+        coverage: Record<string, { known: number; missing: number; ratio: number }>;
+        top: Record<string, CatalogTopItem[]>;
+    };
+    recent_recommendations?: {
+        exposures: number;
+        items: number;
+        top_sources: CatalogTopItem[];
+        top_recall_sources: CatalogTopItem[];
+        top_genres: CatalogTopItem[];
+        top_artists: CatalogTopItem[];
+    };
+    slate_feedback?: {
+        count: number;
+        ratings: CatalogTopItem[];
+        reasons: CatalogTopItem[];
+    };
+    warnings?: { code: string; severity: string; message: string }[];
+    error?: string;
+}
+
+export async function fetchCatalogDiagnostics(limit: number = 50): Promise<CatalogDiagnostics> {
+    const resp = await fetch(`http://localhost:8501/api/catalog-diagnostics?limit=${limit}`);
+    if (!resp.ok) throw new Error(`曲库诊断失败: ${resp.status}`);
+    return resp.json();
+}
+
 // ---- 查询用户喜欢/不喜欢的歌曲（从 Neo4j 同步）----
 
 export interface BackendSong {

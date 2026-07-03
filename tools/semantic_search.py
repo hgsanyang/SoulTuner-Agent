@@ -125,8 +125,76 @@ def _backend_spec(backend: str) -> dict:
     }
 
 
-def _dense_query_variants_enabled() -> bool:
-    return str(os.getenv("MUSIC_DENSE_QUERY_VARIANTS", "0")).strip().lower() in {"1", "true", "yes", "on"}
+_VARIANT_TRIGGER_TERMS = (
+    "类似",
+    "相似",
+    "听感",
+    "氛围",
+    "感觉",
+    "场景",
+    "安静",
+    "温柔",
+    "雨天",
+    "专注",
+    "学习",
+    "运动",
+    "开车",
+    "睡前",
+    "难过",
+    "开心",
+    "治愈",
+    "放松",
+    "quiet",
+    "soft",
+    "rainy",
+    "focus",
+    "study",
+    "sleep",
+    "driving",
+    "similar",
+    "same vibe",
+    "mood",
+    "vibe",
+)
+
+_PRECISION_QUERY_TERMS = (
+    "歌手",
+    "这首",
+    "这歌",
+    "原唱",
+    "版本",
+    "artist",
+    "singer",
+    "original",
+    "version",
+)
+
+
+def _dense_query_variant_mode() -> str:
+    raw = str(getattr(settings, "dense_query_variant_mode", "") or os.getenv("MUSIC_DENSE_QUERY_VARIANTS", "auto"))
+    mode = raw.strip().lower()
+    if mode in {"1", "true", "yes"}:
+        return "on"
+    if mode in {"0", "false", "no"}:
+        return "off"
+    if mode not in {"off", "auto", "on"}:
+        logger.warning("[SemanticSearch] 未知 MUSIC_DENSE_QUERY_VARIANTS=%s，回退 auto", raw)
+        return "auto"
+    return mode
+
+
+def _should_use_dense_query_variants(text: str) -> bool:
+    mode = _dense_query_variant_mode()
+    if mode == "off":
+        return False
+    if mode == "on":
+        return True
+    normalized = str(text or "").casefold()
+    if any(term in normalized for term in _PRECISION_QUERY_TERMS) and not any(
+        term in normalized for term in ("类似", "相似", "听感", "similar", "same vibe")
+    ):
+        return False
+    return any(term in normalized for term in _VARIANT_TRIGGER_TERMS)
 
 
 def build_dense_query_variants(text: str) -> List[str]:
@@ -134,11 +202,17 @@ def build_dense_query_variants(text: str) -> List[str]:
     base = str(text or "").strip()
     if not base:
         return []
-    return [
+    variants = [
         base,
         f"{base}\nFocus on instrumentation, tempo, timbre, vocals, production texture, and acoustic energy.",
         f"{base}\nFocus on mood trajectory, listening context, language, genre cues, and emotional atmosphere.",
     ]
+    lowered = base.casefold()
+    if any(term in lowered for term in ("类似", "相似", "听感", "same vibe", "similar", "sounds like")):
+        variants.append(
+            f"{base}\nRetrieve songs with similar groove, arrangement density, vocal texture, and production era."
+        )
+    return variants
 
 
 def _normalize_vector(vector: List[float]) -> List[float]:
@@ -167,7 +241,7 @@ def _encode_single_query_for_backend(text: str, backend: str) -> List[float]:
 
 
 def _encode_query_for_backend(text: str, backend: str) -> List[float]:
-    variants = build_dense_query_variants(text) if _dense_query_variants_enabled() else [text]
+    variants = build_dense_query_variants(text) if _should_use_dense_query_variants(text) else [text]
     vectors = [_normalize_vector(_encode_single_query_for_backend(variant, backend)) for variant in variants if variant]
     query_vector = _mean_vectors(vectors) if len(vectors) > 1 else vectors[0]
     if len(vectors) > 1:

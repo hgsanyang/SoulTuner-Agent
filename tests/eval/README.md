@@ -11,6 +11,9 @@ It is not an intent-label accuracy test.
 - `holdout`: 34 frozen cases, including English mirrors, multi-turn context,
   negative constraints, and soft-intent cases. Do not tune
   directly against this set.
+- `dev_easy` / `dev_hard` and `holdout_easy` / `holdout_hard`: derived views
+  over the same frozen JSON files. `hard` currently covers negation,
+  soft-intent, scenario, catalog-gap/web-fallback, and multi-turn cases.
 - `all`: dev + holdout, for explicit milestone checks only.
 
 Run:
@@ -19,11 +22,18 @@ Run:
 python -m tests.eval.evaluate_outcomes --split smoke
 python -m tests.eval.evaluate_outcomes --split dev
 python -m tests.eval.evaluate_outcomes --split holdout
+python -m tests.eval.evaluate_outcomes --split holdout_hard
 python -m tests.eval.calibrate_soft_judge --min-accuracy 0.95
 ```
 
 Reports are written to `tests/eval/results/` and include git sha, branch, dirty
 state, effective model config, Planner temperature, and key non-secret settings.
+Each case now includes `intent_status` and `ranking_status`, and the aggregate
+report includes `by_dimension` so failures can be traced to intent planning
+versus ranking/retrieval quality.
+Use `--require-no-failures` or `--min-decided-pass-rate 0.95` when running a
+full-stack quality gate in a local/remote environment that has Neo4j and model
+credentials.
 Outcome eval sets `EVAL_DISABLE_SIDE_EFFECTS=True` internally so it measures the
 recommendation path without writing preference extraction, GraphZep persistence,
 or profile-refresh side effects.

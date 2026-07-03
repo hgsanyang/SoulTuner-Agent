@@ -9,7 +9,15 @@ import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
 import SongCard from '@/components/Content/SongCard';
-import { streamRecommendations, type RefinementOption, type SSEEvent } from '@/lib/api';
+import {
+  fetchCatalogDiagnostics,
+  sendSlateFeedback,
+  streamRecommendations,
+  type CatalogDiagnostics,
+  type RefinementOption,
+  type SSEEvent,
+  type SlateFeedbackRating,
+} from '@/lib/api';
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -33,6 +41,25 @@ export interface ChatMessage {
 const STORAGE_KEY = 'music_chat_history';
 const DIALOG_STATE_KEY = 'music_dialog_state';
 
+const SLATE_FEEDBACK_OPTIONS: { rating: SlateFeedbackRating; label: string }[] = [
+  { rating: 'great', label: '整体很准' },
+  { rating: 'partial', label: '有几首不错' },
+  { rating: 'off', label: '不太对味' },
+  { rating: 'too_familiar', label: '太像旧歌单' },
+  { rating: 'more_discovery', label: '想发现更多' },
+];
+
+const SLATE_REASON_OPTIONS = [
+  '太像我的旧歌单',
+  '想发现更多新歌',
+  '太吵了',
+  '太安静了',
+  '场景不贴合',
+  '联网多一点',
+  '少推荐已收藏',
+  '语言/年代不准',
+];
+
 export default function RecommendationsPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [dialogState, setDialogState] = useState<Record<string, any>>({});
@@ -49,6 +76,12 @@ export default function RecommendationsPage() {
   const autoFollowMessagesRef = useRef(true);
   const songListRef = useRef<HTMLDivElement>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [slateFeedbackStatus, setSlateFeedbackStatus] = useState<Record<string, string>>({});
+  const [slateFeedbackReasons, setSlateFeedbackReasons] = useState<Record<string, string[]>>({});
+  const [slateFeedbackNote, setSlateFeedbackNote] = useState('');
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<CatalogDiagnostics | null>(null);
 
   // 联网搜索开关状态（持久化到 localStorage）
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
@@ -139,6 +172,9 @@ export default function RecommendationsPage() {
       exposure_id: s.song.exposure_id,
       exposure_rank: s.song.exposure_rank,
     }));
+  const latestExposureId = latestAssistantWithSongs?.exposureId
+    || latestAssistantWithSongs?.songs?.find((song: any) => song?.exposure_id)?.exposure_id
+    || '';
 
   // 当最新推荐歌曲变化时，右侧面板自动滚到顶部
   useEffect(() => {
@@ -308,6 +344,54 @@ export default function RecommendationsPage() {
       if (msg.id !== msgId || !msg.songs) return msg;
       return { ...msg, songs: msg.songs.filter((_, i) => i !== songIndex) };
     }));
+  }, []);
+
+  const toggleSlateReason = useCallback((exposureId: string, reason: string) => {
+    if (!exposureId) return;
+    setSlateFeedbackReasons(prev => {
+      const current = prev[exposureId] || [];
+      const next = current.includes(reason)
+        ? current.filter(item => item !== reason)
+        : [...current, reason];
+      return { ...prev, [exposureId]: next };
+    });
+  }, []);
+
+  const handleSlateFeedback = useCallback(async (rating: SlateFeedbackRating) => {
+    if (!latestExposureId) {
+      showToast('还没有可评价的推荐批次');
+      return;
+    }
+    try {
+      await sendSlateFeedback({
+        exposureId: latestExposureId,
+        rating,
+        reasons: slateFeedbackReasons[latestExposureId] || [],
+        note: slateFeedbackNote,
+        extra: {
+          song_count: allSongs.length,
+          web_search_enabled: webSearchEnabled,
+        },
+      });
+      setSlateFeedbackStatus(prev => ({ ...prev, [latestExposureId]: rating }));
+      setSlateFeedbackNote('');
+      showToast('✅ 已记录这组推荐的反馈');
+    } catch (err: any) {
+      showToast(`⚠️ 反馈记录失败：${err?.message || '未知错误'}`);
+    }
+  }, [allSongs.length, latestExposureId, showToast, slateFeedbackNote, slateFeedbackReasons, webSearchEnabled]);
+
+  const loadDiagnostics = useCallback(async () => {
+    setDiagnosticsOpen(true);
+    setDiagnosticsLoading(true);
+    try {
+      const report = await fetchCatalogDiagnostics(50);
+      setDiagnostics(report);
+    } catch (err: any) {
+      setDiagnostics({ success: false, error: err?.message || '曲库诊断失败' });
+    } finally {
+      setDiagnosticsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -750,6 +834,132 @@ export default function RecommendationsPage() {
                       onRemove={() => handleRemoveSong(msgId, idx)}
                     />
                   ))}
+                </div>
+                <div style={{
+                  flexShrink: 0,
+                  borderTop: `1px solid ${theme.colors.border.default}`,
+                  padding: '0.85rem 1rem',
+                  backgroundColor: 'rgba(18,18,18,0.72)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.65rem' }}>
+                    <div>
+                      <div style={{ color: theme.colors.text.primary, fontWeight: 650, fontSize: '0.9rem' }}>这组推荐怎么样？</div>
+                      <div style={{ color: theme.colors.text.muted, fontSize: '0.72rem', marginTop: '0.15rem' }}>
+                        用于离线重放和排序权重学习，不会写入 GraphZep。
+                      </div>
+                    </div>
+                    <button
+                      onClick={loadDiagnostics}
+                      style={{
+                        padding: '0.38rem 0.7rem',
+                        borderRadius: '999px',
+                        border: '1px solid rgba(91,214,170,0.28)',
+                        backgroundColor: diagnosticsOpen ? 'rgba(42,170,130,0.18)' : 'rgba(255,255,255,0.06)',
+                        color: 'rgba(238,255,248,0.88)',
+                        fontSize: '0.76rem',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      曲库诊断
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginBottom: '0.55rem' }}>
+                    {SLATE_FEEDBACK_OPTIONS.map(option => {
+                      const active = latestExposureId && slateFeedbackStatus[latestExposureId] === option.rating;
+                      return (
+                        <button
+                          key={option.rating}
+                          onClick={() => handleSlateFeedback(option.rating)}
+                          disabled={!latestExposureId}
+                          style={{
+                            padding: '0.38rem 0.64rem',
+                            borderRadius: '999px',
+                            border: active ? '1px solid rgba(29,185,84,0.55)' : '1px solid rgba(255,255,255,0.12)',
+                            backgroundColor: active ? 'rgba(29,185,84,0.20)' : 'rgba(255,255,255,0.06)',
+                            color: active ? '#fff' : 'rgba(255,255,255,0.76)',
+                            fontSize: '0.76rem',
+                            cursor: latestExposureId ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.6rem' }}>
+                    {SLATE_REASON_OPTIONS.map(reason => {
+                      const selected = Boolean(latestExposureId && (slateFeedbackReasons[latestExposureId] || []).includes(reason));
+                      return (
+                        <button
+                          key={reason}
+                          onClick={() => toggleSlateReason(latestExposureId, reason)}
+                          disabled={!latestExposureId}
+                          title="作为这组推荐的补充原因"
+                          style={{
+                            padding: '0.32rem 0.58rem',
+                            borderRadius: '999px',
+                            border: selected ? '1px solid rgba(120,210,255,0.44)' : '1px solid rgba(255,255,255,0.10)',
+                            backgroundColor: selected ? 'rgba(65,145,210,0.18)' : 'rgba(255,255,255,0.045)',
+                            color: selected ? 'rgba(238,250,255,0.95)' : 'rgba(255,255,255,0.58)',
+                            fontSize: '0.72rem',
+                            cursor: latestExposureId ? 'pointer' : 'not-allowed',
+                          }}
+                        >
+                          {reason}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    value={slateFeedbackNote}
+                    onChange={event => setSlateFeedbackNote(event.target.value)}
+                    placeholder="可选：哪里不对？例如太像我的收藏、年代不准、想更冷门..."
+                    maxLength={240}
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      padding: '0.55rem 0.7rem',
+                      borderRadius: '0.55rem',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      backgroundColor: 'rgba(0,0,0,0.22)',
+                      color: theme.colors.text.primary,
+                      outline: 'none',
+                      fontSize: '0.76rem',
+                    }}
+                  />
+                  {diagnosticsOpen && (
+                    <div style={{
+                      marginTop: '0.75rem',
+                      padding: '0.75rem',
+                      borderRadius: '0.7rem',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      backgroundColor: 'rgba(0,0,0,0.20)',
+                      color: 'rgba(255,255,255,0.72)',
+                      fontSize: '0.76rem',
+                      lineHeight: 1.55,
+                    }}>
+                      {diagnosticsLoading ? (
+                        <div>正在读取曲库分布...</div>
+                      ) : diagnostics?.success ? (
+                        <div>
+                          <div style={{ color: '#fff', fontWeight: 650, marginBottom: '0.4rem' }}>
+                            曲库 {diagnostics.catalog?.total_songs || 0} 首 · 可播放 {diagnostics.catalog?.playable_songs || 0} 首 · 最近曝光 {diagnostics.recent_recommendations?.exposures || 0} 批
+                          </div>
+                          <div>语言：{(diagnostics.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || '暂无'}</div>
+                          <div>流派：{(diagnostics.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无'}</div>
+                          <div>最近来源：{(diagnostics.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无曝光'}</div>
+                          {(diagnostics.warnings || []).length > 0 && (
+                            <div style={{ marginTop: '0.45rem', color: 'rgba(255,220,160,0.92)' }}>
+                              {(diagnostics.warnings || []).slice(0, 3).map(w => w.message).join('；')}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ color: '#ff8f8f' }}>{diagnostics?.error || '曲库诊断失败'}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

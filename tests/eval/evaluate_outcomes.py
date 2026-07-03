@@ -78,6 +78,15 @@ CASE_SPLITS = {
     "holdout": CASES_DIR / "outcome_holdout.json",
 }
 
+HARD_CATEGORIES = {
+    "negative_constraint",
+    "soft_mood",
+    "scenario",
+    "multi_turn_context",
+    "catalog_gap",
+    "web_fallback",
+}
+
 
 # ----------------------------------------------------------------------------
 # 工具
@@ -178,6 +187,21 @@ def _is_degraded(result: Dict[str, Any]) -> bool:
     return False
 
 
+def _case_difficulty(case: Dict[str, Any]) -> str:
+    explicit = _norm(case.get("difficulty"))
+    if explicit in {"easy", "hard"}:
+        return explicit
+    category = _norm(case.get("category", ""))
+    checks = case.get("checks") or {}
+    if category in HARD_CATEGORIES:
+        return "hard"
+    if checks.get("objective_soft_judge") or checks.get("expected_clarification"):
+        return "hard"
+    if case.get("chat_history") or case.get("dialog_state"):
+        return "hard"
+    return "easy"
+
+
 def _load_cases(cases_file: str | None = None, split: str = "smoke") -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     if cases_file:
         path = Path(cases_file)
@@ -194,12 +218,31 @@ def _load_cases(cases_file: str | None = None, split: str = "smoke") -> Tuple[Li
             loaded = json.loads(path.read_text(encoding="utf-8"))
             for case in loaded:
                 case.setdefault("split", name)
+                case["difficulty"] = _case_difficulty(case)
             cases.extend(loaded)
         return cases, {"split": "all", "case_files": files}
+    if split in {"dev_easy", "dev_hard", "holdout_easy", "holdout_hard"}:
+        base_split, difficulty = split.rsplit("_", 1)
+        path = CASE_SPLITS[base_split]
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        cases = []
+        for case in loaded:
+            case.setdefault("split", base_split)
+            case["difficulty"] = _case_difficulty(case)
+            if case["difficulty"] == difficulty:
+                cases.append(case)
+        return cases, {
+            "split": split,
+            "base_split": base_split,
+            "difficulty": difficulty,
+            "case_files": [str(path)],
+        }
+
     path = CASE_SPLITS[split]
     cases = json.loads(path.read_text(encoding="utf-8"))
     for case in cases:
         case.setdefault("split", split)
+        case["difficulty"] = _case_difficulty(case)
     return cases, {"split": split, "case_files": [str(path)]}
 
 
@@ -461,6 +504,35 @@ _HANDLERS_WITH_CHECKS = {
 # 仅作为配对参数、不单独触发的键
 _PAIR_ONLY = {"artist_any_of", "genre_any_of", "language_any_of", "mood_any_of", "scenario_any_of"}
 
+_CHECK_DIMENSIONS = {
+    "min_results": "ranking",
+    "artist_match_min_ratio": "intent",
+    "genre_match_min_ratio": "ranking",
+    "language_match_min_ratio": "intent",
+    "mood_match_min_ratio": "ranking",
+    "scenario_match_min_ratio": "ranking",
+    "must_include_titles": "intent",
+    "must_exclude": "intent",
+    "min_playable_ratio": "ranking",
+    "max_per_artist": "ranking",
+    "not_degraded": "intent",
+    "objective_soft_judge": "ranking",
+    "expected_clarification": "intent",
+    "dialog_state_contains": "intent",
+    "dialog_delta_contains": "intent",
+}
+
+
+def _dimension_status(outcomes: List[Dict[str, str]], dimension: str) -> str:
+    relevant = [
+        outcome for outcome in outcomes
+        if _CHECK_DIMENSIONS.get(outcome.get("name", "")) == dimension
+        and outcome.get("status") in {"pass", "fail"}
+    ]
+    if not relevant:
+        return "indeterminate"
+    return "fail" if any(outcome["status"] == "fail" for outcome in relevant) else "pass"
+
 
 def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
     songs = _unwrap_songs(result)
@@ -488,12 +560,15 @@ def evaluate_case(case: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any
     return {
         "id": case.get("id"),
         "category": case.get("category", "uncategorized"),
+        "difficulty": case.get("difficulty") or _case_difficulty(case),
         "split": case.get("split"),
         "query": case.get("query"),
         "has_chat_history": bool(case.get("chat_history")),
         "intent_type": result.get("intent_type"),
         "num_songs": len(songs),
         "case_status": case_status,
+        "intent_status": _dimension_status(outcomes, "intent"),
+        "ranking_status": _dimension_status(outcomes, "ranking"),
         "outcomes": outcomes,
         "manual_review": checks.get("manual_review", []),
         "dialog_state": result.get("dialog_state", {}),
@@ -620,10 +695,20 @@ async def run(
     # 按 check 类型聚合
     by_check = defaultdict(lambda: {"pass": 0, "fail": 0, "skip": 0})
     by_category = defaultdict(lambda: {"pass": 0, "fail": 0, "indeterminate": 0, "total": 0})
+    by_difficulty = defaultdict(lambda: {"pass": 0, "fail": 0, "indeterminate": 0, "total": 0})
+    by_dimension = {
+        "intent": {"pass": 0, "fail": 0, "indeterminate": 0},
+        "ranking": {"pass": 0, "fail": 0, "indeterminate": 0},
+    }
     for r in reports:
         cat = r.get("category", "uncategorized")
         by_category[cat][r["case_status"]] += 1
         by_category[cat]["total"] += 1
+        difficulty = r.get("difficulty", "unknown")
+        by_difficulty[difficulty][r["case_status"]] += 1
+        by_difficulty[difficulty]["total"] += 1
+        by_dimension["intent"][r.get("intent_status", "indeterminate")] += 1
+        by_dimension["ranking"][r.get("ranking_status", "indeterminate")] += 1
         for o in r["outcomes"]:
             by_check[o["name"]][o["status"]] += 1
 
@@ -676,6 +761,18 @@ async def run(
     for name, c in sorted(by_category.items()):
         print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d} {c['total']:>6d}")
 
+    print("\n按难度:")
+    print(f"  {'difficulty':28s} {'pass':>6s} {'fail':>6s} {'indet':>6s} {'total':>6s}")
+    print(f"  {'-'*56}")
+    for name, c in sorted(by_difficulty.items()):
+        print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d} {c['total']:>6d}")
+
+    print("\n按链路分层:")
+    print(f"  {'dimension':28s} {'pass':>6s} {'fail':>6s} {'indet':>6s}")
+    print(f"  {'-'*48}")
+    for name, c in sorted(by_dimension.items()):
+        print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d}")
+
     failed = [r for r in reports if r["case_status"] == "fail"]
     if failed:
         print(f"\n❌ 失败用例 ({len(failed)}):")
@@ -703,7 +800,11 @@ async def run(
         "case_timeout_seconds": round(case_timeout, 3) if case_timeout and case_timeout > 0 else None,
         "passed": n_pass, "failed": n_fail, "indeterminate": n_indet,
         "decided_pass_rate": round(n_pass / decided, 4) if decided else None,
-        "by_check": dict(by_check), "by_category": dict(by_category), "cases": reports,
+        "by_check": dict(by_check),
+        "by_category": dict(by_category),
+        "by_difficulty": dict(by_difficulty),
+        "by_dimension": by_dimension,
+        "cases": reports,
     }
     if timing_summary:
         report["timing"] = timing_summary
@@ -719,7 +820,10 @@ def main():
             stream.reconfigure(encoding="utf-8")
     p = argparse.ArgumentParser(description="SoulTuner 结果导向离线评测（尺子）")
     p.add_argument("--provider", default="dashscope")
-    p.add_argument("--split", choices=["smoke", "dev", "holdout", "all"], default="smoke",
+    p.add_argument("--split", choices=[
+        "smoke", "dev", "dev_easy", "dev_hard",
+        "holdout", "holdout_easy", "holdout_hard", "all",
+    ], default="smoke",
                    help="评测切分。holdout 是冻结集，日常迭代不要频繁看详情")
     p.add_argument("--cases", default=None, help="自定义 cases JSON；传入时覆盖 --split")
     p.add_argument("--limit", type=int, default=15, help="请求的 top-k（仅记录，实际条数由管线 FinalCut 决定）")
@@ -732,8 +836,12 @@ def main():
                    help="跳过解释 LLM，保留歌曲结果并生成确定性简短说明")
     p.add_argument("--case-timeout", type=float, default=0.0,
                    help="单条用例超时秒数；>0 时单 case 超时会标记为 TIMEOUT 并继续整轮")
+    p.add_argument("--min-decided-pass-rate", type=float, default=None,
+                   help="质量闸门：可判定用例通过率低于该值时退出非 0，例如 0.95")
+    p.add_argument("--require-no-failures", action="store_true",
+                   help="质量闸门：任一 case 失败即退出非 0（indeterminate 不算失败）")
     args = p.parse_args()
-    asyncio.run(run(
+    report = asyncio.run(run(
         args.provider,
         args.cases,
         args.split,
@@ -744,6 +852,22 @@ def main():
         fast=args.fast,
         case_timeout=args.case_timeout,
     ))
+    failed = int(report.get("failed") or 0)
+    pass_rate = report.get("decided_pass_rate")
+    gate_failed = False
+    if args.require_no_failures and failed > 0:
+        print(f"\n❌ 质量闸门失败: failed={failed}, require-no-failures=true")
+        gate_failed = True
+    if args.min_decided_pass_rate is not None:
+        actual = 0.0 if pass_rate is None else float(pass_rate)
+        if actual < float(args.min_decided_pass_rate):
+            print(
+                f"\n❌ 质量闸门失败: decided_pass_rate={actual:.1%} "
+                f"< {float(args.min_decided_pass_rate):.1%}"
+            )
+            gate_failed = True
+    if gate_failed:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
