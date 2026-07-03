@@ -72,6 +72,10 @@ class MusicAgentState(TypedDict, total=False):
     # 本地未命中 → 联网降级标志（内部使用，节点间通信）
     _need_web_fallback: bool   # True 时 route_after_search 会跳转到 web_fallback 节点
     _web_fallback_query: str   # 传给网易云 API 的干净搜索词（歌名 歌手）
+    _web_action: str           # fallback / mix_in / blocked / none
+    _web_target_count: int     # 本轮联网候选目标数量
+    _web_discovery_required: bool  # True 时先用 Tavily/SearxNG/智谱发现候选，再用网易云解析
+    _catalog_gap: Dict[str, Any]   # Catalog Gap Detector 的可观测诊断
 
 
 class UserPreferences(TypedDict, total=False):

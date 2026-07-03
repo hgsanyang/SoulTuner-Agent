@@ -24,6 +24,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger
 from config.settings import settings
+from agent.catalog_gap import analyze_catalog_gap, interleave_online_results
 from agent.explanation import emit_fast_explanation
 from agent.intent.delta_planner import IntentDeltaPlanner
 from agent.intent.planner import IntentPlanner
@@ -40,6 +41,7 @@ from agent.retrieval_fallback import (
     filter_results_by_avoid,
     filter_results_by_requested_language,
 )
+from agent.web_discovery import build_web_discovery_query, extract_song_candidates
 from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
@@ -72,6 +74,10 @@ from schemas.dialog_state import (
 from schemas.refinement import build_refinement_suggestions
 
 logger = get_logger(__name__)
+
+
+def _web_search_enabled() -> bool:
+    return os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1").lower() not in {"0", "false", "no", "off"}
 
 
 def _record_timing(state: MusicAgentState, name: str, elapsed_seconds: float) -> Dict[str, float]:
@@ -631,6 +637,9 @@ class MusicRecommendationGraph:
         if intent_type in ["graph_search", "hybrid_search", "vector_search"]:
             return "search_songs"
         elif intent_type == "web_search":
+            if not _web_search_enabled():
+                logger.info("[route_by_intent] web_search 意图被前端开关关闭")
+                return "web_disabled"
             # web_search 直接走 web_fallback（网易云 API 搜可播放歌曲）
             # 不走 MusicHybridRetrieval 的纯文本联网搜索（只返回资讯不返回音频）
             return "web_fallback"
@@ -678,6 +687,37 @@ class MusicRecommendationGraph:
             },
             "step_count": state.get("step_count", 0) + 1,
         }
+
+    async def web_disabled_node(self, state: MusicAgentState) -> Dict[str, Any]:
+        """Respect the UI web-search switch and explain the local-catalog boundary."""
+        message = (
+            "我现在按你的设置只使用本地曲库，不会联网搜索。这个请求需要外部候选或实时资料，"
+            "本地曲库暂时无法可靠满足。你可以打开下方“联网搜索”，我再为你查找更多可播放候选。"
+        )
+        request_id = (state.get("metadata") or {}).get("request_id")
+        explanation_queue = self._explanation_queues.get(request_id) if request_id else None
+        if explanation_queue is not None:
+            await explanation_queue.put(message)
+            await explanation_queue.put(None)
+        return {
+            "search_results": [],
+            "recommendations": [],
+            "final_response": message,
+            "retrieval_meta": {
+                **(state.get("retrieval_meta") or {}),
+                "source": "local",
+                "degraded": True,
+                "degraded_reason": "web_search_disabled",
+                "web_search_blocked": True,
+            },
+            "_web_action": "blocked",
+            "_catalog_gap": {
+                "action": "blocked",
+                "reasons": ["web_search_disabled"],
+                "message": message,
+            },
+            "step_count": state.get("step_count", 0) + 1,
+        }
     
     async def search_songs_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
@@ -722,28 +762,62 @@ class MusicRecommendationGraph:
                     song.setdefault("source", "local")
 
             fallback_decision = decide_online_fallback(search_results, retrieval_plan, query)
-            if fallback_decision.required:
+            gap_decision = analyze_catalog_gap(
+                search_results,
+                retrieval_plan,
+                query,
+                web_enabled=_web_search_enabled(),
+                fallback_decision=fallback_decision,
+                normal_mix_count=getattr(settings, "web_mix_in_count", 4),
+                fallback_count=getattr(settings, "web_fallback_count", 10),
+                min_local_results=getattr(settings, "catalog_gap_min_local_results", 8),
+            )
+            if gap_decision.action == "fallback":
                 logger.warning(
-                    "[search_songs] 本地库存不足，统一降级联网: reason=%s, inventory=%d",
-                    fallback_decision.reason,
-                    fallback_decision.inventory_count,
+                    "[search_songs] Catalog gap 触发联网兜底: reasons=%s, inventory=%d",
+                    ",".join(gap_decision.reasons),
+                    gap_decision.inventory_count,
+                )
+            elif gap_decision.action == "mix_in":
+                logger.info(
+                    "[search_songs] 联网开启，计划少量穿插候选: inventory=%d, target=%d",
+                    gap_decision.inventory_count,
+                    gap_decision.target_web_count,
+                )
+            elif gap_decision.action == "blocked":
+                logger.info(
+                    "[search_songs] 本地缺口但联网关闭: reasons=%s",
+                    ",".join(gap_decision.reasons),
                 )
             dialog_state = update_dialog_result_anchors(
                 state.get("dialog_state"),
                 search_results,
             )
+            recommendations_payload = (
+                []
+                if gap_decision.action == "blocked"
+                else raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else []
+            )
+            result_count = 0 if gap_decision.action == "blocked" else len(search_results)
 
             return {
-                "search_results": search_results,
-                "recommendations": raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else [],
-                "_need_web_fallback": fallback_decision.required,
+                "search_results": [] if gap_decision.action == "blocked" else search_results,
+                "recommendations": recommendations_payload,
+                "_need_web_fallback": gap_decision.needs_online,
                 "_web_fallback_query": fallback_query(retrieval_plan, query),
+                "_web_action": gap_decision.action,
+                "_web_target_count": gap_decision.target_web_count,
+                "_web_discovery_required": gap_decision.discovery_required,
+                "_catalog_gap": gap_decision.model_dump(),
                 "retrieval_meta": {
-                    "inventory_count": fallback_decision.inventory_count,
-                    "result_count": len(search_results),
+                    "inventory_count": gap_decision.inventory_count,
+                    "result_count": result_count,
                     "source": "local",
-                    "degraded": fallback_decision.required,
-                    "degraded_reason": fallback_decision.reason or None,
+                    "degraded": gap_decision.action in {"fallback", "blocked"},
+                    "degraded_reason": ",".join(gap_decision.reasons) or None,
+                    "web_action": gap_decision.action,
+                    "web_search_blocked": gap_decision.action == "blocked",
+                    "catalog_gap": gap_decision.model_dump(),
                 },
                 "dialog_state": dialog_state.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
@@ -758,20 +832,37 @@ class MusicRecommendationGraph:
                 retrieval_plan,
                 state.get("intent_parameters", {}).get("query", state.get("input", "")),
             )
+            gap_decision = analyze_catalog_gap(
+                [],
+                retrieval_plan,
+                state.get("intent_parameters", {}).get("query", state.get("input", "")),
+                web_enabled=_web_search_enabled(),
+                fallback_decision=fallback_decision,
+                normal_mix_count=getattr(settings, "web_mix_in_count", 4),
+                fallback_count=getattr(settings, "web_fallback_count", 10),
+                min_local_results=getattr(settings, "catalog_gap_min_local_results", 8),
+            )
             return {
                 "search_results": [],
                 "recommendations": [],
-                "_need_web_fallback": fallback_decision.required,
+                "_need_web_fallback": gap_decision.needs_online,
                 "_web_fallback_query": fallback_query(
                     retrieval_plan,
                     state.get("intent_parameters", {}).get("query", state.get("input", "")),
                 ),
+                "_web_action": gap_decision.action,
+                "_web_target_count": gap_decision.target_web_count,
+                "_web_discovery_required": gap_decision.discovery_required,
+                "_catalog_gap": gap_decision.model_dump(),
                 "retrieval_meta": {
                     "inventory_count": 0,
                     "result_count": 0,
                     "source": "local",
-                    "degraded": fallback_decision.required,
-                    "degraded_reason": "local_retrieval_error" if fallback_decision.required else None,
+                    "degraded": gap_decision.action in {"fallback", "blocked"},
+                    "degraded_reason": "local_retrieval_error" if gap_decision.action in {"fallback", "blocked"} else None,
+                    "web_action": gap_decision.action,
+                    "web_search_blocked": gap_decision.action == "blocked",
+                    "catalog_gap": gap_decision.model_dump(),
                 },
                 "step_count": state.get("step_count", 0) + 1,
                 "error_log": state.get("error_log", []) + [
@@ -782,9 +873,12 @@ class MusicRecommendationGraph:
 
 
     def route_after_search(self, state: MusicAgentState) -> str:
-        """搜索后路由：本地未命中时降级到联网，否则就线生成解释"""
+        """搜索后路由：按 Catalog Gap Detector 决定联网兜底/混入/本地解释。"""
+        if state.get("_web_action") == "blocked":
+            logger.info("[route_after_search] 本地缺口但联网关闭 → generate_explanation")
+            return "generate_explanation"
         if state.get("_need_web_fallback"):
-            logger.info("[route_after_search] 本地未命中 → web_fallback")
+            logger.info("[route_after_search] Catalog gap / mix-in → web_fallback")
             return "web_fallback"
         return "generate_explanation"
 
@@ -805,6 +899,13 @@ class MusicRecommendationGraph:
         prior_retrieval_meta = dict(state.get("retrieval_meta") or {})
         excluded_by_avoid = 0
         excluded_by_language = 0
+        web_action = str(state.get("_web_action") or "fallback")
+        target_count = int(state.get("_web_target_count") or getattr(settings, "web_fallback_count", 10))
+        if web_action == "mix_in":
+            target_count = int(state.get("_web_target_count") or getattr(settings, "web_mix_in_count", 4))
+        target_count = max(1, min(target_count, 20))
+        discovery_required = bool(state.get("_web_discovery_required"))
+        catalog_gap = dict(state.get("_catalog_gap") or {})
 
         def _web_meta(result_count: int, failure_reason: str | None = None) -> Dict[str, Any]:
             degraded = bool(prior_retrieval_meta.get("degraded")) or bool(failure_reason)
@@ -816,6 +917,10 @@ class MusicRecommendationGraph:
                 "degraded_reason": failure_reason or prior_retrieval_meta.get("degraded_reason"),
                 "excluded_by_avoid": excluded_by_avoid,
                 "excluded_by_language": excluded_by_language,
+                "web_action": web_action,
+                "web_target_count": target_count,
+                "web_discovery_required": discovery_required,
+                "catalog_gap": catalog_gap,
             }
 
         params = state.get("intent_parameters", {})
@@ -842,10 +947,68 @@ class MusicRecommendationGraph:
                         type(exc).__name__,
                     )
 
-                # 1) 搜索
+                # 1) 搜索 / 外部候选发现
                 import re as _re
+                from urllib.parse import quote as _url_quote
                 clean_query = _re.sub(r'[《》\[\]【】]', ' ', query).strip()
-                if netease_plan.mode == "new_songs":
+                songs = []
+
+                if discovery_required:
+                    try:
+                        from tools.web_search_aggregator import _federated_search_async
+
+                        discovery_query = build_web_discovery_query(
+                            user_input,
+                            retrieval_plan,
+                            catalog_gap,
+                        )
+                        logger.info("[web_fallback] 外部候选发现: %s", discovery_query)
+                        discovery_docs = await _federated_search_async(discovery_query)
+                        candidates = extract_song_candidates(
+                            discovery_docs,
+                            max_candidates=max(target_count * 2, 8),
+                        )
+                        logger.info("[web_fallback] 外部资料抽取候选 %d 个", len(candidates))
+
+                        async def _resolve_candidate(candidate):
+                            if not candidate.query:
+                                return []
+                            url = f"{api_base}/search?keywords={_url_quote(candidate.query)}&limit=3"
+                            payload = await fetch_json_with_retry(
+                                session,
+                                url,
+                                timeout=timeout,
+                                attempts=1,
+                            )
+                            resolved = payload.get("result", {}).get("songs", [])
+                            for row in resolved:
+                                row["_discovery_evidence"] = candidate.evidence
+                                row["_discovery_query"] = candidate.query
+                            return resolved
+
+                        resolved_batches = await asyncio.gather(
+                            *(_resolve_candidate(candidate) for candidate in candidates),
+                            return_exceptions=True,
+                        )
+                        seen_ids = set()
+                        for batch in resolved_batches:
+                            if isinstance(batch, Exception):
+                                continue
+                            for row in batch:
+                                sid = row.get("id")
+                                if sid and sid not in seen_ids:
+                                    seen_ids.add(sid)
+                                    songs.append(row)
+                                if len(songs) >= target_count:
+                                    break
+                            if len(songs) >= target_count:
+                                break
+                    except Exception as exc:
+                        logger.warning("[web_fallback] 外部候选发现失败，回退网易云直搜: %s", type(exc).__name__)
+
+                if songs:
+                    logger.info("[web_fallback] 使用外部资料候选解析出 %d 首", len(songs))
+                elif netease_plan.mode == "new_songs":
                     search_url = f"{api_base}/top/song?type=7"
                     data = await fetch_json_with_retry(
                         session,
@@ -866,8 +1029,11 @@ class MusicRecommendationGraph:
                         if s.get("id")
                     ]
                 else:
-                    search_limit = 20 if netease_plan.artist_terms and not netease_plan.song_terms else 5
-                    search_url = f"{api_base}/search?keywords={clean_query}&limit={search_limit}"
+                    search_limit = max(
+                        target_count,
+                        20 if netease_plan.artist_terms and not netease_plan.song_terms else settings.netease_search_limit,
+                    )
+                    search_url = f"{api_base}/search?keywords={_url_quote(clean_query)}&limit={search_limit}"
                     data = await fetch_json_with_retry(
                         session,
                         search_url,
@@ -905,6 +1071,26 @@ class MusicRecommendationGraph:
 
                 if not songs:
                     logger.warning(f"[web_fallback] 联网搜索无结果: {query}")
+                    if web_action == "mix_in":
+                        local_raw = state.get("recommendations", [])
+                        local_items = getattr(local_raw, "data", local_raw)
+                        if isinstance(local_items, list) and local_items:
+                            from schemas.music_state import ToolOutput
+                            local_meta = {
+                                **_web_meta(len(local_items), "web_search_empty"),
+                                "source": "local",
+                                "degraded": False,
+                                "online_result_count": 0,
+                                "local_result_count": len(local_items),
+                            }
+                            return {
+                                "search_results": [r.get("song", r) if isinstance(r, dict) else r for r in local_items],
+                                "recommendations": ToolOutput(success=True, data=local_items, raw_markdown=""),
+                                "_need_web_fallback": False,
+                                "retrieval_meta": local_meta,
+                                "step_count": state.get("step_count", 0) + 1,
+                                "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
+                            }
                     return {"search_results": [], "recommendations": [],
                             "_need_web_fallback": False,
                             "retrieval_meta": _web_meta(0, "web_search_empty"),
@@ -912,7 +1098,7 @@ class MusicRecommendationGraph:
                             "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0)}
 
                 # 收集 song_ids 用于批量获取详情
-                song_ids = [str(s["id"]) for s in songs[:5]]
+                song_ids = [str(s["id"]) for s in songs[:target_count]]
 
                 # 2) 批量获取详情 (封面 + 更准确的元数据)
                 detail_url = f"{api_base}/song/detail?ids={','.join(song_ids)}"
@@ -966,7 +1152,7 @@ class MusicRecommendationGraph:
 
                 # 4) 组装结果 —— 必须包含 preview_url (前端播放用) + cover_url
                 results = []
-                for s in songs[:5]:
+                for s in songs[:target_count]:
                     sid = str(s["id"])
                     title = s.get("name", "Unknown")
                     artists = [a["name"] for a in s.get("artists", [])]
@@ -996,6 +1182,8 @@ class MusicRecommendationGraph:
                             "platform": "netease",
                             "is_trial": is_trial,       # 标记是否 30s 试听
                             "language": s.get("_inferred_language"),
+                            "web_evidence": s.get("_discovery_evidence", ""),
+                            "web_discovery_query": s.get("_discovery_query", ""),
                         }
                     })
 
@@ -1003,17 +1191,37 @@ class MusicRecommendationGraph:
             trial_count = sum(1 for r in results if r["song"].get("is_trial"))
             logger.info(f"[web_fallback] 联网返回 {len(results)} 首歌曲，{matched} 首可播放，{trial_count} 首为试听版")
 
+            final_results = results
+            final_meta = _web_meta(len(results))
+            if web_action == "mix_in":
+                local_raw = state.get("recommendations", [])
+                local_items = getattr(local_raw, "data", local_raw)
+                if isinstance(local_items, list) and local_items:
+                    final_results = interleave_online_results(
+                        local_items,
+                        results,
+                        target_len=len(local_items),
+                    )
+                    final_meta = {
+                        **final_meta,
+                        "source": "local+web",
+                        "result_count": len(final_results),
+                        "online_result_count": len(results),
+                        "local_result_count": len(local_items),
+                        "degraded": False,
+                    }
+
             from schemas.music_state import ToolOutput
-            dialog_state = update_dialog_result_anchors(state.get("dialog_state"), results)
+            dialog_state = update_dialog_result_anchors(state.get("dialog_state"), final_results)
             return {
-                "search_results": [r["song"] for r in results],
+                "search_results": [r.get("song", r) for r in final_results],
                 "recommendations": ToolOutput(
                     success=True,
-                    data=results,
+                    data=final_results,
                     raw_markdown="",
                 ),
                 "_need_web_fallback": False,
-                "retrieval_meta": _web_meta(len(results)),
+                "retrieval_meta": final_meta,
                 "dialog_state": dialog_state.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
@@ -1429,10 +1637,18 @@ class MusicRecommendationGraph:
                 
         if not recommendations or not has_real_content:
             logger.warning("没有推荐结果，跳过解释生成")
-            await _finish_queue()
+            retrieval_meta = state.get("retrieval_meta") or {}
+            catalog_gap = retrieval_meta.get("catalog_gap") or state.get("_catalog_gap") or {}
+            gap_message = catalog_gap.get("message") if isinstance(catalog_gap, dict) else ""
+            response = (
+                gap_message
+                if retrieval_meta.get("web_search_blocked") and gap_message
+                else "抱歉，没有找到符合你要求的音乐。你可以换个方式描述你的需求，或者告诉我你喜欢的歌手和风格？"
+            )
+            await _finish_queue(response)
             return {
                 "explanation": "抱歉，没有找到合适的音乐推荐。",
-                "final_response": "抱歉，没有找到符合你要求的音乐。你可以换个方式描述你的需求，或者告诉我你喜欢的歌手和风格？",
+                "final_response": response,
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "explanation_ms", _time.time() - _t0),
             }
@@ -2215,6 +2431,7 @@ class MusicRecommendationGraph:
         workflow.add_node("create_playlist", self.create_playlist_node)
         workflow.add_node("general_chat", self.general_chat_node)
         workflow.add_node("clarification", self.clarification_node)
+        workflow.add_node("web_disabled", self.web_disabled_node)
         workflow.add_node("generate_explanation", self.generate_explanation)
         
         # 设置入口点为 GraphZep 记忆召回
@@ -2235,6 +2452,7 @@ class MusicRecommendationGraph:
                 "analyze_user_preferences": "analyze_user_preferences",
                 "general_chat": "general_chat",
                 "clarification": "clarification",
+                "web_disabled": "web_disabled",
             }
         )
         
@@ -2284,6 +2502,7 @@ class MusicRecommendationGraph:
         workflow.add_edge("extract_preferences", "persist_to_graphzep")
         workflow.add_edge("general_chat", "persist_to_graphzep")
         workflow.add_edge("clarification", "persist_to_graphzep")
+        workflow.add_edge("web_disabled", "persist_to_graphzep")
         workflow.add_edge("persist_to_graphzep", END)
         
         # 编译图（注入 checkpointer 实现状态持久化）
