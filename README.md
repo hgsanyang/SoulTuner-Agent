@@ -313,12 +313,21 @@ python scripts/replay_feedback.py --rollback
 
 默认 replay 使用 `explicit_feedback_logistic_v2`：只按精确 `exposure_id + title + artist` 归因，按时间切分训练/验证，比较 baseline/candidate 的 log-loss、accuracy 与严格同曝光 preference pairs。候选只有通过离线闸门后才能 promote；active/previous 两版支持一键回滚。学习结果以 `0.8~1.2` 的有界 multiplier 调整三路 RRF、内容双锚和召回后校正，`delta_limit=±0.08` 不变；全局策略与样本足够的 per-user 策略分离并做收缩。无真实正负事件时会明确返回 `insufficient_data`，不会生成“伪提升”权重。
 
+`GET /api/ranking-policy/status` 会返回 `readiness.stage`、`readiness.next_action`、`can_replay`、`can_promote` 等字段，用来判断现在应该继续收集反馈、离线 replay、人工 promote，还是已经有 active 策略在运行。上线前或日常巡检可以运行：
+
+```powershell
+python scripts/p7_smoke.py
+python scripts/p7_smoke.py --api-base http://localhost:8501
+```
+
+这个 smoke 不调用 LLM，也不读取私密原文 query；它只检查公开 Demo 安全护栏、路径校验、A3 readiness、文搜音后端配置、alignment calibration 配置和可选 API 健康。
+
 ### 工程质量
 
 | 维度                 | 说明                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | **CI/CD**      | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
-| **单元测试**   | 244 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、对齐校准、公开 demo、教师日志等） |
+| **单元测试**   | 272 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、A3 readiness、P7 smoke、对齐 adapter、公开 demo、教师日志等） |
 | **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；另有 `context_dev/context_holdout` 中文上下文匹配尺子，覆盖 11 类目标与 4 档具体度 |
 | **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比）              |
 | **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres）         |
@@ -525,7 +534,7 @@ python startup_all.py
 │
 ├── graphzep_service/           # 可选 GraphZep 记忆旁路服务
 ├── tests/                      # 测试与评测
-│   ├── unit/                   # 单元测试 (244 tests, pytest)
+│   ├── unit/                   # 单元测试 (272 tests, pytest)
 │   │   ├── test_normalize_key.py
 │   │   ├── test_gssc_token_budget.py
 │   │   ├── test_tag_expansion.py
@@ -559,12 +568,22 @@ python startup_all.py
 | `DENSE_TEXT_AUDIO_BACKEND` | 文搜音后端 | `muq`（Docker CPU 自动使用 `m2d`；可选 `both`） |
 | `MUSIC_DENSE_QUERY_VARIANTS` | 多描述 HyDE 向量集成 | `auto`（场景/情绪/听感类查询自动生成声学/情绪多视角并平均向量；精确歌手/歌名查询保持单向量） |
 | `MUSIC_ALIGNMENT_CALIBRATION_PATH` | 文搜音 gap 校正文件 | 空（提供 JSON 后按后端应用 scale/bias 校准，缺失即 no-op） |
+| `MUSIC_ALIGNMENT_ADAPTER_PATH` | 文搜音文本侧 adapter | 空（提供 `train_alignment_adapter.py` 产物后启用 linear adapter；缺失/维度不符即 no-op） |
 | `MUSIC_FEEDBACK_DIR` | 曝光/行为日志目录 | `data/feedback` |
 | `FEEDBACK_LOG_RAW_QUERY` | 是否在反馈日志保存原始 query（默认仅 hash） | `0` |
 | `RECALL_SOURCE_TIMEOUT_SECONDS` | 单路召回超时 | `60`（覆盖 MuQ 首次冷加载）          |
 | `TAVILY_API_KEY`      | 联网搜索          | 可选                                         |
 
 MuQ-MuLan 以 24kHz 音频工作，模型按需加载；本项目实测 fp32 峰值约 2.75GB 显存，fp16 约 1.4GB。`up gpu` 将 GPU 暴露给后端并启用 fp16；`up cpu` 自动选择 M2D，避免 CPU 容器因 MuQ 冷加载失去响应。MuQ 权重采用 **CC-BY-NC 4.0**，仅限非商业使用；商业部署必须替换或重新获得授权。
+
+自有曲库文搜音 adapter 是可选增强，不会默认改变线上排序。训练与验证：
+
+```powershell
+python scripts/train_alignment_adapter.py --backend muq --output data/alignment_adapter.json
+python -m tests.eval.evaluate_alignment_attribute --k 10 --adapter-path data/alignment_adapter.json
+```
+
+只有属性尺子与端到端 outcome/context 尺子都不退时，才建议在 `.env` 设置 `MUSIC_ALIGNMENT_ADAPTER_PATH=data/alignment_adapter.json`。
 
 ---
 

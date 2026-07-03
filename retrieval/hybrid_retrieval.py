@@ -980,11 +980,13 @@ class MusicHybridRetrieval:
             def _encode_query(backend: str):
                 if backend == "muq":
                     from retrieval.muq_embedder import encode_text_to_muq
+                    from retrieval.alignment_calibration import apply_alignment_calibration
 
-                    return encode_text_to_muq(query_text)
+                    return apply_alignment_calibration(encode_text_to_muq(query_text), backend)
                 from retrieval.audio_embedder import encode_text_to_embedding
+                from retrieval.alignment_calibration import apply_alignment_calibration
 
-                return encode_text_to_embedding(query_text)
+                return apply_alignment_calibration(encode_text_to_embedding(query_text), backend)
 
             # ── 语义锚：query → text embedding ──
             # 首次启动时 HuggingFace 文本编码器可能仍在下载，不能让精排阻塞整条推荐链。

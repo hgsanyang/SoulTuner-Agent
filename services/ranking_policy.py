@@ -122,3 +122,61 @@ def apply_multipliers(
         if total > 0:
             adjusted = {key: value / total for key, value in adjusted.items()}
     return adjusted
+
+
+def summarize_policy_readiness(
+    *,
+    num_exposures: int,
+    num_events: int,
+    num_slate_feedback: int,
+    active: dict[str, Any] | None = None,
+    candidate: dict[str, Any] | None = None,
+    min_events: int = 20,
+) -> dict[str, Any]:
+    """Summarize the next safe A3 action without reading private log contents."""
+    labeled_signals = max(0, int(num_events)) + max(0, int(num_slate_feedback))
+    min_events = max(1, int(min_events))
+    active_ok = bool(
+        active
+        and active.get("status") == "active"
+        and active.get("gate_passed") is True
+        and active.get("global_status") == "accepted"
+    )
+    candidate_ok = bool(
+        candidate
+        and candidate.get("gate_passed") is True
+        and candidate.get("global_status") == "accepted"
+    )
+
+    if active_ok:
+        stage = "active_policy"
+        next_action = "继续正常使用并收集反馈；如效果变差可 rollback 到上一版策略。"
+    elif candidate_ok:
+        stage = "candidate_ready"
+        next_action = "候选排序策略已通过离线闸门，可以人工检查后 promote。"
+    elif labeled_signals >= min_events and int(num_exposures) > 0:
+        stage = "replay_ready"
+        next_action = "反馈量已达到最小 replay 门槛，可以运行 ranking-policy replay 生成候选。"
+    else:
+        stage = "collect_feedback"
+        remaining = max(0, min_events - labeled_signals)
+        next_action = f"继续正常使用并提交点赞/跳过/拉黑/歌单级反馈；至少还需要约 {remaining} 条标注信号。"
+
+    warnings: list[str] = []
+    if int(num_exposures) == 0:
+        warnings.append("尚无曝光日志，无法把反馈归因到具体推荐列表。")
+    if int(num_events) == 0 and int(num_slate_feedback) == 0:
+        warnings.append("尚无显式反馈，A3 不会生成伪策略。")
+    if candidate and not candidate_ok:
+        warnings.append("存在候选策略但未通过 gate，不能 promote。")
+
+    return {
+        "stage": stage,
+        "next_action": next_action,
+        "can_replay": stage in {"replay_ready", "candidate_ready", "active_policy"},
+        "can_promote": candidate_ok,
+        "has_active_policy": active_ok,
+        "labeled_signals": labeled_signals,
+        "min_events": min_events,
+        "warnings": warnings,
+    }

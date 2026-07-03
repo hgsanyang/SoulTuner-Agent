@@ -1114,7 +1114,13 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 async def ranking_policy_status():
     """Return non-sensitive A3 policy state for diagnostics and UI tooling."""
     from services.feedback_logger import load_jsonl
-    from services.ranking_policy import ACTIVE_FILE, CANDIDATE_FILE, feedback_dir, policy_path
+    from services.ranking_policy import (
+        ACTIVE_FILE,
+        CANDIDATE_FILE,
+        feedback_dir,
+        policy_path,
+        summarize_policy_readiness,
+    )
 
     root = feedback_dir()
     exposures = load_jsonl(root / "exposures.jsonl")
@@ -1139,13 +1145,24 @@ async def ranking_policy_status():
         except Exception:
             return {"status": "invalid"}
 
+    active = _summary(policy_path(ACTIVE_FILE))
+    candidate = _summary(policy_path(CANDIDATE_FILE))
+    readiness = summarize_policy_readiness(
+        num_exposures=len(exposures),
+        num_events=len(events),
+        num_slate_feedback=len(slate_feedback),
+        active=active,
+        candidate=candidate,
+    )
+
     return {
         "feedback_dir": str(root),
         "num_exposures": len(exposures),
         "num_events": len(events),
         "num_slate_feedback": len(slate_feedback),
-        "active": _summary(policy_path(ACTIVE_FILE)),
-        "candidate": _summary(policy_path(CANDIDATE_FILE)),
+        "active": active,
+        "candidate": candidate,
+        "readiness": readiness,
     }
 
 

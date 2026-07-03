@@ -184,6 +184,7 @@ def _rank_ids(query_vector: list[float], matrix: np.ndarray, ids: list[str]) -> 
 def evaluate_attribute_alignment(
     k: int = 10,
     calibration_path: str = "",
+    adapter_path: str = "",
     query_variants: bool = False,
     include_clamp3: bool = False,
 ) -> dict[str, Any]:
@@ -193,8 +194,11 @@ def evaluate_attribute_alignment(
     from tools.semantic_search import build_dense_query_variants, _mean_vectors
 
     previous_calibration_path = os.environ.get("MUSIC_ALIGNMENT_CALIBRATION_PATH")
+    previous_adapter_path = os.environ.get("MUSIC_ALIGNMENT_ADAPTER_PATH")
     if calibration_path:
         os.environ["MUSIC_ALIGNMENT_CALIBRATION_PATH"] = calibration_path
+    if adapter_path:
+        os.environ["MUSIC_ALIGNMENT_ADAPTER_PATH"] = adapter_path
     ids, labels_by_id, corpora = _fetch_common_corpus()
     rows = []
     grouped: dict[str, dict[str, list[float]]] = {}
@@ -263,11 +267,14 @@ def evaluate_attribute_alignment(
                 }
             )
     finally:
-        if calibration_path:
-            if previous_calibration_path is None:
-                os.environ.pop("MUSIC_ALIGNMENT_CALIBRATION_PATH", None)
-            else:
-                os.environ["MUSIC_ALIGNMENT_CALIBRATION_PATH"] = previous_calibration_path
+        if previous_calibration_path is None:
+            os.environ.pop("MUSIC_ALIGNMENT_CALIBRATION_PATH", None)
+        else:
+            os.environ["MUSIC_ALIGNMENT_CALIBRATION_PATH"] = previous_calibration_path
+        if previous_adapter_path is None:
+            os.environ.pop("MUSIC_ALIGNMENT_ADAPTER_PATH", None)
+        else:
+            os.environ["MUSIC_ALIGNMENT_ADAPTER_PATH"] = previous_adapter_path
 
     def mean(values: list[float]) -> float:
         return float(sum(values) / len(values)) if values else 0.0
@@ -297,6 +304,7 @@ def evaluate_attribute_alignment(
             "clamp3_songs": len(corpora.get("clamp3", {}).get("ids", [])),
         },
         "calibration_path": calibration_path or "",
+        "adapter_path": adapter_path or "",
         "query_variants": bool(query_variants),
         "include_clamp3": bool(include_clamp3),
         "clamp3_status": clamp3_status,
@@ -315,6 +323,7 @@ def main() -> None:
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--output", default="")
     parser.add_argument("--calibration-path", default="", help="Optional alignment calibration JSON")
+    parser.add_argument("--adapter-path", default="", help="Optional learned text-side alignment adapter JSON")
     parser.add_argument("--query-variants", action="store_true", help="Evaluate multi-view dense query variants")
     parser.add_argument("--include-clamp3", action="store_true", help="Include optional CLaMP3 backend if clamp3_embedding exists")
     args = parser.parse_args()
@@ -322,6 +331,7 @@ def main() -> None:
     report = evaluate_attribute_alignment(
         k=args.k,
         calibration_path=args.calibration_path,
+        adapter_path=args.adapter_path,
         query_variants=args.query_variants,
         include_clamp3=args.include_clamp3,
     )
@@ -346,6 +356,8 @@ def main() -> None:
     print(f"Queries: {report['query_count']} | P@{report['k']}")
     if report.get("calibration_path"):
         print(f"Calibration: {report['calibration_path']}")
+    if report.get("adapter_path"):
+        print(f"Adapter: {report['adapter_path']}")
     if report.get("query_variants"):
         print("Query variants: enabled")
     print("Overall: " + " | ".join(f"{name.upper()}={value:.3f}" for name, value in metrics["overall"].items()))

@@ -312,12 +312,21 @@ python scripts/replay_feedback.py --rollback
 
 Replay uses `explicit_feedback_logistic_v2`: strict exposure attribution, chronological train/validation splitting, baseline-vs-candidate metrics, and same-exposure preference pairs. A candidate must pass validation before promotion; active and previous versions support rollback. Learned policies are bounded to `0.8~1.2` multipliers for RRF, content anchors, and post-recall terms while preserving the `±0.08` adjustment cap. Global and sufficiently supported per-user policies remain isolated. Insufficient real positive/negative feedback returns `insufficient_data` and never activates fake weights.
 
+`GET /api/ranking-policy/status` returns `readiness.stage`, `readiness.next_action`, `can_replay`, `can_promote`, and related fields so the UI or operator can see whether the system should keep collecting feedback, run offline replay, promote a gated candidate, or keep using an active policy. For release or daily smoke checks:
+
+```powershell
+python scripts/p7_smoke.py
+python scripts/p7_smoke.py --api-base http://localhost:8501
+```
+
+The smoke check does not call an LLM or read raw private queries. It validates public-demo safety guards, path safety, A3 readiness, text-to-music backend configuration, alignment calibration configuration, and optional API health.
+
 ### Engineering Quality
 
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 244 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, alignment calibration, public demo, teacher logs, and more |
+| **Unit Testing** | 272 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7 smoke, alignment adapter, public demo, teacher logs, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; `context_dev/context_holdout` add a Chinese context-matching ruler with 11 goal categories and 4 specificity levels |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
@@ -542,12 +551,22 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 | `DENSE_TEXT_AUDIO_BACKEND` | Text-to-music backend | `muq` (Docker CPU automatically uses `m2d`; `both` optional) |
 | `MUSIC_DENSE_QUERY_VARIANTS` | Multi-view HyDE vector ensemble | `auto` (scene/mood/similarity queries use acoustic/emotional/context views; exact artist/title queries stay single-vector) |
 | `MUSIC_ALIGNMENT_CALIBRATION_PATH` | Optional text/audio gap calibration JSON | empty (scale/bias per backend; missing file is no-op) |
+| `MUSIC_ALIGNMENT_ADAPTER_PATH` | Optional text-side alignment adapter | empty (loads the `train_alignment_adapter.py` linear adapter artifact; missing or mismatched files are no-op) |
 | `MUSIC_FEEDBACK_DIR` | Exposure/event feedback log directory | `data/feedback` |
 | `FEEDBACK_LOG_RAW_QUERY` | Store raw queries in feedback logs (hash-only by default) | `0` |
 | `RECALL_SOURCE_TIMEOUT_SECONDS` | Per-recall timeout | `60` (covers MuQ cold loading) |
 | `TAVILY_API_KEY` | Cloud indexing rules | Optional |
 
 MuQ-MuLan processes 24kHz audio and loads on demand. This project measured about 2.75GB peak VRAM in fp32 and about 1.4GB in fp16. `up gpu` exposes the GPU to the backend and enables fp16, while `up cpu` selects M2D to avoid an unresponsive CPU container during MuQ cold loading. MuQ weights use **CC-BY-NC 4.0** and therefore are restricted to non-commercial use unless separately licensed.
+
+The local-catalog text-to-music adapter is optional and off by default:
+
+```powershell
+python scripts/train_alignment_adapter.py --backend muq --output data/alignment_adapter.json
+python -m tests.eval.evaluate_alignment_attribute --k 10 --adapter-path data/alignment_adapter.json
+```
+
+Only set `MUSIC_ALIGNMENT_ADAPTER_PATH=data/alignment_adapter.json` after the attribute ruler and end-to-end outcome/context rulers do not regress.
 
 ---
 
