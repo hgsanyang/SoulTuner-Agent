@@ -11,13 +11,24 @@ import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { useRouter } from 'next/navigation';
-import { fetchPendingSongs, ingestPendingSongs, deletePendingSong, PendingSong } from '@/lib/api';
+import {
+    fetchPendingSongs,
+    ingestPendingSongs,
+    deletePendingSong,
+    fetchIngestJobs,
+    retryIngestJob,
+    PendingSong,
+    IngestJob,
+} from '@/lib/api';
 
 export default function PendingPage() {
     const [songs, setSongs] = useState<PendingSong[]>([]);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(true);
     const [ingesting, setIngesting] = useState(false);
+    const [jobs, setJobs] = useState<IngestJob[]>([]);
+    const [jobCounts, setJobCounts] = useState<Record<string, number>>({});
+    const [retryingJob, setRetryingJob] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [formatFilter, setFormatFilter] = useState('all');
     const { playSong } = usePlayer();
@@ -31,7 +42,13 @@ export default function PendingPage() {
         setLoading(false);
     }, []);
 
-    useEffect(() => { loadSongs(); }, [loadSongs]);
+    const loadJobs = useCallback(async () => {
+        const data = await fetchIngestJobs(12);
+        setJobs(data.jobs);
+        setJobCounts(data.counts);
+    }, []);
+
+    useEffect(() => { loadSongs(); loadJobs(); }, [loadSongs, loadJobs]);
 
     const toggleSelect = (basename: string) => {
         setSelected(prev => {
@@ -77,11 +94,25 @@ export default function PendingPage() {
         })));
         setIngesting(false);
         if (result.success) {
-            showToast(`✅ 已成功入库 ${result.ingested} 首歌曲`);
+            const jobText = result.job_id ? `，后台任务 ${result.job_id}` : '';
+            showToast(`✅ 已写入 ${result.ingested} 首歌曲${jobText}`);
             setSelected(new Set());
             loadSongs();
+            loadJobs();
         } else {
             showToast('❌ 入库失败，请重试');
+        }
+    };
+
+    const handleRetryJob = async (job: IngestJob) => {
+        setRetryingJob(job.job_id);
+        const result = await retryIngestJob(job.job_id);
+        setRetryingJob(null);
+        if (result.success) {
+            showToast('✅ 已重新加入入库队列');
+            loadJobs();
+        } else {
+            showToast('❌ 重试失败，请查看后端日志');
         }
     };
 
@@ -160,6 +191,39 @@ export default function PendingPage() {
                     <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
                         状态：待入库 → 分析中 → 已入库
                     </span>
+                </div>
+            )}
+
+            {jobs.length > 0 && (
+                <div style={{ display: 'grid', gap: '0.65rem', padding: '0.85rem 1rem', borderRadius: theme.borderRadius.md, background: 'rgba(255,255,255,0.025)', border: `1px solid ${theme.colors.border.default}` }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>入库增强队列</span>
+                        {['pending', 'processing', 'failed', 'done'].map(status => (
+                            <span key={status} style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: 'rgba(255,255,255,0.05)', color: theme.colors.text.secondary }}>
+                                {status}: {jobCounts[status] || 0}
+                            </span>
+                        ))}
+                        <button onClick={loadJobs} style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.28rem 0.65rem', fontSize: '0.74rem' }}>
+                            刷新
+                        </button>
+                    </div>
+                    <div style={{ display: 'grid', gap: '0.35rem' }}>
+                        {jobs.slice(0, 5).map(job => {
+                            const isRetrying = retryingJob === job.job_id;
+                            const statusColor = job.status === 'failed' ? '#f87171' : job.status === 'done' ? theme.colors.primary.accent : job.status === 'processing' ? '#60a5fa' : '#f59e0b';
+                            return (
+                                <div key={job.job_id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.76rem', color: theme.colors.text.secondary }}>
+                                    <span style={{ color: statusColor, width: '5.8rem' }}>{job.status}</span>
+                                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.job_id} · {job.song_count} 首{job.error ? ` · ${job.error}` : ''}</span>
+                                    {job.status === 'failed' && (
+                                        <button disabled={isRetrying} onClick={() => handleRetryJob(job)} style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: theme.borderRadius.sm, color: '#fca5a5', cursor: isRetrying ? 'wait' : 'pointer', padding: '0.22rem 0.55rem', fontSize: '0.72rem' }}>
+                                            {isRetrying ? '重试中' : '重试'}
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             )}
 

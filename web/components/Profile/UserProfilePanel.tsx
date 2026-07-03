@@ -15,9 +15,24 @@ const PRESET_MOODS = ['开心', '悲伤', '放松', '热血', '浪漫', '治愈'
 const PRESET_SCENARIOS = ['学习', '跑步', '开车', '睡前', '派对', '冥想'];
 const PRESET_LANGUAGES = ['中文', '英文', '日语', '韩语', '纯音乐'];
 
+const LEARNED_PREF_FIELDS = [
+  { key: 'avoid_genres', label: '避开流派' },
+  { key: 'avoid_moods', label: '避开情绪' },
+  { key: 'avoid_scenarios', label: '避开场景' },
+  { key: 'add_moods', label: '偏好情绪' },
+  { key: 'add_scenarios', label: '偏好场景' },
+  { key: 'activity_contexts', label: '探索倾向' },
+];
+
 interface UserProfilePanelProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+interface MemoryProfile {
+  user_id: string;
+  episodic_backends?: string[];
+  profile?: Record<string, any>;
 }
 
 export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelProps) {
@@ -30,6 +45,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [memory, setMemory] = useState<MemoryProfile | null>(null);
 
   // ---- 加载偏好 ----
   const loadProfile = useCallback(async () => {
@@ -44,6 +60,13 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
           setScenarios(data.profile.preferred_scenarios || []);
           setLanguages(data.profile.preferred_languages || []);
           setFreeText(data.profile.free_text || '');
+        }
+      }
+      const memoryRes = await fetch(`${API_URL}/api/memory/profile`);
+      if (memoryRes.ok) {
+        const memoryData = await memoryRes.json();
+        if (memoryData.success && memoryData.memory) {
+          setMemory(memoryData.memory);
         }
       }
     } catch (e) {
@@ -111,6 +134,39 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
     setLanguages([]);
     setFreeText('');
     setDirty(true);
+  };
+
+  const removeLearnedPreference = async (field: string, value: string) => {
+    try {
+      const resp = await fetch(
+        `${API_URL}/api/memory/preference?field=${encodeURIComponent(field)}&value=${encodeURIComponent(value)}`,
+        { method: 'DELETE' },
+      );
+      if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
+      setMessage('✅ 已删除该条记忆');
+      await loadProfile();
+      setTimeout(() => setMessage(''), 2500);
+    } catch (e) {
+      console.error('Failed to remove memory preference:', e);
+      setMessage('❌ 删除记忆失败');
+      setTimeout(() => setMessage(''), 3000);
+    }
+  };
+
+  const clearLearnedPreferences = async () => {
+    const ok = window.confirm('只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？');
+    if (!ok) return;
+    try {
+      const resp = await fetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
+      if (!resp.ok) throw new Error(`清空失败: ${resp.status}`);
+      setMessage('✅ 已清空系统学习偏好');
+      await loadProfile();
+      setTimeout(() => setMessage(''), 2500);
+    } catch (e) {
+      console.error('Failed to clear learned preferences:', e);
+      setMessage('❌ 清空学习记忆失败');
+      setTimeout(() => setMessage(''), 3000);
+    }
   };
 
   if (!isOpen) return null;
@@ -187,6 +243,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
   );
 
   const totalSelected = genres.length + moods.length + scenarios.length + languages.length;
+  const learnedPrefs = memory?.profile || {};
 
   return createPortal(
     <>
@@ -273,6 +330,93 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   onFocus={e => { e.target.style.borderColor = theme.colors.primary.accent; }}
                   onBlur={e => { e.target.style.borderColor = theme.colors.border.default; }}
                 />
+              </div>
+
+              <div style={{ marginBottom: '1.2rem' }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
+                  marginBottom: '0.6rem',
+                }}>
+                  <span style={{ fontSize: '1rem' }}>🧠</span>
+                  <span style={{
+                    fontSize: '0.82rem', fontWeight: 600,
+                    color: theme.colors.text.primary,
+                  }}>系统学到的偏好</span>
+                  {(memory?.episodic_backends || []).map(name => (
+                    <span key={name} style={{
+                      fontSize: '0.68rem',
+                      color: theme.colors.text.muted,
+                      background: 'rgba(255,255,255,0.06)',
+                      border: `1px solid ${theme.colors.border.default}`,
+                      borderRadius: '999px',
+                      padding: '0.1rem 0.45rem',
+                    }}>{name}</span>
+                  ))}
+                  {LEARNED_PREF_FIELDS.some(field => Array.isArray(learnedPrefs[field.key]) && learnedPrefs[field.key].length > 0) && (
+                    <button
+                      onClick={clearLearnedPreferences}
+                      style={{
+                        marginLeft: 'auto',
+                        border: '1px solid rgba(240,96,96,0.35)',
+                        background: 'rgba(240,96,96,0.08)',
+                        color: '#fca5a5',
+                        borderRadius: '999px',
+                        padding: '0.16rem 0.55rem',
+                        fontSize: '0.7rem',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      清空学习记忆
+                    </button>
+                  )}
+                </div>
+                <div style={{
+                  display: 'grid',
+                  gap: '0.55rem',
+                  background: 'rgba(255,255,255,0.035)',
+                  border: `1px solid ${theme.colors.border.default}`,
+                  borderRadius: theme.borderRadius.sm,
+                  padding: '0.75rem',
+                }}>
+                  {LEARNED_PREF_FIELDS.map(field => {
+                    const values = Array.isArray(learnedPrefs[field.key]) ? learnedPrefs[field.key] : [];
+                    if (!values.length) return null;
+                    return (
+                      <div key={field.key}>
+                        <div style={{
+                          fontSize: '0.72rem',
+                          color: theme.colors.text.muted,
+                          marginBottom: '0.35rem',
+                        }}>{field.label}</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                          {values.map((value: string) => (
+                            <button
+                              key={`${field.key}-${value}`}
+                              onClick={() => removeLearnedPreference(field.key, value)}
+                              title="点击删除这条学习记忆"
+                              style={{
+                                border: '1px solid rgba(29,185,84,0.35)',
+                                background: 'rgba(29,185,84,0.10)',
+                                color: theme.colors.text.primary,
+                                borderRadius: '999px',
+                                padding: '0.26rem 0.58rem',
+                                fontSize: '0.72rem',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {value} ×
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!LEARNED_PREF_FIELDS.some(field => Array.isArray(learnedPrefs[field.key]) && learnedPrefs[field.key].length > 0) && (
+                    <span style={{ color: theme.colors.text.muted, fontSize: '0.76rem' }}>
+                      暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。
+                    </span>
+                  )}
+                </div>
               </div>
             </>
           )}

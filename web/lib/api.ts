@@ -200,6 +200,10 @@ export type SlateFeedbackRating =
     | 'more_discovery'
     | 'too_noisy'
     | 'too_quiet'
+    | 'too_sad'
+    | 'too_generic'
+    | 'more_niche'
+    | 'closer_to_seed'
     | 'wrong_context';
 
 export async function sendSlateFeedback(params: {
@@ -471,6 +475,15 @@ export interface PendingSong {
     acquired_at: string;
 }
 
+export interface IngestJob {
+    job_id: string;
+    status: 'pending' | 'processing' | 'done' | 'failed' | string;
+    song_count: number;
+    songs?: any[];
+    error?: string;
+    updated_at?: number;
+}
+
 export async function fetchPendingSongs(): Promise<PendingSong[]> {
     try {
         const resp = await fetch('http://localhost:8501/api/pending-songs');
@@ -491,7 +504,7 @@ export async function ingestPendingSongs(songs: {
     artist: string;
     album: string;
     duration: number;
-}[]): Promise<{ success: boolean; ingested: number; message: string }> {
+}[]): Promise<{ success: boolean; ingested: number; message: string; job_id?: string; enrichment?: string }> {
     try {
         const resp = await fetch('http://localhost:8501/api/pending-songs/ingest', {
             method: 'POST',
@@ -518,6 +531,31 @@ export async function deletePendingSong(
         return resp.json();
     } catch (err) {
         console.warn('[API] deletePendingSong 失败:', err);
+        return { success: false };
+    }
+}
+
+export async function fetchIngestJobs(limit: number = 30): Promise<{ jobs: IngestJob[]; counts: Record<string, number> }> {
+    try {
+        const resp = await fetch(`http://localhost:8501/api/ingest-jobs?limit=${limit}`);
+        if (!resp.ok) return { jobs: [], counts: {} };
+        const data = await resp.json();
+        return data.success ? { jobs: data.jobs || [], counts: data.counts || {} } : { jobs: [], counts: {} };
+    } catch (err) {
+        console.warn('[API] fetchIngestJobs 失败:', err);
+        return { jobs: [], counts: {} };
+    }
+}
+
+export async function retryIngestJob(jobId: string): Promise<{ success: boolean }> {
+    try {
+        const resp = await fetch(`http://localhost:8501/api/ingest-jobs/${encodeURIComponent(jobId)}/retry`, {
+            method: 'POST',
+        });
+        if (!resp.ok) return { success: false };
+        return resp.json();
+    } catch (err) {
+        console.warn('[API] retryIngestJob 失败:', err);
         return { success: false };
     }
 }
@@ -558,6 +596,33 @@ export async function fetchLibrarySongs(
     } catch (err) {
         console.warn('[API] fetchLibrarySongs 失败:', err);
         return { songs: [], total: 0 };
+    }
+}
+
+export async function updateLibrarySongTags(song: {
+    music_id?: string;
+    title?: string;
+    artist?: string;
+    genres?: string[];
+    moods?: string[];
+    themes?: string[];
+    scenarios?: string[];
+    language?: string;
+}): Promise<{ success: boolean; error?: string }> {
+    try {
+        const resp = await fetch('http://localhost:8501/api/library-songs/tags', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(song),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: '标签更新失败' }));
+            return { success: false, error: err.detail || `标签更新失败: ${resp.status}` };
+        }
+        return resp.json();
+    } catch (err: any) {
+        console.warn('[API] updateLibrarySongTags 失败:', err);
+        return { success: false, error: err.message || '标签更新失败' };
     }
 }
 

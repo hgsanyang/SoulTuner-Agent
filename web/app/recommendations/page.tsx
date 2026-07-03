@@ -43,16 +43,23 @@ const DIALOG_STATE_KEY = 'music_dialog_state';
 
 const SLATE_FEEDBACK_OPTIONS: { rating: SlateFeedbackRating; label: string }[] = [
   { rating: 'great', label: '整体很准' },
-  { rating: 'partial', label: '有几首不错' },
-  { rating: 'off', label: '不太对味' },
-  { rating: 'too_familiar', label: '太像旧歌单' },
-  { rating: 'more_discovery', label: '想发现更多' },
+  { rating: 'partial', label: '几首不错' },
+  { rating: 'too_noisy', label: '太吵了' },
+  { rating: 'too_sad', label: '太丧了' },
+  { rating: 'too_generic', label: '太普通' },
+  { rating: 'more_niche', label: '想更小众' },
+  { rating: 'closer_to_seed', label: '贴近刚才那首' },
+  { rating: 'off', label: '不喜欢这批' },
 ];
 
 const SLATE_REASON_OPTIONS = [
   '太像我的旧歌单',
   '想发现更多新歌',
   '太吵了',
+  '太丧了',
+  '太普通',
+  '想更小众',
+  '更贴近刚才那首',
   '太安静了',
   '场景不贴合',
   '联网多一点',
