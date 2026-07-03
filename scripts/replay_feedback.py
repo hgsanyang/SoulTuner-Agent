@@ -48,6 +48,10 @@ def main() -> int:
                         help="Minimum matched labeled events required before writing learned weights")
     parser.add_argument("--per-user-min-events", type=int, default=30)
     parser.add_argument("--validation-ratio", type=float, default=0.2)
+    parser.add_argument("--slate-top-k", type=int, default=5,
+                        help="Top-k items per high-confidence slate feedback used as weak labels")
+    parser.add_argument("--no-slate-feedback", action="store_true",
+                        help="Ignore slate_feedback.jsonl when fitting the v2 policy")
     parser.add_argument("--write-candidate", action="store_true",
                         help="Write ranking_policy.candidate.json, even before manual promotion")
     parser.add_argument("--promote", action="store_true",
@@ -70,6 +74,7 @@ def main() -> int:
 
     exposures = load_jsonl(feedback_dir / "exposures.jsonl")
     events = load_jsonl(feedback_dir / "events.jsonl")
+    slate_feedback = [] if args.no_slate_feedback else load_jsonl(feedback_dir / "slate_feedback.jsonl")
     if args.method == "heuristic":
         report = estimate_tri_anchor_weights(exposures, events)
     elif args.method == "legacy":
@@ -78,12 +83,15 @@ def main() -> int:
         report = learn_ranking_policy(
             exposures,
             events,
+            slate_feedback=slate_feedback,
             min_events=args.min_events,
             per_user_min_events=args.per_user_min_events,
             validation_ratio=args.validation_ratio,
+            slate_top_k=args.slate_top_k,
         )
     report["num_exposures"] = len(exposures)
     report["num_events"] = len(events)
+    report["num_slate_feedback"] = len(slate_feedback)
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if args.method == "v2" and (args.write_candidate or args.write):

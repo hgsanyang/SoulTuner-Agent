@@ -361,7 +361,13 @@ def rerank_with_soft_constraints(
     return adjusted
 
 # ---- 用户偏好缓存（启动时加载一次，避免每次请求都查 Neo4j） ----
-_user_pref_cache: dict = {}  # {user_id: {genres: set, moods: set, themes: set, scenarios: set, expanded_genres: set}}
+_user_pref_cache: dict = {}  # {user_id: structured hot-path preference sets}
+
+
+def _as_pref_set(values) -> set:
+    if isinstance(values, str):
+        values = values.replace("，", ",").replace("/", ",").split(",")
+    return {str(x).strip().lower() for x in (values or []) if str(x or "").strip()}
 
 def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
     """
@@ -371,46 +377,51 @@ def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
     if user_id in _user_pref_cache:
         return _user_pref_cache[user_id]
 
-    import json as _json
-    empty_prefs = {"genres": set(), "moods": set(), "themes": set(), "scenarios": set(), "expanded_genres": set()}
+    empty_prefs = {
+        "genres": set(),
+        "moods": set(),
+        "themes": set(),
+        "scenarios": set(),
+        "avoid_genres": set(),
+        "avoid_moods": set(),
+        "avoid_scenarios": set(),
+        "expanded_genres": set(),
+        "expanded_avoid_genres": set(),
+        "activity_contexts": set(),
+    }
 
     try:
-        from retrieval.neo4j_client import get_neo4j_client
-        neo4j = get_neo4j_client()
-        if not neo4j or not neo4j.driver:
-            _user_pref_cache[user_id] = empty_prefs
-            return empty_prefs
-    except Exception:
-        _user_pref_cache[user_id] = empty_prefs
-        return empty_prefs
-
-    try:
-        pref_query = """
-        MATCH (u:User {id: $uid})
-        OPTIONAL MATCH (u)-[:LIKES|LISTENED_TO]->(s:Song)
-        OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
-        OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
-        OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
-        RETURN u.preferred_genres AS pg,
-               collect(DISTINCT m.name) AS moods,
-               collect(DISTINCT t.name) AS themes,
-               collect(DISTINCT sc.name) AS scenarios
-        """
-        pref_result = neo4j.execute_query(pref_query, {"uid": user_id})
-
         prefs = dict(empty_prefs)  # copy
-        if pref_result and pref_result[0]:
-            row = pref_result[0]
-            raw_pg = row.get("pg")
-            if raw_pg:
-                try:
-                    parsed = _json.loads(raw_pg)
-                    prefs["genres"] = {g.strip().lower() for g in parsed if g.strip()}
-                except (ValueError, TypeError):
-                    pass
-            prefs["moods"] = {x.strip().lower() for x in (row.get("moods") or []) if x and x.strip()}
-            prefs["themes"] = {x.strip().lower() for x in (row.get("themes") or []) if x and x.strip()}
-            prefs["scenarios"] = {x.strip().lower() for x in (row.get("scenarios") or []) if x and x.strip()}
+        try:
+            from services.memory_gateway import get_memory_gateway
+
+            profile = get_memory_gateway().get_user_profile(user_id)
+        except Exception as gateway_error:
+            logger.warning("[PrefCache] MemoryGateway 读取失败，偏好降级为空: %s", gateway_error)
+            profile = {}
+
+        prefs["genres"] = (
+            _as_pref_set(profile.get("preferred_genres"))
+            | _as_pref_set(profile.get("favorite_genres"))
+            | _as_pref_set(profile.get("preferred_genres_explicit"))
+        )
+        prefs["moods"] = (
+            _as_pref_set(profile.get("preferred_moods"))
+            | _as_pref_set(profile.get("favorite_moods"))
+            | _as_pref_set(profile.get("add_moods"))
+            | _as_pref_set(profile.get("mood_tendency"))
+        )
+        prefs["themes"] = _as_pref_set(profile.get("favorite_themes"))
+        prefs["scenarios"] = (
+            _as_pref_set(profile.get("preferred_scenarios"))
+            | _as_pref_set(profile.get("favorite_scenarios"))
+            | _as_pref_set(profile.get("add_scenarios"))
+            | _as_pref_set(profile.get("activity_contexts"))
+        )
+        prefs["avoid_genres"] = _as_pref_set(profile.get("avoid_genres"))
+        prefs["avoid_moods"] = _as_pref_set(profile.get("avoid_moods"))
+        prefs["avoid_scenarios"] = _as_pref_set(profile.get("avoid_scenarios"))
+        prefs["activity_contexts"] = _as_pref_set(profile.get("activity_contexts"))
 
         # 展开 Genre 偏好（中文 → 英文别名映射）
         try:
@@ -428,10 +439,21 @@ def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
                 expanded.add(pref)
         prefs["expanded_genres"] = expanded
 
+        expanded_avoid: set = set()
+        for pref in prefs["avoid_genres"]:
+            for key, aliases in GENRE_TAG_MAP.items():
+                if key.lower() == pref or pref in key.lower():
+                    expanded_avoid.update(a.lower() for a in aliases)
+                    break
+            else:
+                expanded_avoid.add(pref)
+        prefs["expanded_avoid_genres"] = expanded_avoid
+
         _user_pref_cache[user_id] = prefs
         logger.info(
             f"[PrefCache] 用户偏好已缓存: genre={len(prefs['genres'])}, mood={len(prefs['moods'])}, "
-            f"theme={len(prefs['themes'])}, scenario={len(prefs['scenarios'])}"
+            f"theme={len(prefs['themes'])}, scenario={len(prefs['scenarios'])}, "
+            f"avoid_genre={len(prefs['avoid_genres'])}, avoid_mood={len(prefs['avoid_moods'])}"
         )
         return prefs
     except Exception as e:
@@ -1191,7 +1213,18 @@ class MusicHybridRetrieval:
         user_pref_themes = user_prefs["themes"]
         user_pref_scenarios = user_prefs["scenarios"]
         expanded_genre_prefs = user_prefs["expanded_genres"]
-        has_any_pref = user_pref_genres or user_pref_moods or user_pref_themes or user_pref_scenarios
+        avoid_genre_prefs = user_prefs.get("expanded_avoid_genres", set())
+        avoid_mood_prefs = user_prefs.get("avoid_moods", set())
+        avoid_scenario_prefs = user_prefs.get("avoid_scenarios", set())
+        has_any_pref = (
+            user_pref_genres
+            or user_pref_moods
+            or user_pref_themes
+            or user_pref_scenarios
+            or avoid_genre_prefs
+            or avoid_mood_prefs
+            or avoid_scenario_prefs
+        )
 
         # ── Step B: 合并查询（图距离 + 候选歌曲标签，1 次 Neo4j round-trip） ──
         combined_query = """
@@ -1268,6 +1301,7 @@ class MusicHybridRetrieval:
                 return len(set_a & set_b) / len(set_a | set_b)
 
             PREF_BOOST_WEIGHT = 0.3
+            AVOID_PENALTY_WEIGHT = 0.38
             DIM_WEIGHTS = {
                 "genre": 0.30, "mood": 0.30,
                 "scenario": 0.25, "theme": 0.15,
@@ -1286,6 +1320,9 @@ class MusicHybridRetrieval:
                 j_mood = _jaccard(user_pref_moods, cand_tags.get("moods", set()))
                 j_theme = _jaccard(user_pref_themes, cand_tags.get("themes", set()))
                 j_scenario = _jaccard(user_pref_scenarios, cand_tags.get("scenarios", set()))
+                j_avoid_genre = _jaccard(avoid_genre_prefs, cand_genre_tags)
+                j_avoid_mood = _jaccard(avoid_mood_prefs, cand_tags.get("moods", set()))
+                j_avoid_scenario = _jaccard(avoid_scenario_prefs, cand_tags.get("scenarios", set()))
 
                 weighted_jaccard = (
                     DIM_WEIGHTS["genre"] * j_genre
@@ -1293,20 +1330,31 @@ class MusicHybridRetrieval:
                     + DIM_WEIGHTS["theme"] * j_theme
                     + DIM_WEIGHTS["scenario"] * j_scenario
                 )
+                avoid_jaccard = (
+                    DIM_WEIGHTS["genre"] * j_avoid_genre
+                    + DIM_WEIGHTS["mood"] * j_avoid_mood
+                    + DIM_WEIGHTS["scenario"] * j_avoid_scenario
+                )
                 boost = PREF_BOOST_WEIGHT * weighted_jaccard
-                c["_graph_affinity"] += boost
+                avoid_penalty = AVOID_PENALTY_WEIGHT * avoid_jaccard
+                c["_graph_affinity"] += boost - avoid_penalty
                 c["_pref_boost"] = round(boost, 4)
+                c["_pref_avoid_penalty"] = round(avoid_penalty, 4)
                 c["_pref_detail"] = {
                     "genre": round(j_genre, 3), "mood": round(j_mood, 3),
                     "theme": round(j_theme, 3), "scenario": round(j_scenario, 3),
+                    "avoid_genre": round(j_avoid_genre, 3),
+                    "avoid_mood": round(j_avoid_mood, 3),
+                    "avoid_scenario": round(j_avoid_scenario, 3),
                 }
-                if boost > 0:
+                if boost > 0 or avoid_penalty > 0:
                     pref_hits += 1
 
             logger.info(
                 f"[GraphAffinity] 偏好加分(缓存+Jaccard): {pref_hits}/{len(candidates)} 首命中 | "
                 f"用户偏好维度: genre={len(user_pref_genres)}, mood={len(user_pref_moods)}, "
-                f"theme={len(user_pref_themes)}, scenario={len(user_pref_scenarios)}"
+                f"theme={len(user_pref_themes)}, scenario={len(user_pref_scenarios)}, "
+                f"avoid_genre={len(avoid_genre_prefs)}, avoid_mood={len(avoid_mood_prefs)}"
             )
         else:
             logger.info("[GraphAffinity] 用户未设置画像偏好且无历史行为，跳过 Jaccard 加分")

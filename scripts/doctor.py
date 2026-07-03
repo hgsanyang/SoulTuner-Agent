@@ -148,6 +148,8 @@ def check_env_file():
          fix="在 .env 填 NEO4J_PASSWORD（须与 Neo4j 实际口令一致）")
     if vals.get("NEO4J_URI"):
         line(True, f"NEO4J_URI 已填", vals.get("NEO4J_URI"))
+    memory_backends = vals.get("MEMORY_EPISODIC_BACKENDS", os.environ.get("MEMORY_EPISODIC_BACKENDS", ""))
+    line(True, "长期记忆旁路", memory_backends or "未启用（Neo4j 热路径仍可用）")
 
     user_settings_path = ROOT / "config" / "user_settings.json"
     if user_settings_path.exists():
@@ -223,10 +225,16 @@ def check_services():
     be = _http("http://127.0.0.1:8501/health")
     line(be == 200, "后端 API :8501 /health", f"HTTP {be or '无响应'}",
          "`conda activate music_agent && python start.py --mode api`（或 docker 的 soultuner-backend）")
+    memory_backends = ENV.get("MEMORY_EPISODIC_BACKENDS", os.environ.get("MEMORY_EPISODIC_BACKENDS", ""))
+    wants_graphzep = "graphzep" in {x.strip().lower() for x in memory_backends.split(",") if x.strip()}
     gz3100 = _http("http://127.0.0.1:3100/healthcheck")
-    line(gz3100 == 200, "GraphZep 记忆服务 :3100",
-         f"HTTP {gz3100 or '无响应'}",
-         "可选服务（挂了不影响核心推荐）。Standard/Full 模式会启动它")
+    if wants_graphzep:
+        line(gz3100 == 200, "GraphZep 记忆旁路 :3100（已配置启用）",
+             f"HTTP {gz3100 or '无响应'}",
+             "`docker compose --profile memory up -d graphzep` 或取消 MEMORY_EPISODIC_BACKENDS=graphzep")
+    else:
+        line(True, "GraphZep 记忆旁路 :3100（未启用）",
+             f"HTTP {gz3100 or '无响应'}；核心推荐使用 Neo4j 热路径")
     # Frontend
     fe = _tcp("127.0.0.1", 3003)
     line(fe, "前端 :3003", fix="`cd web && npm run dev`（可选，只跑后端/评测时不需要）")

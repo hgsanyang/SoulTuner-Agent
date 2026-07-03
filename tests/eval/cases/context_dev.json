@@ -334,6 +334,15 @@
     "checks": {"min_results": 3, "must_exclude": [{"title": "心要野", "artist": "后海大鲨鱼"}], "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["soft", "mellow", "relaxing"], "negative_any": ["energetic", "driving", "rock"], "min_positive_ratio": 0.2, "max_negative_ratio": 0.5, "min_coverage_ratio": 0.4}}
   },
   {
+    "id": "ctx_dev_refine_lh_02_rainy_soft_quiet",
+    "category": "context_interaction_refinement",
+    "goal_category": "interaction_refinement",
+    "specificity": "LH",
+    "query": "偏柔软安静一点，不要那么有劲",
+    "chat_history": [{"role": "user", "content": "今天下雨天，给我一些适合雨天的歌"}, {"role": "assistant", "content": "推荐了一些雨天氛围歌曲。"}],
+    "checks": {"min_results": 3, "min_playable_ratio": 0.4, "not_degraded": true, "dialog_delta_contains": {"followup": true}, "objective_soft_judge": {"positive_any": ["rainy", "peaceful", "relaxing", "soft", "late night"], "negative_any": ["dance", "energetic", "driving", "party", "workout"], "min_positive_ratio": 0.3, "max_negative_ratio": 0.4, "min_coverage_ratio": 0.45}}
+  },
+  {
     "id": "ctx_dev_refine_hh_01",
     "category": "context_interaction_refinement",
     "goal_category": "interaction_refinement",

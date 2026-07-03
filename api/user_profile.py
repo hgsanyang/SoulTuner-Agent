@@ -1,7 +1,7 @@
 """
 用户画像 API 路由
 - GET  /api/user-profile  读取偏好
-- POST /api/user-profile  保存偏好 → Neo4j + GraphZep
+- POST /api/user-profile  保存偏好 → Neo4j hot path + MemoryGateway sidecars
 """
 import asyncio
 import json
@@ -108,7 +108,7 @@ async def get_user_profile(user_id: str = "local_admin"):
 @router.post("/api/user-profile")
 async def save_user_profile(request: UserProfileRequest):
     """
-    保存偏好到 Neo4j User 节点属性 + GraphZep 长期记忆。
+    保存偏好到 Neo4j User 节点属性，并通过 MemoryGateway 旁路写入长期记忆。
     """
     try:
         from retrieval.neo4j_client import get_neo4j_client
@@ -143,7 +143,7 @@ async def save_user_profile(request: UserProfileRequest):
             f"scenarios={request.preferred_scenarios}, langs={request.preferred_languages}"
         )
 
-        # ③ 生成自然语言描述 → 写入 GraphZep 长期记忆
+        # ③ 生成自然语言描述 → 投递 MemoryGateway 长期记忆旁路
         desc_parts = []
         if request.preferred_genres:
             desc_parts.append(f"喜欢的音乐流派: {', '.join(request.preferred_genres)}")
@@ -159,12 +159,18 @@ async def save_user_profile(request: UserProfileRequest):
         if desc_parts:
             description = "用户主动设置了音乐画像偏好 —— " + "；".join(desc_parts)
             try:
-                from services.graphzep_client import get_graphzep_client
-                gz = get_graphzep_client()
-                asyncio.create_task(gz.add_user_event(event_description=description))
-                logger.info(f"[UserProfile] GraphZep 偏好已投递: {description[:80]}...")
-            except Exception as gz_err:
-                logger.warning(f"[UserProfile] GraphZep 写入失败（不影响主流程）: {gz_err}")
+                from services.memory_gateway import get_memory_gateway
+
+                asyncio.create_task(
+                    get_memory_gateway().remember_text(
+                        description=description,
+                        user_id=request.user_id,
+                        extra={"source": "user_profile"},
+                    )
+                )
+                logger.info(f"[UserProfile] 长期记忆旁路已投递: {description[:80]}...")
+            except Exception as memory_err:
+                logger.warning(f"[UserProfile] 长期记忆写入失败（不影响主流程）: {memory_err}")
 
         # ★ 清除精排阶段的偏好缓存，确保下次推荐使用最新画像
         try:

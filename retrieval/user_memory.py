@@ -3,6 +3,31 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+
+SEMANTIC_LIST_FIELDS = {
+    "add_genres",
+    "avoid_genres",
+    "add_moods",
+    "avoid_moods",
+    "add_scenarios",
+    "avoid_scenarios",
+    "add_artists",
+    "avoid_artists",
+    "activity_contexts",
+}
+
+SEMANTIC_CONFLICT_FIELDS = {
+    "add_genres": "avoid_genres",
+    "avoid_genres": "add_genres",
+    "add_moods": "avoid_moods",
+    "avoid_moods": "add_moods",
+    "add_scenarios": "avoid_scenarios",
+    "avoid_scenarios": "add_scenarios",
+    "add_artists": "avoid_artists",
+    "avoid_artists": "add_artists",
+}
+
+
 class UserMemoryManager:
 
     """
@@ -316,10 +341,16 @@ class UserMemoryManager:
         ORDER BY rel.weight DESC, rel.play_count DESC LIMIT $limit
         OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
         OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
+        OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+        OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
         RETURN 
             collect(DISTINCT s.title) as favorite_songs,
             collect(DISTINCT g.name) as favorite_genres,
-            collect(DISTINCT a.name) as favorite_artists
+            collect(DISTINCT a.name) as favorite_artists,
+            collect(DISTINCT m.name) as favorite_moods,
+            collect(DISTINCT t.name) as favorite_themes,
+            collect(DISTINCT sc.name) as favorite_scenarios
         """
         if not self.neo4j_client:
             return {}
@@ -331,7 +362,10 @@ class UserMemoryManager:
                 prefs = {
                     "favorite_songs": record.get("favorite_songs", []),
                     "favorite_genres": record.get("favorite_genres", []),
-                    "favorite_artists": record.get("favorite_artists", [])
+                    "favorite_artists": record.get("favorite_artists", []),
+                    "favorite_moods": record.get("favorite_moods", []),
+                    "favorite_themes": record.get("favorite_themes", []),
+                    "favorite_scenarios": record.get("favorite_scenarios", [])
                 }
             # ============================================================
             # 【升级】合并 User 节点上的语义记忆属性
@@ -344,22 +378,44 @@ class UserMemoryManager:
             MATCH (u:User {id: $user_id})
             RETURN u.avoid_genres AS avoid_genres,
                    u.add_genres AS add_genres,
+                   u.add_moods AS add_moods,
+                   u.avoid_moods AS avoid_moods,
+                   u.add_scenarios AS add_scenarios,
+                   u.avoid_scenarios AS avoid_scenarios,
                    u.add_artists AS add_artists,
                    u.avoid_artists AS avoid_artists,
                    u.mood_tendency AS mood_tendency,
                    u.activity_contexts AS activity_contexts,
-                   u.language_preference AS language_preference
+                   u.language_preference AS language_preference,
+                   u.preferred_genres AS preferred_genres,
+                   u.preferred_moods AS preferred_moods,
+                   u.preferred_scenarios AS preferred_scenarios,
+                   u.preferred_languages AS preferred_languages,
+                   u.preferences_updated_at AS preferences_updated_at
             """
             semantic_result = self.neo4j_client.execute_query(semantic_query, {"user_id": user_id})
             if semantic_result and len(semantic_result) > 0:
                 sr = semantic_result[0]
                 prefs["avoid_genres"] = sr.get("avoid_genres", []) or []
                 prefs["preferred_genres_explicit"] = sr.get("add_genres", []) or []
+                prefs["add_moods"] = sr.get("add_moods", []) or []
+                prefs["avoid_moods"] = sr.get("avoid_moods", []) or []
+                prefs["add_scenarios"] = sr.get("add_scenarios", []) or []
+                prefs["avoid_scenarios"] = sr.get("avoid_scenarios", []) or []
                 prefs["preferred_artists_explicit"] = sr.get("add_artists", []) or []
                 prefs["avoid_artists"] = sr.get("avoid_artists", []) or []
                 prefs["mood_tendency"] = sr.get("mood_tendency", "")
                 prefs["activity_contexts"] = sr.get("activity_contexts", []) or []
                 prefs["language_preference"] = sr.get("language_preference", "")
+                prefs["preferences_updated_at"] = sr.get("preferences_updated_at", 0) or 0
+                import json as _json
+                for field in ["preferred_genres", "preferred_moods", "preferred_scenarios", "preferred_languages"]:
+                    raw = sr.get(field)
+                    if raw:
+                        try:
+                            prefs[field] = _json.loads(raw)
+                        except (TypeError, ValueError):
+                            prefs[field] = []
             return prefs
         except Exception as e:
             logger.error(f"提取用户图谱偏好失败: {e}")
@@ -387,13 +443,22 @@ class UserMemoryManager:
             set_clauses = []
             params = {"user_id": user_id}
             # 列表型字段：追加合并（去重）
-            list_fields = ["add_genres", "avoid_genres", "add_artists", "avoid_artists", "activity_contexts"]
+            list_fields = sorted(SEMANTIC_LIST_FIELDS)
             for field in list_fields:
                 values = extraction_result.get(field, [])
                 if values and isinstance(values, list) and len(values) > 0:
+                    conflict_field = SEMANTIC_CONFLICT_FIELDS.get(field)
+                    if conflict_field:
+                        set_clauses.append(
+                            f"u.{conflict_field} = ["
+                            f"x IN coalesce(u.{conflict_field}, []) "
+                            f"WHERE NOT (toLower(toString(x)) IN [v IN ${field} | toLower(toString(v))])"
+                            f"]"
+                        )
                     # 使用 APOC 风格的列表合并，或者简单的 Cypher coalesce + 手动去重
                     set_clauses.append(
-                        f"u.{field} = [x IN (coalesce(u.{field}, []) + ${field}) WHERE x IS NOT NULL | x]"
+                        f"u.{field} = reduce(acc = [], x IN coalesce(u.{field}, []) + ${field} | "
+                        f"CASE WHEN x IS NULL OR x IN acc THEN acc ELSE acc + x END)"
                     )
                     params[field] = values
             # 字符串型字段：直接覆盖（如果非空）
@@ -414,3 +479,54 @@ class UserMemoryManager:
             logger.info(f"[SemanticMemory] 成功更新用户 {user_id} 的语义偏好: {list(params.keys())}")
         except Exception as e:
             logger.error(f"[SemanticMemory] 偏好持久化失败: {e}")
+
+    def remove_semantic_preference(self, user_id: str, field: str, value: str) -> bool:
+        """Remove one learned preference item from an allowed User list field."""
+        if field not in SEMANTIC_LIST_FIELDS:
+            logger.warning(f"[SemanticMemory] 拒绝删除不支持的偏好字段: {field}")
+            return False
+        cleaned_value = str(value or "").strip()
+        if not cleaned_value or not self.neo4j_client:
+            return False
+        try:
+            query = f"""
+            MATCH (u:User {{id: $user_id}})
+            SET u.{field} = [
+                x IN coalesce(u.{field}, [])
+                WHERE toLower(toString(x)) <> toLower($value)
+            ],
+            u.preferences_updated_at = timestamp()
+            RETURN u.{field} AS values
+            """
+            self.neo4j_client.execute_query(query, {
+                "user_id": user_id,
+                "value": cleaned_value,
+            })
+            logger.info(
+                f"[SemanticMemory] 已删除用户 {user_id} 的语义偏好: {field}={cleaned_value}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"[SemanticMemory] 删除语义偏好失败: {e}")
+            return False
+
+    def clear_semantic_preferences(self, user_id: str) -> bool:
+        """Clear learned semantic preferences while keeping profile and song relations."""
+        if not self.neo4j_client:
+            return False
+        try:
+            list_sets = [f"u.{field} = []" for field in sorted(SEMANTIC_LIST_FIELDS)]
+            query = f"""
+            MATCH (u:User {{id: $user_id}})
+            SET {', '.join(list_sets)},
+                u.mood_tendency = '',
+                u.language_preference = '',
+                u.preferences_updated_at = timestamp()
+            RETURN u.id AS user_id
+            """
+            result = self.neo4j_client.execute_query(query, {"user_id": user_id})
+            logger.info(f"[SemanticMemory] 已清空用户 {user_id} 的系统学习偏好")
+            return bool(result is not None)
+        except Exception as e:
+            logger.error(f"[SemanticMemory] 清空语义偏好失败: {e}")
+            return False

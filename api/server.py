@@ -976,6 +976,22 @@ class SlateFeedbackRequest(BaseModel):
     extra: Optional[Dict[str, Any]] = None
 
 
+class RankingPolicyReplayRequest(BaseModel):
+    """Generate a validation-gated ranking-policy candidate from feedback logs."""
+    min_events: int = 20
+    per_user_min_events: int = 30
+    validation_ratio: float = 0.2
+    slate_top_k: int = 5
+    include_slate_feedback: bool = True
+    write_candidate: bool = True
+
+
+class MemoryPreferenceUpdateRequest(BaseModel):
+    """Editable memory update from the user profile panel."""
+    user_id: str = "local_admin"
+    preferences: Dict[str, Any]
+
+
 # ---- 新增:行为事件转自然语言 ----
 EVENT_TEMPLATES = {
     "like":      "用户对《{title}》{artist} 点了赞,表示喜欢这首歌",
@@ -999,6 +1015,10 @@ SUPPORTED_SLATE_RATINGS = {
     "more_discovery",
     "too_noisy",
     "too_quiet",
+    "too_sad",
+    "too_generic",
+    "more_niche",
+    "closer_to_seed",
     "wrong_context",
 }
 
@@ -1021,66 +1041,29 @@ async def capture_user_event(request: UserEventRequest):
     try:
         if request.event_type not in SUPPORTED_USER_EVENTS:
             raise HTTPException(status_code=422, detail="Unsupported user event type")
-        from retrieval.user_memory import UserMemoryManager
-        memory = UserMemoryManager()
-        memory.ensure_user_exists(request.user_id)
-
-        # ① 直写 Neo4j 关系（精确、快速、0.1s 内完成）
         event = request.event_type
         title = request.song_title
         artist = request.artist
 
-        if event == "like":
-            memory.record_liked_song(request.user_id, title, artist)
-        elif event == "save":
-            memory.record_saved_song(request.user_id, title, artist)
-        elif event == "repeat":
-            # 循环播放：先确保 LIKES 存在，再额外加权
-            memory.record_liked_song(request.user_id, title, artist)
-        elif event == "unlike":
-            memory.remove_like(request.user_id, title, artist)
-        elif event == "unsave":
-            memory.remove_save(request.user_id, title, artist)
-        elif event == "skip":
-            memory.record_skipped(request.user_id, title, artist)
-        elif event == "dislike":
-            memory.record_dislike(request.user_id, title, artist)
-        elif event == "full_play":
-            memory.record_listened_song(request.user_id, title, artist)
+        # MemoryGateway 统一写入 Neo4j 热路径、JSONL 反馈日志和可选 GraphZep 旁路。
+        from services.memory_gateway import get_memory_gateway
 
-        # ② 本地 JSONL 事件日志：供离线重放、排序权重学习和未来 DPO/SFT 数据构建。
-        try:
-            from services.feedback_logger import log_user_event
-            feedback_event_id = log_user_event(
-                event_type=event,
-                song_title=title,
-                artist=artist,
-                user_id=request.user_id,
-                exposure_id=request.exposure_id,
-                extra=request.extra,
-            )
-        except Exception as log_error:
-            logger.warning(f"[Feedback] 行为事件日志写入失败: {log_error}")
-            feedback_event_id = None
-
-        # ③ GraphZep 异步写入（仅作为补充上下文，不作为主记忆源）
-        template = EVENT_TEMPLATES.get(
-            event,
-            "用户对《{title}》{artist} 执行了" + event + " 操作"
+        result = await get_memory_gateway().remember_event(
+            event_type=event,
+            title=title,
+            artist=artist,
+            user_id=request.user_id,
+            exposure_id=request.exposure_id,
+            extra=request.extra if isinstance(request.extra, dict) else {"value": request.extra} if request.extra is not None else {},
         )
-        description = template.format(title=title, artist=artist)
-
-        if event != "play_start":
-            from services.graphzep_client import get_graphzep_client
-            client = get_graphzep_client()
-            asyncio.create_task(
-                client.add_user_event(event_description=description)
-            )
+        if not result.success:
+            raise HTTPException(status_code=422, detail=result.error or "user event failed")
 
         return {
             "success": True,
-            "event_recorded": description,
-            "feedback_event_id": feedback_event_id,
+            "event_recorded": result.description,
+            "feedback_event_id": result.feedback_event_id,
+            "graphzep_scheduled": result.graphzep_scheduled,
         }
 
     except HTTPException:
@@ -1095,8 +1078,8 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
     """Record feedback for an entire recommendation slate.
 
     This is the A3-lite bridge between user-facing evaluation buttons and
-    offline ranking replay.  It intentionally writes local JSONL only; GraphZep
-    will be redesigned later and should not be a hard dependency here.
+    offline ranking replay. MemoryGateway also turns high-confidence slate
+    feedback into conservative hot-path preference updates.
     """
     try:
         if not request.exposure_id.strip():
@@ -1104,9 +1087,9 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
         if request.rating not in SUPPORTED_SLATE_RATINGS:
             raise HTTPException(status_code=422, detail="Unsupported slate rating")
 
-        from services.feedback_logger import log_slate_feedback
+        from services.memory_gateway import get_memory_gateway
 
-        feedback_id = log_slate_feedback(
+        result = await get_memory_gateway().remember_slate_feedback(
             exposure_id=request.exposure_id,
             rating=request.rating,
             reasons=request.reasons,
@@ -1114,7 +1097,12 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
             user_id=request.user_id,
             extra=request.extra or {},
         )
-        return {"success": True, "feedback_id": feedback_id}
+        return {
+            "success": True,
+            "feedback_id": result.slate_feedback_id,
+            "preference_update": result.preference_update,
+            "graphzep_scheduled": result.graphzep_scheduled,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1159,6 +1147,148 @@ async def ranking_policy_status():
         "active": _summary(policy_path(ACTIVE_FILE)),
         "candidate": _summary(policy_path(CANDIDATE_FILE)),
     }
+
+
+@app.get("/api/memory/profile")
+async def memory_profile(user_id: str = "local_admin"):
+    """Return editable hot-path memory and configured episodic sidecars."""
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        return {
+            "success": True,
+            "memory": get_memory_gateway().explain_memory(user_id=user_id),
+        }
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 读取记忆画像失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/memory/preference")
+async def add_memory_preference(request: MemoryPreferenceUpdateRequest):
+    """Add structured preferences to the Neo4j hot path."""
+    reject_public_demo_action("update memory preference")
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        result = get_memory_gateway().remember_preference(
+            user_id=request.user_id,
+            preferences=request.preferences,
+        )
+        return {
+            "success": result.success,
+            "preference_update": result.preference_update,
+        }
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 写入记忆偏好失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/memory/preference")
+async def delete_memory_preference(
+    field: str,
+    value: str,
+    user_id: str = "local_admin",
+):
+    """Delete one learned preference item from the Neo4j hot path."""
+    reject_public_demo_action("delete memory preference")
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        ok = get_memory_gateway().forget_preference_item(
+            user_id=user_id,
+            field=field,
+            value=value,
+        )
+        if not ok:
+            raise HTTPException(status_code=422, detail="Unsupported memory field or value")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 删除记忆偏好失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/memory/profile")
+async def clear_learned_memory_profile(
+    user_id: str = "local_admin",
+):
+    """Clear learned hot-path preference fields, keeping manual profile and song relations."""
+    reject_public_demo_action("clear learned memory profile")
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        ok = get_memory_gateway().clear_learned_preferences(user_id=user_id)
+        if not ok:
+            raise HTTPException(status_code=422, detail="Unable to clear learned preferences")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 清空学习记忆失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/ranking-policy/replay")
+async def ranking_policy_replay(
+    request: RankingPolicyReplayRequest,
+    _: None = Depends(require_admin_api_key),
+):
+    """Fit a candidate ranking policy from logged exposures and feedback."""
+    reject_public_demo_action("learn ranking policy")
+    from services.feedback_logger import load_jsonl
+    from services.ranking_learning import learn_ranking_policy
+    from services.ranking_policy import feedback_dir, write_candidate
+
+    root = feedback_dir()
+    exposures = load_jsonl(root / "exposures.jsonl")
+    events = load_jsonl(root / "events.jsonl")
+    slate_feedback = (
+        load_jsonl(root / "slate_feedback.jsonl")
+        if request.include_slate_feedback
+        else []
+    )
+    report = learn_ranking_policy(
+        exposures,
+        events,
+        slate_feedback=slate_feedback,
+        min_events=max(1, int(request.min_events)),
+        per_user_min_events=max(1, int(request.per_user_min_events)),
+        validation_ratio=max(0.05, min(float(request.validation_ratio), 0.5)),
+        slate_top_k=max(1, min(int(request.slate_top_k), 10)),
+    )
+    report["num_exposures"] = len(exposures)
+    report["num_events"] = len(events)
+    report["num_slate_feedback"] = len(slate_feedback)
+    candidate_path = None
+    if request.write_candidate:
+        candidate_path = str(write_candidate(report, root))
+    return {
+        "success": True,
+        "candidate_path": candidate_path,
+        "report": report,
+    }
+
+
+@app.post("/api/ranking-policy/promote")
+async def ranking_policy_promote(_: None = Depends(require_admin_api_key)):
+    """Promote a gate-passed candidate policy to the active runtime policy."""
+    reject_public_demo_action("promote ranking policy")
+    from services.ranking_policy import feedback_dir, promote_candidate
+
+    path = promote_candidate(feedback_dir())
+    return {"success": True, "active_path": str(path)}
+
+
+@app.post("/api/ranking-policy/rollback")
+async def ranking_policy_rollback(_: None = Depends(require_admin_api_key)):
+    """Restore the previous active ranking policy."""
+    reject_public_demo_action("rollback ranking policy")
+    from services.ranking_policy import feedback_dir, rollback_policy
+
+    path = rollback_policy(feedback_dir())
+    return {"success": True, "active_path": str(path)}
 
 
 @app.get("/api/catalog-diagnostics")
@@ -1522,6 +1652,17 @@ class PendingIngestRequest(BaseModel):
     songs: List[PendingIngestItem]
 
 
+class LibraryTagUpdateRequest(BaseModel):
+    music_id: str = ""
+    title: str = ""
+    artist: str = ""
+    genres: List[str] = []
+    moods: List[str] = []
+    themes: List[str] = []
+    scenarios: List[str] = []
+    language: str = ""
+
+
 @app.post("/api/pending-songs/ingest")
 async def ingest_pending_songs(
     request: PendingIngestRequest,
@@ -1625,6 +1766,44 @@ async def delete_pending_song(
     }
 
 
+@app.get("/api/ingest-jobs")
+async def get_ingest_jobs(limit: int = 30):
+    """Return recent offline ingestion worker jobs for the pending-import UI."""
+    try:
+        from services.ingest_queue import list_jobs
+
+        jobs = list_jobs(limit=limit)
+        counts: dict[str, int] = {}
+        for job in jobs:
+            status = str(job.get("status") or "unknown")
+            counts[status] = counts.get(status, 0) + 1
+        return {"success": True, "jobs": jobs, "counts": counts}
+    except Exception as e:
+        logger.error(f"[ingest-jobs] 查询队列失败: {e}")
+        return {"success": False, "jobs": [], "counts": {}, "error": str(e)}
+
+
+@app.post("/api/ingest-jobs/{job_id}/retry")
+async def retry_ingest_job(
+    job_id: str,
+    _: None = Depends(require_admin_api_key),
+):
+    """Retry a failed enrichment job by moving it back to the pending queue."""
+    reject_public_demo_action("retry ingest job")
+    try:
+        from services.ingest_queue import retry_failed_job
+
+        ok = retry_failed_job(job_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Failed job not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ingest-jobs] 重试任务失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 # ================================================================
 # 我的曲库 (Library) API — 查询 Neo4j 图谱中的全部歌曲
 # ================================================================
@@ -1698,6 +1877,118 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
     except Exception as e:
         logger.error(f"查询曲库失败: {e}")
         return {"success": False, "songs": [], "total": 0, "error": str(e)}
+
+
+@app.patch("/api/library-songs/tags")
+async def update_library_song_tags(
+    request: LibraryTagUpdateRequest,
+    _: None = Depends(require_admin_api_key),
+):
+    """Update curated tags on one Song node and its tag relationships."""
+    reject_public_demo_action("update library song tags")
+    if not request.music_id and not (request.title and request.artist):
+        raise HTTPException(status_code=400, detail="music_id or title+artist is required")
+
+    def _clean(values: List[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for value in values or []:
+            text = str(value or "").strip()
+            key = text.casefold()
+            if text and key not in seen:
+                seen.add(key)
+                out.append(text[:80])
+        return out[:5]
+
+    relationship_specs = {
+        "genres": ("BELONGS_TO_GENRE", "Genre"),
+        "moods": ("HAS_MOOD", "Mood"),
+        "themes": ("HAS_THEME", "Theme"),
+        "scenarios": ("FITS_SCENARIO", "Scenario"),
+    }
+    values_by_field = {
+        "genres": _clean(request.genres),
+        "moods": _clean(request.moods),
+        "themes": _clean(request.themes),
+        "scenarios": _clean(request.scenarios),
+    }
+    language = str(request.language or "").strip()[:40]
+
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+
+        client = get_neo4j_client()
+        match = """
+        MATCH (s:Song)
+        WHERE ($music_id <> '' AND s.music_id = $music_id)
+           OR ($music_id = '' AND s.title = $title AND coalesce(s.artist, '') = $artist)
+        WITH s LIMIT 1
+        """
+        exists = client.execute_query(
+            match + " RETURN elementId(s) AS sid",
+            {
+                "music_id": request.music_id,
+                "title": request.title,
+                "artist": request.artist,
+            },
+        )
+        if not exists:
+            raise HTTPException(status_code=404, detail="Song not found")
+
+        for field, values in values_by_field.items():
+            rel, label = relationship_specs[field]
+            client.execute_query(
+                match
+                + f"""
+                OPTIONAL MATCH (s)-[old:{rel}]->(:{label})
+                DELETE old
+                WITH s
+                SET s.{field} = $values,
+                    s.updated_at = timestamp()
+                WITH s
+                UNWIND $values AS tag_name
+                MERGE (tag:{label} {{name: tag_name}})
+                MERGE (s)-[:{rel}]->(tag)
+                RETURN count(tag) AS updated
+                """,
+                {
+                    "music_id": request.music_id,
+                    "title": request.title,
+                    "artist": request.artist,
+                    "values": values,
+                },
+            )
+
+        if language:
+            client.execute_query(
+                match
+                + """
+                OPTIONAL MATCH (s)-[old:IN_LANGUAGE]->(:Language)
+                DELETE old
+                WITH s
+                MERGE (lang:Language {name: $language})
+                MERGE (s)-[:IN_LANGUAGE]->(lang)
+                SET s.language = $language,
+                    s.updated_at = timestamp()
+                RETURN lang.name AS language
+                """,
+                {
+                    "music_id": request.music_id,
+                    "title": request.title,
+                    "artist": request.artist,
+                    "language": language,
+                },
+            )
+
+        return {
+            "success": True,
+            "tags": {**values_by_field, "language": language},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[library-tags] 更新标签失败: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 if __name__ == "__main__":

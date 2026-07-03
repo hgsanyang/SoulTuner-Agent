@@ -58,7 +58,7 @@ class MusicAgentState(TypedDict, total=False):
     refinement_options: List[Dict[str, Any]]  # B3: 非阻塞细化 chips
 
     # GraphZep 记忆上下文（新增）
-    graphzep_facts: str           # 从 GraphZep 召回的事实文本
+    graphzep_facts: str           # 兼容字段：从 MemoryGateway 召回的长期记忆文本
     graphzep_group_id: str        # 当前会话的 group ID
 
     # 歌单相关（新增）
