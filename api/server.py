@@ -1906,16 +1906,7 @@ async def update_library_song_tags(
     if not request.music_id and not (request.title and request.artist):
         raise HTTPException(status_code=400, detail="music_id or title+artist is required")
 
-    def _clean(values: List[str]) -> List[str]:
-        out: List[str] = []
-        seen = set()
-        for value in values or []:
-            text = str(value or "").strip()
-            key = text.casefold()
-            if text and key not in seen:
-                seen.add(key)
-                out.append(text[:80])
-        return out[:5]
+    from services.tag_policy import clean_tag_payload
 
     relationship_specs = {
         "genres": ("BELONGS_TO_GENRE", "Genre"),
@@ -1923,12 +1914,7 @@ async def update_library_song_tags(
         "themes": ("HAS_THEME", "Theme"),
         "scenarios": ("FITS_SCENARIO", "Scenario"),
     }
-    values_by_field = {
-        "genres": _clean(request.genres),
-        "moods": _clean(request.moods),
-        "themes": _clean(request.themes),
-        "scenarios": _clean(request.scenarios),
-    }
+    values_by_field = clean_tag_payload(request.model_dump())
     language = str(request.language or "").strip()[:40]
 
     try:

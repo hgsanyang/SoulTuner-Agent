@@ -317,16 +317,17 @@ Replay uses `explicit_feedback_logistic_v2`: strict exposure attribution, chrono
 ```powershell
 python scripts/p7_smoke.py
 python scripts/p7_smoke.py --api-base http://localhost:8501
+python scripts/p9_p14_smoke.py
 ```
 
-The smoke check does not call an LLM or read raw private queries. It validates public-demo safety guards, path safety, A3 readiness, text-to-music backend configuration, alignment calibration configuration, and optional API health.
+These smoke checks do not call an LLM or read raw private queries. `p7_smoke.py` validates public-demo safety guards, path safety, A3 readiness, text-to-music backend configuration, alignment calibration configuration, and optional API health. `p9_p14_smoke.py` validates context pressure cases, Catalog Gap Detector, post-recall adjustments, ingest queue, slate feedback, MemoryGateway preference mapping, tag hygiene, and library UI entrypoints.
 
 ### Engineering Quality
 
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 272 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7 smoke, alignment adapter, public demo, teacher logs, and more |
+| **Unit Testing** | 281 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, alignment adapter, public demo, teacher logs, tag hygiene, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; `context_dev/context_holdout` add a Chinese context-matching ruler with 11 goal categories and 4 specificity levels |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
