@@ -53,7 +53,8 @@ _RECENCY_PATTERNS = (
     r"(?:最新|最近|今年|本周|本月|刚出|刚发|新歌|新曲|新专|2026|latest|new release)",
 )
 _EXTERNAL_KNOWLEDGE_PATTERNS = (
-    r"(?:榜单|排名|获奖|新闻|资讯|巡演|演唱会|背景|代表作|口碑|playlist|chart|award|news)",
+    r"(?:榜单|排名|获奖|新闻|资讯|巡演|演唱会|代表作|口碑|playlist|chart|award|news)",
+    r"(?:创作背景|歌曲背景|歌手背景|背景故事|background info|background story)",
 )
 
 

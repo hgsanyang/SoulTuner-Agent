@@ -51,6 +51,42 @@ def test_normal_catalog_with_web_enabled_mix_in():
     assert decision.target_web_count == 4
 
 
+def test_background_music_is_not_external_knowledge_fallback():
+    local = [
+        {"song": {"title": f"Rain {i}", "artist": "A", "preview_url": "u"}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        _plan(),
+        "雨夜看书，想要温柔背景音乐，不要太燃也不要派对感",
+        web_enabled=True,
+    )
+
+    assert decision.action == "mix_in"
+    assert "external_knowledge_required" not in decision.reasons
+    assert decision.discovery_required is False
+
+
+def test_song_background_request_still_uses_external_discovery():
+    local = [
+        {"song": {"title": f"Song {i}", "artist": "A", "preview_url": "u"}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        _plan(),
+        "查一下晴天这首歌的创作背景和代表作资料",
+        web_enabled=True,
+    )
+
+    assert decision.action == "fallback"
+    assert "external_knowledge_required" in decision.reasons
+    assert decision.discovery_required is True
+
+
 def test_interleave_online_results_keeps_target_length_and_dedupes():
     local = [{"song": {"title": f"L{i}", "artist": "A"}} for i in range(8)]
     online = [
