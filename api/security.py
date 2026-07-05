@@ -1,9 +1,4 @@
-"""Small security helpers for local/admin API routes.
-
-The project defaults to a friendly single-user local mode.  When a public demo
-or admin API key is configured, destructive routes must be protected and file
-paths must stay inside the intended media roots.
-"""
+"""Small security helpers for local/admin API routes."""
 
 from __future__ import annotations
 
@@ -32,14 +27,14 @@ def _truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def public_demo_enabled() -> bool:
-    """Return whether public demo protections should be enforced."""
+def shared_safe_mode_enabled() -> bool:
+    """Return whether shared-environment protections should be enforced."""
     try:
         from config.settings import settings
 
         return bool(getattr(settings, "public_demo_mode", False))
     except Exception:
-        return _truthy(os.getenv("PUBLIC_DEMO_MODE"))
+        return _truthy(os.getenv("SHARED_SAFE_MODE")) or _truthy(os.getenv("PUBLIC_DEMO_MODE"))
 
 
 def _admin_api_key() -> str:
@@ -52,14 +47,14 @@ def _admin_api_key() -> str:
 
 
 def admin_key_required() -> bool:
-    """Local mode stays keyless unless a key or public demo is configured."""
+    """Local mode stays keyless unless a key or shared safe mode is configured."""
     try:
         from config.settings import settings
 
         configured = bool(getattr(settings, "api_key_required", False))
     except Exception:
         configured = _truthy(os.getenv("API_KEY_REQUIRED"))
-    return configured or bool(_admin_api_key()) or public_demo_enabled()
+    return configured or bool(_admin_api_key()) or shared_safe_mode_enabled()
 
 
 async def require_admin_api_key(
@@ -72,7 +67,7 @@ async def require_admin_api_key(
     if not expected:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin API key is required in public/demo mode.",
+            detail="Admin API key is required in shared safe mode.",
         )
     if x_api_key != expected:
         raise HTTPException(
@@ -81,12 +76,12 @@ async def require_admin_api_key(
         )
 
 
-def reject_public_demo_action(action: str) -> None:
-    """Block filesystem-changing actions in public demo mode."""
-    if public_demo_enabled():
+def reject_shared_safe_action(action: str) -> None:
+    """Block filesystem-changing actions in shared safe mode."""
+    if shared_safe_mode_enabled():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"{action} is disabled in PUBLIC_DEMO_MODE.",
+            detail=f"{action} is disabled in shared safe mode.",
         )
 
 
