@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-244_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-317_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -305,12 +305,14 @@ After P11, ingestion keeps more auditable enrichment metadata. `genres/moods/the
 python scripts/p11_data_flywheel_audit.py
 python scripts/p11_prepare_online_ingest.py
 python scripts/p11_prepare_online_ingest.py --quick-ingest --enqueue
-python scripts/p11_sync_knowledge_cache.py --dry-run
+python scripts/p15_enrich_music_knowledge.py --artist "The Cure" --dry-run
+python scripts/p11_sync_knowledge_cache.py --from sqlite --dry-run
+python -m tests.eval.evaluate_knowledge_gap
 ```
 
 The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. `p11_prepare_online_ingest.py` defaults to dry-run; `--quick-ingest` writes valid metadata into Neo4j immediately, and `--enqueue` schedules the background worker to add lyrics tags plus MuQ/M2D/OMAR vectors.
 
-Artist/song descriptions use a two-layer knowledge store. `MusicKnowledgeCache` keeps full cards, source URLs, and fact lists under `../data/knowledge_cache/` (gitignored). `p11_sync_knowledge_cache.py` syncs only lightweight summaries and `KnowledgeCard` relationships into Neo4j for search expansion, library detail pages, and recommendation explanations. These are optional RAG entries, not hard catalog facts.
+Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. SQLite FTS is the default RAG backend. If the knowledge base grows later, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant` or `ENABLE_QDRANT=1` in `.env`; `.\soultuner.ps1 up cpu/gpu` will start the Qdrant container automatically, so no manual download is required.
 
 ### Feedback Loop
 

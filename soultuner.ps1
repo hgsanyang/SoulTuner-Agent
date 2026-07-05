@@ -106,7 +106,7 @@ function Start-NeteaseApi {
 }
 
 function Stop-NeteaseApi {
-    $containerId = docker compose --profile cpu --profile gpu --profile memory ps -q netease 2>$null
+    $containerId = docker compose --profile cpu --profile gpu --profile memory --profile rag ps -q netease 2>$null
     if ($LASTEXITCODE -eq 0 -and $containerId) {
         docker compose --profile cpu --profile gpu stop netease
         Assert-LastNativeCommand "Stopping Docker Netease proxy"
@@ -127,7 +127,7 @@ function Stop-NeteaseApi {
 }
 
 function Stop-LocalNeteaseApiForDocker {
-    $containerId = docker compose --profile cpu --profile gpu --profile memory ps -q netease 2>$null
+    $containerId = docker compose --profile cpu --profile gpu --profile memory --profile rag ps -q netease 2>$null
     if ($LASTEXITCODE -eq 0 -and $containerId) {
         return
     }
@@ -151,11 +151,17 @@ switch ($Action) {
         $ComposeFiles = @("-f", "docker-compose.yml")
         $MemoryBackends = (($env:MEMORY_EPISODIC_BACKENDS -split ",") | ForEach-Object { $_.Trim().ToLowerInvariant() })
         $UseGraphZep = $MemoryBackends -contains "graphzep"
+        $UseQdrant = ($env:MUSIC_KNOWLEDGE_VECTOR_BACKEND -eq "qdrant") -or ($env:ENABLE_QDRANT -eq "1")
         if ($Profile -eq "gpu") {
             $ComposeFiles += @("-f", "docker-compose.gpu.yml")
             $env:DENSE_TEXT_AUDIO_BACKEND = "muq"
         } else {
             $env:DENSE_TEXT_AUDIO_BACKEND = "m2d"
+        }
+        if ($UseQdrant) {
+            $env:MUSIC_KNOWLEDGE_VECTOR_BACKEND = "qdrant"
+            docker compose @ComposeFiles --profile rag up -d qdrant
+            Assert-LastNativeCommand "Starting optional Qdrant knowledge sidecar"
         }
         docker compose @ComposeFiles --profile $Profile up -d --remove-orphans neo4j searxng netease backend
         Assert-LastNativeCommand "Starting core Docker services"
@@ -177,11 +183,16 @@ switch ($Action) {
         } else {
             Write-Host "Memory:   Neo4j hot path only (set MEMORY_EPISODIC_BACKENDS=graphzep to enable GraphZep)"
         }
+        if ($UseQdrant) {
+            Write-Host "Qdrant:   http://localhost:6333 (optional knowledge vector sidecar)"
+        } else {
+            Write-Host "RAG:      SQLite FTS knowledge store (set MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant or ENABLE_QDRANT=1 to enable Qdrant)"
+        }
         Write-Host "SearxNG:  http://localhost:8888"
         Write-Host "Netease:  http://localhost:3000"
     }
     "down" {
-        docker compose --profile cpu --profile gpu --profile memory down
+        docker compose --profile cpu --profile gpu --profile memory --profile rag down
         Assert-LastNativeCommand "Stopping Docker services"
     }
     "doctor" {
@@ -199,7 +210,7 @@ switch ($Action) {
         }
     }
     "logs" {
-        docker compose --profile cpu --profile gpu --profile memory logs -f --tail 200
+        docker compose --profile cpu --profile gpu --profile memory --profile rag logs -f --tail 200
     }
     "mock" {
         Invoke-ProjectPython start.py --mock

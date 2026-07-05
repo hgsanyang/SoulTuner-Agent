@@ -206,12 +206,23 @@ def normalize_knowledge_card(payload: Mapping[str, Any]) -> dict[str, Any]:
     source_url = _clean_text(payload.get("source_url") or payload.get("url"), max_length=800)
     source = _clean_text(payload.get("source"), max_length=80) or "web"
     confidence = clamp_confidence(payload.get("confidence"), source_confidence(source))
+    style_tags = [
+        _clean_text(tag, max_length=80)
+        for tag in payload.get("style_tags") or []
+        if _clean_text(tag, max_length=80)
+    ][:12]
+    try:
+        release_year = int(payload.get("release_year") or 0)
+    except (TypeError, ValueError):
+        release_year = 0
     return {
         "kind": kind,
         "title": _clean_text(payload.get("title"), max_length=220),
         "artist": _clean_text(payload.get("artist"), max_length=220),
         "summary": summary,
         "facts": facts,
+        "style_tags": style_tags,
+        "release_year": release_year if 1900 <= release_year <= 2100 else None,
         "source": source,
         "source_url": source_url,
         "confidence": confidence,

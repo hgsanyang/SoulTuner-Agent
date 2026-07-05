@@ -66,6 +66,17 @@ It currently covers six slate-feedback mappings, including noisy/sad/quiet,
 over-familiar, niche discovery, and seed-closeness feedback. It does not call
 Neo4j, GraphZep, Mem0, or LLMs.
 
+Catalog Gap + knowledge-store routing has a separate targeted ruler:
+
+```powershell
+python -m tests.eval.evaluate_knowledge_gap
+```
+
+It covers era requests, artist-style/background evidence, same-era similarity,
+true inventory-gap web fallback, and source citation. It uses only temporary
+SQLite knowledge cards and deterministic local recommendation fixtures, so it
+does not consume LLM/API budget.
+
 A3 ranking policy readiness is exposed through the API and a lightweight smoke
 script. It is not a quality ruler; it answers the operational question "what is
 safe to do next with the collected feedback?"

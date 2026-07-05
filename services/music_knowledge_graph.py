@@ -13,6 +13,8 @@ def knowledge_card_params(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize a knowledge card into safe Neo4j parameters."""
 
     card = normalize_knowledge_card(payload)
+    style_tags = payload.get("style_tags") or []
+    release_year = payload.get("release_year")
     key = knowledge_key(card["kind"], card.get("title", ""), card.get("artist", ""))
     return {
         "key": key,
@@ -21,6 +23,8 @@ def knowledge_card_params(payload: Mapping[str, Any]) -> dict[str, Any]:
         "artist": card.get("artist", ""),
         "summary": card.get("summary", ""),
         "facts_json": json.dumps(card.get("facts") or [], ensure_ascii=False, sort_keys=True),
+        "style_tags_json": json.dumps(style_tags if isinstance(style_tags, list) else [], ensure_ascii=False, sort_keys=True),
+        "release_year": release_year,
         "source": card.get("source", "web"),
         "source_url": card.get("source_url", ""),
         "confidence": card.get("confidence", 0.5),
@@ -34,6 +38,8 @@ SET k.kind = $kind,
     k.artist = $artist,
     k.summary = $summary,
     k.facts_json = $facts_json,
+    k.style_tags_json = $style_tags_json,
+    k.release_year = $release_year,
     k.source = $source,
     k.source_url = $source_url,
     k.confidence = $confidence,

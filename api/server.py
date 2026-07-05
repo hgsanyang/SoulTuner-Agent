@@ -1863,12 +1863,24 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
         OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
         OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
         OPTIONAL MATCH (s)-[:IN_LANGUAGE]->(lang:Language)
+        OPTIONAL MATCH (s)-[:HAS_LANGUAGE]->(lang2:Language)
+        OPTIONAL MATCH (s)-[:HAS_KNOWLEDGE]->(kc:KnowledgeCard)
         WITH s, a,
              collect(DISTINCT m.name) AS moods,
              collect(DISTINCT t.name) AS themes,
              collect(DISTINCT g.name) AS genres,
              collect(DISTINCT sc.name) AS scenarios,
-             collect(DISTINCT lang.name) AS languages
+             collect(DISTINCT lang.name) + collect(DISTINCT lang2.name) AS languages,
+             collect(DISTINCT {
+                key: kc.key,
+                kind: kc.kind,
+                summary: kc.summary,
+                source: kc.source,
+                source_url: kc.source_url,
+                confidence: kc.confidence,
+                release_year: kc.release_year,
+                style_tags_json: kc.style_tags_json
+             }) AS knowledge_cards
         RETURN s.title AS title,
                coalesce(a.name, s.artist, 'Unknown') AS artist,
                s.album AS album,
@@ -1880,8 +1892,18 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                s.duration AS duration,
                s.format AS format,
                s.vibe AS vibe,
+               s.source_platform AS source_platform,
+               s.source_id AS source_id,
+               s.metadata_source AS metadata_source,
+               s.release_year AS release_year,
+               s.tag_source AS tag_source,
+               s.tag_confidence_json AS tag_confidence_json,
+               size(coalesce(s.muq_embedding, [])) AS muq_dim,
+               size(coalesce(s.m2d2_embedding, [])) AS m2d_dim,
+               size(coalesce(s.omar_embedding, [])) AS omar_dim,
                moods, themes, genres, scenarios,
-               coalesce(s.language, languages[0], '') AS language
+               coalesce(s.language, languages[0], '') AS language,
+               knowledge_cards
         ORDER BY s.updated_at DESC
         SKIP $offset LIMIT $limit
         """
@@ -1893,6 +1915,29 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
 
         songs = []
         for r in results:
+            vector_coverage = {
+                "muq": int(r.get("muq_dim") or 0) == 512,
+                "m2d": int(r.get("m2d_dim") or 0) == 768,
+                "omar": int(r.get("omar_dim") or 0) == 1024,
+            }
+            knowledge_cards = [
+                card
+                for card in (r.get("knowledge_cards") or [])
+                if isinstance(card, dict) and card.get("summary")
+            ][:3]
+            missing_fields = []
+            for field_name, value in (
+                ("audio", r.get("audio_url")),
+                ("cover", r.get("cover_url")),
+                ("lyrics", r.get("lrc_url")),
+                ("language", r.get("language")),
+                ("release_year", r.get("release_year")),
+            ):
+                if value in (None, "", [], "Unknown", "unknown"):
+                    missing_fields.append(field_name)
+            for field_name, covered in vector_coverage.items():
+                if not covered:
+                    missing_fields.append(f"{field_name}_embedding")
             songs.append({
                 "title": r.get("title", ""),
                 "artist": r.get("artist", "Unknown"),
@@ -1910,6 +1955,15 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "genres": r.get("genres", []),
                 "scenarios": r.get("scenarios", []),
                 "language": r.get("language", ""),
+                "release_year": r.get("release_year"),
+                "source_platform": r.get("source_platform", ""),
+                "source_id": r.get("source_id", ""),
+                "metadata_source": r.get("metadata_source", ""),
+                "tag_source": r.get("tag_source", ""),
+                "tag_confidence_json": r.get("tag_confidence_json", ""),
+                "vector_coverage": vector_coverage,
+                "missing_fields": missing_fields,
+                "knowledge_cards": knowledge_cards,
             })
 
         return {"success": True, "songs": songs, "total": total}

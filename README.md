@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-244_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-317_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -306,12 +306,14 @@ P11 后，入库增强会保留更多可审计信息：`genres/moods/themes/scen
 python scripts/p11_data_flywheel_audit.py
 python scripts/p11_prepare_online_ingest.py
 python scripts/p11_prepare_online_ingest.py --quick-ingest --enqueue
-python scripts/p11_sync_knowledge_cache.py --dry-run
+python scripts/p15_enrich_music_knowledge.py --artist "The Cure" --dry-run
+python scripts/p11_sync_knowledge_cache.py --from sqlite --dry-run
+python -m tests.eval.evaluate_knowledge_gap
 ```
 
 审计脚本不调用 LLM/GPU/网络，只检查 `../data/online_acquired/` 与入库队列：哪些歌缺音频、封面、歌词、发行年份，哪些队列任务无效。`p11_prepare_online_ingest.py` 默认 dry-run；加 `--quick-ingest` 会把有效元数据秒级写入 Neo4j，加 `--enqueue` 会加入后台 Worker 队列补歌词标签与 MuQ/M2D/OMAR 向量。
 
-歌手/歌曲介绍采用双层知识库：`MusicKnowledgeCache` 在 `../data/knowledge_cache/` 保存完整知识卡、来源 URL 与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py` 只把摘要和 `KnowledgeCard` 关系同步到 Neo4j，供搜索扩展、曲库详情页和推荐解释读取。它是可选 RAG 缓存，不作为歌曲硬过滤事实。
+歌手/歌曲介绍采用双层知识库：SQLite `MusicKnowledgeStore` 在 `../data/knowledge_cache/music_knowledge.sqlite` 保存完整知识卡、来源 URL、置信度、更新时间、风格标签与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py --from sqlite` 只把摘要、来源和 `KnowledgeCard` 关系同步到 Neo4j，供 Catalog Gap Detector、曲库详情页和推荐解释读取。联网搜索只在 `p15_enrich_music_knowledge.py` 这类离线增强脚本中运行，不进入推荐热路径。默认 RAG 后端是 SQLite FTS；如果后续知识库变大，可在 `.env` 设置 `MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant` 或 `ENABLE_QDRANT=1`，`.\soultuner.ps1 up cpu/gpu` 会自动拉起 Qdrant 容器，无需手动下载安装。
 
 ### 反馈闭环
 

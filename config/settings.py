@@ -307,6 +307,36 @@ class GlobalSettings(BaseSettings):
         validation_alias="CATALOG_GAP_MIN_LOCAL_RESULTS",
         description="低于该数量且存在可执行约束时，视为本地库存不足",
     )
+    knowledge_store_path: str = Field(
+        default="../data/knowledge_cache/music_knowledge.sqlite",
+        validation_alias="MUSIC_KNOWLEDGE_STORE_PATH",
+        description="离线音乐知识库 SQLite 路径，存歌手/歌曲知识卡、来源与 FTS 索引",
+    )
+    knowledge_cache_path: str = Field(
+        default="../data/knowledge_cache/music_knowledge.jsonl",
+        validation_alias="MUSIC_KNOWLEDGE_CACHE_PATH",
+        description="兼容 JSONL 知识卡缓存路径",
+    )
+    knowledge_gap_enabled: bool = Field(
+        default=True,
+        validation_alias="MUSIC_KNOWLEDGE_GAP_ENABLED",
+        description="Catalog Gap Detector 是否查询本地知识库作为外部知识证据",
+    )
+    knowledge_gap_min_confidence: float = Field(
+        default=0.55,
+        validation_alias="MUSIC_KNOWLEDGE_GAP_MIN_CONFIDENCE",
+        description="知识卡作为本地证据的最低置信度",
+    )
+    qdrant_url: str = Field(
+        default="http://localhost:6333",
+        validation_alias="QDRANT_URL",
+        description="可选 Qdrant RAG 向量服务地址；默认 Docker 服务端口",
+    )
+    knowledge_vector_backend: str = Field(
+        default="sqlite",
+        validation_alias="MUSIC_KNOWLEDGE_VECTOR_BACKEND",
+        description="知识库语义检索后端: sqlite | qdrant；当前默认 SQLite FTS，Qdrant 为可选增强",
+    )
     user_preference_limit: int = Field(
         default=20,
         description="从 Neo4j 读取用户偏好时的最大条数",
