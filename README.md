@@ -293,6 +293,19 @@ python -m tests.eval.evaluate_knowledge_gap
 
 歌手/歌曲介绍采用双层知识库：SQLite `MusicKnowledgeStore` 在 `../data/knowledge_cache/music_knowledge.sqlite` 保存完整知识卡、来源 URL、置信度、更新时间、风格标签与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py --from sqlite` 只把摘要、来源和 `KnowledgeCard` 关系同步到 Neo4j，供 Catalog Gap Detector、曲库详情页和推荐解释读取。联网搜索只在 `p15_enrich_music_knowledge.py` 这类离线增强脚本中运行，不进入推荐热路径。`.\soultuner.ps1 up cpu/gpu` 默认同时启动 Qdrant 容器，知识检索会先走 SQLite FTS 精确命中，再并入 Qdrant 摘要向量召回；若只想保留轻量 SQLite，可在 `.env` 设 `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` 或启动前设置 `DISABLE_QDRANT=1`。
 
+如果国内网络拉取 `qdrant/qdrant:v1.15.5` 超时，可在 `.env` 临时设置：
+
+```env
+QDRANT_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5
+```
+
+或者先手动拉取并打官方 tag：
+
+```powershell
+docker pull swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5
+docker tag swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5 qdrant/qdrant:v1.15.5
+```
+
 ### 反馈闭环
 
 推荐完成时会写入 `${MUSIC_DATA_PATH}/feedback/exposures.jsonl`，记录 query hash、intent、三路来源排名、内容锚分数、召回后校正分量和最终位置；默认不保存原始 query。前端把 `exposure_id` 和位置随点赞、收藏、跳过、完整播放、循环、不喜欢一起回传。开始播放是中性事件，未点击不当负样本，只有显式 `skip/dislike` 才是负反馈。
