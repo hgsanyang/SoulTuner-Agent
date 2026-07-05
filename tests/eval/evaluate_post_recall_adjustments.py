@@ -39,6 +39,25 @@ def _candidate(title: str, score: float, affinity: float = 0.0) -> dict[str, Any
     }
 
 
+def _tagged_candidate(
+    title: str,
+    score: float,
+    *,
+    genres: list[str] | None = None,
+    moods: list[str] | None = None,
+    scenarios: list[str] | None = None,
+) -> dict[str, Any]:
+    row = _candidate(title, score)
+    row["song"].update(
+        {
+            "genres": genres or [],
+            "moods": moods or [],
+            "scenarios": scenarios or [],
+        }
+    )
+    return row
+
+
 def _rank(items: list[dict[str, Any]], score_field: str) -> list[str]:
     return [
         item["song"]["title"]
@@ -131,6 +150,53 @@ def evaluate_synthetic() -> dict[str, Any]:
                 "longtail": item["_post_longtail_score"],
                 "exposure_penalty": item["_post_exposure_penalty"],
                 "effective_exposure": item["_post_effective_exposure"],
+            }
+            for item in adjusted
+        ],
+    }
+
+
+def evaluate_semantic_context() -> dict[str, Any]:
+    """Measure calm/rainy semantic nudges on near ties and strong gaps."""
+    base = [
+        _tagged_candidate("content best conflict", 0.98, genres=["Dance"], moods=["Energetic"], scenarios=["Driving"]),
+        _tagged_candidate("near tie conflict", 0.82, genres=["Dance"], moods=["Energetic"], scenarios=["Party"]),
+        _tagged_candidate("rainy fit", 0.80, genres=["Lo-Fi"], moods=["Peaceful"], scenarios=["Rainy Day"]),
+        _tagged_candidate("late night fit", 0.78, genres=["Indie"], moods=["Dreamy"], scenarios=["Late Night"]),
+    ]
+    adjusted = apply_post_recall_adjustments(
+        [dict(item, song=dict(item["song"])) for item in base],
+        query_text="下雨天，柔软安静一点，别太吵",
+        apply_to_similarity=True,
+        now_ms=NOW_MS,
+    )
+    by_title = {item["song"]["title"]: item for item in adjusted}
+    strong_gap = 2 * DEFAULT_CONFIG.delta_limit
+    return {
+        "before_rank": _rank(base, "similarity_score"),
+        "after_rank": _rank(adjusted, "similarity_score"),
+        "safety": _pairwise_flips(base, adjusted, strong_gap=strong_gap),
+        "checks": {
+            "rainy_fit_overtakes_near_tie_conflict": (
+                by_title["rainy fit"]["similarity_score"]
+                > by_title["near tie conflict"]["similarity_score"]
+            ),
+            "content_best_still_not_overridden": (
+                by_title["content best conflict"]["similarity_score"]
+                > by_title["rainy fit"]["similarity_score"]
+            ),
+            "conflict_has_semantic_penalty": by_title["near tie conflict"]["_post_semantic_conflict_score"] > 0,
+            "fit_has_semantic_positive": by_title["rainy fit"]["_post_semantic_positive_score"] > 0,
+        },
+        "items": [
+            {
+                "title": item["song"]["title"],
+                "adjusted": item["similarity_score"],
+                "delta": item["_post_recall_delta"],
+                "semantic_positive": item["_post_semantic_positive_score"],
+                "semantic_conflict": item["_post_semantic_conflict_score"],
+                "positive_hits": item["_post_semantic_positive_hits"],
+                "conflict_hits": item["_post_semantic_conflict_hits"],
             }
             for item in adjusted
         ],
@@ -246,6 +312,7 @@ def main() -> int:
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "git_sha": _git_sha(),
         "synthetic": evaluate_synthetic(),
+        "semantic_context": evaluate_semantic_context(),
     }
     if args.live:
         try:
@@ -267,6 +334,10 @@ def main() -> int:
     print(f"strong_gap_flips: {len(synthetic['safety']['strong_gap_flips'])}")
     print(f"near_tie_flips: {len(synthetic['safety']['near_tie_flips'])}")
     print(f"direction_checks: {synthetic['direction_checks']}")
+    semantic = report["semantic_context"]
+    print(f"semantic_before_rank: {semantic['before_rank']}")
+    print(f"semantic_after_rank:  {semantic['after_rank']}")
+    print(f"semantic_checks: {semantic['checks']}")
     if "live_catalog" in report:
         live = report["live_catalog"]
         print(f"live_sample_size: {live['sample_size']}")

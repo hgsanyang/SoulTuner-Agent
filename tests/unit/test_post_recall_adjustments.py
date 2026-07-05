@@ -6,15 +6,18 @@ from retrieval.post_recall_adjustments import (
     exposure_penalty,
     freshness_score,
     longtail_score,
+    semantic_fit_scores,
 )
 
 
 NOW = 1_800_000_000_000
 
 
-def _candidate(title: str, score: float, affinity: float = 0.0) -> dict:
+def _candidate(title: str, score: float, affinity: float = 0.0, **song_extra) -> dict:
+    song = {"title": title, "artist": "artist"}
+    song.update(song_extra)
     return {
-        "song": {"title": title, "artist": "artist"},
+        "song": song,
         "similarity_score": score,
         "_rrf_score": score,
         "_graph_affinity": affinity,
@@ -108,3 +111,58 @@ def test_post_recall_delta_limit_prevents_adjustment_from_dominating():
     by_title = {item["song"]["title"]: item for item in adjusted}
     assert by_title["weak but fresh"]["similarity_score"] <= 0.64
     assert by_title["strong base"]["similarity_score"] >= 0.86
+
+
+def test_semantic_fit_only_activates_for_matching_context():
+    calm_song = {"genres": ["Lo-Fi"], "moods": ["Peaceful"], "scenarios": ["Rainy Day"]}
+    energetic_song = {"genres": ["Dance"], "moods": ["Energetic"], "scenarios": ["Driving"]}
+
+    inactive = semantic_fit_scores(calm_song, query_text="来点开车用的摇滚")
+    calm = semantic_fit_scores(calm_song, query_text="下雨天，柔软安静一点")
+    conflict = semantic_fit_scores(energetic_song, query_text="下雨天，柔软安静一点")
+
+    assert inactive["active"] is False
+    assert calm["positive"] > 0
+    assert calm["conflict"] == 0
+    assert conflict["conflict"] > 0
+    assert {"dance", "driving", "energetic"} & set(conflict["conflict_hits"])
+
+
+def test_post_recall_semantic_context_nudges_near_ties_but_stays_bounded():
+    candidates = [
+        _candidate("dance conflict", 0.82, genres=["Dance"], moods=["Energetic"], scenarios=["Driving"]),
+        _candidate("rain fit", 0.80, genres=["Lo-Fi"], moods=["Peaceful"], scenarios=["Rainy Day"]),
+        _candidate("content best", 0.98, genres=["Dance"], moods=["Energetic"], scenarios=["Driving"]),
+    ]
+
+    adjusted = apply_post_recall_adjustments(
+        candidates,
+        query_text="下雨天，柔软安静一点，别太吵",
+        apply_to_similarity=True,
+        now_ms=NOW,
+    )
+    by_title = {item["song"]["title"]: item for item in adjusted}
+
+    assert by_title["rain fit"]["_post_semantic_positive_score"] > 0
+    assert by_title["dance conflict"]["_post_semantic_conflict_score"] > 0
+    assert by_title["rain fit"]["similarity_score"] > by_title["dance conflict"]["similarity_score"]
+    assert by_title["content best"]["similarity_score"] > by_title["rain fit"]["similarity_score"]
+    assert max(abs(item["_post_recall_delta"]) for item in adjusted) <= 0.08
+
+
+def test_post_recall_semantic_context_respects_explicit_driving_request():
+    candidate = _candidate(
+        "road song",
+        0.8,
+        genres=["Rock"],
+        moods=["Energetic"],
+        scenarios=["Driving"],
+    )
+
+    adjusted = apply_post_recall_adjustments(
+        [candidate],
+        query_text="开车路上听，温柔但要有公路感",
+        now_ms=NOW,
+    )
+
+    assert "driving" not in adjusted[0]["_post_semantic_conflict_hits"]

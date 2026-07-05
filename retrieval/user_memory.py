@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +344,7 @@ class UserMemoryManager:
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
         OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
-        RETURN 
+        RETURN
             collect(DISTINCT s.title) as favorite_songs,
             collect(DISTINCT g.name) as favorite_genres,
             collect(DISTINCT a.name) as favorite_artists,
@@ -376,22 +376,23 @@ class UserMemoryManager:
             # ============================================================
             semantic_query = """
             MATCH (u:User {id: $user_id})
-            RETURN u.avoid_genres AS avoid_genres,
-                   u.add_genres AS add_genres,
-                   u.add_moods AS add_moods,
-                   u.avoid_moods AS avoid_moods,
-                   u.add_scenarios AS add_scenarios,
-                   u.avoid_scenarios AS avoid_scenarios,
-                   u.add_artists AS add_artists,
-                   u.avoid_artists AS avoid_artists,
-                   u.mood_tendency AS mood_tendency,
-                   u.activity_contexts AS activity_contexts,
-                   u.language_preference AS language_preference,
-                   u.preferred_genres AS preferred_genres,
-                   u.preferred_moods AS preferred_moods,
-                   u.preferred_scenarios AS preferred_scenarios,
-                   u.preferred_languages AS preferred_languages,
-                   u.preferences_updated_at AS preferences_updated_at
+            WITH properties(u) AS p
+            RETURN p['avoid_genres'] AS avoid_genres,
+                   p['add_genres'] AS add_genres,
+                   p['add_moods'] AS add_moods,
+                   p['avoid_moods'] AS avoid_moods,
+                   p['add_scenarios'] AS add_scenarios,
+                   p['avoid_scenarios'] AS avoid_scenarios,
+                   p['add_artists'] AS add_artists,
+                   p['avoid_artists'] AS avoid_artists,
+                   p['mood_tendency'] AS mood_tendency,
+                   p['activity_contexts'] AS activity_contexts,
+                   p['language_preference'] AS language_preference,
+                   p['preferred_genres'] AS preferred_genres,
+                   p['preferred_moods'] AS preferred_moods,
+                   p['preferred_scenarios'] AS preferred_scenarios,
+                   p['preferred_languages'] AS preferred_languages,
+                   p['preferences_updated_at'] AS preferences_updated_at
             """
             semantic_result = self.neo4j_client.execute_query(semantic_query, {"user_id": user_id})
             if semantic_result and len(semantic_result) > 0:

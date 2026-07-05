@@ -80,6 +80,68 @@ _TAG_ALIASES = {
     "sleep": {"sleep", "latenight", "relaxing"},
     "睡眠": {"sleep", "latenight", "relaxing"},
 }
+_QUERY_TAG_TERMS = {
+    "genres": {
+        "r&b": "R&B",
+        "rnb": "R&B",
+        "节奏布鲁斯": "R&B",
+        "hip hop": "Hip-Hop",
+        "hip-hop": "Hip-Hop",
+        "说唱": "Hip-Hop",
+        "rap": "Hip-Hop",
+        "lo-fi": "Lo-Fi",
+        "lofi": "Lo-Fi",
+        "摇滚": "Rock",
+        "民谣": "Folk",
+        "电子": "Electronic",
+        "电音": "Electronic",
+        "edm": "EDM",
+        "爵士": "Jazz",
+        "后摇": "Post-Rock",
+        "独立": "Indie",
+    },
+    "moods": {
+        "安静": "Calm",
+        "柔软": "Soft",
+        "温柔": "Gentle",
+        "平静": "Peaceful",
+        "治愈": "Healing",
+        "难过": "Melancholy",
+        "伤感": "Melancholy",
+        "怀旧": "Nostalgic",
+        "复古": "Nostalgic",
+        "quiet": "Calm",
+        "soft": "Soft",
+        "gentle": "Gentle",
+        "calm": "Calm",
+        "nostalgic": "Nostalgic",
+    },
+    "scenarios": {
+        "雨天": "Rainy Day",
+        "下雨": "Rainy Day",
+        "专注": "Study",
+        "学习": "Study",
+        "写代码": "Work",
+        "睡前": "Sleep",
+        "夜里": "Late Night",
+        "深夜": "Late Night",
+        "开车": "Driving",
+        "通勤": "Commute",
+        "rainy": "Rainy Day",
+        "study": "Study",
+        "focus": "Study",
+        "sleep": "Sleep",
+        "late night": "Late Night",
+        "driving": "Driving",
+    },
+}
+_LANGUAGE_TEXT_PATTERNS = {
+    "Cantonese": ("粤语", "广东歌", "港乐", "cantonese"),
+    "Korean": ("韩语", "韩国歌", "korean"),
+    "Japanese": ("日语", "日文", "japanese"),
+    "English": ("英文", "英语", "english"),
+    "Chinese": ("中文", "国语", "华语", "mandarin", "chinese"),
+}
 
 
 def _song_dict(item: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -174,13 +236,38 @@ def _tag_matches(requested: Any, labels: Sequence[str]) -> bool:
     return False
 
 
-def _requested_tag_terms(retrieval_plan: Mapping[str, Any] | None) -> dict[str, list[str]]:
+def _dedupe_terms(terms: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for term in terms:
+        text = str(term or "").strip()
+        key = text.casefold()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
+
+
+def _query_tag_terms(text: str) -> dict[str, list[str]]:
+    lowered = text.casefold()
+    inferred: dict[str, list[str]] = {"genres": [], "moods": [], "scenarios": []}
+    if not lowered:
+        return inferred
+    for tag_field, mapping in _QUERY_TAG_TERMS.items():
+        for needle, label in mapping.items():
+            if needle.casefold() in lowered:
+                inferred[tag_field].append(label)
+    return {tag_field: _dedupe_terms(values) for tag_field, values in inferred.items()}
+
+
+def _requested_tag_terms(retrieval_plan: Mapping[str, Any] | None, text: str = "") -> dict[str, list[str]]:
     plan = dict(retrieval_plan or {})
     hints = dict(plan.get("hints") or {})
+    inferred = _query_tag_terms(text)
     return {
-        "genres": _iter_terms(hints.get("genres")),
-        "moods": _iter_terms(hints.get("mood")),
-        "scenarios": _iter_terms(hints.get("scenario")),
+        "genres": _dedupe_terms([*_iter_terms(hints.get("genres")), *inferred["genres"]]),
+        "moods": _dedupe_terms([*_iter_terms(hints.get("mood")), *inferred["moods"]]),
+        "scenarios": _dedupe_terms([*_iter_terms(hints.get("scenario")), *inferred["scenarios"]]),
     }
 
 
@@ -233,6 +320,58 @@ def _soft_inventory_gap_reasons(
         if enough_label_evidence and matched == 0:
             reasons.append(f"local_{tag_field}_match_insufficient")
     return reasons
+
+
+def _requested_language(hard: Mapping[str, Any], text: str) -> str:
+    hard_language = _canonical_language(hard.get("language"))
+    if hard_language:
+        return hard_language
+    lowered = text.casefold()
+    for language, needles in _LANGUAGE_TEXT_PATTERNS.items():
+        if any(needle.casefold() in lowered for needle in needles):
+            return language
+    return ""
+
+
+def _language_evidence(search_results: Sequence[Mapping[str, Any]], requested_language: str) -> dict[str, Any]:
+    requested = _canonical_language(requested_language)
+    total = len(search_results)
+    if not requested:
+        return {"requested": "", "known": 0, "matched": 0, "total": total, "coverage": 0.0, "match_ratio": 0.0}
+    known = 0
+    matched = 0
+    for item in search_results:
+        song = _song_dict(item)
+        actual = _canonical_language(song.get("language"))
+        if actual:
+            known += 1
+            if actual == requested:
+                matched += 1
+    return {
+        "requested": requested,
+        "known": known,
+        "matched": matched,
+        "total": total,
+        "coverage": round(known / total, 4) if total else 0.0,
+        "match_ratio": round(matched / known, 4) if known else 0.0,
+    }
+
+
+def _language_gap_reason(
+    evidence: Mapping[str, Any],
+    *,
+    min_local_results: int,
+) -> str:
+    requested = str(evidence.get("requested") or "")
+    total = int(evidence.get("total") or 0)
+    known = int(evidence.get("known") or 0)
+    matched = int(evidence.get("matched") or 0)
+    if not requested or total < min_local_results:
+        return ""
+    enough_language_evidence = known >= max(4, int(total * 0.4))
+    if enough_language_evidence and matched == 0:
+        return "local_language_match_insufficient"
+    return ""
 
 
 def _metadata_coverage(search_results: Sequence[Mapping[str, Any]]) -> dict[str, float]:
@@ -337,7 +476,8 @@ def analyze_catalog_gap(
     artists, songs, hard = layered_constraints(plan)
     count = len(search_results or [])
     coverage = _metadata_coverage(search_results)
-    tag_evidence = _tag_evidence(search_results, _requested_tag_terms(plan))
+    tag_evidence = _tag_evidence(search_results, _requested_tag_terms(plan, text))
+    language_evidence = _language_evidence(search_results, _requested_language(hard, text))
     knowledge_evidence = _knowledge_evidence(text, search_results)
     reasons: list[str] = []
     soft_reasons: list[str] = []
@@ -370,6 +510,9 @@ def analyze_catalog_gap(
         reasons.append("local_inventory_low")
     if count and coverage["playable"] < 0.5:
         reasons.append("playable_gap")
+    language_reason = _language_gap_reason(language_evidence, min_local_results=min_local_results)
+    if language_reason:
+        reasons.append(language_reason)
     soft_reasons.extend(
         _soft_inventory_gap_reasons(
             tag_evidence,
@@ -381,7 +524,12 @@ def analyze_catalog_gap(
     soft_reasons = list(dict.fromkeys(reason for reason in soft_reasons if reason))
     strict_gap = bool(reasons)
     soft_gap = bool(soft_reasons)
-    details = {"coverage": coverage, "tag_evidence": tag_evidence, "knowledge_evidence": knowledge_evidence}
+    details = {
+        "coverage": coverage,
+        "tag_evidence": tag_evidence,
+        "language_evidence": language_evidence,
+        "knowledge_evidence": knowledge_evidence,
+    }
     if strict_gap and not web_enabled:
         return CatalogGapDecision(
             action="blocked",

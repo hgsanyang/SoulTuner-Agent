@@ -90,14 +90,42 @@ def _check_catalog_gap_and_adjustments() -> list[dict[str, Any]]:
 
     adjusted = apply_post_recall_adjustments(
         [
-            {"song": {"title": "fresh", "artist": "A"}, "similarity_score": 0.5, "_graph_affinity": 1.0},
-            {"song": {"title": "stale", "artist": "A"}, "similarity_score": 0.5, "_graph_affinity": 0.0},
+            {
+                "song": {
+                    "title": "fresh",
+                    "artist": "A",
+                    "genres": ["Lo-Fi"],
+                    "moods": ["Peaceful"],
+                    "scenarios": ["Rainy Day"],
+                },
+                "similarity_score": 0.5,
+                "_graph_affinity": 1.0,
+            },
+            {
+                "song": {
+                    "title": "stale",
+                    "artist": "A",
+                    "genres": ["Dance"],
+                    "moods": ["Energetic"],
+                    "scenarios": ["Driving"],
+                },
+                "similarity_score": 0.5,
+                "_graph_affinity": 0.0,
+            },
         ],
         metadata_by_title={"fresh": {"updated_at": 1_800_000_000_000, "ts_beta": 1.0}},
+        query_text="下雨天，柔软安静一点",
         now_ms=1_800_000_000_000,
     )
     max_delta = max(abs(float(item.get("_post_recall_delta") or 0)) for item in adjusted)
     rows.append(_ok("post_recall_delta_bounded", f"max_delta={max_delta:.3f}") if max_delta <= 0.08 else _fail("post_recall_delta_bounded", str(max_delta)))
+    by_title = {item["song"]["title"]: item for item in adjusted}
+    rows.append(
+        _ok("post_recall_semantic_context", "calm fit up, conflict down")
+        if by_title["fresh"]["_post_recall_delta"] > by_title["stale"]["_post_recall_delta"]
+        and by_title["stale"]["_post_semantic_conflict_score"] > 0
+        else _fail("post_recall_semantic_context", json.dumps(adjusted, ensure_ascii=False))
+    )
     return rows
 
 

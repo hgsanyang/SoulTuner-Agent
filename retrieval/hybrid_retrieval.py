@@ -54,6 +54,10 @@ def _post_recall_config_for_user(user_id: str = GRAPH_AFFINITY_USER_ID) -> PostR
             * float(multipliers.get("longtail", 1.0)),
             exposure_penalty_weight=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_weight
             * float(multipliers.get("exposure_penalty", 1.0)),
+            semantic_preference_weight=DEFAULT_POST_RECALL_CONFIG.semantic_preference_weight
+            * float(multipliers.get("semantic_preference", 1.0)),
+            semantic_conflict_weight=DEFAULT_POST_RECALL_CONFIG.semantic_conflict_weight
+            * float(multipliers.get("semantic_conflict", 1.0)),
             delta_limit=DEFAULT_POST_RECALL_CONFIG.delta_limit,
             freshness_half_life_days=DEFAULT_POST_RECALL_CONFIG.freshness_half_life_days,
             exposure_half_life_days=DEFAULT_POST_RECALL_CONFIG.exposure_half_life_days,
@@ -1521,6 +1525,9 @@ class MusicHybridRetrieval:
             final_list = apply_post_recall_adjustments(
                 final_list,
                 metadata_by_title=post_metadata_by_title,
+                query_text=getattr(self, "_current_query", "") or "",
+                soft_intent=soft_intent or getattr(self, "_current_soft_intent", {}) or {},
+                hints=hints or {},
                 score_field="_rrf_score",
                 output_score_field="_post_coarse_score",
                 config=_post_recall_config_for_user(user_id),
@@ -1661,6 +1668,16 @@ class MusicHybridRetrieval:
             final_list = apply_post_recall_adjustments(
                 final_list,
                 metadata_by_title=post_metadata_by_title,
+                query_text=" ".join(
+                    part
+                    for part in (
+                        getattr(self, "_current_query", "") or "",
+                        getattr(self, "_current_hyde_text", "") or "",
+                    )
+                    if part
+                ),
+                soft_intent=soft_intent or getattr(self, "_current_soft_intent", {}) or {},
+                hints=hints or {},
                 score_field="similarity_score",
                 output_score_field="_post_final_score",
                 apply_to_similarity=True,
