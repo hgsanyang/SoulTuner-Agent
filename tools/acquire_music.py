@@ -117,8 +117,11 @@ class OnlineMusicAcquirer:
         song_id = str(song["id"])
         title = song.get("name", "Unknown")
         artists = [a["name"] for a in song.get("artists", [])]
+        artist_ids = [str(a.get("id")) for a in song.get("artists", []) if a.get("id")]
         artist_str = "、".join(artists) if artists else "Unknown"
-        album = song.get("album", {}).get("name", "Unknown")
+        album_info = song.get("album", {}) or {}
+        album = album_info.get("name", "Unknown")
+        album_id = str(album_info.get("id") or "")
         duration = song.get("duration", 0)
 
         safe_title = _safe_filename(title)
@@ -197,6 +200,7 @@ class OnlineMusicAcquirer:
             "musicName": title,
             "artist": [[a, 0] for a in artists],  # NCM 格式: [[name, id], ...]
             "album": album,
+            "album_id": album_id,
             "duration": duration,
             "format": ext,
             "source": "online",
@@ -209,6 +213,9 @@ class OnlineMusicAcquirer:
             "publishTime": song_detail.get("publishTime") if isinstance(song_detail, dict) else None,
             "cover_url": cover_url or "",
             "lyrics_available": has_lyrics,
+            "artist_ids": artist_ids,
+            "aliases": song_detail.get("alia", []) if isinstance(song_detail, dict) else [],
+            "popularity": song_detail.get("pop") if isinstance(song_detail, dict) else None,
         }
         meta_path = os.path.join(ONLINE_META_DIR, f"{file_basename}_meta.json")
         try:
@@ -218,11 +225,33 @@ class OnlineMusicAcquirer:
             logger.warning(f"元数据保存失败: {e}")
 
         return self._build_result(
-            song_id, title, artist_str, album, duration, file_basename, ext, has_lyrics
+            song_id,
+            title,
+            artist_str,
+            album,
+            duration,
+            file_basename,
+            ext,
+            has_lyrics,
+            release_year=release_year,
+            source_platform="netease",
+            metadata_source="netease",
         )
 
     def _build_result(
-        self, song_id, title, artist, album, duration, file_basename, ext, has_lyrics=False
+        self,
+        song_id,
+        title,
+        artist,
+        album,
+        duration,
+        file_basename,
+        ext,
+        has_lyrics=False,
+        *,
+        release_year=None,
+        source_platform="netease",
+        metadata_source="netease",
     ) -> Dict[str, Any]:
         """构建返回结果"""
         lrc_url = f"{STATIC_PREFIX_ONLINE_LYRICS}/{file_basename}.lrc" if has_lyrics else ""
@@ -240,6 +269,10 @@ class OnlineMusicAcquirer:
             "file_basename": file_basename,
             "ext": ext,
             "source": "online",
+            "source_platform": source_platform,
+            "source_id": song_id,
+            "metadata_source": metadata_source,
+            "release_year": release_year,
         }
 
     # ---- NeteaseAPI 辅助方法 ----
@@ -365,6 +398,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.source_id = $source_id,
                     s.metadata_source = $metadata_source,
                     s.release_year = $release_year,
+                    s.album_id = $album_id,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
@@ -385,6 +419,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.source_id = $source_id,
                     s.metadata_source = $metadata_source,
                     s.release_year = $release_year,
+                    s.album_id = $album_id,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
@@ -400,6 +435,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     "musicName": title,
                     "artist": [[artist, 0]],
                     "album": song.get("album", "Unknown"),
+                    "album_id": song.get("album_id", ""),
                     "duration": song.get("duration", 0),
                     "format": song.get("ext", "mp3"),
                     "source": "online",
@@ -424,6 +460,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 "source_id": normalized_meta.get("source_id", song.get("song_id", "")),
                 "metadata_source": normalized_meta.get("metadata_source", "netease"),
                 "release_year": normalized_meta.get("release_year"),
+                "album_id": normalized_meta.get("album_id", ""),
                 "acquired_at": datetime.now().isoformat(),
             }
             client.execute_query(query, params)

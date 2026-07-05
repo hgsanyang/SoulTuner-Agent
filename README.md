@@ -304,9 +304,14 @@ P11 后，入库增强会保留更多可审计信息：`genres/moods/themes/scen
 
 ```powershell
 python scripts/p11_data_flywheel_audit.py
+python scripts/p11_prepare_online_ingest.py
+python scripts/p11_prepare_online_ingest.py --quick-ingest --enqueue
+python scripts/p11_sync_knowledge_cache.py --dry-run
 ```
 
-这个审计脚本不调用 LLM/GPU/网络，只检查 `../data/online_acquired/` 与入库队列：哪些歌缺音频、封面、歌词、发行年份，哪些队列任务无效。歌手/歌曲介绍可以作为离线知识卡写入 `MusicKnowledgeCache`，供搜索扩展、曲库详情页和推荐解释读取；它是可选 RAG 缓存，不作为歌曲硬过滤事实。
+审计脚本不调用 LLM/GPU/网络，只检查 `../data/online_acquired/` 与入库队列：哪些歌缺音频、封面、歌词、发行年份，哪些队列任务无效。`p11_prepare_online_ingest.py` 默认 dry-run；加 `--quick-ingest` 会把有效元数据秒级写入 Neo4j，加 `--enqueue` 会加入后台 Worker 队列补歌词标签与 MuQ/M2D/OMAR 向量。
+
+歌手/歌曲介绍采用双层知识库：`MusicKnowledgeCache` 在 `../data/knowledge_cache/` 保存完整知识卡、来源 URL 与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py` 只把摘要和 `KnowledgeCard` 关系同步到 Neo4j，供搜索扩展、曲库详情页和推荐解释读取。它是可选 RAG 缓存，不作为歌曲硬过滤事实。
 
 ### 反馈闭环
 

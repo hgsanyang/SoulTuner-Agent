@@ -303,9 +303,14 @@ After P11, ingestion keeps more auditable enrichment metadata. `genres/moods/the
 
 ```powershell
 python scripts/p11_data_flywheel_audit.py
+python scripts/p11_prepare_online_ingest.py
+python scripts/p11_prepare_online_ingest.py --quick-ingest --enqueue
+python scripts/p11_sync_knowledge_cache.py --dry-run
 ```
 
-The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. Artist/song descriptions can be written as offline knowledge cards through `MusicKnowledgeCache` for search expansion, library detail pages, and recommendation explanations. They are optional RAG cache entries, not hard catalog facts.
+The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. `p11_prepare_online_ingest.py` defaults to dry-run; `--quick-ingest` writes valid metadata into Neo4j immediately, and `--enqueue` schedules the background worker to add lyrics tags plus MuQ/M2D/OMAR vectors.
+
+Artist/song descriptions use a two-layer knowledge store. `MusicKnowledgeCache` keeps full cards, source URLs, and fact lists under `../data/knowledge_cache/` (gitignored). `p11_sync_knowledge_cache.py` syncs only lightweight summaries and `KnowledgeCard` relationships into Neo4j for search expansion, library detail pages, and recommendation explanations. These are optional RAG entries, not hard catalog facts.
 
 ### Feedback Loop
 

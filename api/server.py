@@ -1655,6 +1655,10 @@ async def get_pending_songs():
                 "cover_url": f"/static/online_covers/{file_basename}_cover.jpg",
                 "lrc_url": f"/static/online_lyrics/{file_basename}.lrc",
                 "acquired_at": meta.get("acquired_at", ""),
+                "release_year": meta.get("release_year"),
+                "source_platform": meta.get("source_platform") or meta.get("source", ""),
+                "source_id": str(meta.get("source_id") or meta.get("musicId", "")),
+                "metadata_source": meta.get("metadata_source", ""),
             })
         except Exception as e:
             logger.warning(f"[pending] 解析元数据失败 {meta_file.name}: {e}")
@@ -1670,6 +1674,10 @@ class PendingIngestItem(BaseModel):
     artist: str = ""
     album: str = "Unknown"
     duration: int = 0
+    release_year: Optional[int] = None
+    source_platform: str = ""
+    source_id: str = ""
+    metadata_source: str = ""
 
 
 class PendingIngestRequest(BaseModel):
@@ -1712,6 +1720,10 @@ async def ingest_pending_songs(
             "lrc_url": f"/static/online_lyrics/{item.file_basename}.lrc",
             "file_basename": item.file_basename,
             "ext": item.ext,
+            "release_year": item.release_year,
+            "source_platform": item.source_platform or "netease",
+            "source_id": item.source_id or item.music_id,
+            "metadata_source": item.metadata_source or "netease",
         }
         songs_to_ingest.append(song_data)
 
@@ -1916,7 +1928,7 @@ async def update_library_song_tags(
     if not request.music_id and not (request.title and request.artist):
         raise HTTPException(status_code=400, detail="music_id or title+artist is required")
 
-    from services.tag_policy import clean_tag_payload
+    from services.catalog_enrichment import prepare_tag_enrichment
 
     relationship_specs = {
         "genres": ("BELONGS_TO_GENRE", "Genre"),
@@ -1924,7 +1936,8 @@ async def update_library_song_tags(
         "themes": ("HAS_THEME", "Theme"),
         "scenarios": ("FITS_SCENARIO", "Scenario"),
     }
-    values_by_field = clean_tag_payload(request.model_dump())
+    enriched_tags = prepare_tag_enrichment(request.model_dump(), source="manual", confidence=1.0)
+    values_by_field = {field: enriched_tags[field] for field in relationship_specs}
     language = str(request.language or "").strip()[:40]
 
     try:
@@ -1957,6 +1970,9 @@ async def update_library_song_tags(
                 DELETE old
                 WITH s
                 SET s.{field} = $values,
+                    s.tag_source = $tag_source,
+                    s.tag_confidence_json = $tag_confidence_json,
+                    s.tag_sources_json = $tag_sources_json,
                     s.updated_at = timestamp()
                 WITH s
                 UNWIND $values AS tag_name
@@ -1969,6 +1985,9 @@ async def update_library_song_tags(
                     "title": request.title,
                     "artist": request.artist,
                     "values": values,
+                    "tag_source": enriched_tags["tag_source"],
+                    "tag_confidence_json": enriched_tags["tag_confidence_json"],
+                    "tag_sources_json": enriched_tags["tag_sources_json"],
                 },
             )
 

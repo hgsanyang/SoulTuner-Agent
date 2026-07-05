@@ -133,6 +133,7 @@ def normalize_acquisition_metadata(metadata: Mapping[str, Any]) -> dict[str, Any
         "artists": artists,
         "artist": "、".join(artists),
         "album": album,
+        "album_id": str(metadata.get("album_id") or metadata.get("albumId") or ""),
         "duration": int(metadata.get("duration") or 0),
         "format": _clean_text(metadata.get("format") or metadata.get("ext"), max_length=20),
         "source": _clean_text(metadata.get("source"), max_length=80) or "online",
@@ -143,6 +144,18 @@ def normalize_acquisition_metadata(metadata: Mapping[str, Any]) -> dict[str, Any
         "lyrics_available": bool(metadata.get("lyrics_available") or metadata.get("lrc_url")),
         "metadata_source": _clean_text(metadata.get("metadata_source"), max_length=80) or source_platform or "unknown",
     }
+    if metadata.get("artist_ids"):
+        normalized["artist_ids"] = [
+            str(item)
+            for item in metadata.get("artist_ids") or []
+            if str(item or "").strip()
+        ]
+    if metadata.get("aliases"):
+        normalized["aliases"] = [
+            _clean_text(item, max_length=180)
+            for item in metadata.get("aliases") or []
+            if _clean_text(item, max_length=180)
+        ]
     return {key: value for key, value in normalized.items() if value not in ("", None)}
 
 
