@@ -329,6 +329,34 @@ def summarize_memory_profile(profile: dict[str, Any], episodic_backends: list[st
     }
 
 
+EDITABLE_MEMORY_FIELDS = (
+    ("avoid_genres", "避开流派", "avoid"),
+    ("avoid_moods", "避开情绪", "avoid"),
+    ("avoid_scenarios", "避开场景", "avoid"),
+    ("add_moods", "偏好情绪", "positive"),
+    ("add_scenarios", "偏好场景", "positive"),
+    ("activity_contexts", "探索倾向", "context"),
+)
+
+
+def editable_memory_sections(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return UI-ready editable learned-memory sections."""
+    sections: list[dict[str, Any]] = []
+    for field_name, label, tone in EDITABLE_MEMORY_FIELDS:
+        values = _clean_list(profile.get(field_name) if isinstance(profile.get(field_name), list) else [])
+        sections.append(
+            {
+                "field": field_name,
+                "label": label,
+                "tone": tone,
+                "values": values,
+                "count": len(values),
+                "deletable": True,
+            }
+        )
+    return sections
+
+
 def derive_preferences_from_slate_feedback(
     *,
     rating: str,
@@ -541,6 +569,7 @@ class MemoryGateway:
             },
             "episodic_backends": episodic_backends,
             "profile": profile,
+            "editable_sections": editable_memory_sections(profile),
             "diagnostics": summarize_memory_profile(profile, episodic_backends),
         }
 

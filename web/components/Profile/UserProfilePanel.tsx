@@ -33,6 +33,19 @@ interface MemoryProfile {
   user_id: string;
   episodic_backends?: string[];
   profile?: Record<string, any>;
+  diagnostics?: {
+    positive_preference_count?: number;
+    negative_preference_count?: number;
+    context_preference_count?: number;
+  };
+  editable_sections?: Array<{
+    field: string;
+    label: string;
+    tone?: string;
+    values: string[];
+    count?: number;
+    deletable?: boolean;
+  }>;
 }
 
 export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelProps) {
@@ -244,6 +257,15 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
 
   const totalSelected = genres.length + moods.length + scenarios.length + languages.length;
   const learnedPrefs = memory?.profile || {};
+  const editableSections = memory?.editable_sections?.length
+    ? memory.editable_sections
+    : LEARNED_PREF_FIELDS.map(field => ({
+      field: field.key,
+      label: field.label,
+      values: Array.isArray(learnedPrefs[field.key]) ? learnedPrefs[field.key] : [],
+      deletable: true,
+    }));
+  const hasLearnedPrefs = editableSections.some(section => section.values.length > 0);
 
   return createPortal(
     <>
@@ -352,7 +374,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                       padding: '0.1rem 0.45rem',
                     }}>{name}</span>
                   ))}
-                  {LEARNED_PREF_FIELDS.some(field => Array.isArray(learnedPrefs[field.key]) && learnedPrefs[field.key].length > 0) && (
+                  {hasLearnedPrefs && (
                     <button
                       onClick={clearLearnedPreferences}
                       style={{
@@ -378,21 +400,34 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   borderRadius: theme.borderRadius.sm,
                   padding: '0.75rem',
                 }}>
-                  {LEARNED_PREF_FIELDS.map(field => {
-                    const values = Array.isArray(learnedPrefs[field.key]) ? learnedPrefs[field.key] : [];
+                  {!!memory?.diagnostics && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.1rem' }}>
+                      <span style={{ fontSize: '0.68rem', color: '#86efac', background: 'rgba(34,197,94,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
+                        正向 {memory.diagnostics.positive_preference_count || 0}
+                      </span>
+                      <span style={{ fontSize: '0.68rem', color: '#fca5a5', background: 'rgba(248,113,113,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
+                        避开 {memory.diagnostics.negative_preference_count || 0}
+                      </span>
+                      <span style={{ fontSize: '0.68rem', color: '#93c5fd', background: 'rgba(59,130,246,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
+                        场景 {memory.diagnostics.context_preference_count || 0}
+                      </span>
+                    </div>
+                  )}
+                  {editableSections.map(section => {
+                    const values = section.values || [];
                     if (!values.length) return null;
                     return (
-                      <div key={field.key}>
+                      <div key={section.field}>
                         <div style={{
                           fontSize: '0.72rem',
                           color: theme.colors.text.muted,
                           marginBottom: '0.35rem',
-                        }}>{field.label}</div>
+                        }}>{section.label}</div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
                           {values.map((value: string) => (
                             <button
-                              key={`${field.key}-${value}`}
-                              onClick={() => removeLearnedPreference(field.key, value)}
+                              key={`${section.field}-${value}`}
+                              onClick={() => section.deletable !== false && removeLearnedPreference(section.field, value)}
                               title="点击删除这条学习记忆"
                               style={{
                                 border: '1px solid rgba(29,185,84,0.35)',
@@ -401,17 +436,17 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                                 borderRadius: '999px',
                                 padding: '0.26rem 0.58rem',
                                 fontSize: '0.72rem',
-                                cursor: 'pointer',
+                                cursor: section.deletable === false ? 'default' : 'pointer',
                               }}
                             >
-                              {value} ×
+                              {value}{section.deletable === false ? '' : ' ×'}
                             </button>
                           ))}
                         </div>
                       </div>
                     );
                   })}
-                  {!LEARNED_PREF_FIELDS.some(field => Array.isArray(learnedPrefs[field.key]) && learnedPrefs[field.key].length > 0) && (
+                  {!hasLearnedPrefs && (
                     <span style={{ color: theme.colors.text.muted, fontSize: '0.76rem' }}>
                       暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。
                     </span>
