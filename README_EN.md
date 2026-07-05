@@ -70,7 +70,7 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
 
-- Local development: create the `music_agent` Conda environment, install Python dependencies and `web/` dependencies, then run `python startup_all.py`.
+- Local development: prefer the main `.\soultuner.ps1 up cpu/gpu` entrypoint. `python startup_all.py` remains only as a legacy local step-by-step debugging entrypoint and will be folded into `scripts/dev/` later.
 - Model cache: Docker allows the first run to download a missing HuggingFace text encoder so vector retrieval works out of the box. For fully offline runs, execute `python scripts/download_models.py` first and set `HF_OFFLINE=true` in `.env`.
 - GPU ingestion: online recommendation does not require a GPU; lyrics tagging, audio vectors, and batch ingestion are handled by `.\soultuner.ps1 up gpu` or `.\soultuner.ps1 ingest gpu`.
 - Manual ports: Neo4j `:7687`, Backend `:8501`, Frontend `:3003`; GraphZep `:3100` is only an optional MemoryGateway sidecar.
@@ -312,7 +312,7 @@ python -m tests.eval.evaluate_knowledge_gap
 
 The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. `p11_prepare_online_ingest.py` defaults to dry-run; `--quick-ingest` writes valid metadata into Neo4j immediately, and `--enqueue` schedules the background worker to add lyrics tags plus MuQ/M2D/OMAR vectors.
 
-Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. SQLite FTS is the default RAG backend. If the knowledge base grows later, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant` or `ENABLE_QDRANT=1` in `.env`; `.\soultuner.ps1 up cpu/gpu` will start the Qdrant container automatically, so no manual download is required.
+Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. `.\soultuner.ps1 up cpu/gpu` now starts Qdrant by default as the future semantic RAG sidecar; exact knowledge-card lookup still uses SQLite FTS today. To keep the stack SQLite-only, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` in `.env` or set `DISABLE_QDRANT=1` before startup.
 
 ### Feedback Loop
 
@@ -342,7 +342,7 @@ These smoke checks do not call an LLM or read raw private queries. `p7_smoke.py`
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 281 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, alignment adapter, public demo, teacher logs, tag hygiene, and more |
+| **Unit Testing** | 317 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, knowledge targeted eval, alignment adapter, public demo, teacher logs, tag hygiene, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; `context_dev/context_holdout` add a Chinese context-matching ruler with 11 goal categories and 4 specificity levels |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
@@ -465,6 +465,7 @@ The flywheel stages files into `../data/processed_audio/`, generates LLM tags, t
 cd web
 npm install
 cd ..
+# legacy local debug entrypoint; daily use should prefer .\soultuner.ps1 up cpu/gpu
 python startup_all.py
 ```
 
@@ -548,7 +549,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 ├── Dockerfile                  # API Engine definitions
 ├── pyproject.toml              # Ruff + Pytest syntax bounds
 ├── .env.example                # Templates
-└── startup_all.py              # OS unified boot pipeline
+└── startup_all.py              # legacy local step-by-step boot entrypoint
 ```
 
 ---

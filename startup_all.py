@@ -1,7 +1,14 @@
-"""
-一键启动所有服务
+r"""
+Legacy 本地分步启动器
 =====================
 集成启动：前端 / 后端 API / NeteaseAPI / SearxNG / GraphZep
+
+日常推荐使用仓库根目录的 soultuner.ps1：
+  .\soultuner.ps1 up cpu
+  .\soultuner.ps1 up gpu
+
+本文件仅保留为不走 Docker 全栈时的本地调试入口，后续计划移入
+scripts/dev/ 或合并进统一启动命令。
 
 用法：
   python startup_all.py              # 启动全部（GraphZep/SearxNG 可选，不影响核心）

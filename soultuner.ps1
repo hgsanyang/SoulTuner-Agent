@@ -48,6 +48,26 @@ function Assert-LastNativeCommand {
     }
 }
 
+function Get-ProjectEnvValue {
+    param([string]$Name, [string]$Default = "")
+
+    $current = [Environment]::GetEnvironmentVariable($Name)
+    if ($current) {
+        return $current
+    }
+    $envPath = Join-Path $ProjectRoot ".env"
+    if (-not (Test-Path $envPath)) {
+        return $Default
+    }
+    $line = Get-Content -Path $envPath -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "^\s*$([regex]::Escape($Name))\s*=" } |
+        Select-Object -First 1
+    if (-not $line) {
+        return $Default
+    }
+    return (($line -split "=", 2)[1]).Trim().Trim('"').Trim("'")
+}
+
 function Get-NeteaseApiDir {
     $candidates = @(
         (Join-Path $ProjectRoot "NeteaseCloudMusicApi"),
@@ -151,7 +171,12 @@ switch ($Action) {
         $ComposeFiles = @("-f", "docker-compose.yml")
         $MemoryBackends = (($env:MEMORY_EPISODIC_BACKENDS -split ",") | ForEach-Object { $_.Trim().ToLowerInvariant() })
         $UseGraphZep = $MemoryBackends -contains "graphzep"
-        $UseQdrant = ($env:MUSIC_KNOWLEDGE_VECTOR_BACKEND -eq "qdrant") -or ($env:ENABLE_QDRANT -eq "1")
+        $KnowledgeVectorBackend = (Get-ProjectEnvValue "MUSIC_KNOWLEDGE_VECTOR_BACKEND" "qdrant").ToLowerInvariant()
+        $EnableQdrantFlag = (Get-ProjectEnvValue "ENABLE_QDRANT" "").ToLowerInvariant()
+        $DisableQdrantFlag = (Get-ProjectEnvValue "DISABLE_QDRANT" "").ToLowerInvariant()
+        $UseQdrant = ($DisableQdrantFlag -ne "1") -and (
+            $KnowledgeVectorBackend -eq "qdrant" -or $EnableQdrantFlag -eq "1" -or $KnowledgeVectorBackend -eq ""
+        )
         if ($Profile -eq "gpu") {
             $ComposeFiles += @("-f", "docker-compose.gpu.yml")
             $env:DENSE_TEXT_AUDIO_BACKEND = "muq"
@@ -184,9 +209,9 @@ switch ($Action) {
             Write-Host "Memory:   Neo4j hot path only (set MEMORY_EPISODIC_BACKENDS=graphzep to enable GraphZep)"
         }
         if ($UseQdrant) {
-            Write-Host "Qdrant:   http://localhost:6333 (optional knowledge vector sidecar)"
+            Write-Host "Qdrant:   http://localhost:6333 (knowledge vector sidecar)"
         } else {
-            Write-Host "RAG:      SQLite FTS knowledge store (set MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant or ENABLE_QDRANT=1 to enable Qdrant)"
+            Write-Host "RAG:      SQLite FTS only (set MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant or ENABLE_QDRANT=1 to enable Qdrant)"
         }
         Write-Host "SearxNG:  http://localhost:8888"
         Write-Host "Netease:  http://localhost:3000"

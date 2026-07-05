@@ -333,9 +333,9 @@ class GlobalSettings(BaseSettings):
         description="可选 Qdrant RAG 向量服务地址；默认 Docker 服务端口",
     )
     knowledge_vector_backend: str = Field(
-        default="sqlite",
+        default="qdrant",
         validation_alias="MUSIC_KNOWLEDGE_VECTOR_BACKEND",
-        description="知识库语义检索后端: sqlite | qdrant；当前默认 SQLite FTS，Qdrant 为可选增强",
+        description="知识库语义检索后端: sqlite | qdrant；Qdrant 默认启动，SQLite FTS 仍作为精确检索与兜底",
     )
     user_preference_limit: int = Field(
         default=20,

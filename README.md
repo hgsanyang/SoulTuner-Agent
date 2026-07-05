@@ -70,7 +70,7 @@ python demos/public_gradio_app.py
 <details>
 <summary>本地开发 / GPU 入库 / 手动分步</summary>
 
-- 本地开发：创建 `music_agent` Conda 环境，安装 Python 与 `web/` 前端依赖后运行 `python startup_all.py`。
+- 本地开发：主入口仍建议使用 `.\soultuner.ps1 up cpu/gpu`。`python startup_all.py` 仅保留为 legacy 本地分步调试入口，后续会收束到 `scripts/dev/`。
 - 模型缓存：Docker 默认允许首次启动自动补齐缺失的 HuggingFace 文本编码器，保证向量检索可用；如需完全离线，可先运行 `python scripts/download_models.py`，再把 `.env` 的 `HF_OFFLINE` 设为 `true`。
 - GPU 入库：日常在线推荐不需要 GPU；音频向量提取和批量入库放在 `.\soultuner.ps1 up gpu` 或 `.\soultuner.ps1 ingest gpu`。
 - 手动分步：Neo4j `:7687`、Backend `:8501`、Frontend `:3003`；GraphZep `:3100` 只是 MemoryGateway 的可选旁路。
@@ -313,7 +313,7 @@ python -m tests.eval.evaluate_knowledge_gap
 
 审计脚本不调用 LLM/GPU/网络，只检查 `../data/online_acquired/` 与入库队列：哪些歌缺音频、封面、歌词、发行年份，哪些队列任务无效。`p11_prepare_online_ingest.py` 默认 dry-run；加 `--quick-ingest` 会把有效元数据秒级写入 Neo4j，加 `--enqueue` 会加入后台 Worker 队列补歌词标签与 MuQ/M2D/OMAR 向量。
 
-歌手/歌曲介绍采用双层知识库：SQLite `MusicKnowledgeStore` 在 `../data/knowledge_cache/music_knowledge.sqlite` 保存完整知识卡、来源 URL、置信度、更新时间、风格标签与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py --from sqlite` 只把摘要、来源和 `KnowledgeCard` 关系同步到 Neo4j，供 Catalog Gap Detector、曲库详情页和推荐解释读取。联网搜索只在 `p15_enrich_music_knowledge.py` 这类离线增强脚本中运行，不进入推荐热路径。默认 RAG 后端是 SQLite FTS；如果后续知识库变大，可在 `.env` 设置 `MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant` 或 `ENABLE_QDRANT=1`，`.\soultuner.ps1 up cpu/gpu` 会自动拉起 Qdrant 容器，无需手动下载安装。
+歌手/歌曲介绍采用双层知识库：SQLite `MusicKnowledgeStore` 在 `../data/knowledge_cache/music_knowledge.sqlite` 保存完整知识卡、来源 URL、置信度、更新时间、风格标签与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py --from sqlite` 只把摘要、来源和 `KnowledgeCard` 关系同步到 Neo4j，供 Catalog Gap Detector、曲库详情页和推荐解释读取。联网搜索只在 `p15_enrich_music_knowledge.py` 这类离线增强脚本中运行，不进入推荐热路径。`.\soultuner.ps1 up cpu/gpu` 默认同时启动 Qdrant 容器，为后续语义 RAG 做准备；当前知识卡精确检索仍以 SQLite FTS 为主。若只想保留轻量 SQLite，可在 `.env` 设 `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` 或启动前设置 `DISABLE_QDRANT=1`。
 
 ### 反馈闭环
 
@@ -343,7 +343,7 @@ python scripts/p9_p14_smoke.py
 | 维度                 | 说明                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | **CI/CD**      | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
-| **单元测试**   | 281 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、A3 readiness、P7/P9-P14 smoke、对齐 adapter、公开 demo、教师日志、标签治理等） |
+| **单元测试**   | 317 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、A3 readiness、P7/P9-P14 smoke、知识库 targeted eval、对齐 adapter、公开 demo、教师日志、标签治理等） |
 | **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；另有 `context_dev/context_holdout` 中文上下文匹配尺子，覆盖 11 类目标与 4 档具体度 |
 | **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比）              |
 | **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres）         |
@@ -466,6 +466,7 @@ python data/pipeline/ingest_to_neo4j.py --dataset yt_dlp_manual --manifest data/
 cd web
 npm install
 cd ..
+# legacy 本地调试入口；日常推荐使用 .\soultuner.ps1 up cpu/gpu
 python startup_all.py
 ```
 
@@ -564,7 +565,7 @@ python startup_all.py
 ├── Dockerfile                  # 后端镜像
 ├── pyproject.toml              # 项目配置 (mypy + ruff + pytest)
 ├── .env.example                # 环境变量模板
-├── startup_all.py              # 本地一键启动器
+├── startup_all.py              # legacy 本地分步启动器（后续计划移入 scripts/dev/）
 └── requirements.txt            # Python 依赖
 ```
 
