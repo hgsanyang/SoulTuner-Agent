@@ -272,6 +272,7 @@ def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) 
             return {"enabled": True, "available": False, "query_hits": 0, "local_song_hits": 0}
         min_conf = float(settings.knowledge_gap_min_confidence)
         query_hits = store.search(text, limit=5, min_confidence=min_conf)
+        query_vector_hits = sum(1 for card in query_hits if card.get("_vector_score") is not None)
         local_hits = []
         release_hits = 0
         for item in list(search_results or [])[:20]:
@@ -289,6 +290,7 @@ def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) 
             "enabled": True,
             "available": True,
             "query_hits": len(query_hits),
+            "query_vector_hits": query_vector_hits,
             "local_song_hits": len(local_hits),
             "local_song_release_year_hits": release_hits,
             "cards": [
@@ -298,6 +300,9 @@ def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) 
                     "artist": card.get("artist"),
                     "confidence": card.get("confidence"),
                     "release_year": card.get("release_year"),
+                    "source_url": card.get("source_url"),
+                    "retrieval_source": "qdrant" if card.get("_vector_score") is not None else "sqlite",
+                    "vector_score": card.get("_vector_score"),
                     "style_tags": card.get("style_tags", []),
                 }
                 for card in (query_hits + local_hits)[:6]

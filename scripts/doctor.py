@@ -240,7 +240,7 @@ def check_services():
     line(fe, "前端 :3003", fix="`cd web && npm run dev`（可选，只跑后端/评测时不需要）")
     # 可选
     line(_tcp("127.0.0.1", 8888), "SearxNG :8888（可选-联网搜索）",
-         fix="可选：`docker compose -f docker-compose.searxng.yml up -d`") or None
+         fix="可选：`docker compose up -d searxng`；legacy 分步调试配置在 `deploy/legacy/`") or None
     line(_tcp("127.0.0.1", 3000), "NeteaseAPI :3000（可选-联网取歌）",
          fix="可选。⚠️注意 :3000 可能与前端 dev 端口冲突") or None
 

@@ -12,6 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from retrieval.neo4j_client import get_neo4j_client  # noqa: E402
+from config.settings import settings  # noqa: E402
+from services.knowledge_vector_index import upsert_cards_to_qdrant  # noqa: E402
 from services.music_knowledge_cache import MusicKnowledgeCache  # noqa: E402
 from services.music_knowledge_graph import upsert_knowledge_card_to_neo4j  # noqa: E402
 from services.music_knowledge_store import MusicKnowledgeStore  # noqa: E402
@@ -73,6 +75,8 @@ def main() -> None:
     parser.add_argument("--store-path", default="")
     parser.add_argument("--from", dest="source", choices=["sqlite", "jsonl"], default="sqlite")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--sync-qdrant", action="store_true", help="Also mirror knowledge cards into Qdrant.")
+    parser.add_argument("--qdrant-only", action="store_true", help="Skip Neo4j and only sync Qdrant.")
     args = parser.parse_args()
 
     if args.source == "jsonl":
@@ -83,12 +87,27 @@ def main() -> None:
         store = MusicKnowledgeStore(args.store_path) if args.store_path else MusicKnowledgeStore()
         cards = load_sqlite_cards(store)
         path = str(store.path)
-    result = {"source": args.source, "path": path, "cards": len(cards), "synced": 0, "dry_run": args.dry_run}
-    if not args.dry_run and cards:
+    sync_qdrant = args.sync_qdrant or str(settings.knowledge_vector_backend).casefold() == "qdrant"
+    result = {
+        "source": args.source,
+        "path": path,
+        "cards": len(cards),
+        "synced": 0,
+        "qdrant_synced": 0,
+        "qdrant_collection": getattr(settings, "knowledge_qdrant_collection", ""),
+        "dry_run": args.dry_run,
+    }
+    if not args.dry_run and cards and not args.qdrant_only:
         client = get_neo4j_client()
         for card in cards:
             upsert_knowledge_card_to_neo4j(client, card)
             result["synced"] += 1
+    if not args.dry_run and cards and sync_qdrant:
+        try:
+            qdrant_result = upsert_cards_to_qdrant(cards)
+            result["qdrant_synced"] = int(qdrant_result.get("upserted") or 0)
+        except Exception as exc:
+            result["qdrant_error"] = str(exc)[:200]
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

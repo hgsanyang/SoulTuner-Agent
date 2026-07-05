@@ -51,3 +51,33 @@ def test_external_knowledge_request_uses_local_knowledge_store(monkeypatch, tmp_
     assert "external_knowledge_required" not in decision.reasons
     assert decision.details["knowledge_evidence"]["query_hits"] >= 1
 
+
+def test_external_knowledge_request_records_qdrant_evidence(monkeypatch, tmp_path):
+    store = MusicKnowledgeStore(tmp_path / "knowledge.sqlite")
+    store.initialize()
+    monkeypatch.setattr(settings, "knowledge_store_path", str(store.path), raising=False)
+    monkeypatch.setattr(settings, "knowledge_gap_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "knowledge_gap_min_confidence", 0.55, raising=False)
+    monkeypatch.setattr(settings, "knowledge_vector_backend", "qdrant", raising=False)
+    monkeypatch.setattr(
+        "services.knowledge_vector_index.search_qdrant_knowledge",
+        lambda *args, **kwargs: [
+            {
+                "kind": "artist",
+                "artist": "Fishmans",
+                "summary": "Japanese dub, dream pop and psychedelic pop band.",
+                "source_url": "https://example.com/fishmans",
+                "confidence": 0.88,
+                "_vector_score": 0.73,
+                "style_tags": ["Dub", "Dream Pop"],
+            }
+        ],
+    )
+
+    local = [_song(f"Song {index}", artist="Fishmans") for index in range(12)]
+    decision = analyze_catalog_gap(local, {}, "讲讲 Fishmans 的迷幻梦幻流行风格", web_enabled=True)
+
+    evidence = decision.details["knowledge_evidence"]
+    assert "external_knowledge_required" not in decision.reasons
+    assert evidence["query_vector_hits"] == 1
+    assert evidence["cards"][0]["retrieval_source"] == "qdrant"

@@ -8,13 +8,13 @@ Legacy 本地分步启动器
   .\soultuner.ps1 up gpu
 
 本文件仅保留为不走 Docker 全栈时的本地调试入口，后续计划移入
-scripts/dev/ 或合并进统一启动命令。
+统一启动命令。
 
 用法：
-  python startup_all.py              # 启动全部（GraphZep/SearxNG 可选，不影响核心）
-  python startup_all.py --no-docker  # 跳过 Docker 服务（SearxNG）
-  python startup_all.py --no-web     # 跳过前端 dev server
-  python startup_all.py --no-netease # 跳过 NeteaseAPI（不需要联网音乐时）
+  python scripts/dev/startup_all.py              # 启动全部（GraphZep/SearxNG 可选，不影响核心）
+  python scripts/dev/startup_all.py --no-docker  # 跳过 Docker 服务（SearxNG）
+  python scripts/dev/startup_all.py --no-web     # 跳过前端 dev server
+  python scripts/dev/startup_all.py --no-netease # 跳过 NeteaseAPI（不需要联网音乐时）
 """
 
 import argparse
@@ -25,10 +25,10 @@ import time
 import signal
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = PROJECT_ROOT / "web"
 GRAPHZEP_DIR = PROJECT_ROOT / "graphzep_service"
-SEARXNG_COMPOSE = PROJECT_ROOT / "docker-compose.searxng.yml"
+SEARXNG_COMPOSE = PROJECT_ROOT / "deploy" / "legacy" / "docker-compose.searxng.yml"
 # 兼容第三方音乐 API 的安装目录
 # 优先级：环境变量 NETEASE_API_DIR > 项目根目录下的兼容API服务 > ~/兼容API服务
 def _resolve_netease_dir() -> Path:
@@ -143,7 +143,7 @@ def start_graphzep():
     if not GRAPHZEP_DIR.exists():
         print(f"  ⚠️ GraphZep 目录不存在: {GRAPHZEP_DIR}")
         return None
-    
+
     # 检查是否有 docker-compose.yml
     compose_file = GRAPHZEP_DIR / "docker-compose.yml"
     if compose_file.exists():
@@ -152,7 +152,7 @@ def start_graphzep():
             ["docker-compose", "up", "-d"],
             GRAPHZEP_DIR,
         )
-    
+
     # 检查是否有 npm/node 启动方式
     package_json = GRAPHZEP_DIR / "package.json"
     if package_json.exists():
@@ -161,8 +161,8 @@ def start_graphzep():
             ["npm.cmd", "start"],
             GRAPHZEP_DIR,
         )
-    
-    print(f"  ⚠️ GraphZep 无可用启动方式")
+
+    print("  ⚠️ GraphZep 无可用启动方式")
     return None
 
 
@@ -175,7 +175,7 @@ def start_netease_api():
         return None
     app_js = NETEASE_API_DIR / "app.js"
     if not app_js.exists():
-        print(f"  ⚠️ NeteaseAPI app.js 不存在，请确认安装正确")
+        print("  ⚠️ NeteaseAPI app.js 不存在，请确认安装正确")
         return None
     return _start_subprocess(
         "NeteaseAPI",

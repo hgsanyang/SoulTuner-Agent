@@ -45,7 +45,7 @@ class GlobalSettings(BaseSettings):
       config/settings.py → 所有功能开关、调参旋钮、检索参数（直接改 default= 即可）
       前端设置面板       → 运行时即时调整（无需重启，关闭面板丢弃）
 
-    修改 settings.py 后重启后端生效：python startup_all.py --no-web
+    修改 settings.py 后重启后端生效：python start.py --mode api
     使用方式：
       from config.settings import settings
       settings.reranker_enabled
@@ -331,6 +331,16 @@ class GlobalSettings(BaseSettings):
         default="http://localhost:6333",
         validation_alias="QDRANT_URL",
         description="可选 Qdrant RAG 向量服务地址；默认 Docker 服务端口",
+    )
+    knowledge_qdrant_collection: str = Field(
+        default="soultuner_music_knowledge",
+        validation_alias="MUSIC_KNOWLEDGE_QDRANT_COLLECTION",
+        description="Qdrant 知识卡 collection 名称",
+    )
+    knowledge_qdrant_timeout_seconds: float = Field(
+        default=0.8,
+        validation_alias="MUSIC_KNOWLEDGE_QDRANT_TIMEOUT_SECONDS",
+        description="推荐热路径查询 Qdrant 的短超时；失败后回退 SQLite",
     )
     knowledge_vector_backend: str = Field(
         default="qdrant",

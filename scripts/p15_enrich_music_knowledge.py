@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from retrieval.neo4j_client import get_neo4j_client  # noqa: E402
+from services.knowledge_vector_index import upsert_cards_to_qdrant  # noqa: E402
 from services.music_knowledge_enrichment import enrich_artist_card, enrich_song_card  # noqa: E402
 from services.music_knowledge_store import MusicKnowledgeStore  # noqa: E402
 
@@ -59,29 +60,53 @@ async def run(args: argparse.Namespace) -> dict:
     cards: list[dict] = []
 
     if args.artist:
-        card = await enrich_artist_card(args.artist, store=store, dry_run=args.dry_run)
+        card = await enrich_artist_card(
+            args.artist,
+            store=store,
+            dry_run=args.dry_run,
+            use_llm_summary=args.use_llm_summary,
+        )
         if card:
             cards.append(card)
     if args.song:
         title, _, artist = args.song.partition("::")
-        card = await enrich_song_card(title.strip(), artist.strip(), store=store, dry_run=args.dry_run)
+        card = await enrich_song_card(
+            title.strip(),
+            artist.strip(),
+            store=store,
+            dry_run=args.dry_run,
+            use_llm_summary=args.use_llm_summary,
+        )
         if card:
             cards.append(card)
     if args.from_neo4j_artists:
         for artist in load_seed_artists(limit=args.limit):
-            card = await enrich_artist_card(artist, store=store, dry_run=args.dry_run)
+            card = await enrich_artist_card(
+                artist,
+                store=store,
+                dry_run=args.dry_run,
+                use_llm_summary=args.use_llm_summary,
+            )
             if card:
                 cards.append(card)
     if args.from_neo4j_songs:
         for song in load_seed_songs(limit=args.limit):
-            card = await enrich_song_card(song["title"], song.get("artist", ""), store=store, dry_run=args.dry_run)
+            card = await enrich_song_card(
+                song["title"],
+                song.get("artist", ""),
+                store=store,
+                dry_run=args.dry_run,
+                use_llm_summary=args.use_llm_summary,
+            )
             if card:
                 cards.append(card)
 
-    return {
+    result = {
         "store_path": str(store.path),
         "cards": len(cards),
         "dry_run": args.dry_run,
+        "llm_summary": bool(args.use_llm_summary),
+        "qdrant_synced": 0,
         "items": [
             {
                 "kind": card.get("kind"),
@@ -95,6 +120,14 @@ async def run(args: argparse.Namespace) -> dict:
             for card in cards
         ],
     }
+    if cards and args.sync_qdrant and not args.dry_run:
+        try:
+            qdrant_result = upsert_cards_to_qdrant(cards)
+            result["qdrant_synced"] = int(qdrant_result.get("upserted") or 0)
+            result["qdrant_collection"] = qdrant_result.get("collection", "")
+        except Exception as exc:
+            result["qdrant_error"] = str(exc)[:200]
+    return result
 
 
 def main() -> None:
@@ -106,6 +139,12 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--store-path", default="")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--use-llm-summary",
+        action="store_true",
+        help="Use DashScope/Qwen to structure search snippets during offline enrichment.",
+    )
+    parser.add_argument("--sync-qdrant", action="store_true", help="Mirror generated cards into Qdrant.")
     args = parser.parse_args()
     print(json.dumps(asyncio.run(run(args)), ensure_ascii=False, indent=2))
 

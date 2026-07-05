@@ -70,7 +70,7 @@ python demos/public_gradio_app.py
 <details>
 <summary>本地开发 / GPU 入库 / 手动分步</summary>
 
-- 本地开发：主入口仍建议使用 `.\soultuner.ps1 up cpu/gpu`。`python startup_all.py` 仅保留为 legacy 本地分步调试入口，后续会收束到 `scripts/dev/`。
+- 本地开发：主入口仍建议使用 `.\soultuner.ps1 up cpu/gpu`。`python scripts/dev/startup_all.py` 仅保留为 legacy 本地分步调试入口。
 - 模型缓存：Docker 默认允许首次启动自动补齐缺失的 HuggingFace 文本编码器，保证向量检索可用；如需完全离线，可先运行 `python scripts/download_models.py`，再把 `.env` 的 `HF_OFFLINE` 设为 `true`。
 - GPU 入库：日常在线推荐不需要 GPU；音频向量提取和批量入库放在 `.\soultuner.ps1 up gpu` 或 `.\soultuner.ps1 ingest gpu`。
 - 手动分步：Neo4j `:7687`、Backend `:8501`、Frontend `:3003`；GraphZep `:3100` 只是 MemoryGateway 的可选旁路。
@@ -313,7 +313,7 @@ python -m tests.eval.evaluate_knowledge_gap
 
 审计脚本不调用 LLM/GPU/网络，只检查 `../data/online_acquired/` 与入库队列：哪些歌缺音频、封面、歌词、发行年份，哪些队列任务无效。`p11_prepare_online_ingest.py` 默认 dry-run；加 `--quick-ingest` 会把有效元数据秒级写入 Neo4j，加 `--enqueue` 会加入后台 Worker 队列补歌词标签与 MuQ/M2D/OMAR 向量。
 
-歌手/歌曲介绍采用双层知识库：SQLite `MusicKnowledgeStore` 在 `../data/knowledge_cache/music_knowledge.sqlite` 保存完整知识卡、来源 URL、置信度、更新时间、风格标签与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py --from sqlite` 只把摘要、来源和 `KnowledgeCard` 关系同步到 Neo4j，供 Catalog Gap Detector、曲库详情页和推荐解释读取。联网搜索只在 `p15_enrich_music_knowledge.py` 这类离线增强脚本中运行，不进入推荐热路径。`.\soultuner.ps1 up cpu/gpu` 默认同时启动 Qdrant 容器，为后续语义 RAG 做准备；当前知识卡精确检索仍以 SQLite FTS 为主。若只想保留轻量 SQLite，可在 `.env` 设 `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` 或启动前设置 `DISABLE_QDRANT=1`。
+歌手/歌曲介绍采用双层知识库：SQLite `MusicKnowledgeStore` 在 `../data/knowledge_cache/music_knowledge.sqlite` 保存完整知识卡、来源 URL、置信度、更新时间、风格标签与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py --from sqlite` 只把摘要、来源和 `KnowledgeCard` 关系同步到 Neo4j，供 Catalog Gap Detector、曲库详情页和推荐解释读取。联网搜索只在 `p15_enrich_music_knowledge.py` 这类离线增强脚本中运行，不进入推荐热路径。`.\soultuner.ps1 up cpu/gpu` 默认同时启动 Qdrant 容器，知识检索会先走 SQLite FTS 精确命中，再并入 Qdrant 摘要向量召回；若只想保留轻量 SQLite，可在 `.env` 设 `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` 或启动前设置 `DISABLE_QDRANT=1`。
 
 ### 反馈闭环
 
@@ -467,7 +467,7 @@ cd web
 npm install
 cd ..
 # legacy 本地调试入口；日常推荐使用 .\soultuner.ps1 up cpu/gpu
-python startup_all.py
+python scripts/dev/startup_all.py
 ```
 
 | 服务 | 端口 |
@@ -550,8 +550,10 @@ python startup_all.py
 │   └── app/library/            # 音乐库页面（待入库 / 我的曲库 / 喜欢 / 收藏）
 │
 ├── graphzep_service/           # 可选 GraphZep 记忆旁路服务
+├── deploy/legacy/              # legacy 单服务调试 compose（主路径使用根目录 docker-compose.yml）
+├── scripts/dev/                # 本地分步调试启动脚本
 ├── tests/                      # 测试与评测
-│   ├── unit/                   # 单元测试 (281 tests, pytest)
+│   ├── unit/                   # 单元测试 (317 tests, pytest)
 │   │   ├── test_normalize_key.py
 │   │   ├── test_gssc_token_budget.py
 │   │   ├── test_tag_expansion.py
@@ -565,7 +567,7 @@ python startup_all.py
 ├── Dockerfile                  # 后端镜像
 ├── pyproject.toml              # 项目配置 (mypy + ruff + pytest)
 ├── .env.example                # 环境变量模板
-├── startup_all.py              # legacy 本地分步启动器（后续计划移入 scripts/dev/）
+├── start.py                    # 后端 / mock 模式轻量入口
 └── requirements.txt            # Python 依赖
 ```
 

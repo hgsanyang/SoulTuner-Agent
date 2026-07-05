@@ -21,6 +21,7 @@ from services.catalog_enrichment import (
     clamp_confidence,
     normalize_knowledge_card,
 )
+from services.music_knowledge_cache import knowledge_key
 
 CardKind = Literal["artist", "song"]
 FTS_STOPWORDS = {
@@ -85,6 +86,22 @@ def _clean_query(query: str) -> str:
     # Keep FTS expression conservative; exact CJK spans are still useful, while
     # punctuation-heavy user text falls back to LIKE search below.
     return " OR ".join(dict.fromkeys(tokens[:8]))
+
+
+def _card_key(card: Mapping[str, Any]) -> str:
+    return knowledge_key(str(card.get("kind") or "song"), str(card.get("title") or ""), str(card.get("artist") or ""))
+
+
+def _dedupe_cards(cards: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    rows: list[dict[str, Any]] = []
+    for card in cards:
+        key = str(card.get("key") or _card_key(card))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(card)
+    return rows
 
 
 def _row_to_card(row: sqlite3.Row, kind: CardKind) -> dict[str, Any]:
@@ -382,14 +399,28 @@ class MusicKnowledgeStore:
         if not query:
             return []
         fts_query = _clean_query(query)
-        rows: list[dict[str, Any]] = []
+        sqlite_rows: list[dict[str, Any]] = []
         with self.connect() as conn:
             if kind in (None, "artist"):
-                rows.extend(self._search_artist(conn, query, fts_query, limit, min_confidence))
+                sqlite_rows.extend(self._search_artist(conn, query, fts_query, limit, min_confidence))
             if kind in (None, "song"):
-                rows.extend(self._search_song(conn, query, fts_query, limit, min_confidence))
-        rows.sort(key=lambda row: (-float(row.get("confidence") or 0), row.get("kind", ""), row.get("title") or row.get("artist") or ""))
-        return rows[: max(1, int(limit))]
+                sqlite_rows.extend(self._search_song(conn, query, fts_query, limit, min_confidence))
+        vector_rows: list[dict[str, Any]] = []
+        if str(getattr(settings, "knowledge_vector_backend", "")).casefold() == "qdrant":
+            try:
+                from services.knowledge_vector_index import search_qdrant_knowledge
+
+                vector_rows = search_qdrant_knowledge(
+                    query,
+                    kind=kind,
+                    limit=limit,
+                    min_confidence=min_confidence,
+                )
+            except Exception:
+                vector_rows = []
+        sqlite_rows.sort(key=lambda row: (-float(row.get("confidence") or 0), row.get("kind", ""), row.get("title") or row.get("artist") or ""))
+        vector_rows.sort(key=lambda row: (-float(row.get("_vector_score") or 0), -float(row.get("confidence") or 0)))
+        return _dedupe_cards([*sqlite_rows, *vector_rows])[: max(1, int(limit))]
 
     def _search_artist(self, conn: sqlite3.Connection, query: str, fts_query: str, limit: int, min_confidence: float) -> list[dict[str, Any]]:
         try:

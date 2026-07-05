@@ -62,9 +62,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # ---- Qdrant 知识库向量后端（默认启动的 RAG 预备服务）----
-  # 当前知识卡热路径仍使用 SQLite FTS；Qdrant 默认随 soultuner.ps1 启动，
-  # 方便后续切换到语义 RAG，不需要用户手动下载。
+  # ---- Qdrant 知识库向量后端（默认启动的 RAG 服务）----
+  # SQLite 保存可审计原文与来源；Qdrant 保存知识卡摘要向量，
+  # 供 Catalog Gap / 歌手背景 / 风格知识查询做语义召回。
   qdrant:
     profiles: ["rag"]
     image: qdrant/qdrant:v1.15.5
@@ -106,6 +106,8 @@ services:
       MUSIC_KNOWLEDGE_CACHE_PATH: /app/data/knowledge_cache/music_knowledge.jsonl
       MUSIC_KNOWLEDGE_VECTOR_BACKEND: ${MUSIC_KNOWLEDGE_VECTOR_BACKEND:-qdrant}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      MUSIC_KNOWLEDGE_QDRANT_COLLECTION: ${MUSIC_KNOWLEDGE_QDRANT_COLLECTION:-soultuner_music_knowledge}
+      MUSIC_KNOWLEDGE_QDRANT_TIMEOUT_SECONDS: ${MUSIC_KNOWLEDGE_QDRANT_TIMEOUT_SECONDS:-0.8}
       FEEDBACK_LOG_RAW_QUERY: ${FEEDBACK_LOG_RAW_QUERY:-0}
       MUSIC_WEB_SEARCH_ENABLED: "1"
       MUSIC_INLINE_INGEST_ENABLED: "0"

@@ -64,3 +64,31 @@ def test_music_knowledge_store_normalized_payload_keeps_style_and_year(tmp_path)
     assert card["release_year"] == 1982
     assert "Chinese Pop" in card["style_tags"]
 
+
+def test_music_knowledge_store_merges_qdrant_semantic_hits(monkeypatch, tmp_path):
+    store = MusicKnowledgeStore(tmp_path / "knowledge.sqlite")
+    store.upsert_artist_card(
+        artist="The Cure",
+        summary="English post-punk and gothic rock band.",
+        source_url="https://example.com/the-cure",
+        confidence=0.9,
+    )
+
+    monkeypatch.setattr("services.music_knowledge_store.settings.knowledge_vector_backend", "qdrant", raising=False)
+    monkeypatch.setattr(
+        "services.knowledge_vector_index.search_qdrant_knowledge",
+        lambda *args, **kwargs: [
+            {
+                "kind": "artist",
+                "artist": "Slowdive",
+                "summary": "Dream pop and shoegaze band.",
+                "source_url": "https://example.com/slowdive",
+                "confidence": 0.85,
+                "_vector_score": 0.7,
+            }
+        ],
+    )
+
+    hits = store.search("gothic shoegaze band", kind="artist", limit=4, min_confidence=0.5)
+
+    assert [hit["artist"] for hit in hits] == ["The Cure", "Slowdive"]

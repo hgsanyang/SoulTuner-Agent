@@ -70,7 +70,7 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
 
-- Local development: prefer the main `.\soultuner.ps1 up cpu/gpu` entrypoint. `python startup_all.py` remains only as a legacy local step-by-step debugging entrypoint and will be folded into `scripts/dev/` later.
+- Local development: prefer the main `.\soultuner.ps1 up cpu/gpu` entrypoint. `python scripts/dev/startup_all.py` remains only as a legacy local step-by-step debugging entrypoint.
 - Model cache: Docker allows the first run to download a missing HuggingFace text encoder so vector retrieval works out of the box. For fully offline runs, execute `python scripts/download_models.py` first and set `HF_OFFLINE=true` in `.env`.
 - GPU ingestion: online recommendation does not require a GPU; lyrics tagging, audio vectors, and batch ingestion are handled by `.\soultuner.ps1 up gpu` or `.\soultuner.ps1 ingest gpu`.
 - Manual ports: Neo4j `:7687`, Backend `:8501`, Frontend `:3003`; GraphZep `:3100` is only an optional MemoryGateway sidecar.
@@ -312,7 +312,7 @@ python -m tests.eval.evaluate_knowledge_gap
 
 The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. `p11_prepare_online_ingest.py` defaults to dry-run; `--quick-ingest` writes valid metadata into Neo4j immediately, and `--enqueue` schedules the background worker to add lyrics tags plus MuQ/M2D/OMAR vectors.
 
-Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. `.\soultuner.ps1 up cpu/gpu` now starts Qdrant by default as the future semantic RAG sidecar; exact knowledge-card lookup still uses SQLite FTS today. To keep the stack SQLite-only, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` in `.env` or set `DISABLE_QDRANT=1` before startup.
+Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. `.\soultuner.ps1 up cpu/gpu` starts Qdrant by default: knowledge lookup first uses SQLite FTS for exact/source-auditable hits, then merges Qdrant summary-vector matches for broader artist/style/background questions. To keep the stack SQLite-only, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` in `.env` or set `DISABLE_QDRANT=1` before startup.
 
 ### Feedback Loop
 
@@ -466,7 +466,7 @@ cd web
 npm install
 cd ..
 # legacy local debug entrypoint; daily use should prefer .\soultuner.ps1 up cpu/gpu
-python startup_all.py
+python scripts/dev/startup_all.py
 ```
 
 | Service | Port |
@@ -541,15 +541,17 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 │   └── app/library/            # Library pages (Pending / My Library / Likes / Collections)
 │
 ├── graphzep_service/           # Optional GraphZep memory sidecar
+├── deploy/legacy/              # Legacy single-service compose files
+├── scripts/dev/                # Local step-by-step debug startup scripts
 ├── tests/                      # Testing & Eval
-│   ├── unit/                   # 244 pytest tests
+│   ├── unit/                   # 317 pytest tests
 │   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
 ├── .github/workflows/ci.yml    # GitHub Actions definitions
 ├── docker-compose.yml          # Container configuration
 ├── Dockerfile                  # API Engine definitions
 ├── pyproject.toml              # Ruff + Pytest syntax bounds
 ├── .env.example                # Templates
-└── startup_all.py              # legacy local step-by-step boot entrypoint
+└── start.py                    # Backend / mock lightweight entrypoint
 ```
 
 ---

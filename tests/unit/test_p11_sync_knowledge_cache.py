@@ -27,3 +27,20 @@ def test_load_sqlite_cards_preserves_sources_and_summary_only(tmp_path):
     assert any(card["source_url"] == "https://example.com/massive-attack" for card in cards)
     assert any(card.get("release_year") == 1998 for card in cards)
 
+
+def test_sync_script_load_cards_are_qdrant_payload_ready(tmp_path):
+    store = MusicKnowledgeStore(tmp_path / "knowledge.sqlite")
+    store.upsert_song_card(
+        title="Blue Monday",
+        artist="New Order",
+        summary="A synth-pop and dance-rock single.",
+        style_tags=["Synth-Pop"],
+        source_url="https://example.com/blue-monday",
+        confidence=0.86,
+    )
+
+    cards = load_sqlite_cards(store)
+
+    assert cards[0]["kind"] == "song"
+    assert cards[0]["style_tags"] == ["Synth-Pop"]
+    assert cards[0]["source_url"] == "https://example.com/blue-monday"
