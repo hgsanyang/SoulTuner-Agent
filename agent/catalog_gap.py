@@ -190,11 +190,11 @@ def _tag_evidence(
 ) -> dict[str, dict[str, Any]]:
     evidence: dict[str, dict[str, Any]] = {}
     total = len(search_results)
-    for field, terms in requested_terms.items():
+    for tag_field, terms in requested_terms.items():
         terms = [str(term).strip() for term in terms if str(term).strip()]
         if not terms:
             continue
-        keys = _TAG_FIELD_KEYS[field]
+        keys = _TAG_FIELD_KEYS[tag_field]
         known = 0
         matched = 0
         for item in search_results:
@@ -203,7 +203,7 @@ def _tag_evidence(
                 known += 1
             if labels and any(_tag_matches(term, labels) for term in terms):
                 matched += 1
-        evidence[field] = {
+        evidence[tag_field] = {
             "requested": terms,
             "known": known,
             "matched": matched,
@@ -220,7 +220,7 @@ def _soft_inventory_gap_reasons(
     min_local_results: int,
 ) -> list[str]:
     reasons: list[str] = []
-    for field, stats in tag_evidence.items():
+    for tag_field, stats in tag_evidence.items():
         total = int(stats.get("total") or 0)
         known = int(stats.get("known") or 0)
         matched = int(stats.get("matched") or 0)
@@ -231,7 +231,7 @@ def _soft_inventory_gap_reasons(
         # proof that the catalog lacks a style.
         enough_label_evidence = known >= max(4, int(total * 0.4))
         if enough_label_evidence and matched == 0:
-            reasons.append(f"local_{field}_match_insufficient")
+            reasons.append(f"local_{tag_field}_match_insufficient")
     return reasons
 
 
@@ -256,6 +256,60 @@ def _metadata_coverage(search_results: Sequence[Mapping[str, Any]]) -> dict[str,
         "playable": round(playable / total, 4),
         "language": round(language_known / total, 4),
     }
+
+
+def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Read local offline knowledge cards as gap evidence without networking."""
+
+    try:
+        from config.settings import settings
+        from services.music_knowledge_store import MusicKnowledgeStore
+
+        if not settings.knowledge_gap_enabled:
+            return {"enabled": False}
+        store = MusicKnowledgeStore()
+        if not store.path.exists():
+            return {"enabled": True, "available": False, "query_hits": 0, "local_song_hits": 0}
+        min_conf = float(settings.knowledge_gap_min_confidence)
+        query_hits = store.search(text, limit=5, min_confidence=min_conf)
+        query_vector_hits = sum(1 for card in query_hits if card.get("_vector_score") is not None)
+        local_hits = []
+        release_hits = 0
+        for item in list(search_results or [])[:20]:
+            song = _song_dict(item)
+            title = str(song.get("title") or "").strip()
+            artist = str(song.get("artist") or "").strip()
+            if not title:
+                continue
+            card = store.get_song_card(title, artist)
+            if card and float(card.get("confidence") or 0) >= min_conf:
+                local_hits.append(card)
+                if card.get("release_year"):
+                    release_hits += 1
+        return {
+            "enabled": True,
+            "available": True,
+            "query_hits": len(query_hits),
+            "query_vector_hits": query_vector_hits,
+            "local_song_hits": len(local_hits),
+            "local_song_release_year_hits": release_hits,
+            "cards": [
+                {
+                    "kind": card.get("kind"),
+                    "title": card.get("title"),
+                    "artist": card.get("artist"),
+                    "confidence": card.get("confidence"),
+                    "release_year": card.get("release_year"),
+                    "source_url": card.get("source_url"),
+                    "retrieval_source": "qdrant" if card.get("_vector_score") is not None else "sqlite",
+                    "vector_score": card.get("_vector_score"),
+                    "style_tags": card.get("style_tags", []),
+                }
+                for card in (query_hits + local_hits)[:6]
+            ],
+        }
+    except Exception as exc:
+        return {"enabled": True, "available": False, "error": str(exc)[:160], "query_hits": 0, "local_song_hits": 0}
 
 
 def _message_for_reasons(reasons: Sequence[str]) -> str:
@@ -284,6 +338,7 @@ def analyze_catalog_gap(
     count = len(search_results or [])
     coverage = _metadata_coverage(search_results)
     tag_evidence = _tag_evidence(search_results, _requested_tag_terms(plan))
+    knowledge_evidence = _knowledge_evidence(text, search_results)
     reasons: list[str] = []
     soft_reasons: list[str] = []
     discovery_required = False
@@ -297,14 +352,19 @@ def analyze_catalog_gap(
     requires_external = _matches_any(text, _EXTERNAL_KNOWLEDGE_PATTERNS)
     if requires_release:
         discovery_required = True
-        if coverage["release"] < 0.5:
+        local_release_with_cards = (
+            count > 0
+            and int(knowledge_evidence.get("local_song_release_year_hits") or 0) >= max(2, int(count * 0.35))
+        )
+        if coverage["release"] < 0.5 and not local_release_with_cards:
             reasons.append("metadata_release_year_missing")
     if requires_recency:
         discovery_required = True
         reasons.append("recency_required")
     if requires_external:
         discovery_required = True
-        reasons.append("external_knowledge_required")
+        if int(knowledge_evidence.get("query_hits") or 0) <= 0:
+            reasons.append("external_knowledge_required")
 
     if count < min_local_results and (artists or songs or hard or requires_release or requires_recency):
         reasons.append("local_inventory_low")
@@ -321,7 +381,7 @@ def analyze_catalog_gap(
     soft_reasons = list(dict.fromkeys(reason for reason in soft_reasons if reason))
     strict_gap = bool(reasons)
     soft_gap = bool(soft_reasons)
-    details = {"coverage": coverage, "tag_evidence": tag_evidence}
+    details = {"coverage": coverage, "tag_evidence": tag_evidence, "knowledge_evidence": knowledge_evidence}
     if strict_gap and not web_enabled:
         return CatalogGapDecision(
             action="blocked",

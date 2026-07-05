@@ -9,3 +9,4 @@
 | `start_vllm.sh` | WSL 环境下启动 vLLM 推理引擎 |
 | `start_vllm.bat` | Windows 环境下启动 vLLM（批处理脚本） |
 | `reset_user_data.py` | 重置用户数据（清除 Neo4j 中的用户行为与偏好记录） |
+| `dev/startup_all.py` | legacy 本地分步调试入口；日常启动优先使用根目录 `soultuner.ps1` |

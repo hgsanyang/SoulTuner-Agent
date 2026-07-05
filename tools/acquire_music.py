@@ -26,9 +26,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.logging_config import get_logger
-from config.settings import settings
-from schemas.music_state import ToolOutput
+from config.logging_config import get_logger  # noqa: E402
+from config.settings import settings  # noqa: E402
+from services.catalog_enrichment import (  # noqa: E402
+    extract_release_year,
+    normalize_acquisition_metadata,
+    prepare_tag_enrichment,
+)
+from schemas.music_state import ToolOutput  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -112,8 +117,11 @@ class OnlineMusicAcquirer:
         song_id = str(song["id"])
         title = song.get("name", "Unknown")
         artists = [a["name"] for a in song.get("artists", [])]
+        artist_ids = [str(a.get("id")) for a in song.get("artists", []) if a.get("id")]
         artist_str = "、".join(artists) if artists else "Unknown"
-        album = song.get("album", {}).get("name", "Unknown")
+        album_info = song.get("album", {}) or {}
+        album = album_info.get("name", "Unknown")
+        album_id = str(album_info.get("id") or "")
         duration = song.get("duration", 0)
 
         safe_title = _safe_filename(title)
@@ -186,16 +194,28 @@ class OnlineMusicAcquirer:
             await self._download_file(cover_url, cover_path, session)
 
         # 6. 保存元数据(兼容 ingest_to_neo4j.py 的 _meta.json 格式)
+        release_year = extract_release_year(song_detail if isinstance(song_detail, dict) else {})
         meta = {
             "musicId": int(song_id),
             "musicName": title,
             "artist": [[a, 0] for a in artists],  # NCM 格式: [[name, id], ...]
             "album": album,
+            "album_id": album_id,
             "duration": duration,
             "format": ext,
             "source": "online",
+            "source_platform": "netease",
+            "source_id": song_id,
+            "metadata_source": "netease",
             "acquired_at": datetime.now().isoformat(),
             "bitrate": song_detail.get("bitrate", 0) if isinstance(song_detail, dict) else 0,
+            "release_year": release_year,
+            "publishTime": song_detail.get("publishTime") if isinstance(song_detail, dict) else None,
+            "cover_url": cover_url or "",
+            "lyrics_available": has_lyrics,
+            "artist_ids": artist_ids,
+            "aliases": song_detail.get("alia", []) if isinstance(song_detail, dict) else [],
+            "popularity": song_detail.get("pop") if isinstance(song_detail, dict) else None,
         }
         meta_path = os.path.join(ONLINE_META_DIR, f"{file_basename}_meta.json")
         try:
@@ -205,11 +225,33 @@ class OnlineMusicAcquirer:
             logger.warning(f"元数据保存失败: {e}")
 
         return self._build_result(
-            song_id, title, artist_str, album, duration, file_basename, ext, has_lyrics
+            song_id,
+            title,
+            artist_str,
+            album,
+            duration,
+            file_basename,
+            ext,
+            has_lyrics,
+            release_year=release_year,
+            source_platform="netease",
+            metadata_source="netease",
         )
 
     def _build_result(
-        self, song_id, title, artist, album, duration, file_basename, ext, has_lyrics=False
+        self,
+        song_id,
+        title,
+        artist,
+        album,
+        duration,
+        file_basename,
+        ext,
+        has_lyrics=False,
+        *,
+        release_year=None,
+        source_platform="netease",
+        metadata_source="netease",
     ) -> Dict[str, Any]:
         """构建返回结果"""
         lrc_url = f"{STATIC_PREFIX_ONLINE_LYRICS}/{file_basename}.lrc" if has_lyrics else ""
@@ -227,6 +269,10 @@ class OnlineMusicAcquirer:
             "file_basename": file_basename,
             "ext": ext,
             "source": "online",
+            "source_platform": source_platform,
+            "source_id": song_id,
+            "metadata_source": metadata_source,
+            "release_year": release_year,
         }
 
     # ---- NeteaseAPI 辅助方法 ----
@@ -312,7 +358,7 @@ class OnlineMusicAcquirer:
 async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
     """
     秒级快速写入 Neo4j：只写元数据 + audio_url，不提取向量。
-    
+
     去重策略（修复与初始数据集的兼容性）：
     1. 先通过 title + PERFORMED_BY->Artist.name 查找已有节点（兼容无 s.artist 属性的旧数据）
     2. 如果找到则 SET 更新属性
@@ -325,7 +371,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
         for song in songs:
             title = song["title"]
             artist = song["artist"]
-            
+
             # ── 第一步：检查是否已存在（通过关系匹配，兼容初始数据集） ──
             existing = client.execute_query(
                 """MATCH (s:Song)-[:PERFORMED_BY]->(a:Artist)
@@ -333,7 +379,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 RETURN elementId(s) AS eid LIMIT 1""",
                 {"title": title, "artist": artist}
             )
-            
+
             if existing:
                 # ── 已存在：更新属性（不创建新节点） ──
                 query = """
@@ -348,6 +394,11 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.audio_url = $audio_url,
                     s.cover_url = $cover_url,
                     s.lrc_url = $lrc_url,
+                    s.source_platform = $source_platform,
+                    s.source_id = $source_id,
+                    s.metadata_source = $metadata_source,
+                    s.release_year = $release_year,
+                    s.album_id = $album_id,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
@@ -364,6 +415,11 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.audio_url = $audio_url,
                     s.cover_url = $cover_url,
                     s.lrc_url = $lrc_url,
+                    s.source_platform = $source_platform,
+                    s.source_id = $source_id,
+                    s.metadata_source = $metadata_source,
+                    s.release_year = $release_year,
+                    s.album_id = $album_id,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
@@ -372,7 +428,24 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 MERGE (s)-[:PERFORMED_BY]->(a)
                 """
                 logger.info(f"✅ Neo4j 秒级入库: {title} - {artist}")
-            
+
+            normalized_meta = normalize_acquisition_metadata(
+                {
+                    "musicId": song.get("song_id"),
+                    "musicName": title,
+                    "artist": [[artist, 0]],
+                    "album": song.get("album", "Unknown"),
+                    "album_id": song.get("album_id", ""),
+                    "duration": song.get("duration", 0),
+                    "format": song.get("ext", "mp3"),
+                    "source": "online",
+                    "source_platform": song.get("platform") or "netease",
+                    "metadata_source": song.get("metadata_source") or "netease",
+                    "release_year": song.get("release_year"),
+                    "cover_url": song.get("cover_url", ""),
+                    "lrc_url": song.get("lrc_url", ""),
+                }
+            )
             params = {
                 "music_id": song["song_id"],
                 "title": title,
@@ -383,6 +456,11 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 "audio_url": song["audio_url"],
                 "cover_url": song.get("cover_url", ""),
                 "lrc_url": song.get("lrc_url", ""),
+                "source_platform": normalized_meta.get("source_platform", "netease"),
+                "source_id": normalized_meta.get("source_id", song.get("song_id", "")),
+                "metadata_source": normalized_meta.get("metadata_source", "netease"),
+                "release_year": normalized_meta.get("release_year"),
+                "album_id": normalized_meta.get("album_id", ""),
                 "acquired_at": datetime.now().isoformat(),
             }
             client.execute_query(query, params)
@@ -411,10 +489,36 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                 try:
                     tags = await _extract_lyrics_tags(basename, lrc_path)
                     if tags:
+                        enriched_tags = prepare_tag_enrichment(tags, source="llm_lyrics")
                         # 将标签写入 Neo4j（统一用 title+artist 匹配）
                         tag_query = """
                         MATCH (s:Song {title: $title, artist: $artist_name})
-                        SET s.vibe = $vibe
+                        SET s.vibe = $vibe,
+                            s.language = $language,
+                            s.region = $region,
+                            s.tag_source = $tag_source,
+                            s.tag_confidence_json = $tag_confidence_json,
+                            s.tag_sources_json = $tag_sources_json,
+                            s.updated_at = timestamp()
+
+                        WITH s
+                        OPTIONAL MATCH (s)-[old_m:HAS_MOOD]->(:Mood)
+                        DELETE old_m
+                        WITH s
+                        OPTIONAL MATCH (s)-[old_t:HAS_THEME]->(:Theme)
+                        DELETE old_t
+                        WITH s
+                        OPTIONAL MATCH (s)-[old_sc:FITS_SCENARIO]->(:Scenario)
+                        DELETE old_sc
+                        WITH s
+                        OPTIONAL MATCH (s)-[old_g:BELONGS_TO_GENRE]->(:Genre)
+                        DELETE old_g
+                        WITH s
+                        OPTIONAL MATCH (s)-[old_l:HAS_LANGUAGE]->(:Language)
+                        DELETE old_l
+                        WITH s
+                        OPTIONAL MATCH (s)-[old_r:IN_REGION]->(:Region)
+                        DELETE old_r
 
                         WITH s
                         FOREACH (mood IN $moods |
@@ -431,14 +535,35 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                             MERGE (sc:Scenario {name: scenario})
                             MERGE (s)-[:FITS_SCENARIO]->(sc)
                         )
+                        WITH s
+                        FOREACH (genre IN $genres |
+                            MERGE (g:Genre {name: genre})
+                            MERGE (s)-[:BELONGS_TO_GENRE]->(g)
+                        )
+                        WITH s
+                        FOREACH (_ IN CASE WHEN $language <> '' THEN [1] ELSE [] END |
+                            MERGE (lang:Language {name: $language})
+                            MERGE (s)-[:HAS_LANGUAGE]->(lang)
+                        )
+                        WITH s
+                        FOREACH (_ IN CASE WHEN $region <> '' THEN [1] ELSE [] END |
+                            MERGE (reg:Region {name: $region})
+                            MERGE (s)-[:IN_REGION]->(reg)
+                        )
                         """
                         client.execute_query(tag_query, {
                             "title": song["title"],
                             "artist_name": song["artist"],
-                            "moods": tags.get("moods", []),
-                            "themes": tags.get("themes", []),
-                            "scenarios": tags.get("scenarios", []),
+                            "moods": enriched_tags.get("moods", []),
+                            "themes": enriched_tags.get("themes", []),
+                            "scenarios": enriched_tags.get("scenarios", []),
+                            "genres": enriched_tags.get("genres", []),
                             "vibe": tags.get("vibe", ""),
+                            "language": str(tags.get("language") or "").strip()[:40],
+                            "region": str(tags.get("region") or "").strip()[:60],
+                            "tag_source": enriched_tags.get("tag_source", "llm_lyrics"),
+                            "tag_confidence_json": enriched_tags.get("tag_confidence_json", "{}"),
+                            "tag_sources_json": enriched_tags.get("tag_sources_json", "{}"),
                         })
                         logger.info(f"🏷️ [后台飞轮] 歌词标签入库: {song['title']}")
                 except Exception as e:

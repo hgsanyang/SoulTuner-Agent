@@ -140,6 +140,31 @@ export default function MyLibraryPage() {
         }
     };
 
+    const missingLabel = (field: string) => {
+        const labels: Record<string, string> = {
+            audio: '音频',
+            cover: '封面',
+            lyrics: '歌词',
+            language: '语言',
+            release_year: '发行年',
+            muq_embedding: 'MuQ',
+            m2d_embedding: 'M2D',
+            omar_embedding: 'OMAR',
+        };
+        return labels[field] || field;
+    };
+
+    const vectorBadge = (label: string, ok?: boolean) => (
+        <span key={label} style={{
+            fontSize: '0.72rem',
+            padding: '0.18rem 0.5rem',
+            borderRadius: '9999px',
+            background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)',
+            color: ok ? '#86efac' : '#fca5a5',
+            border: `1px solid ${ok ? 'rgba(34,197,94,0.24)' : 'rgba(239,68,68,0.2)'}`,
+        }}>{label} {ok ? '✓' : '缺'}</span>
+    );
+
     const tagInputStyle = {
         width: '100%',
         padding: '0.45rem 0.55rem',
@@ -359,9 +384,37 @@ export default function MyLibraryPage() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.65rem', fontSize: '0.82rem', color: theme.colors.text.secondary }}>
                         <div>来源：{sourceLabel(selectedSong.source).text}</div>
                         <div>语言：{selectedSong.language || '未标注'}</div>
+                        <div>发行年：{selectedSong.release_year || '未补全'}</div>
                         <div>格式：{selectedSong.format || '未知'}</div>
                         <div>时长：{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : '未知'}</div>
+                        <div>标签来源：{selectedSong.tag_source || '未记录'}</div>
                     </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                        {vectorBadge('MuQ', selectedSong.vector_coverage?.muq)}
+                        {vectorBadge('M2D', selectedSong.vector_coverage?.m2d)}
+                        {vectorBadge('OMAR', selectedSong.vector_coverage?.omar)}
+                        {(selectedSong.missing_fields || []).slice(0, 8).map(field => (
+                            <span key={field} style={{ fontSize: '0.72rem', padding: '0.18rem 0.5rem', borderRadius: '9999px', background: 'rgba(250,204,21,0.1)', color: '#fde68a', border: '1px solid rgba(250,204,21,0.18)' }}>
+                                待补：{missingLabel(field)}
+                            </span>
+                        ))}
+                    </div>
+                    {!!selectedSong.knowledge_cards?.length && (
+                        <div style={{ display: 'grid', gap: '0.55rem', padding: '0.75rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, background: 'rgba(255,255,255,0.025)' }}>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: theme.colors.text.primary }}>知识卡摘要</div>
+                            {selectedSong.knowledge_cards.slice(0, 2).map((card, index) => (
+                                <div key={card.key || index} style={{ display: 'grid', gap: '0.25rem', fontSize: '0.76rem', color: theme.colors.text.secondary, lineHeight: 1.55 }}>
+                                    <div>{card.summary}</div>
+                                    <div style={{ color: theme.colors.text.muted }}>
+                                        来源：{card.source || 'knowledge'}{card.confidence ? ` · 置信度 ${Math.round(card.confidence * 100)}%` : ''}
+                                        {card.source_url && (
+                                            <a href={card.source_url} target="_blank" rel="noreferrer" style={{ marginLeft: '0.5rem', color: theme.colors.primary.accent }}>查看来源</a>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.6rem', padding: '0.75rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, background: 'rgba(255,255,255,0.025)' }}>
                         {renderTagInput('流派，最多 5 个', 'genres', 'Indie, Folk')}
                         {renderTagInput('情绪，最多 5 个', 'moods', 'Peaceful, Dreamy')}

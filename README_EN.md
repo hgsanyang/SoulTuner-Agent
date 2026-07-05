@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-244_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-317_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -70,7 +70,7 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
 
-- Local development: create the `music_agent` Conda environment, install Python dependencies and `web/` dependencies, then run `python startup_all.py`.
+- Local development: prefer the main `.\soultuner.ps1 up cpu/gpu` entrypoint. `python scripts/dev/startup_all.py` remains only as a legacy local step-by-step debugging entrypoint.
 - Model cache: Docker allows the first run to download a missing HuggingFace text encoder so vector retrieval works out of the box. For fully offline runs, execute `python scripts/download_models.py` first and set `HF_OFFLINE=true` in `.env`.
 - GPU ingestion: online recommendation does not require a GPU; lyrics tagging, audio vectors, and batch ingestion are handled by `.\soultuner.ps1 up gpu` or `.\soultuner.ps1 ingest gpu`.
 - Manual ports: Neo4j `:7687`, Backend `:8501`, Frontend `:3003`; GraphZep `:3100` is only an optional MemoryGateway sidecar.
@@ -299,6 +299,21 @@ User search → Discover new song → Download to "Pending" staging area → Fro
 
 > 💡 Songs acquired from the web no longer auto-ingest. Users manage ingested songs from the "My Library" page (search/play/tag edit/delete).
 
+After P11, ingestion keeps more auditable enrichment metadata. `genres/moods/themes/scenarios` are still chosen only when supported by the song, capped at five per field, and never padded. Background enrichment writes tag source and confidence JSON so manual tags, lyrics LLM output, platform metadata, and future audio-model estimates remain distinguishable. Song metadata records verifiable fields such as title, artist, album, duration, format, cover, lyrics, source platform, source id, and release year; uncertain fields such as `tempo/energy/danceability` are not guessed.
+
+```powershell
+python scripts/p11_data_flywheel_audit.py
+python scripts/p11_prepare_online_ingest.py
+python scripts/p11_prepare_online_ingest.py --quick-ingest --enqueue
+python scripts/p15_enrich_music_knowledge.py --artist "The Cure" --dry-run
+python scripts/p11_sync_knowledge_cache.py --from sqlite --dry-run
+python -m tests.eval.evaluate_knowledge_gap
+```
+
+The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. `p11_prepare_online_ingest.py` defaults to dry-run; `--quick-ingest` writes valid metadata into Neo4j immediately, and `--enqueue` schedules the background worker to add lyrics tags plus MuQ/M2D/OMAR vectors.
+
+Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. `.\soultuner.ps1 up cpu/gpu` starts Qdrant by default: knowledge lookup first uses SQLite FTS for exact/source-auditable hits, then merges Qdrant summary-vector matches for broader artist/style/background questions. To keep the stack SQLite-only, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` in `.env` or set `DISABLE_QDRANT=1` before startup.
+
 ### Feedback Loop
 
 Every recommendation slate is written under `${MUSIC_DATA_PATH}/feedback` with a query hash, intent, source ranks, content-anchor scores, post-recall components, and final position; raw queries are disabled by default. The frontend returns the exact `exposure_id` and position with like/save/skip/full-play/repeat/dislike events. Play-start is neutral, and untouched impressions are never mislabeled as negatives.
@@ -327,7 +342,7 @@ These smoke checks do not call an LLM or read raw private queries. `p7_smoke.py`
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 281 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, alignment adapter, public demo, teacher logs, tag hygiene, and more |
+| **Unit Testing** | 317 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, knowledge targeted eval, alignment adapter, public demo, teacher logs, tag hygiene, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; `context_dev/context_holdout` add a Chinese context-matching ruler with 11 goal categories and 4 specificity levels |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
@@ -450,7 +465,8 @@ The flywheel stages files into `../data/processed_audio/`, generates LLM tags, t
 cd web
 npm install
 cd ..
-python startup_all.py
+# legacy local debug entrypoint; daily use should prefer .\soultuner.ps1 up cpu/gpu
+python scripts/dev/startup_all.py
 ```
 
 | Service | Port |
@@ -525,15 +541,17 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 │   └── app/library/            # Library pages (Pending / My Library / Likes / Collections)
 │
 ├── graphzep_service/           # Optional GraphZep memory sidecar
+├── deploy/legacy/              # Legacy single-service compose files
+├── scripts/dev/                # Local step-by-step debug startup scripts
 ├── tests/                      # Testing & Eval
-│   ├── unit/                   # 244 pytest tests
+│   ├── unit/                   # 317 pytest tests
 │   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
 ├── .github/workflows/ci.yml    # GitHub Actions definitions
 ├── docker-compose.yml          # Container configuration
 ├── Dockerfile                  # API Engine definitions
 ├── pyproject.toml              # Ruff + Pytest syntax bounds
 ├── .env.example                # Templates
-└── startup_all.py              # OS unified boot pipeline
+└── start.py                    # Backend / mock lightweight entrypoint
 ```
 
 ---

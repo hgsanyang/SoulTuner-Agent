@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-244_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-317_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -70,7 +70,7 @@ python demos/public_gradio_app.py
 <details>
 <summary>本地开发 / GPU 入库 / 手动分步</summary>
 
-- 本地开发：创建 `music_agent` Conda 环境，安装 Python 与 `web/` 前端依赖后运行 `python startup_all.py`。
+- 本地开发：主入口仍建议使用 `.\soultuner.ps1 up cpu/gpu`。`python scripts/dev/startup_all.py` 仅保留为 legacy 本地分步调试入口。
 - 模型缓存：Docker 默认允许首次启动自动补齐缺失的 HuggingFace 文本编码器，保证向量检索可用；如需完全离线，可先运行 `python scripts/download_models.py`，再把 `.env` 的 `HF_OFFLINE` 设为 `true`。
 - GPU 入库：日常在线推荐不需要 GPU；音频向量提取和批量入库放在 `.\soultuner.ps1 up gpu` 或 `.\soultuner.ps1 ingest gpu`。
 - 手动分步：Neo4j `:7687`、Backend `:8501`、Frontend `:3003`；GraphZep `:3100` 只是 MemoryGateway 的可选旁路。
@@ -300,6 +300,21 @@ stateDiagram-v2
 
 > 💡 联网获取的歌曲不再自动入库，用户可在「我的曲库」页面管理已入库歌曲（播放/搜索/标签编辑/删除）。
 
+P11 后，入库增强会保留更多可审计信息：`genres/moods/themes/scenarios` 仍然按实际内容选择、每类最多 5 个且不强行填满；后台会写入标签来源与置信度 JSON，方便区分手动标签、歌词 LLM、平台元数据或后续音频模型推断。歌曲元数据优先记录可验证字段（标题、歌手、专辑、时长、格式、封面、歌词、来源平台、来源 ID、发行年份等），不确定的 `tempo/energy/danceability` 不会被盲目填写。
+
+```powershell
+python scripts/p11_data_flywheel_audit.py
+python scripts/p11_prepare_online_ingest.py
+python scripts/p11_prepare_online_ingest.py --quick-ingest --enqueue
+python scripts/p15_enrich_music_knowledge.py --artist "The Cure" --dry-run
+python scripts/p11_sync_knowledge_cache.py --from sqlite --dry-run
+python -m tests.eval.evaluate_knowledge_gap
+```
+
+审计脚本不调用 LLM/GPU/网络，只检查 `../data/online_acquired/` 与入库队列：哪些歌缺音频、封面、歌词、发行年份，哪些队列任务无效。`p11_prepare_online_ingest.py` 默认 dry-run；加 `--quick-ingest` 会把有效元数据秒级写入 Neo4j，加 `--enqueue` 会加入后台 Worker 队列补歌词标签与 MuQ/M2D/OMAR 向量。
+
+歌手/歌曲介绍采用双层知识库：SQLite `MusicKnowledgeStore` 在 `../data/knowledge_cache/music_knowledge.sqlite` 保存完整知识卡、来源 URL、置信度、更新时间、风格标签与事实列表（已 gitignore）；`p11_sync_knowledge_cache.py --from sqlite` 只把摘要、来源和 `KnowledgeCard` 关系同步到 Neo4j，供 Catalog Gap Detector、曲库详情页和推荐解释读取。联网搜索只在 `p15_enrich_music_knowledge.py` 这类离线增强脚本中运行，不进入推荐热路径。`.\soultuner.ps1 up cpu/gpu` 默认同时启动 Qdrant 容器，知识检索会先走 SQLite FTS 精确命中，再并入 Qdrant 摘要向量召回；若只想保留轻量 SQLite，可在 `.env` 设 `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` 或启动前设置 `DISABLE_QDRANT=1`。
+
 ### 反馈闭环
 
 推荐完成时会写入 `${MUSIC_DATA_PATH}/feedback/exposures.jsonl`，记录 query hash、intent、三路来源排名、内容锚分数、召回后校正分量和最终位置；默认不保存原始 query。前端把 `exposure_id` 和位置随点赞、收藏、跳过、完整播放、循环、不喜欢一起回传。开始播放是中性事件，未点击不当负样本，只有显式 `skip/dislike` 才是负反馈。
@@ -328,7 +343,7 @@ python scripts/p9_p14_smoke.py
 | 维度                 | 说明                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | **CI/CD**      | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
-| **单元测试**   | 281 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、A3 readiness、P7/P9-P14 smoke、对齐 adapter、公开 demo、教师日志、标签治理等） |
+| **单元测试**   | 317 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、A3 readiness、P7/P9-P14 smoke、知识库 targeted eval、对齐 adapter、公开 demo、教师日志、标签治理等） |
 | **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；另有 `context_dev/context_holdout` 中文上下文匹配尺子，覆盖 11 类目标与 4 档具体度 |
 | **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比）              |
 | **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres）         |
@@ -451,7 +466,8 @@ python data/pipeline/ingest_to_neo4j.py --dataset yt_dlp_manual --manifest data/
 cd web
 npm install
 cd ..
-python startup_all.py
+# legacy 本地调试入口；日常推荐使用 .\soultuner.ps1 up cpu/gpu
+python scripts/dev/startup_all.py
 ```
 
 | 服务 | 端口 |
@@ -534,8 +550,10 @@ python startup_all.py
 │   └── app/library/            # 音乐库页面（待入库 / 我的曲库 / 喜欢 / 收藏）
 │
 ├── graphzep_service/           # 可选 GraphZep 记忆旁路服务
+├── deploy/legacy/              # legacy 单服务调试 compose（主路径使用根目录 docker-compose.yml）
+├── scripts/dev/                # 本地分步调试启动脚本
 ├── tests/                      # 测试与评测
-│   ├── unit/                   # 单元测试 (281 tests, pytest)
+│   ├── unit/                   # 单元测试 (317 tests, pytest)
 │   │   ├── test_normalize_key.py
 │   │   ├── test_gssc_token_budget.py
 │   │   ├── test_tag_expansion.py
@@ -549,7 +567,7 @@ python startup_all.py
 ├── Dockerfile                  # 后端镜像
 ├── pyproject.toml              # 项目配置 (mypy + ruff + pytest)
 ├── .env.example                # 环境变量模板
-├── startup_all.py              # 本地一键启动器
+├── start.py                    # 后端 / mock 模式轻量入口
 └── requirements.txt            # Python 依赖
 ```
 

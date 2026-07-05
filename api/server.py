@@ -1655,6 +1655,10 @@ async def get_pending_songs():
                 "cover_url": f"/static/online_covers/{file_basename}_cover.jpg",
                 "lrc_url": f"/static/online_lyrics/{file_basename}.lrc",
                 "acquired_at": meta.get("acquired_at", ""),
+                "release_year": meta.get("release_year"),
+                "source_platform": meta.get("source_platform") or meta.get("source", ""),
+                "source_id": str(meta.get("source_id") or meta.get("musicId", "")),
+                "metadata_source": meta.get("metadata_source", ""),
             })
         except Exception as e:
             logger.warning(f"[pending] 解析元数据失败 {meta_file.name}: {e}")
@@ -1670,6 +1674,10 @@ class PendingIngestItem(BaseModel):
     artist: str = ""
     album: str = "Unknown"
     duration: int = 0
+    release_year: Optional[int] = None
+    source_platform: str = ""
+    source_id: str = ""
+    metadata_source: str = ""
 
 
 class PendingIngestRequest(BaseModel):
@@ -1712,6 +1720,10 @@ async def ingest_pending_songs(
             "lrc_url": f"/static/online_lyrics/{item.file_basename}.lrc",
             "file_basename": item.file_basename,
             "ext": item.ext,
+            "release_year": item.release_year,
+            "source_platform": item.source_platform or "netease",
+            "source_id": item.source_id or item.music_id,
+            "metadata_source": item.metadata_source or "netease",
         }
         songs_to_ingest.append(song_data)
 
@@ -1851,12 +1863,24 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
         OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
         OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
         OPTIONAL MATCH (s)-[:IN_LANGUAGE]->(lang:Language)
+        OPTIONAL MATCH (s)-[:HAS_LANGUAGE]->(lang2:Language)
+        OPTIONAL MATCH (s)-[:HAS_KNOWLEDGE]->(kc:KnowledgeCard)
         WITH s, a,
              collect(DISTINCT m.name) AS moods,
              collect(DISTINCT t.name) AS themes,
              collect(DISTINCT g.name) AS genres,
              collect(DISTINCT sc.name) AS scenarios,
-             collect(DISTINCT lang.name) AS languages
+             collect(DISTINCT lang.name) + collect(DISTINCT lang2.name) AS languages,
+             collect(DISTINCT {
+                key: kc.key,
+                kind: kc.kind,
+                summary: kc.summary,
+                source: kc.source,
+                source_url: kc.source_url,
+                confidence: kc.confidence,
+                release_year: kc.release_year,
+                style_tags_json: kc.style_tags_json
+             }) AS knowledge_cards
         RETURN s.title AS title,
                coalesce(a.name, s.artist, 'Unknown') AS artist,
                s.album AS album,
@@ -1868,8 +1892,18 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                s.duration AS duration,
                s.format AS format,
                s.vibe AS vibe,
+               s.source_platform AS source_platform,
+               s.source_id AS source_id,
+               s.metadata_source AS metadata_source,
+               s.release_year AS release_year,
+               s.tag_source AS tag_source,
+               s.tag_confidence_json AS tag_confidence_json,
+               size(coalesce(s.muq_embedding, [])) AS muq_dim,
+               size(coalesce(s.m2d2_embedding, [])) AS m2d_dim,
+               size(coalesce(s.omar_embedding, [])) AS omar_dim,
                moods, themes, genres, scenarios,
-               coalesce(s.language, languages[0], '') AS language
+               coalesce(s.language, languages[0], '') AS language,
+               knowledge_cards
         ORDER BY s.updated_at DESC
         SKIP $offset LIMIT $limit
         """
@@ -1881,6 +1915,29 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
 
         songs = []
         for r in results:
+            vector_coverage = {
+                "muq": int(r.get("muq_dim") or 0) == 512,
+                "m2d": int(r.get("m2d_dim") or 0) == 768,
+                "omar": int(r.get("omar_dim") or 0) == 1024,
+            }
+            knowledge_cards = [
+                card
+                for card in (r.get("knowledge_cards") or [])
+                if isinstance(card, dict) and card.get("summary")
+            ][:3]
+            missing_fields = []
+            for field_name, value in (
+                ("audio", r.get("audio_url")),
+                ("cover", r.get("cover_url")),
+                ("lyrics", r.get("lrc_url")),
+                ("language", r.get("language")),
+                ("release_year", r.get("release_year")),
+            ):
+                if value in (None, "", [], "Unknown", "unknown"):
+                    missing_fields.append(field_name)
+            for field_name, covered in vector_coverage.items():
+                if not covered:
+                    missing_fields.append(f"{field_name}_embedding")
             songs.append({
                 "title": r.get("title", ""),
                 "artist": r.get("artist", "Unknown"),
@@ -1898,6 +1955,15 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "genres": r.get("genres", []),
                 "scenarios": r.get("scenarios", []),
                 "language": r.get("language", ""),
+                "release_year": r.get("release_year"),
+                "source_platform": r.get("source_platform", ""),
+                "source_id": r.get("source_id", ""),
+                "metadata_source": r.get("metadata_source", ""),
+                "tag_source": r.get("tag_source", ""),
+                "tag_confidence_json": r.get("tag_confidence_json", ""),
+                "vector_coverage": vector_coverage,
+                "missing_fields": missing_fields,
+                "knowledge_cards": knowledge_cards,
             })
 
         return {"success": True, "songs": songs, "total": total}
@@ -1916,7 +1982,7 @@ async def update_library_song_tags(
     if not request.music_id and not (request.title and request.artist):
         raise HTTPException(status_code=400, detail="music_id or title+artist is required")
 
-    from services.tag_policy import clean_tag_payload
+    from services.catalog_enrichment import prepare_tag_enrichment
 
     relationship_specs = {
         "genres": ("BELONGS_TO_GENRE", "Genre"),
@@ -1924,7 +1990,8 @@ async def update_library_song_tags(
         "themes": ("HAS_THEME", "Theme"),
         "scenarios": ("FITS_SCENARIO", "Scenario"),
     }
-    values_by_field = clean_tag_payload(request.model_dump())
+    enriched_tags = prepare_tag_enrichment(request.model_dump(), source="manual", confidence=1.0)
+    values_by_field = {field: enriched_tags[field] for field in relationship_specs}
     language = str(request.language or "").strip()[:40]
 
     try:
@@ -1957,6 +2024,9 @@ async def update_library_song_tags(
                 DELETE old
                 WITH s
                 SET s.{field} = $values,
+                    s.tag_source = $tag_source,
+                    s.tag_confidence_json = $tag_confidence_json,
+                    s.tag_sources_json = $tag_sources_json,
                     s.updated_at = timestamp()
                 WITH s
                 UNWIND $values AS tag_name
@@ -1969,6 +2039,9 @@ async def update_library_song_tags(
                     "title": request.title,
                     "artist": request.artist,
                     "values": values,
+                    "tag_source": enriched_tags["tag_source"],
+                    "tag_confidence_json": enriched_tags["tag_confidence_json"],
+                    "tag_sources_json": enriched_tags["tag_sources_json"],
                 },
             )
 

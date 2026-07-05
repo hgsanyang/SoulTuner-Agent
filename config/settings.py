@@ -45,7 +45,7 @@ class GlobalSettings(BaseSettings):
       config/settings.py → 所有功能开关、调参旋钮、检索参数（直接改 default= 即可）
       前端设置面板       → 运行时即时调整（无需重启，关闭面板丢弃）
 
-    修改 settings.py 后重启后端生效：python startup_all.py --no-web
+    修改 settings.py 后重启后端生效：python start.py --mode api
     使用方式：
       from config.settings import settings
       settings.reranker_enabled
@@ -306,6 +306,46 @@ class GlobalSettings(BaseSettings):
         default=8,
         validation_alias="CATALOG_GAP_MIN_LOCAL_RESULTS",
         description="低于该数量且存在可执行约束时，视为本地库存不足",
+    )
+    knowledge_store_path: str = Field(
+        default="../data/knowledge_cache/music_knowledge.sqlite",
+        validation_alias="MUSIC_KNOWLEDGE_STORE_PATH",
+        description="离线音乐知识库 SQLite 路径，存歌手/歌曲知识卡、来源与 FTS 索引",
+    )
+    knowledge_cache_path: str = Field(
+        default="../data/knowledge_cache/music_knowledge.jsonl",
+        validation_alias="MUSIC_KNOWLEDGE_CACHE_PATH",
+        description="兼容 JSONL 知识卡缓存路径",
+    )
+    knowledge_gap_enabled: bool = Field(
+        default=True,
+        validation_alias="MUSIC_KNOWLEDGE_GAP_ENABLED",
+        description="Catalog Gap Detector 是否查询本地知识库作为外部知识证据",
+    )
+    knowledge_gap_min_confidence: float = Field(
+        default=0.55,
+        validation_alias="MUSIC_KNOWLEDGE_GAP_MIN_CONFIDENCE",
+        description="知识卡作为本地证据的最低置信度",
+    )
+    qdrant_url: str = Field(
+        default="http://localhost:6333",
+        validation_alias="QDRANT_URL",
+        description="可选 Qdrant RAG 向量服务地址；默认 Docker 服务端口",
+    )
+    knowledge_qdrant_collection: str = Field(
+        default="soultuner_music_knowledge",
+        validation_alias="MUSIC_KNOWLEDGE_QDRANT_COLLECTION",
+        description="Qdrant 知识卡 collection 名称",
+    )
+    knowledge_qdrant_timeout_seconds: float = Field(
+        default=0.8,
+        validation_alias="MUSIC_KNOWLEDGE_QDRANT_TIMEOUT_SECONDS",
+        description="推荐热路径查询 Qdrant 的短超时；失败后回退 SQLite",
+    )
+    knowledge_vector_backend: str = Field(
+        default="qdrant",
+        validation_alias="MUSIC_KNOWLEDGE_VECTOR_BACKEND",
+        description="知识库语义检索后端: sqlite | qdrant；Qdrant 默认启动，SQLite FTS 仍作为精确检索与兜底",
     )
     user_preference_limit: int = Field(
         default=20,

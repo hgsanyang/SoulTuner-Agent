@@ -94,6 +94,7 @@ data/kaggle/
 data/mtg/
 data/feedback/
 data/yt_dlp_manual/
+data/knowledge_cache/
 
 # JSON 数据文件（保留 music_database.json 作为种子数据）
 data/**/*.json

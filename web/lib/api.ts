@@ -583,6 +583,28 @@ export interface LibrarySong {
     genres?: string[];
     scenarios?: string[];
     language?: string;
+    release_year?: number | null;
+    source_platform?: string;
+    source_id?: string;
+    metadata_source?: string;
+    tag_source?: string;
+    tag_confidence_json?: string;
+    vector_coverage?: {
+        muq?: boolean;
+        m2d?: boolean;
+        omar?: boolean;
+    };
+    missing_fields?: string[];
+    knowledge_cards?: Array<{
+        key?: string;
+        kind?: string;
+        summary?: string;
+        source?: string;
+        source_url?: string;
+        confidence?: number;
+        release_year?: number | null;
+        style_tags_json?: string;
+    }>;
 }
 
 export async function fetchLibrarySongs(
