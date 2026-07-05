@@ -139,10 +139,17 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--store-path", default="")
     parser.add_argument("--dry-run", action="store_true")
+    parser.set_defaults(use_llm_summary=True)
     parser.add_argument(
         "--use-llm-summary",
         action="store_true",
-        help="Use DashScope/Qwen to structure search snippets during offline enrichment.",
+        help="Use DashScope/Qwen web search to build sourced knowledge cards. This is the default.",
+    )
+    parser.add_argument(
+        "--no-llm-summary",
+        action="store_false",
+        dest="use_llm_summary",
+        help="Disable DashScope/Qwen and fall back to external search snippets plus deterministic summarization.",
     )
     parser.add_argument("--sync-qdrant", action="store_true", help="Mirror generated cards into Qdrant.")
     args = parser.parse_args()

@@ -52,20 +52,7 @@ Copy-Item .env.example .env
 
 Both CPU and GPU modes start the complete product workflow. The difference is multimodal quality and ingestion throughput: `up cpu` defaults to the lighter M2D text-to-music fallback while Neo4j, recommendation, web fallback, and the frontend remain fully available; with an NVIDIA GPU, use `.\soultuner.ps1 up gpu` to enable MuQ-MuLan fp16 as the primary text-to-music anchor and start the separate ingestion worker. Memory now defaults to the Neo4j hot path and no longer starts GraphZep by default. To experiment with natural-language episodic memory sidecars, set `MEMORY_EPISODIC_BACKENDS=graphzep` or `graphzep,mem0` in `.env` before startup.
 
-Do not expose a personal music library directly as a public demo. Set `PUBLIC_DEMO_MODE=true` and configure `ADMIN_API_KEY` in `.env`; download, ingest, and delete operations are disabled or require `X-API-Key`. Public demos should use CC/open catalogs or mock audio.
-
-### CC-only Gradio Public Demo
-
-For public showcases, use the lightweight Gradio demo instead of exposing a personal library. It reads the MTG-Jamendo CC sample outside the repository by default, recommends by tags/scenarios, and never connects to the private Neo4j catalog or performs download/ingest/delete actions. The demo only loads CC / Jamendo / MTG metadata and rejects private/runtime catalog paths such as `processed_audio`, `online_audio`, or `download`.
-
-```powershell
-python -m pip install -r requirements-demo.txt
-$env:PUBLIC_DEMO_MODE = "1"
-$env:PUBLIC_DEMO_DATA_DIR = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\mtg_sample"
-python demos/public_gradio_app.py
-```
-
-Use this for Hugging Face Spaces / ModelScope showcases. The full product experience still runs through Docker + Next.js / FastAPI.
+If you expose the service on a LAN or shared environment, configure `ADMIN_API_KEY` in `.env` and enable `PUBLIC_DEMO_MODE=true` when needed. That mode disables or protects local destructive actions such as download, ingest, and delete. The open-source main branch does not include personal-library showcase deployment instructions.
 
 <details>
 <summary>Local development / GPU ingestion / manual steps</summary>
@@ -99,15 +86,6 @@ Use this for Hugging Face Spaces / ModelScope showcases. The full product experi
 ---
 
 ## 🖼️ Feature Preview
-
-<div align="center">
-<h3>🎬 Explore SoulTuner's Features</h3>
-<p>
-  <a href="https://www.bilibili.com/video/BV11dQLBDEeF/">
-    <img src="https://img.shields.io/badge/▶_Demo_—_Bilibili_|_bilibili.com/video/BV11dQLBDEeF-00A1D6?style=for-the-badge&logo=bilibili&logoColor=white&labelColor=FB7299" alt="Demo Video" />
-  </a>
-</p>
-</div>
 
 ### 🏠 Home · 💬 Chat · 🎵 Recommend · 🎧 Player · 🗺️ Journey
 
@@ -335,14 +313,14 @@ python scripts/p7_smoke.py --api-base http://localhost:8501
 python scripts/p9_p14_smoke.py
 ```
 
-These smoke checks do not call an LLM or read raw private queries. `p7_smoke.py` validates public-demo safety guards, path safety, A3 readiness, text-to-music backend configuration, alignment calibration configuration, and optional API health. `p9_p14_smoke.py` validates context pressure cases, Catalog Gap Detector, post-recall adjustments, ingest queue, slate feedback, MemoryGateway preference mapping, tag hygiene, and library UI entrypoints.
+These smoke checks do not call an LLM or read raw private queries. `p7_smoke.py` validates shared-environment safety guards, path safety, A3 readiness, text-to-music backend configuration, alignment calibration configuration, and optional API health. `p9_p14_smoke.py` validates context pressure cases, Catalog Gap Detector, post-recall adjustments, ingest queue, slate feedback, MemoryGateway preference mapping, tag hygiene, and library UI entrypoints.
 
 ### Engineering Quality
 
 | Dimension | Description |
 |---|---|
 | **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 317 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, knowledge targeted eval, alignment adapter, public demo, teacher logs, tag hygiene, and more |
+| **Unit Testing** | 317 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, knowledge targeted eval, alignment adapter, teacher logs, tag hygiene, and more |
 | **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; `context_dev/context_holdout` add a Chinese context-matching ruler with 11 goal categories and 4 specificity levels |
 | **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
 | **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |

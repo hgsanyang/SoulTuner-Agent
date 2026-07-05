@@ -67,7 +67,7 @@ services:
   # 供 Catalog Gap / 歌手背景 / 风格知识查询做语义召回。
   qdrant:
     profiles: ["rag"]
-    image: qdrant/qdrant:v1.15.5
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.15.5}
     container_name: soultuner-qdrant
     ports:
       - "6333:6333"

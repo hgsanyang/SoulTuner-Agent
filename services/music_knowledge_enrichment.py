@@ -13,6 +13,7 @@ from typing import Any, Mapping
 import aiohttp
 
 from services.catalog_enrichment import build_artist_knowledge_query, build_song_knowledge_query, clamp_confidence
+from config.settings import settings
 from services.music_knowledge_store import MusicKnowledgeStore
 from tools.web_search_aggregator import fetch_searxng_search, fetch_tavily_search, fetch_zhipu_search
 
@@ -114,6 +115,138 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _load_dashscope_env() -> str:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(PROJECT_ENV_FILE, override=False)
+    except Exception:
+        pass
+    return os.getenv("DASHSCOPE_API_KEY", "").strip()
+
+
+def _normalise_llm_card(
+    *,
+    kind: str,
+    title: str = "",
+    artist: str = "",
+    parsed: Mapping[str, Any],
+    source_url: str = "",
+    source_title: str = "",
+    source: str = "dashscope_web_search",
+) -> dict[str, Any] | None:
+    summary = str(parsed.get("summary") or "").strip()
+    if not summary:
+        return None
+    sources = parsed.get("sources") or parsed.get("source_urls") or []
+    if isinstance(sources, str):
+        sources = [sources]
+    first_source = source_url or next((str(item).strip() for item in sources if str(item).strip()), "")
+    return {
+        "kind": "artist" if kind == "artist" else "song",
+        "title": title,
+        "artist": artist,
+        "summary": summary[:900],
+        "facts": [str(item)[:220] for item in parsed.get("facts") or [] if str(item).strip()][:8],
+        "source": source,
+        "source_url": first_source,
+        "confidence": clamp_confidence(parsed.get("confidence"), default=0.74),
+        "style_tags": [str(item)[:80] for item in parsed.get("style_tags") or [] if str(item).strip()][:8],
+        "source_title": source_title or "Qwen web search",
+        "release_year": parsed.get("release_year"),
+    }
+
+
+def _dashscope_openai_client() -> Any | None:
+    api_key = _load_dashscope_env()
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+
+        return OpenAI(
+            api_key=api_key,
+            base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        )
+    except Exception:
+        return None
+
+
+def _knowledge_llm_model() -> str:
+    model = str(getattr(settings, "llm_default_model", "") or "").strip()
+    return model if model.startswith("qwen3.") else "qwen3.7-plus"
+
+
+def _response_text(response: Any) -> str:
+    text = getattr(response, "output_text", "")
+    if text:
+        return str(text)
+    try:
+        data = response.model_dump()
+    except Exception:
+        data = {}
+    chunks: list[str] = []
+    for item in data.get("output") or []:
+        for content in item.get("content") or []:
+            if content.get("type") in {"output_text", "text"}:
+                chunks.append(str(content.get("text") or ""))
+    return "\n".join(chunks)
+
+
+def _llm_web_card(
+    *,
+    kind: str,
+    query: str,
+    title: str = "",
+    artist: str = "",
+) -> dict[str, Any] | None:
+    """Ask Qwen3.7-plus to perform web search and return a sourced card."""
+
+    client = _dashscope_openai_client()
+    if client is None or not hasattr(client, "responses"):
+        return None
+    subject = f"artist={artist or title}" if kind == "artist" else f"title={title}, artist={artist}"
+    prompt = f"""
+你是音乐资料整理助手。请调用联网搜索核对资料，只整理和音乐相关的事实，不要编造。
+对象: {kind}; {subject}
+搜索意图: {query}
+
+请输出严格 JSON:
+{{
+  "summary": "120字以内中文摘要，覆盖风格、背景、代表性信息",
+  "facts": ["最多5条可由联网结果支持的事实"],
+  "style_tags": ["最多6个音乐风格/类型/场景标签"],
+  "release_year": 歌曲首发年份或 null，歌手卡可为 null,
+  "confidence": 0.0到1.0,
+  "sources": ["至少1个用于支撑摘要的网页URL"]
+}}
+
+规则:
+- 只输出 JSON，不要 Markdown。
+- 如果同名歌曲/歌手有歧义，降低 confidence，并在 facts 里说明歧义。
+- 发行年份优先原曲首发年份，不把重制版、精选集、Live 专辑年份当作首发年份。
+""".strip()
+    try:
+        response = client.responses.create(
+            model=_knowledge_llm_model(),
+            input=prompt,
+            tools=[{"type": "web_search"}],
+            extra_body={"enable_thinking": True},
+        )
+        parsed = _extract_json_object(_response_text(response))
+        if not parsed:
+            return None
+        return _normalise_llm_card(
+            kind=kind,
+            title=title,
+            artist=artist,
+            parsed=parsed,
+            source="dashscope_web_search",
+        )
+    except Exception:
+        return None
+
+
 def _llm_card_from_snippets(
     *,
     kind: str,
@@ -121,24 +254,12 @@ def _llm_card_from_snippets(
     artist: str = "",
     snippets: list[WebSnippet],
 ) -> dict[str, Any] | None:
-    """Use Qwen/DashScope to structure web snippets during offline enrichment."""
+    """Use Qwen/DashScope to structure already-fetched snippets."""
 
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv(PROJECT_ENV_FILE, override=False)
-    except Exception:
-        pass
-    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-    if not api_key or not snippets:
+    client = _dashscope_openai_client()
+    if client is None or not snippets:
         return None
     try:
-        from openai import OpenAI
-
-        client = OpenAI(
-            api_key=api_key,
-            base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        )
         evidence = "\n".join(
             f"[{idx + 1}] title={snippet.title}\nurl={snippet.url}\ncontent={snippet.content}"
             for idx, snippet in enumerate(snippets[:6])
@@ -160,32 +281,25 @@ def _llm_card_from_snippets(
 搜索片段:
 {evidence}
 """.strip()
-        response = client.chat.completions.create(
-            model=os.getenv("MODEL_NAME", "qwen3.7-plus"),
-            messages=[
-                {"role": "system", "content": "你只输出 JSON，不输出解释。"},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
+        response = client.responses.create(
+            model=_knowledge_llm_model(),
+            input=f"你只输出 JSON，不输出解释。\n\n{prompt}",
+            extra_body={"enable_thinking": True},
         )
-        content = response.choices[0].message.content if response.choices else ""
+        content = _response_text(response)
         parsed = _extract_json_object(content)
         if not parsed:
             return None
         primary = snippets[0]
-        return {
-            "kind": "artist" if kind == "artist" else "song",
-            "title": title,
-            "artist": artist,
-            "summary": str(parsed.get("summary") or "")[:900],
-            "facts": [str(item)[:220] for item in parsed.get("facts") or [] if str(item).strip()][:8],
-            "source": primary.source or "web",
-            "source_url": primary.url,
-            "confidence": clamp_confidence(parsed.get("confidence"), default=0.72),
-            "style_tags": [str(item)[:80] for item in parsed.get("style_tags") or [] if str(item).strip()][:8],
-            "source_title": primary.title,
-            "release_year": parsed.get("release_year"),
-        }
+        return _normalise_llm_card(
+            kind=kind,
+            title=title,
+            artist=artist,
+            parsed=parsed,
+            source_url=primary.url,
+            source_title=primary.title,
+            source=primary.source or "web",
+        )
     except Exception:
         return None
 
@@ -243,8 +357,18 @@ async def enrich_artist_card(
     use_llm_summary: bool = False,
 ) -> dict[str, Any] | None:
     query = build_artist_knowledge_query(artist)
-    snippets = await fetch_music_knowledge_snippets(query)
-    card = build_card_from_snippets(kind="artist", artist=artist, title=artist, snippets=snippets, use_llm_summary=use_llm_summary)
+    card = None
+    if use_llm_summary:
+        card = _llm_web_card(kind="artist", query=query, artist=artist, title=artist)
+    if card is None:
+        snippets = await fetch_music_knowledge_snippets(query)
+        card = build_card_from_snippets(
+            kind="artist",
+            artist=artist,
+            title=artist,
+            snippets=snippets,
+            use_llm_summary=use_llm_summary,
+        )
     if card and not dry_run:
         store = store or MusicKnowledgeStore()
         store.upsert_artist_card(
@@ -269,8 +393,18 @@ async def enrich_song_card(
     use_llm_summary: bool = False,
 ) -> dict[str, Any] | None:
     query = build_song_knowledge_query(title, artist)
-    snippets = await fetch_music_knowledge_snippets(query)
-    card = build_card_from_snippets(kind="song", title=title, artist=artist, snippets=snippets, use_llm_summary=use_llm_summary)
+    card = None
+    if use_llm_summary:
+        card = _llm_web_card(kind="song", query=query, title=title, artist=artist)
+    if card is None:
+        snippets = await fetch_music_knowledge_snippets(query)
+        card = build_card_from_snippets(
+            kind="song",
+            title=title,
+            artist=artist,
+            snippets=snippets,
+            use_llm_summary=use_llm_summary,
+        )
     if card and not dry_run:
         store = store or MusicKnowledgeStore()
         store.upsert_song_card(

@@ -5,6 +5,7 @@ from services.music_knowledge_enrichment import (
     infer_style_tags,
     normalize_snippets,
     _extract_json_object,
+    _llm_web_card,
 )
 
 
@@ -92,3 +93,36 @@ def test_llm_summary_path_can_override_deterministic_card(monkeypatch):
 
     assert card["summary"] == "LLM structured summary."
     assert card["confidence"] == 0.91
+
+
+def test_qwen_web_search_card_parses_responses_api_json(monkeypatch):
+    class FakeResponses:
+        def create(self, **kwargs):
+            assert kwargs["model"] == "qwen3.7-plus"
+            assert kwargs["tools"] == [{"type": "web_search"}]
+
+            class Response:
+                output_text = (
+                    '{"summary":"The Cure 是英国后朋克/哥特摇滚乐队。",'
+                    '"facts":["代表作包括 Boys Don’t Cry。"],'
+                    '"style_tags":["Post-Punk","Gothic Rock"],'
+                    '"release_year":null,'
+                    '"confidence":0.86,'
+                    '"sources":["https://example.com/the-cure"]}'
+                )
+
+            return Response()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setenv("MODEL_NAME", "deepseek-ai/DeepSeek-V3.2")
+    monkeypatch.setattr("services.music_knowledge_enrichment._dashscope_openai_client", lambda: FakeClient())
+    monkeypatch.setattr("services.music_knowledge_enrichment.settings.llm_default_model", "qwen3.7-plus", raising=False)
+
+    card = _llm_web_card(kind="artist", query="The Cure 音乐人 简介 风格", artist="The Cure", title="The Cure")
+
+    assert card is not None
+    assert card["source"] == "dashscope_web_search"
+    assert card["source_url"] == "https://example.com/the-cure"
+    assert "Gothic Rock" in card["style_tags"]
