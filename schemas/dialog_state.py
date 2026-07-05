@@ -181,6 +181,62 @@ def _merge_unique(previous: list[str], current: list[str]) -> list[str]:
     return merged
 
 
+_NON_ARTIST_ENTITY_CUES = (
+    "想听",
+    "推荐",
+    "来点",
+    "给我",
+    "一些",
+    "几首",
+    "适合",
+    "感觉",
+    "氛围",
+    "那种",
+    "这种",
+    "同样",
+    "类似",
+    "保留",
+    "今天",
+    "晚上",
+    "夜里",
+    "凌晨",
+    "下雨",
+    "雨天",
+    "通勤",
+    "路上",
+    "散步",
+    "开车",
+    "写代码",
+    "听一点",
+    "一点",
+)
+
+
+def _is_plausible_artist_entity(value: Any) -> bool:
+    """Reject broad context phrases before they become hard artist filters."""
+    text = str(value or "").strip(" ，,。.!！?？")
+    if not text:
+        return False
+    folded = _norm(text)
+    if len(text) > 24:
+        return False
+    if re.search(r"\s{2,}", text):
+        return False
+    if re.search(r"[，,。.!！?？；;：:]", text):
+        return False
+    if any(cue in folded for cue in _NON_ARTIST_ENTITY_CUES):
+        return False
+    if re.search(r"(的)?(歌|歌曲|音乐)$", folded):
+        return False
+    if re.search(r"^(我|你|他|她|他们|她们|大家|某个|一个|一种)", folded):
+        return False
+    return True
+
+
+def _clean_artist_entities(values: list[str]) -> list[str]:
+    return [value for value in _merge_unique([], values) if _is_plausible_artist_entity(value)]
+
+
 def _non_empty(value: Any) -> bool:
     if isinstance(value, list):
         return bool(value)
@@ -745,7 +801,7 @@ def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMus
         artist_match = re.search(r"([\w\u4e00-\u9fff·・\-. ]{2,32})的歌", text)
         if artist_match:
             artist = str(artist_match.group(1)).strip(" ，,。.!！")
-            if artist and not re.search(r"我|你|他|她|他们|她们|大家|一些|几首", artist):
+            if _is_plausible_artist_entity(artist):
                 hard.artist_entities = _merge_unique(hard.artist_entities, [artist])
                 extracted = True
 
@@ -773,9 +829,11 @@ def apply_plan_delta_with_report(
 
     base = prev if followup else DialogMusicState()
     hard = HardConstraints(
-        artist_entities=_merge_unique(
-            base.hard_constraints.artist_entities if followup else [],
-            rp.hard_constraints.artist_entities,
+        artist_entities=_clean_artist_entities(
+            _merge_unique(
+                base.hard_constraints.artist_entities if followup else [],
+                rp.hard_constraints.artist_entities,
+            )
         ),
         song_entities=_merge_unique(
             base.hard_constraints.song_entities if followup else [],
@@ -872,7 +930,9 @@ def apply_dialog_state_to_plan(plan: MusicQueryPlan, dialog_state: DialogMusicSt
     """Copy deterministic state back into the executable retrieval plan."""
     updated = plan.model_copy(deep=True)
     rp = updated.retrieval_plan
-    rp.hard_constraints = dialog_state.hard_constraints.model_copy(deep=True)
+    hard = dialog_state.hard_constraints.model_copy(deep=True)
+    hard.artist_entities = _clean_artist_entities(hard.artist_entities)
+    rp.hard_constraints = hard
     rp.soft_intent = dialog_state.soft_intent.model_copy(deep=True)
     rp.hints = dialog_state.hints.model_copy(deep=True)
     # Re-validate to sync layered fields back to legacy fields.

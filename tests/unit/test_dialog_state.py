@@ -166,6 +166,35 @@ def test_legacy_chat_history_extracts_artist_and_work_context():
     assert state.hints.scenario == "工作"
 
 
+def test_legacy_chat_history_does_not_turn_scene_phrase_into_artist():
+    state = infer_dialog_state_from_history(
+        [
+            {"role": "user", "content": "今天下雨，想听一点通勤路上的歌"},
+            {"role": "assistant", "content": "推荐了一些雨天通勤和独立流行歌曲。"},
+        ]
+    )
+    updated = apply_plan_delta(
+        state,
+        _plan(vibe="quiet, soft"),
+        "保留雨天感，但鼓少一点，再安静一点",
+    )
+
+    assert updated.hard_constraints.artist_entities == []
+    assert updated.hints.scenario == "Rainy Day"
+    assert "low dynamic" in updated.soft_intent.vibe
+
+
+def test_planner_artist_phrase_guard_drops_contextual_false_artist():
+    updated = apply_plan_delta(
+        None,
+        _plan(artist=["想听一点通勤路上"], vibe="rainy, indoor"),
+        "保留雨天感，但鼓少一点，再安静一点",
+    )
+
+    assert updated.hard_constraints.artist_entities == []
+    assert updated.soft_intent.vibe
+
+
 def test_dialog_state_syncs_back_to_legacy_plan_fields():
     state = apply_plan_delta(
         None,
