@@ -473,6 +473,13 @@ export interface PendingSong {
     cover_url: string;
     lrc_url: string;
     acquired_at: string;
+    valid?: boolean;
+    status?: 'ready' | 'invalid' | string;
+    missing_assets?: string[];
+    release_year?: number | null;
+    source_platform?: string;
+    source_id?: string;
+    metadata_source?: string;
 }
 
 export interface IngestJob {
@@ -506,6 +513,10 @@ export async function ingestPendingSongs(songs: {
     artist: string;
     album: string;
     duration: number;
+    release_year?: number | null;
+    source_platform?: string;
+    source_id?: string;
+    metadata_source?: string;
 }[]): Promise<{ success: boolean; ingested: number; message: string; job_id?: string; enrichment?: string }> {
     try {
         const resp = await fetch('http://localhost:8501/api/pending-songs/ingest', {
@@ -595,6 +606,8 @@ export interface LibrarySong {
         omar?: boolean;
     };
     missing_fields?: string[];
+    quality_score?: number;
+    duplicate_key?: string;
     knowledge_cards?: Array<{
         key?: string;
         kind?: string;

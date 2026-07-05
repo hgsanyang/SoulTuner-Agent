@@ -21,6 +21,7 @@ export default function MyLibraryPage() {
     const [sourceFilter, setSourceFilter] = useState('all');
     const [languageFilter, setLanguageFilter] = useState('all');
     const [moodFilter, setMoodFilter] = useState('all');
+    const [qualityFilter, setQualityFilter] = useState('all');
     const [selectedSong, setSelectedSong] = useState<LibrarySong | null>(null);
     const [tagDraft, setTagDraft] = useState({
         genres: '',
@@ -129,7 +130,12 @@ export default function MyLibraryPage() {
         const matchesSource = sourceFilter === 'all' || (s.source || 'local') === sourceFilter;
         const matchesLanguage = languageFilter === 'all' || (s.language || '') === languageFilter;
         const matchesMood = moodFilter === 'all' || (s.moods || []).includes(moodFilter);
-        return matchesQuery && matchesSource && matchesLanguage && matchesMood;
+        const missingCount = (s.missing_fields || []).length;
+        const matchesQuality = qualityFilter === 'all'
+            || (qualityFilter === 'ready' && missingCount === 0)
+            || (qualityFilter === 'missing' && missingCount > 0)
+            || (qualityFilter === 'low' && (s.quality_score ?? 1) < 0.8);
+        return matchesQuery && matchesSource && matchesLanguage && matchesMood && matchesQuality;
     });
 
     const sourceLabel = (src: string) => {
@@ -152,6 +158,19 @@ export default function MyLibraryPage() {
             omar_embedding: 'OMAR',
         };
         return labels[field] || field;
+    };
+
+    const qualityBadge = (song: LibrarySong) => {
+        const score = typeof song.quality_score === 'number' ? song.quality_score : 0;
+        const missingCount = (song.missing_fields || []).length;
+        const color = score >= 0.92 ? '#86efac' : score >= 0.8 ? '#fde68a' : '#fca5a5';
+        const background = score >= 0.92 ? 'rgba(34,197,94,0.12)' : score >= 0.8 ? 'rgba(250,204,21,0.10)' : 'rgba(248,113,113,0.10)';
+        const border = score >= 0.92 ? 'rgba(34,197,94,0.24)' : score >= 0.8 ? 'rgba(250,204,21,0.18)' : 'rgba(248,113,113,0.22)';
+        return (
+            <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '9999px', color, background, border: `1px solid ${border}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                质量 {Math.round(score * 100)}%{missingCount ? ` · 缺 ${missingCount}` : ''}
+            </span>
+        );
     };
 
     const vectorBadge = (label: string, ok?: boolean) => (
@@ -248,6 +267,12 @@ export default function MyLibraryPage() {
                     <option value="all">全部情绪</option>
                     {moodOptions.map(mood => <option key={mood} value={mood}>{mood}</option>)}
                 </select>
+                <select value={qualityFilter} onChange={e => setQualityFilter(e.target.value)} style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary }}>
+                    <option value="all">全部质量</option>
+                    <option value="ready">资料完整</option>
+                    <option value="missing">待补资料</option>
+                    <option value="low">低质量优先</option>
+                </select>
                 <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>显示 {filtered.length} / {total}</span>
             </div>
 
@@ -332,6 +357,7 @@ export default function MyLibraryPage() {
                                 <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '9999px', border: `1px solid ${src.color}33`, color: src.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
                                     {src.text}
                                 </span>
+                                {qualityBadge(song)}
 
                                 <button title="详情" aria-label={`查看 ${song.title} 详情`} onClick={e => { e.stopPropagation(); setSelectedSong(song); }}
                                     style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.35rem 0.6rem', borderRadius: theme.borderRadius.sm, fontSize: '0.76rem' }}>
@@ -388,6 +414,8 @@ export default function MyLibraryPage() {
                         <div>格式：{selectedSong.format || '未知'}</div>
                         <div>时长：{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : '未知'}</div>
                         <div>标签来源：{selectedSong.tag_source || '未记录'}</div>
+                        <div>质量分：{Math.round((selectedSong.quality_score ?? 0) * 100)}%</div>
+                        <div>去重键：{selectedSong.duplicate_key || '未生成'}</div>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                         {vectorBadge('MuQ', selectedSong.vector_coverage?.muq)}
