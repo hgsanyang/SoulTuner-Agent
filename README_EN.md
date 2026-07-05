@@ -41,26 +41,77 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 ---
 
-## 🚀 For Regular Users · Docker in 3 Steps
+## 🖼️ Feature Preview
+
+### 🏠 Home · 💬 Chat · 🎵 Recommend · 🎧 Player · 🗺️ Journey
+
+<table>
+  <tr>
+    <td><img src="assets/首页.png" alt="Home" /></td>
+    <td><img src="assets/对话页面.png" alt="Chat" /></td>
+  </tr>
+  <tr>
+    <td><img src="assets/音乐推荐.png" alt="Recommendation" /></td>
+    <td><img src="assets/播放页1.png" alt="Player" /></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="assets/音乐旅程.png" alt="Journey" /></td>
+  </tr>
+</table>
+
+---
+
+## 🚀 Quick Start
 
 ```powershell
+# First enter the root folder of your cloned repository
+cd <your-project-directory>
 Copy-Item .env.example .env
-# Edit .env: at least fill NEO4J_PASSWORD and DASHSCOPE_API_KEY
-.\soultuner.ps1 up cpu        # Full CPU experience: Neo4j + Backend + Frontend + optional memory sidecar + SearxNG + Netease proxy
-.\soultuner.ps1 doctor        # Open http://localhost:3003 after health checks pass
+notepad .env
 ```
 
-Both CPU and GPU modes start the complete product workflow. The difference is multimodal quality and ingestion throughput: `up cpu` defaults to the lighter M2D text-to-music fallback while Neo4j, recommendation, web fallback, and the frontend remain fully available; with an NVIDIA GPU, use `.\soultuner.ps1 up gpu` to enable MuQ-MuLan fp16 as the primary text-to-music anchor and start the separate ingestion worker. Memory now defaults to the Neo4j hot path and no longer starts GraphZep by default. To experiment with natural-language episodic memory sidecars, set `MEMORY_EPISODIC_BACKENDS=graphzep` or `graphzep,mem0` in `.env` before startup.
+The default model setup uses DashScope / Qwen. You can switch to another provider by changing `MAIN_LLM_PROVIDER` and `MODEL_NAME`, then filling the matching provider API key or service URL.
 
-If you expose the service on a LAN or shared environment, configure `ADMIN_API_KEY` in `.env` and enable `PUBLIC_DEMO_MODE=true` when needed. That mode disables or protects local destructive actions such as download, ingest, and delete. The open-source main branch does not include personal-library showcase deployment instructions.
+For the default setup, fill at least:
+
+```env
+MAIN_LLM_PROVIDER=dashscope
+MODEL_NAME=qwen3.7-plus
+DASHSCOPE_API_KEY=your DashScope key
+NEO4J_PASSWORD=your Neo4j password
+MUSIC_DATA_PATH=../data
+```
+
+For other providers such as SiliconFlow, Google, Volcengine, local SGLang, VLLM, or Ollama, change `MAIN_LLM_PROVIDER` and `MODEL_NAME`, then fill the corresponding key or endpoint in `.env.example`. You can also adjust model settings later from the frontend settings panel.
+
+Then start the default GPU stack:
+
+```powershell
+.\soultuner.ps1 up gpu
+```
+
+Open `http://localhost:3003` after startup. To check service health:
+
+```powershell
+.\soultuner.ps1 doctor
+```
+
+If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
+
+```powershell
+.\soultuner.ps1 up cpu
+```
 
 <details>
-<summary>Local development / GPU ingestion / manual steps</summary>
+<summary>Other common commands</summary>
 
-- Local development: prefer the main `.\soultuner.ps1 up cpu/gpu` entrypoint. `python scripts/dev/startup_all.py` remains only as a legacy local step-by-step debugging entrypoint.
-- Model cache: Docker allows the first run to download a missing HuggingFace text encoder so vector retrieval works out of the box. For fully offline runs, execute `python scripts/download_models.py` first and set `HF_OFFLINE=true` in `.env`.
-- GPU ingestion: online recommendation does not require a GPU; lyrics tagging, audio vectors, and batch ingestion are handled by `.\soultuner.ps1 up gpu` or `.\soultuner.ps1 ingest gpu`.
-- Manual ports: Neo4j `:7687`, Backend `:8501`, Frontend `:3003`; GraphZep `:3100` is only an optional MemoryGateway sidecar.
+| Command | Purpose |
+|---|---|
+| `.\soultuner.ps1 down` | Stop all containers |
+| `.\soultuner.ps1 logs` | Show service logs |
+| `.\soultuner.ps1 test` | Run unit tests |
+| `.\soultuner.ps1 ingest gpu` | Process pending songs with the GPU worker |
+| `python scripts/dev/start_backend.py` | Start only the backend for local debugging |
 
 </details>
 
@@ -82,26 +133,6 @@ If you expose the service on a LAN or shared environment, configure `ADMIN_API_K
 | 📋 **Library Mgmt** | Pending staging area + queue status/retry + My Library full-graph management (search/play/tag edit/delete) |
 | 📡 **SSE Streaming** | Real-time frontend rendering: thinking process → song cards → recommendation reasons |
 | 🐳 **Docker Deployment** | `docker compose up` one-click full-stack startup |
-
----
-
-## 🖼️ Feature Preview
-
-### 🏠 Home · 💬 Chat · 🎵 Recommend · 🎧 Player · 🗺️ Journey
-
-<table>
-  <tr>
-    <td><img src="assets/首页.png" alt="Home" /></td>
-    <td><img src="assets/对话页面.png" alt="Chat" /></td>
-  </tr>
-  <tr>
-    <td><img src="assets/音乐推荐.png" alt="Recommendation" /></td>
-    <td><img src="assets/播放页1.png" alt="Player" /></td>
-  </tr>
-  <tr>
-    <td colspan="2"><img src="assets/音乐旅程.png" alt="Journey" /></td>
-  </tr>
-</table>
 
 ---
 
@@ -174,7 +205,7 @@ If you expose the service on a LAN or shared environment, configure `ADMIN_API_K
 
 ---
 
-## 🔬 Technical Depth
+## 🔬 Technical Notes
 
 ### RAG Hybrid Retrieval Pipeline
 
@@ -200,21 +231,9 @@ User Query → Planner (LLM) outputs a layered plan
    Step 7: MMR Multi-dim Diversity + FinalCut
 ```
 
-**Key Design Decisions**:
+The retrieval layer treats explicit entities, language, and instrumental-only requests as hard constraints. Mood, scenario, vibe, and user preference stay as ranking signals. This keeps precise requests such as “only this artist” stable while avoiding empty results for softer requests such as “quiet, rainy, gentle”.
 
-- **Layered Intent Plan**: The Planner outputs `hard_constraints / soft_intent / hints`. Entities, language, and instrumental constraints are hard filters; mood, scenario, and vibe are ranking signals.
-- **Three Content Recall Paths**: Graph entities/tags, MuQ-MuLan text-to-music search, and BM25 lexical search always run; `intent_type` plus query profile only adjust these content-source weights.
-- **Weighted RRF Fusion**: Candidates are merged with `weight / (60 + rank)`, preserving source rank and source metadata instead of equal merging.
-- **Three-model roles**: MuQ-MuLan is the default text-to-music anchor and the preferred semantic rerank anchor; M2D-CLAP remains available as recall/rerank fallback; OMAR-RQ is used for seed-based acoustic similarity when the user asks for songs similar to a reference track.
-- **Personalization and cold-start are post-recall score adjustments**: User profile, long-tail, freshness, and time-decayed exposure affect only content-recalled candidates. They are neither independent recall sources nor duplicated inside the content anchor.
-- **Unified adjustment scale**: Personalization, freshness, long-tail, and exposure fatigue are normalized to `[0,1]` and merged into a clipped delta (default `±0.08`) so content relevance remains dominant.
-- **Catalog Gap Detector**: Web search is enabled by default. Healthy local results get a small online mix-in (default `WEB_MIX_IN_COUNT=4`) to expand the library. Era/latest/external-knowledge requests or weak local inventory switch to fallback mode (default `WEB_FALLBACK_COUNT=10`). If web search is disabled, the agent does not go online; it explains the local catalog boundary and asks the user to enable web search for broader results.
-- **Two-stage online candidate resolution**: For knowledge-heavy gaps, SearxNG/Tavily/Zhipu first discover context-relevant title/artist candidates, then the Netease proxy resolves playable songs. Liking or saving an online song downloads it to the Pending staging area for user-confirmed ingestion.
-- **Coarse Rank + Thompson Sampling**: Content RRF plus the clipped adjustment delta is used for cutoff (`coarse_cut_ratio=65%`), while tail candidates are rescued via TS sampling (`Beta(α,β)` distribution) for long-tail/new-song exploration.
-- **Content-Anchor Normalized Reranking**: Semantic reranking follows the configured primary dense backend (MuQ by default, M2D fallback). The acoustic anchor no longer uses the candidate-set centroid; OMAR-RQ only aligns to explicit seed tracks. Personalization is applied only through the bounded post-recall layer instead of a 25% ranking anchor.
-- **Deployable fallback**: `DENSE_TEXT_AUDIO_BACKEND=muq|m2d|both`; a missing MuQ model/index or encoding failure automatically falls back to M2D, while lazy loading keeps the default memory footprint bounded.
-- **Explicit DST + PlanDelta**: First turns and topic resets use the full planner. Established follow-ups emit only whitelisted `add/replace/remove/clear_topic` operations, while deterministic code preserves untouched slots. Unresolved references, missing key entities, or severe conflicts return a clarification question with options; delta failures fall back to the full planner.
-- **MMR Jaccard**: Re-ranking using the `{genre, mood, theme, scenario}` multidimensional tags for candidate diversity.
+Recall source and rank metadata are preserved, so recommendation cards can explain whether a song came from graph search, vector search, lexical search, or online fallback.
 
 ### Agent Workflow
 
@@ -246,243 +265,11 @@ stateDiagram-v2
     persist_memory --> [*]: MemoryGateway Async Write
 ```
 
-> Intent recognition, HyDE, and the async tuner-style response default to `dashscope / qwen3.7-plus`. Recommended songs are streamed first; the default `EXPLANATION_MODE=tuner_async` then generates a short conversational response plus follow-up chips. The legacy per-song explanation mode remains available via `EXPLANATION_MODE=song_detail`, but is not recommended as the default because the system should not invent detailed listening impressions.
+### Memory And Feedback
 
-> `web_search` intent now routes **directly to the `web_fallback` node** (Online Music API live search), bypassing HybridRetrieval entirely. Normal recommendation can still use the Catalog Gap Detector to mix in a few online songs, while era/latest/external-knowledge gaps or weak local inventory trigger fallback. Supports Chinese-first query extraction, multi-level fallback query resolution, 30-second preview detection, and a two-stage "web evidence discovery → Netease playable resolution" path.
+MemoryGateway handles user profile, behavior feedback, and optional long-term memory sidecars. Neo4j stores structured events such as likes, saves, skips, and dislikes; GraphZep/Mem0 are optional extensions and do not block the main recommendation path.
 
-> Preference extraction is governed by a decoupled `extract_preferences` node; general chat intents automatically bypass it.
-
-### Memory System
-
-| Component | Description |
-|---|---|
-| **MemoryGateway** | Unified memory entry point; Neo4j stores behavior/structured hot-path preferences, while GraphZep/Mem0 can dual-run as optional sidecars |
-| **GSSC Token Budget** | Dynamic memory assignment for facts + chat_history, LLM summarization + async pre-compression caching |
-| **Neo4j Preference Graph** | Auto-extract user preferences from chat, async write to Neo4j User nodes; behavior events (like/save/skip/dislike) directly write relationship edges |
-| **Editable User Profile** | Frontend profile panel edits declared preferences and can remove one learned preference or clear all learned avoid/context/discovery preferences |
-| **Profile Synthesizer** | Dynamic profile synthesis: aggregates long-term memory + behavioral stats (played/liked/skipped counts) → auto-generates a structured user portrait injected into each Planner prompt |
-
-**Memory Architecture Highlights**:
-- **Neo4j** handles precise behavioral relationships (LIKES / SAVES / LISTENED_TO / SKIPPED / DISLIKES) with fast Bolt direct-write (~100ms)
-- **GraphZep / Mem0** only manage fuzzy semantic memory sidecars. Configure `MEMORY_EPISODIC_BACKENDS=graphzep,mem0` to dual-run them; disabling sidecars does not break the recommendation hot path.
-- **Profile Synthesizer** asynchronously aggregates both memory sources per conversation turn, generating a readable `portrait` injected into the current Planner system prompt
-
-### User Profile System
-
-The frontend profile panel saves preferences (genre/mood/scenario/language) to the Neo4j `User` node and sends natural-language memory to MemoryGateway sidecars. It also exposes learned avoid/context/discovery preferences for single-item deletion or full learned-memory clearing without deleting manual profile settings, likes, or saves. Graph Affinity reads these attributes during retrieval to boost favored tracks or softly demote avoided ones. The Profile Synthesizer aggregates behavior statistics and memory snapshots to provide personalized context injection.
-
-### Data Flywheel
-
-User search → Discover new song → Download to "Pending" staging area → Frontend preview & playback → Select and confirm ingestion → Ingest queue with pending/processing/done/failed status and retry → LLM label extraction + MuQ/M2D/OMAR vector encoding → Neo4j ingestion → Discoverable next time.
-
-> 💡 Songs acquired from the web no longer auto-ingest. Users manage ingested songs from the "My Library" page (search/play/tag edit/delete).
-
-After P11, ingestion keeps more auditable enrichment metadata. `genres/moods/themes/scenarios` are still chosen only when supported by the song, capped at five per field, and never padded. Background enrichment writes tag source and confidence JSON so manual tags, lyrics LLM output, platform metadata, and future audio-model estimates remain distinguishable. Song metadata records verifiable fields such as title, artist, album, duration, format, cover, lyrics, source platform, source id, and release year; uncertain fields such as `tempo/energy/danceability` are not guessed.
-
-```powershell
-python scripts/p11_data_flywheel_audit.py
-python scripts/p11_prepare_online_ingest.py
-python scripts/p11_prepare_online_ingest.py --quick-ingest --enqueue
-python scripts/p15_enrich_music_knowledge.py --artist "The Cure" --dry-run
-python scripts/p11_sync_knowledge_cache.py --from sqlite --dry-run
-python -m tests.eval.evaluate_knowledge_gap
-```
-
-The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. `p11_prepare_online_ingest.py` defaults to dry-run; `--quick-ingest` writes valid metadata into Neo4j immediately, and `--enqueue` schedules the background worker to add lyrics tags plus MuQ/M2D/OMAR vectors.
-
-Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. `.\soultuner.ps1 up cpu/gpu` starts Qdrant by default: knowledge lookup first uses SQLite FTS for exact/source-auditable hits, then merges Qdrant summary-vector matches for broader artist/style/background questions. To keep the stack SQLite-only, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` in `.env` or set `DISABLE_QDRANT=1` before startup.
-
-If pulling `qdrant/qdrant:v1.15.5` times out on a restricted network, temporarily set this in `.env`:
-
-```env
-QDRANT_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5
-```
-
-Or pull once and retag it locally:
-
-```powershell
-docker pull swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5
-docker tag swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5 qdrant/qdrant:v1.15.5
-```
-
-### Feedback Loop
-
-Every recommendation slate is written under `${MUSIC_DATA_PATH}/feedback` with a query hash, intent, source ranks, content-anchor scores, post-recall components, and final position; raw queries are disabled by default. The frontend returns the exact `exposure_id` and position with like/save/skip/full-play/repeat/dislike events. Play-start is neutral, and untouched impressions are never mislabeled as negatives.
-
-```powershell
-python scripts/replay_feedback.py
-python scripts/replay_feedback.py --write-candidate
-python scripts/replay_feedback.py --promote
-python scripts/replay_feedback.py --rollback
-```
-
-Replay uses `explicit_feedback_logistic_v2`: strict exposure attribution, chronological train/validation splitting, baseline-vs-candidate metrics, and same-exposure preference pairs. A candidate must pass validation before promotion; active and previous versions support rollback. Learned policies are bounded to `0.8~1.2` multipliers for RRF, content anchors, and post-recall terms while preserving the `±0.08` adjustment cap. Global and sufficiently supported per-user policies remain isolated. Insufficient real positive/negative feedback returns `insufficient_data` and never activates fake weights.
-
-`GET /api/ranking-policy/status` returns `readiness.stage`, `readiness.next_action`, `can_replay`, `can_promote`, and related fields so the UI or operator can see whether the system should keep collecting feedback, run offline replay, promote a gated candidate, or keep using an active policy. For release or daily smoke checks:
-
-```powershell
-python scripts/p7_smoke.py
-python scripts/p7_smoke.py --api-base http://localhost:8501
-python scripts/p9_p14_smoke.py
-```
-
-These smoke checks do not call an LLM or read raw private queries. `p7_smoke.py` validates shared-environment safety guards, path safety, A3 readiness, text-to-music backend configuration, alignment calibration configuration, and optional API health. `p9_p14_smoke.py` validates context pressure cases, Catalog Gap Detector, post-recall adjustments, ingest queue, slate feedback, MemoryGateway preference mapping, tag hygiene, and library UI entrypoints.
-
-### Engineering Quality
-
-| Dimension | Description |
-|---|---|
-| **CI/CD** | GitHub Actions — Auto runs `ruff` linting and `pytest` unit tests |
-| **Unit Testing** | 317 tests covering settings loading, Planner/Delta Planner, outcome eval, fusion filters, DST, strict feedback attribution, policy rollback, A3 readiness, P7/P9-P14 smoke, knowledge targeted eval, alignment adapter, teacher logs, tag hygiene, and more |
-| **Outcome Eval** | `evaluate_outcomes` measures whether returned songs satisfy the user's intent; `context_dev/context_holdout` add a Chinese context-matching ruler with 11 goal categories and 4 specificity levels |
-| **Token Tracking** | Built-in structured Token consumption reports in GSSC pipelines |
-| **State Persistence** | LangGraph MemorySaver Checkpoint (in-memory, replaceable with DB adapters) |
-| **Code Standards** | Enforced by Ruff static analysis + pyproject.toml |
-
-<details>
-<summary>Outcome Eval Details</summary>
-
-```powershell
-python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast
-python -m tests.eval.evaluate_outcomes --split holdout --planner-temperature 0 --fast
-python -m tests.eval.evaluate_outcomes --split holdout_hard --planner-temperature 0 --fast
-python -m tests.eval.evaluate_outcomes --split holdout_easy --planner-temperature 0 --fast --require-no-failures
-python -m tests.eval.evaluate_outcomes --split context_dev --planner-temperature 0 --fast --case-timeout 75
-python -m tests.eval.evaluate_outcomes --split context_holdout --planner-temperature 0 --fast --case-timeout 75
-python -m tests.eval.evaluate_outcomes --split dev --planner-temperature 0 --fast --timing --case-timeout 45
-```
-
-The harness checks whether returned songs satisfy artist, title, language, playability, negation, soft intent, and fallback behavior. The `context_*` splits are the new non-saturated Chinese ruler for "understand this moment and select fitting songs"; run them with `--planner-temperature 0`.
-
-The legacy `evaluate_intent.py` remains useful only as a route-label regression check; it is no longer used as evidence of recommendation quality. See `tests/eval/README.md` for details.
-
-</details>
-
-### Distillation Teacher Logs
-
-Planner, HyDE, and tuner-style explanation outputs can be written locally for later SFT/distillation. Logging is disabled by default; when enabled, text fields are hashed unless explicitly allowed:
-
-```powershell
-$env:TEACHER_LOG = "1"
-$env:TEACHER_LOG_DIR = "data/teacher"
-```
-
-Only set `TEACHER_LOG_STORE_TEXT=1` when building a private local training set. Do not commit `data/teacher/` to the remote repository.
-
----
-
-## 📊 Neo4j Knowledge Graph
-
-```mermaid
-erDiagram
-    Song ||--|| Artist : PERFORMED_BY
-    Song }o--o{ Genre : HAS_GENRE
-    Song }o--o{ Mood : HAS_MOOD
-    Song }o--o{ Scenario : FITS_SCENARIO
-    Song ||--|| Language : IN_LANGUAGE
-    Song ||--|| Region : IN_REGION
-    User }o--o{ Song : "LIKES / SAVES / LISTENED_TO"
-    User }o--o{ Genre : PREFERS_GENRE
-
-    Song {
-        string title
-        string music_id
-        float_arr muq_embedding
-        float_arr m2d2_embedding
-        float_arr omar_embedding
-        string audio_url
-    }
-    Artist { string name }
-    Genre { string name }
-    Mood { string name }
-    Scenario { string name }
-    User {
-        string user_id
-        string preferred_genres
-        string preferred_moods
-        string preferred_scenarios
-        string preferred_languages
-        string profile_free_text
-    }
-```
-
-**Vector Indices**: `song_muq_index` (512d, cosine, primary text-to-music) + `song_m2d2_index` (768d, cosine, fallback/rerank) + `song_omar_index` (1024d, cosine, acoustic auxiliary).
-
----
-
-## 🧰 Startup And Ingestion Reference
-
-For everyday use, the 3-step Docker block near the top is enough. The commands below keep only two startup modes: CPU and GPU.
-
-| Command | Purpose |
-|---|---|
-| `.\soultuner.ps1 up cpu` | Full CPU online stack; text-to-music uses the M2D fallback by default to avoid heavy MuQ cold loading |
-| `.\soultuner.ps1 up gpu` | Full CPU workflow + MuQ-MuLan fp16 primary text-to-music anchor + separate ingestion worker for lyrics tags, audio vectors, and batch ingest |
-| `MEMORY_EPISODIC_BACKENDS=graphzep` | Optionally enables the GraphZep natural-language memory sidecar without changing the Neo4j hot path |
-| `.\soultuner.ps1 doctor` | Environment diagnosis and next-step hints |
-| `.\soultuner.ps1 test` | Unit tests |
-| `.\soultuner.ps1 mock` | End-to-end mock run without external services |
-| `.\soultuner.ps1 ingest gpu` | Process the ingestion queue with the GPU worker |
-
-<details>
-<summary>First-time model cache and data ingestion</summary>
-
-```powershell
-conda create -n music_agent python=3.11
-conda activate music_agent
-pip install -r requirements.txt
-python scripts/download_models.py
-.\soultuner.ps1 ingest gpu
-```
-
-Online recommendation only reads mounted model caches. Batch lyrics tagging, audio-vector extraction, and new-song ingestion are handled by the GPU worker so day-to-day recommendation does not depend on GPU work.
-
-Manual yt-dlp downloads under `data/yt_dlp_manual/downloads` use the same canonical ingestion path:
-
-```powershell
-python data/pipeline/yt_dlp_manual_flywheel.py --dry-run
-python data/pipeline/yt_dlp_manual_flywheel.py --stage --include-existing --batch-size 5
-python data/pipeline/ingest_to_neo4j.py --dataset yt_dlp_manual --manifest data/pipeline/gemini_prompts/<manifest>.json --force
-```
-
-The flywheel stages files into `../data/processed_audio/`, generates LLM tags, then uses GPU extraction for MuQ/M2D/OMAR before writing to Docker Neo4j. Generated manifests, tag JSON, and media files are gitignored.
-
-</details>
-
-<details>
-<summary>Local development / manual startup</summary>
-
-```powershell
-cd web
-npm install
-cd ..
-# legacy local debug entrypoint; daily use should prefer .\soultuner.ps1 up cpu/gpu
-python scripts/dev/startup_all.py
-```
-
-| Service | Port |
-|---|---|
-| Neo4j Bolt / Browser | `7687` / `7474` |
-| GraphZep | `3100` (optional memory profile) |
-| Backend | `8501` |
-| Frontend | `3003` |
-| SearxNG | `8888` |
-
-</details>
-
----
-### Advanced: Local LLM Experiment (Optional)
-
-DashScope is the recommended default. Switch providers only when you explicitly want to test a local model, from **Settings → Model Config → Advanced Options**.
-
-1. **Terminal A (WSL)**: Start the local inference engine.
-
-   ```bash
-   wsl
-   bash /path/to/SoulTuner-Agent/scripts/start_sglang.sh
-   ```
-
-2. **Frontend Advanced Options**: switch the specific model slot to `sglang`, then save.
+Frontend profile settings, song feedback, and slate-level feedback can gradually affect ranking, but they do not override the relevance of the current query.
 
 ---
 
@@ -503,7 +290,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 ├── retrieval/                  # Engine abstractions
 │   ├── hybrid_retrieval.py     # Multi-path Fusion + bounded adjustment/TS + Content-Anchor Rerank + MMR
 │   ├── gssc_context_builder.py # GSSC pipeline (Budgeting + Abstract Context mapping)
-│   ├── muq_embedder.py         # MuQ-MuLan 24kHz audio/text encoder (lazy-loaded)
+│   ├── muq_embedder.py         # MuQ-MuLan audio/text encoder
 │   ├── audio_embedder.py       # M2D-CLAP fallback and semantic rerank encoder
 │   ├── neo4j_client.py         # Node connectivity definitions
 │   ├── music_journey.py        # Journey architect algorithms
@@ -513,7 +300,7 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 │   ├── graphrag_search.py      # Neo4j Cypher definitions
 │   ├── semantic_search.py      # MuQ primary, M2D fallback, OMAR-assisted retrieval
 │   ├── web_search_aggregator.py# SearxNG + Tavily routers
-│   └── acquire_music.py        # Flywheel tools (download to staging + on-demand ingest)
+│   └── acquire_music.py        # Song acquisition and pending-ingest tools
 │
 ├── llms/                       # LLMs
 │   ├── prompts.py              # LLM Prompts
@@ -535,14 +322,14 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 ├── deploy/legacy/              # Legacy single-service compose files
 ├── scripts/dev/                # Local step-by-step debug startup scripts
 ├── tests/                      # Testing & Eval
-│   ├── unit/                   # 317 pytest tests
+│   ├── unit/                   # Unit tests
 │   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
 ├── .github/workflows/ci.yml    # GitHub Actions definitions
 ├── docker-compose.yml          # Container configuration
 ├── Dockerfile                  # API Engine definitions
 ├── pyproject.toml              # Ruff + Pytest syntax bounds
 ├── .env.example                # Templates
-└── start.py                    # Backend / mock lightweight entrypoint
+└── scripts/dev/start_backend.py # Backend local debug entrypoint
 ```
 
 ---
@@ -551,32 +338,16 @@ DashScope is the recommended default. Switch providers only when you explicitly 
 
 ### Environment Variables
 
-| Property | Description | Default |
-|---|---|---|
-| `DASHSCOPE_BASE_URL` | DashScope API base | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `DASHSCOPE_API_KEY` | DashScope API key | — |
-| `MODEL_NAME` | Main reasoning model | `qwen3.7-plus` |
-| `NEO4J_URI` | Neo4j bindings | `neo4j://127.0.0.1:7687` |
-| `NEO4J_PASSWORD` | Neo4j security parameters | — |
-| `DENSE_TEXT_AUDIO_BACKEND` | Text-to-music backend | `muq` (Docker CPU automatically uses `m2d`; `both` optional) |
-| `MUSIC_DENSE_QUERY_VARIANTS` | Multi-view HyDE vector ensemble | `auto` (scene/mood/similarity queries use acoustic/emotional/context views; exact artist/title queries stay single-vector) |
-| `MUSIC_ALIGNMENT_CALIBRATION_PATH` | Optional text/audio gap calibration JSON | empty (scale/bias per backend; missing file is no-op) |
-| `MUSIC_ALIGNMENT_ADAPTER_PATH` | Optional text-side alignment adapter | empty (loads the `train_alignment_adapter.py` linear adapter artifact; missing or mismatched files are no-op) |
-| `MUSIC_FEEDBACK_DIR` | Exposure/event feedback log directory | `data/feedback` |
-| `FEEDBACK_LOG_RAW_QUERY` | Store raw queries in feedback logs (hash-only by default) | `0` |
-| `RECALL_SOURCE_TIMEOUT_SECONDS` | Per-recall timeout | `60` (covers MuQ cold loading) |
-| `TAVILY_API_KEY` | Cloud indexing rules | Optional |
+| Variable | Description |
+| --- | --- |
+| `DASHSCOPE_API_KEY` | Default DashScope / Qwen API key; fill the matching provider key if you switch providers |
+| `NEO4J_PASSWORD` | Local Neo4j password |
+| `MUSIC_DATA_PATH` | Folder for audio, cache, pending-ingest queue, and feedback logs |
+| `MUSIC_WEB_SEARCH_ENABLED` | Whether online candidate fallback is allowed |
+| `ADMIN_API_KEY` | Protects admin endpoints in shared or LAN deployments |
+| `QDRANT_IMAGE` | Optional Qdrant image override for slow networks |
 
-MuQ-MuLan processes 24kHz audio and loads on demand. This project measured about 2.75GB peak VRAM in fp32 and about 1.4GB in fp16. `up gpu` exposes the GPU to the backend and enables fp16, while `up cpu` selects M2D to avoid an unresponsive CPU container during MuQ cold loading. MuQ weights use **CC-BY-NC 4.0** and therefore are restricted to non-commercial use unless separately licensed.
-
-The local-catalog text-to-music adapter is optional and off by default. Prefer the acoustic-caption training path first, then enable it only after the attribute ruler and outcome/context rulers do not regress:
-
-```powershell
-python scripts/train_alignment_adapter.py --backend muq --caption-style acoustic --output data/alignment_adapter.json
-python -m tests.eval.evaluate_alignment_attribute --k 10 --adapter-path data/alignment_adapter.json
-```
-
-Only set `MUSIC_ALIGNMENT_ADAPTER_PATH=data/alignment_adapter.json` after validation passes.
+More advanced options are available in `.env.example`; normal usage does not require changing them one by one.
 
 ---
 
