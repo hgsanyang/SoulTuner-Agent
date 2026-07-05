@@ -4,7 +4,7 @@
 
 ## unit/
 
-单元测试（pytest，当前 281 tests）：
+单元测试（pytest，当前 304 tests）：
 
 | 文件 | 覆盖范围 |
 |------|---------|
@@ -21,6 +21,9 @@
 | `test_p9_p14_smoke.py` | P9-P14 质量飞轮 smoke 检查入口 |
 | `test_ingest_queue.py` | 入库增强队列生命周期、失败任务重试 |
 | `test_tag_policy.py` | 曲库/入库标签治理：去重、限 5、不强制填满 |
+| `test_catalog_enrichment.py` | P11 元数据、标签来源/置信度、知识卡规范化 |
+| `test_music_knowledge_cache.py` | 离线歌曲/歌手知识卡缓存 |
+| `test_p11_data_flywheel_audit.py` | 数据飞轮审计脚本纯逻辑 |
 | `test_schema_validation.py` | Pydantic Schema 校验 |
 
 ## eval/

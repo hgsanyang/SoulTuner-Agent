@@ -299,6 +299,14 @@ User search → Discover new song → Download to "Pending" staging area → Fro
 
 > 💡 Songs acquired from the web no longer auto-ingest. Users manage ingested songs from the "My Library" page (search/play/tag edit/delete).
 
+After P11, ingestion keeps more auditable enrichment metadata. `genres/moods/themes/scenarios` are still chosen only when supported by the song, capped at five per field, and never padded. Background enrichment writes tag source and confidence JSON so manual tags, lyrics LLM output, platform metadata, and future audio-model estimates remain distinguishable. Song metadata records verifiable fields such as title, artist, album, duration, format, cover, lyrics, source platform, source id, and release year; uncertain fields such as `tempo/energy/danceability` are not guessed.
+
+```powershell
+python scripts/p11_data_flywheel_audit.py
+```
+
+The audit script does not call an LLM, GPU, or network. It checks `../data/online_acquired/` plus the ingest queue for missing audio, cover, lyrics, release year, and invalid jobs. Artist/song descriptions can be written as offline knowledge cards through `MusicKnowledgeCache` for search expansion, library detail pages, and recommendation explanations. They are optional RAG cache entries, not hard catalog facts.
+
 ### Feedback Loop
 
 Every recommendation slate is written under `${MUSIC_DATA_PATH}/feedback` with a query hash, intent, source ranks, content-anchor scores, post-recall components, and final position; raw queries are disabled by default. The frontend returns the exact `exposure_id` and position with like/save/skip/full-play/repeat/dislike events. Play-start is neutral, and untouched impressions are never mislabeled as negatives.

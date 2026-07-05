@@ -55,7 +55,8 @@ try:
 except Exception:
     pass
 
-from retrieval.neo4j_client import get_neo4j_client
+from retrieval.neo4j_client import get_neo4j_client  # noqa: E402
+from services.catalog_enrichment import normalize_acquisition_metadata, prepare_tag_enrichment  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -341,6 +342,13 @@ class UnifiedIngestion:
             "s.vibe = $vibe",
             "s.language = $language",
             "s.region = $region",
+            "s.source_platform = $source_platform",
+            "s.source_id = $source_id",
+            "s.metadata_source = $metadata_source",
+            "s.release_year = $release_year",
+            "s.tag_source = $tag_source",
+            "s.tag_confidence_json = $tag_confidence_json",
+            "s.tag_sources_json = $tag_sources_json",
             "s.dataset = $dataset",
             "s.updated_at = timestamp()",
         ]
@@ -361,6 +369,13 @@ class UnifiedIngestion:
             "genres": song_data.get("genres", []),
             "language": song_data.get("language", ""),
             "region": song_data.get("region", ""),
+            "source_platform": song_data.get("source_platform", ""),
+            "source_id": song_data.get("source_id", ""),
+            "metadata_source": song_data.get("metadata_source", ""),
+            "release_year": song_data.get("release_year"),
+            "tag_source": song_data.get("tag_source", ""),
+            "tag_confidence_json": song_data.get("tag_confidence_json", "{}"),
+            "tag_sources_json": song_data.get("tag_sources_json", "{}"),
             "dataset": song_data.get("dataset", self.dataset),
         }
 
@@ -444,6 +459,7 @@ class UnifiedIngestion:
 
         # 1. 读取元数据（兼容网易云格式和 MTG 格式）
         meta = self._load_metadata(basename) or {}
+        normalized_meta = normalize_acquisition_metadata(meta)
         music_id = str(meta.get("musicId", f"local_{basename}"))
         title = meta.get("musicName", basename.split(" - ")[0] if " - " in basename else basename)
         artists_raw = meta.get("artist", [])
@@ -481,6 +497,16 @@ class UnifiedIngestion:
             else:
                 genres = raw_genre or []
 
+        tag_enrichment = prepare_tag_enrichment(
+            {
+                "genres": genres,
+                "moods": moods,
+                "themes": themes,
+                "scenarios": scenarios,
+            },
+            source="local_metadata" if (meta.get("moods") or meta.get("themes") or meta.get("scenarios")) else "llm_lyrics",
+        )
+
         # 3. 构建静态 URL
         urls = self._build_static_urls(basename, ext)
 
@@ -492,13 +518,20 @@ class UnifiedIngestion:
             "duration": duration,
             "format": fmt,
             "dataset": dataset,
-            "moods": moods,
-            "themes": themes,
-            "scenarios": scenarios,
-            "genres": genres,
+            "moods": tag_enrichment["moods"],
+            "themes": tag_enrichment["themes"],
+            "scenarios": tag_enrichment["scenarios"],
+            "genres": tag_enrichment["genres"],
             "vibe": vibe,
             "language": language,
             "region": region,
+            "source_platform": normalized_meta.get("source_platform", ""),
+            "source_id": normalized_meta.get("source_id", music_id),
+            "metadata_source": normalized_meta.get("metadata_source", ""),
+            "release_year": normalized_meta.get("release_year"),
+            "tag_source": tag_enrichment["tag_source"],
+            "tag_confidence_json": tag_enrichment["tag_confidence_json"],
+            "tag_sources_json": tag_enrichment["tag_sources_json"],
             "m2d2_embedding": None,
             "omar_embedding": None,
             "muq_embedding": None,
@@ -597,7 +630,6 @@ class UnifiedIngestion:
 
         success = 0
         errors = 0
-        skipped = 0
 
         if skip_embeddings:
             # ══════════════════════════════════════════════════════

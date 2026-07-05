@@ -300,6 +300,14 @@ stateDiagram-v2
 
 > 💡 联网获取的歌曲不再自动入库，用户可在「我的曲库」页面管理已入库歌曲（播放/搜索/标签编辑/删除）。
 
+P11 后，入库增强会保留更多可审计信息：`genres/moods/themes/scenarios` 仍然按实际内容选择、每类最多 5 个且不强行填满；后台会写入标签来源与置信度 JSON，方便区分手动标签、歌词 LLM、平台元数据或后续音频模型推断。歌曲元数据优先记录可验证字段（标题、歌手、专辑、时长、格式、封面、歌词、来源平台、来源 ID、发行年份等），不确定的 `tempo/energy/danceability` 不会被盲目填写。
+
+```powershell
+python scripts/p11_data_flywheel_audit.py
+```
+
+这个审计脚本不调用 LLM/GPU/网络，只检查 `../data/online_acquired/` 与入库队列：哪些歌缺音频、封面、歌词、发行年份，哪些队列任务无效。歌手/歌曲介绍可以作为离线知识卡写入 `MusicKnowledgeCache`，供搜索扩展、曲库详情页和推荐解释读取；它是可选 RAG 缓存，不作为歌曲硬过滤事实。
+
 ### 反馈闭环
 
 推荐完成时会写入 `${MUSIC_DATA_PATH}/feedback/exposures.jsonl`，记录 query hash、intent、三路来源排名、内容锚分数、召回后校正分量和最终位置；默认不保存原始 query。前端把 `exposure_id` 和位置随点赞、收藏、跳过、完整播放、循环、不喜欢一起回传。开始播放是中性事件，未点击不当负样本，只有显式 `skip/dislike` 才是负反馈。
