@@ -1114,6 +1114,7 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 async def ranking_policy_status():
     """Return non-sensitive A3 policy state for diagnostics and UI tooling."""
     from services.feedback_logger import load_jsonl
+    from services.feedback_diagnostics import summarize_feedback_quality
     from services.ranking_policy import (
         ACTIVE_FILE,
         CANDIDATE_FILE,
@@ -1154,6 +1155,11 @@ async def ranking_policy_status():
         active=active,
         candidate=candidate,
     )
+    feedback_quality = summarize_feedback_quality(
+        exposures,
+        events,
+        slate_feedback,
+    )
 
     return {
         "feedback_dir": str(root),
@@ -1163,6 +1169,7 @@ async def ranking_policy_status():
         "active": active,
         "candidate": candidate,
         "readiness": readiness,
+        "feedback_quality": feedback_quality,
     }
 
 
