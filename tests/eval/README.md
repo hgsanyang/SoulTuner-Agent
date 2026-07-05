@@ -87,7 +87,7 @@ python scripts/p7_smoke.py --api-base http://localhost:8501
 python scripts/p9_p14_smoke.py
 ```
 
-The smoke check verifies that public-demo safety guards, path validation,
+The smoke check verifies that shared-environment safety guards, path validation,
 ranking-policy readiness, dense-backend configuration, optional calibration
 configuration, and selected API endpoints are wired correctly without calling an
 LLM or consuming outcome-eval budget. `p9_p14_smoke.py` is the broader quality

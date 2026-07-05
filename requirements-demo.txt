@@ -1,5 +1,0 @@
-# Optional public demo dependencies.
-# Install only when deploying the Gradio demo:
-#   python -m pip install -r requirements-demo.txt
-
-gradio>=4.44.0

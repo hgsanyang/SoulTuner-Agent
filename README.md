@@ -52,20 +52,7 @@ Copy-Item .env.example .env
 
 CPU 和 GPU 都能启动完整产品功能。区别只在多模态质量与入库吞吐：`up cpu` 默认用资源更轻的 M2D 文搜音回退，Neo4j / 推荐 / 联网 / 前端全可用；有 NVIDIA GPU 时，把第三行改成 `.\soultuner.ps1 up gpu`，后端会启用 MuQ-MuLan fp16 文搜音主锚，并同时启动独立入库 Worker。默认记忆使用 Neo4j 热路径，不再强制启动 GraphZep；如果要实验自然语言长期记忆旁路，在 `.env` 设置 `MEMORY_EPISODIC_BACKENDS=graphzep` 或 `graphzep,mem0` 后再启动。
 
-公开演示请不要直接暴露个人曲库服务。将 `.env` 里的 `PUBLIC_DEMO_MODE=true` 并配置 `ADMIN_API_KEY` 后，下载、入库、删除等本地破坏性操作会被禁用或要求 `X-API-Key`；公开 Demo 仍建议只使用 CC/open 曲库或 mock 音频。
-
-### CC-only Gradio 公开演示
-
-如果只想做作品展示，不暴露个人曲库，可以启动一个轻量 Gradio demo。它默认读取仓库外的 MTG-Jamendo CC sample，只做标签/场景推荐，不连接私人 Neo4j 曲库，也不会执行下载、入库或删除。Demo 只加载 CC / Jamendo / MTG 来源的元数据，并会拒绝指向 `processed_audio`、`online_audio`、`download` 等私人/运行时曲库路径。
-
-```powershell
-python -m pip install -r requirements-demo.txt
-$env:PUBLIC_DEMO_MODE = "1"
-$env:PUBLIC_DEMO_DATA_DIR = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\mtg_sample"
-python demos/public_gradio_app.py
-```
-
-这个 demo 适合 Hugging Face Spaces / 魔搭作品页的公开展示；完整产品体验仍使用上面的 Docker + Next.js / FastAPI 入口。
+如果要把服务暴露到局域网或多人环境，请在 `.env` 中配置 `ADMIN_API_KEY`，并按需启用 `PUBLIC_DEMO_MODE=true`。该模式会禁用或保护下载、入库、删除等本地破坏性操作；开源主分支不包含个人曲库或作品展示部署说明。
 
 <details>
 <summary>本地开发 / GPU 入库 / 手动分步</summary>
@@ -99,15 +86,6 @@ python demos/public_gradio_app.py
 ---
 
 ## 🖼️ 功能预览
-
-<div align="center">
-<h3>🎬 快速了解 SoulTuner 的功能</h3>
-<p>
-  <a href="https://www.bilibili.com/video/BV11dQLBDEeF/">
-    <img src="https://img.shields.io/badge/▶_Demo展示_—_B站地址_|_bilibili.com/video/BV11dQLBDEeF-00A1D6?style=for-the-badge&logo=bilibili&logoColor=white&labelColor=FB7299" alt="Demo Video" />
-  </a>
-</p>
-</div>
 
 ### 🏠 首页 · 💬 对话 · 🎵 推荐 · 🎧 播放 · 🗺️ 旅程
 
@@ -336,7 +314,7 @@ python scripts/p7_smoke.py --api-base http://localhost:8501
 python scripts/p9_p14_smoke.py
 ```
 
-这些 smoke 不调用 LLM，也不读取私密原文 query。`p7_smoke.py` 检查公开 Demo 安全护栏、路径校验、A3 readiness、文搜音后端配置、alignment calibration 配置和可选 API 健康；`p9_p14_smoke.py` 检查上下文压力用例、Catalog Gap Detector、召回后修正、入库队列、歌单级反馈、MemoryGateway 偏好映射、标签治理和曲库 UI 入口。
+这些 smoke 不调用 LLM，也不读取私密原文 query。`p7_smoke.py` 检查共享环境安全护栏、路径校验、A3 readiness、文搜音后端配置、alignment calibration 配置和可选 API 健康；`p9_p14_smoke.py` 检查上下文压力用例、Catalog Gap Detector、召回后修正、入库队列、歌单级反馈、MemoryGateway 偏好映射、标签治理和曲库 UI 入口。
 
 ### 工程质量
 
