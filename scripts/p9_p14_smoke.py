@@ -103,7 +103,7 @@ def _check_catalog_gap_and_adjustments() -> list[dict[str, Any]]:
 
 def _check_ingest_feedback_memory_and_tags() -> list[dict[str, Any]]:
     from services.feedback_logger import SLATE_FEEDBACK_FILE, load_jsonl, log_exposure, log_slate_feedback
-    from services.ingest_queue import enqueue_songs, list_jobs
+    from services import ingest_queue
     from services.memory_gateway import derive_preferences_from_slate_feedback
     from services.ranking_policy import summarize_policy_readiness
     from services.tag_policy import clean_tag_payload
@@ -112,9 +112,22 @@ def _check_ingest_feedback_memory_and_tags() -> list[dict[str, Any]]:
     with tempfile.TemporaryDirectory() as tmp:
         old_feedback = os.environ.get("MUSIC_FEEDBACK_DIR")
         old_queue = os.environ.get("MUSIC_INGEST_QUEUE_DIR")
+        old_queue_paths = (
+            ingest_queue.QUEUE_ROOT,
+            ingest_queue.PENDING_DIR,
+            ingest_queue.PROCESSING_DIR,
+            ingest_queue.DONE_DIR,
+            ingest_queue.FAILED_DIR,
+        )
         try:
             os.environ["MUSIC_FEEDBACK_DIR"] = str(Path(tmp) / "feedback")
             os.environ["MUSIC_INGEST_QUEUE_DIR"] = str(Path(tmp) / "queue")
+            queue_root = Path(tmp) / "queue"
+            ingest_queue.QUEUE_ROOT = queue_root
+            ingest_queue.PENDING_DIR = queue_root / "pending"
+            ingest_queue.PROCESSING_DIR = queue_root / "processing"
+            ingest_queue.DONE_DIR = queue_root / "done"
+            ingest_queue.FAILED_DIR = queue_root / "failed"
             exposure_id = log_exposure(
                 query="雨天安静一点",
                 request_id="p9p14-smoke",
@@ -134,8 +147,15 @@ def _check_ingest_feedback_memory_and_tags() -> list[dict[str, Any]]:
             prefs = derive_preferences_from_slate_feedback(rating="too_noisy", reasons=["太吵"], note="少点土嗨 EDM")
             rows.append(_ok("memory_slate_mapping", json.dumps(prefs, ensure_ascii=False)) if "avoid_moods" in prefs else _fail("memory_slate_mapping", str(prefs)))
 
-            job_id = enqueue_songs([{"title": "New Song", "artist": "A"}])
-            jobs = list_jobs()
+            job_id = ingest_queue.enqueue_songs([
+                {
+                    "title": "Smoke Song",
+                    "artist": "Smoke Artist",
+                    "audio_url": "/static/online_audio/Smoke Song - Smoke Artist.mp3",
+                    "file_basename": "Smoke Song - Smoke Artist",
+                }
+            ])
+            jobs = ingest_queue.list_jobs()
             rows.append(_ok("ingest_queue_pending", job_id) if jobs and jobs[0]["status"] == "pending" else _fail("ingest_queue_pending", str(jobs)))
 
             tags = clean_tag_payload({"genres": ["Indie", "indie", "Unknown", "Folk", "Rock", "Pop", "Dream Pop", "EDM"]})
@@ -149,6 +169,13 @@ def _check_ingest_feedback_memory_and_tags() -> list[dict[str, Any]]:
                 os.environ.pop("MUSIC_INGEST_QUEUE_DIR", None)
             else:
                 os.environ["MUSIC_INGEST_QUEUE_DIR"] = old_queue
+            (
+                ingest_queue.QUEUE_ROOT,
+                ingest_queue.PENDING_DIR,
+                ingest_queue.PROCESSING_DIR,
+                ingest_queue.DONE_DIR,
+                ingest_queue.FAILED_DIR,
+            ) = old_queue_paths
     return rows
 
 

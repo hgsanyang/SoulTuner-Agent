@@ -7,13 +7,14 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 QUEUE_ROOT = Path(os.getenv("MUSIC_INGEST_QUEUE_DIR", "data/ingest_queue"))
 PENDING_DIR = QUEUE_ROOT / "pending"
 PROCESSING_DIR = QUEUE_ROOT / "processing"
 DONE_DIR = QUEUE_ROOT / "done"
 FAILED_DIR = QUEUE_ROOT / "failed"
+PLACEHOLDER_TITLES = {"new song", "unknown", "untitled", "test", "song"}
 
 
 def _ensure_dirs() -> None:
@@ -21,14 +22,53 @@ def _ensure_dirs() -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
 
+class IngestQueueValidationError(ValueError):
+    """Raised when a song cannot safely enter the offline enrichment queue."""
+
+
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _has_audio_pointer(song: Mapping[str, Any]) -> bool:
+    return bool(_clean_text(song.get("audio_url")) or _clean_text(song.get("file_basename")))
+
+
+def validate_songs_for_queue(songs: list[dict[str, Any]] | Any) -> list[dict[str, Any]]:
+    """Validate and normalize queued songs before the GPU worker sees them."""
+    if not isinstance(songs, list) or not songs:
+        raise IngestQueueValidationError("queue job must contain at least one song")
+
+    normalized: list[dict[str, Any]] = []
+    for index, raw in enumerate(songs):
+        if not isinstance(raw, Mapping):
+            raise IngestQueueValidationError(f"song[{index}] must be an object")
+        song = dict(raw)
+        title = _clean_text(song.get("title") or song.get("name"))
+        artist = _clean_text(song.get("artist"))
+        if not title:
+            raise IngestQueueValidationError(f"song[{index}] missing title")
+        if title.casefold() in PLACEHOLDER_TITLES:
+            raise IngestQueueValidationError(f"song[{index}] has placeholder title: {title}")
+        if not artist:
+            raise IngestQueueValidationError(f"song[{index}] missing artist")
+        if not _has_audio_pointer(song):
+            raise IngestQueueValidationError(f"song[{index}] missing audio_url or file_basename")
+        song["title"] = title
+        song["artist"] = artist
+        normalized.append(song)
+    return normalized
+
+
 def enqueue_songs(songs: list[dict[str, Any]]) -> str:
     """Atomically enqueue songs for the offline enrichment worker."""
     _ensure_dirs()
+    normalized_songs = validate_songs_for_queue(songs)
     job_id = f"{int(time.time())}-{uuid.uuid4().hex[:10]}"
     target = PENDING_DIR / f"{job_id}.json"
     temporary = target.with_suffix(".tmp")
     temporary.write_text(
-        json.dumps({"job_id": job_id, "songs": songs}, ensure_ascii=False, indent=2),
+        json.dumps({"job_id": job_id, "songs": normalized_songs}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     temporary.replace(target)
@@ -40,6 +80,13 @@ def _load_job(path: Path, status: str) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         payload = {}
+    validation_error = ""
+    try:
+        validate_songs_for_queue(payload.get("songs") or [])
+        valid = True
+    except IngestQueueValidationError as exc:
+        validation_error = str(exc)
+        valid = False
     stat = path.stat()
     return {
         "job_id": payload.get("job_id") or path.stem,
@@ -47,6 +94,8 @@ def _load_job(path: Path, status: str) -> dict[str, Any]:
         "songs": payload.get("songs") or [],
         "song_count": len(payload.get("songs") or []),
         "error": payload.get("error", ""),
+        "valid": valid,
+        "validation_error": validation_error,
         "updated_at": int(stat.st_mtime * 1000),
         "file": path.name,
     }
@@ -94,7 +143,13 @@ def claim_next_job() -> tuple[Path, dict[str, Any]] | None:
             pending.replace(processing)
         except (FileNotFoundError, PermissionError):
             continue
-        return processing, json.loads(processing.read_text(encoding="utf-8"))
+        payload = json.loads(processing.read_text(encoding="utf-8"))
+        try:
+            payload["songs"] = validate_songs_for_queue(payload.get("songs") or [])
+        except IngestQueueValidationError as exc:
+            fail_job(processing, str(exc))
+            continue
+        return processing, payload
     return None
 
 

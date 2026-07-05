@@ -1690,7 +1690,7 @@ async def ingest_pending_songs(
     """
     reject_public_demo_action("ingest pending songs")
     from tools.acquire_music import _quick_ingest_to_neo4j, _background_flywheel
-    from services.ingest_queue import enqueue_songs
+    from services.ingest_queue import IngestQueueValidationError, enqueue_songs
 
     songs_to_ingest = []
     for item in request.songs:
@@ -1719,7 +1719,10 @@ async def ingest_pending_songs(
     if inline_ingest:
         asyncio.create_task(_background_flywheel(songs_to_ingest))
     else:
-        job_id = enqueue_songs(songs_to_ingest)
+        try:
+            job_id = enqueue_songs(songs_to_ingest)
+        except IngestQueueValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logger.info(
         "✅ [pending-ingest] 元数据入库 %s 首，增强模式=%s job=%s",
