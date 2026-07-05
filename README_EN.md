@@ -292,6 +292,19 @@ The audit script does not call an LLM, GPU, or network. It checks `../data/onlin
 
 Artist/song descriptions use a two-layer knowledge store. SQLite `MusicKnowledgeStore` keeps full cards, source URLs, confidence, update time, style tags, and fact lists under `../data/knowledge_cache/music_knowledge.sqlite` (gitignored). `p11_sync_knowledge_cache.py --from sqlite` syncs only lightweight summaries, sources, and `KnowledgeCard` relationships into Neo4j for the Catalog Gap Detector, library detail pages, and recommendation explanations. Web search only runs during offline enrichment scripts such as `p15_enrich_music_knowledge.py`; it is not part of the recommendation hot path. `.\soultuner.ps1 up cpu/gpu` starts Qdrant by default: knowledge lookup first uses SQLite FTS for exact/source-auditable hits, then merges Qdrant summary-vector matches for broader artist/style/background questions. To keep the stack SQLite-only, set `MUSIC_KNOWLEDGE_VECTOR_BACKEND=sqlite` in `.env` or set `DISABLE_QDRANT=1` before startup.
 
+If pulling `qdrant/qdrant:v1.15.5` times out on a restricted network, temporarily set this in `.env`:
+
+```env
+QDRANT_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5
+```
+
+Or pull once and retag it locally:
+
+```powershell
+docker pull swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5
+docker tag swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/qdrant/qdrant:v1.15.5 qdrant/qdrant:v1.15.5
+```
+
 ### Feedback Loop
 
 Every recommendation slate is written under `${MUSIC_DATA_PATH}/feedback` with a query hash, intent, source ranks, content-anchor scores, post-recall components, and final position; raw queries are disabled by default. The frontend returns the exact `exposure_id` and position with like/save/skip/full-play/repeat/dislike events. Play-start is neutral, and untouched impressions are never mislabeled as negatives.
