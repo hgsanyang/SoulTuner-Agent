@@ -26,11 +26,11 @@ from pydantic import BaseModel
 from config.logging_config import get_logger
 from agent.music_agent import MusicRecommendationAgent
 from api.security import (
-    public_demo_enabled,
-    reject_public_demo_action,
+    reject_shared_safe_action,
     require_admin_api_key,
     safe_resolve_child,
     safe_static_url_to_path,
+    shared_safe_mode_enabled,
 )
 
 logger = get_logger(__name__)
@@ -157,8 +157,8 @@ app.add_middleware(
         "http://localhost:31000",
         "http://127.0.0.1:31000"
     ],
-    allow_credentials=not public_demo_enabled(),
-    allow_methods=["GET", "POST", "OPTIONS"] if public_demo_enabled() else ["*"],
+    allow_credentials=not shared_safe_mode_enabled(),
+    allow_methods=["GET", "POST", "OPTIONS"] if shared_safe_mode_enabled() else ["*"],
     allow_headers=["*"],
 )
 
@@ -303,7 +303,7 @@ async def acquire_song_endpoint(
     下载单首歌曲的音频/歌词/封面到本地待入库目录。
     不再自动入库 Neo4j，需要用户在待入库页面确认后才入库。
     """
-    reject_public_demo_action("acquire song")
+    reject_shared_safe_action("acquire song")
     import aiohttp
     from tools.acquire_music import OnlineMusicAcquirer
 
@@ -1191,7 +1191,7 @@ async def memory_profile(user_id: str = "local_admin"):
 @app.post("/api/memory/preference")
 async def add_memory_preference(request: MemoryPreferenceUpdateRequest):
     """Add structured preferences to the Neo4j hot path."""
-    reject_public_demo_action("update memory preference")
+    reject_shared_safe_action("update memory preference")
     try:
         from services.memory_gateway import get_memory_gateway
 
@@ -1215,7 +1215,7 @@ async def delete_memory_preference(
     user_id: str = "local_admin",
 ):
     """Delete one learned preference item from the Neo4j hot path."""
-    reject_public_demo_action("delete memory preference")
+    reject_shared_safe_action("delete memory preference")
     try:
         from services.memory_gateway import get_memory_gateway
 
@@ -1239,7 +1239,7 @@ async def clear_learned_memory_profile(
     user_id: str = "local_admin",
 ):
     """Clear learned hot-path preference fields, keeping manual profile and song relations."""
-    reject_public_demo_action("clear learned memory profile")
+    reject_shared_safe_action("clear learned memory profile")
     try:
         from services.memory_gateway import get_memory_gateway
 
@@ -1260,7 +1260,7 @@ async def ranking_policy_replay(
     _: None = Depends(require_admin_api_key),
 ):
     """Fit a candidate ranking policy from logged exposures and feedback."""
-    reject_public_demo_action("learn ranking policy")
+    reject_shared_safe_action("learn ranking policy")
     from services.feedback_logger import load_jsonl
     from services.ranking_learning import learn_ranking_policy
     from services.ranking_policy import feedback_dir, write_candidate
@@ -1298,7 +1298,7 @@ async def ranking_policy_replay(
 @app.post("/api/ranking-policy/promote")
 async def ranking_policy_promote(_: None = Depends(require_admin_api_key)):
     """Promote a gate-passed candidate policy to the active runtime policy."""
-    reject_public_demo_action("promote ranking policy")
+    reject_shared_safe_action("promote ranking policy")
     from services.ranking_policy import feedback_dir, promote_candidate
 
     path = promote_candidate(feedback_dir())
@@ -1308,7 +1308,7 @@ async def ranking_policy_promote(_: None = Depends(require_admin_api_key)):
 @app.post("/api/ranking-policy/rollback")
 async def ranking_policy_rollback(_: None = Depends(require_admin_api_key)):
     """Restore the previous active ranking policy."""
-    reject_public_demo_action("rollback ranking policy")
+    reject_shared_safe_action("rollback ranking policy")
     from services.ranking_policy import feedback_dir, rollback_policy
 
     path = rollback_policy(feedback_dir())
@@ -1420,7 +1420,7 @@ async def remove_dislike(
     _: None = Depends(require_admin_api_key),
 ):
     """从「不喜欢」列表中移除一首歌"""
-    reject_public_demo_action("remove disliked song")
+    reject_shared_safe_action("remove disliked song")
     try:
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
@@ -1457,7 +1457,7 @@ async def delete_song_completely(
     """
     deleted_files = []
     errors = []
-    reject_public_demo_action("delete song")
+    reject_shared_safe_action("delete song")
 
     try:
         from retrieval.neo4j_client import get_neo4j_client
@@ -1703,7 +1703,7 @@ async def ingest_pending_songs(
     """
     秒级写入歌曲元数据，并将耗时的歌词/向量增强交给独立 Worker。
     """
-    reject_public_demo_action("ingest pending songs")
+    reject_shared_safe_action("ingest pending songs")
     from tools.acquire_music import _quick_ingest_to_neo4j, _background_flywheel
     from services.ingest_queue import IngestQueueValidationError, enqueue_songs
 
@@ -1772,7 +1772,7 @@ async def delete_pending_song(
     """
     删除待入库歌曲的所有本地文件（音频、封面、歌词、元数据）。
     """
-    reject_public_demo_action("delete pending song")
+    reject_shared_safe_action("delete pending song")
     deleted = []
     errors = []
 
@@ -1828,7 +1828,7 @@ async def retry_ingest_job(
     _: None = Depends(require_admin_api_key),
 ):
     """Retry a failed enrichment job by moving it back to the pending queue."""
-    reject_public_demo_action("retry ingest job")
+    reject_shared_safe_action("retry ingest job")
     try:
         from services.ingest_queue import retry_failed_job
 
@@ -1978,7 +1978,7 @@ async def update_library_song_tags(
     _: None = Depends(require_admin_api_key),
 ):
     """Update curated tags on one Song node and its tag relationships."""
-    reject_public_demo_action("update library song tags")
+    reject_shared_safe_action("update library song tags")
     if not request.music_id and not (request.title and request.artist):
         raise HTTPException(status_code=400, detail="music_id or title+artist is required")
 

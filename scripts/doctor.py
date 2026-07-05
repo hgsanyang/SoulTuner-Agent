@@ -143,11 +143,11 @@ def check_env_file():
     llm_keys = ["SILICONFLOW_API_KEY", "SiliconFlow_API_KEY", "DASHSCOPE_API_KEY",
                 "ZHIPU_API_KEY", "GOOGLE_API_KEY", "VOLCENGINE_API_KEY"]
     has_llm = any(vals.get(k) for k in llm_keys)
-    line(has_llm, "至少一个 LLM API Key 已填", fix="在 .env 填 SILICONFLOW_API_KEY（或其它厂商）")
+    line(has_llm, "至少一个 LLM API Key 已填", fix="在 .env 填 DASHSCOPE_API_KEY")
     line(bool(vals.get("NEO4J_PASSWORD")), "NEO4J_PASSWORD 已填",
          fix="在 .env 填 NEO4J_PASSWORD（须与 Neo4j 实际口令一致）")
     if vals.get("NEO4J_URI"):
-        line(True, f"NEO4J_URI 已填", vals.get("NEO4J_URI"))
+        line(True, "NEO4J_URI 已填", vals.get("NEO4J_URI"))
     memory_backends = vals.get("MEMORY_EPISODIC_BACKENDS", os.environ.get("MEMORY_EPISODIC_BACKENDS", ""))
     line(True, "长期记忆旁路", memory_backends or "未启用（Neo4j 热路径仍可用）")
 
@@ -224,7 +224,7 @@ def check_services():
     # Backend
     be = _http("http://127.0.0.1:8501/health")
     line(be == 200, "后端 API :8501 /health", f"HTTP {be or '无响应'}",
-         "`conda activate music_agent && python start.py --mode api`（或 docker 的 soultuner-backend）")
+         "`.\\soultuner.ps1 up cpu`（或 `python scripts/dev/start_backend.py` 本地调试）")
     memory_backends = ENV.get("MEMORY_EPISODIC_BACKENDS", os.environ.get("MEMORY_EPISODIC_BACKENDS", ""))
     wants_graphzep = "graphzep" in {x.strip().lower() for x in memory_backends.split(",") if x.strip()}
     gz3100 = _http("http://127.0.0.1:3100/healthcheck")

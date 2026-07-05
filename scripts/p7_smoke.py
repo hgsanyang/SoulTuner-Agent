@@ -26,7 +26,7 @@ from urllib.request import Request, urlopen
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from api.security import HTTPException, reject_public_demo_action, safe_resolve_child  # noqa: E402
+from api.security import HTTPException, reject_shared_safe_action, safe_resolve_child  # noqa: E402
 from config.settings import settings  # noqa: E402
 from services.feedback_logger import load_jsonl  # noqa: E402
 from services.ranking_policy import feedback_dir, summarize_policy_readiness  # noqa: E402
@@ -50,7 +50,7 @@ def _check_shared_environment_guards() -> list[dict[str, Any]]:
     try:
         setattr(settings, "public_demo_mode", True)
         try:
-            reject_public_demo_action("delete song")
+            reject_shared_safe_action("delete song")
             rows.append(_fail("shared_write_guard", "destructive action was not blocked"))
         except HTTPException as exc:
             rows.append(

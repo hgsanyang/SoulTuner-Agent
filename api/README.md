@@ -14,8 +14,8 @@ FastAPI 后端接口层 — SSE 流式推荐 + 运行时设置 + 用户画像。
 # 推荐：一键启动全栈（Backend + Frontend + 可选记忆旁路 + SearxNG）
 .\soultuner.ps1 up cpu
 
-# 或仅启动后端
-python start.py --mode api
+# 或仅启动后端（开发调试）
+python scripts/dev/start_backend.py
 # 后端运行在 http://localhost:8501
 
 # legacy 本地分步调试入口

@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pathlib import Path
 import json as _json
 import os
@@ -45,7 +45,7 @@ class GlobalSettings(BaseSettings):
       config/settings.py → 所有功能开关、调参旋钮、检索参数（直接改 default= 即可）
       前端设置面板       → 运行时即时调整（无需重启，关闭面板丢弃）
 
-    修改 settings.py 后重启后端生效：python start.py --mode api
+    修改 settings.py 后重启后端生效：.\\soultuner.ps1 up cpu
     使用方式：
       from config.settings import settings
       settings.reranker_enabled
@@ -447,12 +447,12 @@ class GlobalSettings(BaseSettings):
     default_user_id: str = Field(default="local_admin", description="默认用户 ID（单用户模式）")
 
     # ================================================================
-    # 7. 安全 / 公开演示模式
+    # 7. 安全 / 共享环境保护
     # ================================================================
     public_demo_mode: bool = Field(
         default=False,
-        validation_alias="PUBLIC_DEMO_MODE",
-        description="公开演示模式：禁用下载/入库/删除等本地破坏性操作",
+        validation_alias=AliasChoices("SHARED_SAFE_MODE", "PUBLIC_DEMO_MODE"),
+        description="共享环境保护：禁用下载/入库/删除等本地破坏性操作",
     )
     admin_api_key: str = Field(
         default="",

@@ -238,7 +238,7 @@ switch ($Action) {
         docker compose --profile cpu --profile gpu --profile memory --profile rag logs -f --tail 200
     }
     "mock" {
-        Invoke-ProjectPython start.py --mock
+        Invoke-ProjectPython scripts/dev/start_backend.py --mock
     }
     "netease-start" {
         Start-NeteaseApi

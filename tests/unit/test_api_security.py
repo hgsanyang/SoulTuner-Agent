@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from api.security import HTTPException, reject_public_demo_action, safe_resolve_child, safe_static_url_to_path
+from api.security import HTTPException, reject_shared_safe_action, safe_resolve_child, safe_static_url_to_path
 from config.settings import settings
 
 
@@ -24,13 +24,13 @@ def test_safe_static_url_to_path_maps_only_known_prefix(tmp_path: Path):
     assert safe_static_url_to_path("/static/covers/a.jpg", "/static/audio/", tmp_path) is None
 
 
-def test_reject_public_demo_action_blocks_when_enabled(monkeypatch):
+def test_reject_shared_safe_action_blocks_when_enabled(monkeypatch):
     monkeypatch.setattr(settings, "public_demo_mode", True)
     with pytest.raises(HTTPException) as exc:
-        reject_public_demo_action("delete song")
+        reject_shared_safe_action("delete song")
     assert exc.value.status_code == 403
 
 
-def test_reject_public_demo_action_allows_local_mode(monkeypatch):
+def test_reject_shared_safe_action_allows_local_mode(monkeypatch):
     monkeypatch.setattr(settings, "public_demo_mode", False)
-    reject_public_demo_action("delete song")
+    reject_shared_safe_action("delete song")

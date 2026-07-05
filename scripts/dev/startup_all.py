@@ -105,7 +105,7 @@ def start_api():
     python_exe = _get_project_python()
     return _start_subprocess(
         "Backend API",
-        [python_exe, "start.py", "--mode", "api"],
+        [python_exe, "scripts/dev/start_backend.py"],
         PROJECT_ROOT,
     )
 
