@@ -281,6 +281,54 @@ def _merge_pref(target: dict[str, Any], key: str, values: list[str]) -> None:
         target[key] = _clean_list([*(target.get(key) or []), *cleaned])
 
 
+def _profile_list_count(profile: dict[str, Any], key: str) -> int:
+    value = profile.get(key)
+    return len(value) if isinstance(value, list) else 1 if str(value or "").strip() else 0
+
+
+def summarize_memory_profile(profile: dict[str, Any], episodic_backends: list[str]) -> dict[str, Any]:
+    """Return privacy-preserving counts for editable memory health."""
+    positive_fields = (
+        "favorite_songs",
+        "favorite_genres",
+        "favorite_artists",
+        "favorite_moods",
+        "favorite_themes",
+        "favorite_scenarios",
+        "preferred_genres_explicit",
+        "preferred_artists_explicit",
+        "add_moods",
+        "add_scenarios",
+        "preferred_genres",
+        "preferred_moods",
+        "preferred_scenarios",
+        "preferred_languages",
+    )
+    negative_fields = (
+        "avoid_genres",
+        "avoid_artists",
+        "avoid_moods",
+        "avoid_scenarios",
+    )
+    context_fields = (
+        "mood_tendency",
+        "activity_contexts",
+        "language_preference",
+    )
+    positive_count = sum(_profile_list_count(profile, key) for key in positive_fields)
+    negative_count = sum(_profile_list_count(profile, key) for key in negative_fields)
+    context_count = sum(_profile_list_count(profile, key) for key in context_fields)
+    return {
+        "positive_preference_count": positive_count,
+        "negative_preference_count": negative_count,
+        "context_preference_count": context_count,
+        "hot_path_has_signal": bool(positive_count or negative_count or context_count),
+        "episodic_enabled": bool(episodic_backends),
+        "episodic_backends": episodic_backends,
+        "needs_more_feedback": not bool(positive_count or negative_count or context_count),
+    }
+
+
 def derive_preferences_from_slate_feedback(
     *,
     rating: str,
@@ -483,6 +531,7 @@ class MemoryGateway:
 
     def explain_memory(self, *, user_id: str = "local_admin") -> dict[str, Any]:
         profile = self.get_user_profile(user_id)
+        episodic_backends = [adapter.name for adapter in self.episodic_adapters]
         return {
             "user_id": user_id,
             "hot_path": {
@@ -490,8 +539,9 @@ class MemoryGateway:
                 "explicit_preferences": "Neo4j User properties",
                 "slate_feedback": "JSONL + deterministic preference updates",
             },
-            "episodic_backends": [adapter.name for adapter in self.episodic_adapters],
+            "episodic_backends": episodic_backends,
             "profile": profile,
+            "diagnostics": summarize_memory_profile(profile, episodic_backends),
         }
 
     def forget_preference_item(self, *, user_id: str, field: str, value: str) -> bool:

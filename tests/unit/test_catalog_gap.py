@@ -51,6 +51,98 @@ def test_normal_catalog_with_web_enabled_mix_in():
     assert decision.target_web_count == 4
 
 
+def test_background_music_is_not_external_knowledge_fallback():
+    local = [
+        {"song": {"title": f"Rain {i}", "artist": "A", "preview_url": "u"}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        _plan(),
+        "雨夜看书，想要温柔背景音乐，不要太燃也不要派对感",
+        web_enabled=True,
+    )
+
+    assert decision.action == "mix_in"
+    assert "external_knowledge_required" not in decision.reasons
+    assert decision.discovery_required is False
+
+
+def test_song_background_request_still_uses_external_discovery():
+    local = [
+        {"song": {"title": f"Song {i}", "artist": "A", "preview_url": "u"}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        _plan(),
+        "查一下晴天这首歌的创作背景和代表作资料",
+        web_enabled=True,
+    )
+
+    assert decision.action == "fallback"
+    assert "external_knowledge_required" in decision.reasons
+    assert decision.discovery_required is True
+
+
+def test_soft_genre_gap_mixes_more_online_candidates():
+    local = [
+        {"song": {"title": f"Rock {i}", "artist": "A", "preview_url": "u", "genres": ["Rock", "Folk"]}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        {"hard_constraints": {}, "soft_intent": {}, "hints": {"genres": ["R&B"]}},
+        "想听韩语 R&B，别太吵",
+        web_enabled=True,
+    )
+
+    assert decision.action == "mix_in"
+    assert "local_genres_match_insufficient" in decision.reasons
+    assert decision.target_web_count == 6
+    assert decision.details["tag_evidence"]["genres"]["matched"] == 0
+
+
+def test_soft_genre_gap_is_explained_when_web_disabled():
+    local = [
+        {"song": {"title": f"Rock {i}", "artist": "A", "preview_url": "u", "genres": ["Rock"]}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        {"hard_constraints": {}, "soft_intent": {}, "hints": {"genres": ["R&B"]}},
+        "想听 R&B",
+        web_enabled=False,
+    )
+
+    assert decision.action == "blocked"
+    assert "local_genres_match_insufficient" in decision.reasons
+    assert "打开联网搜索" in decision.message
+
+
+def test_soft_mood_aliases_do_not_trigger_false_gap():
+    local = [
+        {"song": {"title": f"Quiet {i}", "artist": "A", "preview_url": "u", "moods": ["Peaceful", "Relaxing"]}}
+        for i in range(12)
+    ]
+    plan = {"hard_constraints": {}, "soft_intent": {}, "hints": {"mood": "平静"}}
+
+    decision = analyze_catalog_gap(
+        local,
+        plan,
+        "想听安静一点的歌",
+        web_enabled=True,
+    )
+
+    assert decision.action == "mix_in"
+    assert decision.reasons == ("online_exploration",)
+    assert decision.details["tag_evidence"]["moods"]["matched"] == 12
+
+
 def test_interleave_online_results_keeps_target_length_and_dedupes():
     local = [{"song": {"title": f"L{i}", "artist": "A"}} for i in range(8)]
     online = [

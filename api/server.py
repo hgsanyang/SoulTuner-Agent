@@ -1114,6 +1114,7 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 async def ranking_policy_status():
     """Return non-sensitive A3 policy state for diagnostics and UI tooling."""
     from services.feedback_logger import load_jsonl
+    from services.feedback_diagnostics import summarize_feedback_quality
     from services.ranking_policy import (
         ACTIVE_FILE,
         CANDIDATE_FILE,
@@ -1154,6 +1155,11 @@ async def ranking_policy_status():
         active=active,
         candidate=candidate,
     )
+    feedback_quality = summarize_feedback_quality(
+        exposures,
+        events,
+        slate_feedback,
+    )
 
     return {
         "feedback_dir": str(root),
@@ -1163,6 +1169,7 @@ async def ranking_policy_status():
         "active": active,
         "candidate": candidate,
         "readiness": readiness,
+        "feedback_quality": feedback_quality,
     }
 
 
@@ -1690,7 +1697,7 @@ async def ingest_pending_songs(
     """
     reject_public_demo_action("ingest pending songs")
     from tools.acquire_music import _quick_ingest_to_neo4j, _background_flywheel
-    from services.ingest_queue import enqueue_songs
+    from services.ingest_queue import IngestQueueValidationError, enqueue_songs
 
     songs_to_ingest = []
     for item in request.songs:
@@ -1719,7 +1726,10 @@ async def ingest_pending_songs(
     if inline_ingest:
         asyncio.create_task(_background_flywheel(songs_to_ingest))
     else:
-        job_id = enqueue_songs(songs_to_ingest)
+        try:
+            job_id = enqueue_songs(songs_to_ingest)
+        except IngestQueueValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logger.info(
         "✅ [pending-ingest] 元数据入库 %s 首，增强模式=%s job=%s",
@@ -1906,16 +1916,7 @@ async def update_library_song_tags(
     if not request.music_id and not (request.title and request.artist):
         raise HTTPException(status_code=400, detail="music_id or title+artist is required")
 
-    def _clean(values: List[str]) -> List[str]:
-        out: List[str] = []
-        seen = set()
-        for value in values or []:
-            text = str(value or "").strip()
-            key = text.casefold()
-            if text and key not in seen:
-                seen.add(key)
-                out.append(text[:80])
-        return out[:5]
+    from services.tag_policy import clean_tag_payload
 
     relationship_specs = {
         "genres": ("BELONGS_TO_GENRE", "Genre"),
@@ -1923,12 +1924,7 @@ async def update_library_song_tags(
         "themes": ("HAS_THEME", "Theme"),
         "scenarios": ("FITS_SCENARIO", "Scenario"),
     }
-    values_by_field = {
-        "genres": _clean(request.genres),
-        "moods": _clean(request.moods),
-        "themes": _clean(request.themes),
-        "scenarios": _clean(request.scenarios),
-    }
+    values_by_field = clean_tag_payload(request.model_dump())
     language = str(request.language or "").strip()[:40]
 
     try:

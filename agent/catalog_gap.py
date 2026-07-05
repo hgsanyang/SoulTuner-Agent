@@ -53,8 +53,33 @@ _RECENCY_PATTERNS = (
     r"(?:最新|最近|今年|本周|本月|刚出|刚发|新歌|新曲|新专|2026|latest|new release)",
 )
 _EXTERNAL_KNOWLEDGE_PATTERNS = (
-    r"(?:榜单|排名|获奖|新闻|资讯|巡演|演唱会|背景|代表作|口碑|playlist|chart|award|news)",
+    r"(?:榜单|排名|获奖|新闻|资讯|巡演|演唱会|代表作|口碑|playlist|chart|award|news)",
+    r"(?:创作背景|歌曲背景|歌手背景|背景故事|background info|background story)",
 )
+_TAG_FIELD_KEYS = {
+    "genres": ("genres", "genre"),
+    "moods": ("moods", "mood"),
+    "scenarios": ("scenarios", "scenario"),
+}
+_TAG_ALIASES = {
+    "r&b": {"r&b", "rnb", "rhythmblues"},
+    "hiphop": {"hiphop", "rap"},
+    "hip-hop": {"hiphop", "rap"},
+    "lofi": {"lofi"},
+    "lo-fi": {"lofi"},
+    "calm": {"calm", "peaceful", "relaxing", "quiet", "soft", "gentle"},
+    "平静": {"calm", "peaceful", "relaxing", "quiet", "soft", "gentle"},
+    "安静": {"calm", "peaceful", "relaxing", "quiet", "soft", "gentle"},
+    "柔软": {"soft", "gentle", "peaceful", "relaxing"},
+    "rainyday": {"rainyday", "rainy", "rain"},
+    "rainy day": {"rainyday", "rainy", "rain"},
+    "雨天": {"rainyday", "rainy", "rain"},
+    "study": {"study", "focus", "work", "reading"},
+    "学习": {"study", "focus", "work", "reading"},
+    "专注": {"study", "focus", "work", "reading"},
+    "sleep": {"sleep", "latenight", "relaxing"},
+    "睡眠": {"sleep", "latenight", "relaxing"},
+}
 
 
 def _song_dict(item: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -105,6 +130,111 @@ def _metadata_value(song: Mapping[str, Any], *keys: str) -> Any:
     return None
 
 
+def _normalize_tag(value: Any) -> str:
+    return re.sub(r"[\W_]+", "", str(value or "").casefold())
+
+
+def _tag_aliases(value: Any) -> set[str]:
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    compact = _normalize_tag(text)
+    aliases = {compact}
+    aliases.update(_normalize_tag(item) for item in _TAG_ALIASES.get(text.casefold(), set()))
+    aliases.update(_normalize_tag(item) for item in _TAG_ALIASES.get(compact, set()))
+    return {item for item in aliases if item}
+
+
+def _iter_label_values(song: Mapping[str, Any], keys: Sequence[str]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        raw = song.get(key)
+        raw_values = raw if isinstance(raw, list) else [raw]
+        for item in raw_values:
+            for piece in re.split(r"[/,，;；|｜]", str(item or "")):
+                text = piece.strip()
+                normalized = _normalize_tag(text)
+                if normalized and normalized not in {"unknown", "none", "null", "未知", "未标注"} and normalized not in seen:
+                    seen.add(normalized)
+                    values.append(text)
+    return values
+
+
+def _tag_matches(requested: Any, labels: Sequence[str]) -> bool:
+    requested_aliases = _tag_aliases(requested)
+    if not requested_aliases:
+        return False
+    for label in labels:
+        label_aliases = _tag_aliases(label)
+        if requested_aliases & label_aliases:
+            return True
+        if any(req and lab and (req in lab or lab in req) for req in requested_aliases for lab in label_aliases):
+            return True
+    return False
+
+
+def _requested_tag_terms(retrieval_plan: Mapping[str, Any] | None) -> dict[str, list[str]]:
+    plan = dict(retrieval_plan or {})
+    hints = dict(plan.get("hints") or {})
+    return {
+        "genres": _iter_terms(hints.get("genres")),
+        "moods": _iter_terms(hints.get("mood")),
+        "scenarios": _iter_terms(hints.get("scenario")),
+    }
+
+
+def _tag_evidence(
+    search_results: Sequence[Mapping[str, Any]],
+    requested_terms: Mapping[str, Sequence[str]],
+) -> dict[str, dict[str, Any]]:
+    evidence: dict[str, dict[str, Any]] = {}
+    total = len(search_results)
+    for field, terms in requested_terms.items():
+        terms = [str(term).strip() for term in terms if str(term).strip()]
+        if not terms:
+            continue
+        keys = _TAG_FIELD_KEYS[field]
+        known = 0
+        matched = 0
+        for item in search_results:
+            labels = _iter_label_values(_song_dict(item), keys)
+            if labels:
+                known += 1
+            if labels and any(_tag_matches(term, labels) for term in terms):
+                matched += 1
+        evidence[field] = {
+            "requested": terms,
+            "known": known,
+            "matched": matched,
+            "total": total,
+            "coverage": round(known / total, 4) if total else 0.0,
+            "match_ratio": round(matched / known, 4) if known else 0.0,
+        }
+    return evidence
+
+
+def _soft_inventory_gap_reasons(
+    tag_evidence: Mapping[str, Mapping[str, Any]],
+    *,
+    min_local_results: int,
+) -> list[str]:
+    reasons: list[str] = []
+    for field, stats in tag_evidence.items():
+        total = int(stats.get("total") or 0)
+        known = int(stats.get("known") or 0)
+        matched = int(stats.get("matched") or 0)
+        if total < min_local_results:
+            continue
+        # Only call a soft catalog gap when the slate has enough usable labels
+        # to make the absence meaningful. Sparse labels should not masquerade as
+        # proof that the catalog lacks a style.
+        enough_label_evidence = known >= max(4, int(total * 0.4))
+        if enough_label_evidence and matched == 0:
+            reasons.append(f"local_{field}_match_insufficient")
+    return reasons
+
+
 def _metadata_coverage(search_results: Sequence[Mapping[str, Any]]) -> dict[str, float]:
     if not search_results:
         return {"release": 0.0, "playable": 0.0, "language": 0.0}
@@ -153,7 +283,9 @@ def analyze_catalog_gap(
     artists, songs, hard = layered_constraints(plan)
     count = len(search_results or [])
     coverage = _metadata_coverage(search_results)
+    tag_evidence = _tag_evidence(search_results, _requested_tag_terms(plan))
     reasons: list[str] = []
+    soft_reasons: list[str] = []
     discovery_required = False
 
     explicit_fallback = fallback_decision if fallback_decision is not None else FallbackDecision(False, "", count)
@@ -178,9 +310,18 @@ def analyze_catalog_gap(
         reasons.append("local_inventory_low")
     if count and coverage["playable"] < 0.5:
         reasons.append("playable_gap")
+    soft_reasons.extend(
+        _soft_inventory_gap_reasons(
+            tag_evidence,
+            min_local_results=min_local_results,
+        )
+    )
 
     reasons = list(dict.fromkeys(reason for reason in reasons if reason))
+    soft_reasons = list(dict.fromkeys(reason for reason in soft_reasons if reason))
     strict_gap = bool(reasons)
+    soft_gap = bool(soft_reasons)
+    details = {"coverage": coverage, "tag_evidence": tag_evidence}
     if strict_gap and not web_enabled:
         return CatalogGapDecision(
             action="blocked",
@@ -189,7 +330,7 @@ def analyze_catalog_gap(
             target_web_count=0,
             discovery_required=discovery_required,
             message=_message_for_reasons(reasons),
-            details={"coverage": coverage},
+            details=details,
         )
     if strict_gap:
         return CatalogGapDecision(
@@ -198,7 +339,26 @@ def analyze_catalog_gap(
             inventory_count=count,
             target_web_count=max(1, int(fallback_count)),
             discovery_required=discovery_required,
-            details={"coverage": coverage},
+            details=details,
+        )
+    if soft_gap and not web_enabled:
+        return CatalogGapDecision(
+            action="blocked",
+            reasons=tuple(soft_reasons),
+            inventory_count=count,
+            target_web_count=0,
+            discovery_required=False,
+            message=_message_for_reasons(soft_reasons),
+            details=details,
+        )
+    if soft_gap:
+        return CatalogGapDecision(
+            action="mix_in",
+            reasons=tuple(soft_reasons),
+            inventory_count=count,
+            target_web_count=max(normal_mix_count, min(int(fallback_count), 6)),
+            discovery_required=False,
+            details=details,
         )
 
     exact_song_request = bool(songs) and not re.search(r"类似|相似|听感|same vibe|sounds like|like this", text)
@@ -209,7 +369,7 @@ def analyze_catalog_gap(
             inventory_count=count,
             target_web_count=max(1, int(normal_mix_count)),
             discovery_required=requires_external or requires_release or requires_recency,
-            details={"coverage": coverage},
+            details=details,
         )
 
     return CatalogGapDecision(
@@ -218,7 +378,7 @@ def analyze_catalog_gap(
         inventory_count=count,
         target_web_count=0,
         discovery_required=False,
-        details={"coverage": coverage},
+        details=details,
     )
 
 

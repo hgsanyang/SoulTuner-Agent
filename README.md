@@ -318,16 +318,17 @@ python scripts/replay_feedback.py --rollback
 ```powershell
 python scripts/p7_smoke.py
 python scripts/p7_smoke.py --api-base http://localhost:8501
+python scripts/p9_p14_smoke.py
 ```
 
-这个 smoke 不调用 LLM，也不读取私密原文 query；它只检查公开 Demo 安全护栏、路径校验、A3 readiness、文搜音后端配置、alignment calibration 配置和可选 API 健康。
+这些 smoke 不调用 LLM，也不读取私密原文 query。`p7_smoke.py` 检查公开 Demo 安全护栏、路径校验、A3 readiness、文搜音后端配置、alignment calibration 配置和可选 API 健康；`p9_p14_smoke.py` 检查上下文压力用例、Catalog Gap Detector、召回后修正、入库队列、歌单级反馈、MemoryGateway 偏好映射、标签治理和曲库 UI 入口。
 
 ### 工程质量
 
 | 维度                 | 说明                                                                         |
 | -------------------- | ---------------------------------------------------------------------------- |
 | **CI/CD**      | GitHub Actions — 每次 push 自动运行 `ruff` 代码检查 + `pytest` 单元测试 |
-| **单元测试**   | 272 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、A3 readiness、P7 smoke、对齐 adapter、公开 demo、教师日志等） |
+| **单元测试**   | 281 tests（设置加载、Planner/Delta Planner、结果评测、融合过滤、DST、严格反馈归因、排序策略回滚、A3 readiness、P7/P9-P14 smoke、对齐 adapter、公开 demo、教师日志、标签治理等） |
 | **结果评测**   | `evaluate_outcomes` 按 dev/holdout 衡量返回歌曲是否满足意图；另有 `context_dev/context_holdout` 中文上下文匹配尺子，覆盖 11 类目标与 4 档具体度 |
 | **Token 追踪** | GSSC 管线内置结构化 Token 消耗报告（Before/After/Savings 对比）              |
 | **状态持久化** | LangGraph MemorySaver Checkpoint（内存级，可替换为 Sqlite/Postgres）         |
@@ -534,7 +535,7 @@ python startup_all.py
 │
 ├── graphzep_service/           # 可选 GraphZep 记忆旁路服务
 ├── tests/                      # 测试与评测
-│   ├── unit/                   # 单元测试 (272 tests, pytest)
+│   ├── unit/                   # 单元测试 (281 tests, pytest)
 │   │   ├── test_normalize_key.py
 │   │   ├── test_gssc_token_budget.py
 │   │   ├── test_tag_expansion.py

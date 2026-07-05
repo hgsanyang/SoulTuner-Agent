@@ -5,6 +5,7 @@ from services.memory_gateway import (
     MemoryGateway,
     derive_preferences_from_slate_feedback,
     reset_memory_gateway_for_tests,
+    summarize_memory_profile,
 )
 
 
@@ -192,3 +193,24 @@ def test_hybrid_pref_loader_reads_gateway_hot_profile(monkeypatch):
     assert "rainy day" in prefs["scenarios"]
     assert "energetic" in prefs["avoid_moods"]
     assert "edm" in prefs["expanded_avoid_genres"]
+
+
+def test_memory_profile_diagnostics_count_hot_and_episodic_signals():
+    profile = FakePrimary().profile
+    diagnostics = summarize_memory_profile(profile, ["mem0"])
+
+    assert diagnostics["hot_path_has_signal"] is True
+    assert diagnostics["positive_preference_count"] >= 6
+    assert diagnostics["negative_preference_count"] >= 2
+    assert diagnostics["context_preference_count"] >= 1
+    assert diagnostics["episodic_enabled"] is True
+    assert diagnostics["needs_more_feedback"] is False
+
+
+def test_explain_memory_includes_privacy_preserving_diagnostics():
+    gateway = MemoryGateway(primary=FakePrimary(), episodic_adapters=[FakeEpisodic("mem0")])
+
+    report = gateway.explain_memory(user_id="u1")
+
+    assert report["diagnostics"]["episodic_backends"] == ["mem0"]
+    assert report["diagnostics"]["hot_path_has_signal"] is True

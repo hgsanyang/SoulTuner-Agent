@@ -4,7 +4,7 @@
 
 ## unit/
 
-单元测试（pytest，当前 272 tests）：
+单元测试（pytest，当前 281 tests）：
 
 | 文件 | 覆盖范围 |
 |------|---------|
@@ -18,7 +18,9 @@
 | `test_ranking_learning.py` | A3 离线重放与排序策略学习 |
 | `test_ranking_policy_readiness.py` | A3 策略成熟度阶段、replay/promote 安全门 |
 | `test_p7_smoke.py` | P7 离线 smoke 检查入口 |
+| `test_p9_p14_smoke.py` | P9-P14 质量飞轮 smoke 检查入口 |
 | `test_ingest_queue.py` | 入库增强队列生命周期、失败任务重试 |
+| `test_tag_policy.py` | 曲库/入库标签治理：去重、限 5、不强制填满 |
 | `test_schema_validation.py` | Pydantic Schema 校验 |
 
 ## eval/
@@ -48,6 +50,9 @@ pytest tests/unit/ -v
 # 发布/日常 smoke（不调用 LLM）
 python scripts/p7_smoke.py
 python scripts/p7_smoke.py --api-base http://localhost:8501
+
+# P9-P14 质量飞轮 smoke（不调用 LLM / 不连 Neo4j）
+python scripts/p9_p14_smoke.py
 
 # 意图分类评测（需要 LLM API Key）
 python -m tests.eval.evaluate_intent --provider siliconflow
