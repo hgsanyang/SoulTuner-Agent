@@ -70,6 +70,7 @@ export default function PendingPage() {
         return matchesQuery && matchesFormat;
     });
     const allFilteredSelected = filteredSongs.length > 0 && filteredSongs.every(s => selected.has(s.file_basename));
+    const invalidJobCount = jobs.filter(job => job.valid === false).length;
 
     const toggleSelectAll = () => {
         if (allFilteredSelected) {
@@ -203,6 +204,11 @@ export default function PendingPage() {
                                 {status}: {jobCounts[status] || 0}
                             </span>
                         ))}
+                        {invalidJobCount > 0 && (
+                            <span style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: 'rgba(248,113,113,0.10)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.25)' }}>
+                                无效: {invalidJobCount}
+                            </span>
+                        )}
                         <button onClick={loadJobs} style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.28rem 0.65rem', fontSize: '0.74rem' }}>
                             刷新
                         </button>
@@ -210,12 +216,14 @@ export default function PendingPage() {
                     <div style={{ display: 'grid', gap: '0.35rem' }}>
                         {jobs.slice(0, 5).map(job => {
                             const isRetrying = retryingJob === job.job_id;
-                            const statusColor = job.status === 'failed' ? '#f87171' : job.status === 'done' ? theme.colors.primary.accent : job.status === 'processing' ? '#60a5fa' : '#f59e0b';
+                            const isInvalid = job.valid === false;
+                            const statusColor = isInvalid || job.status === 'failed' ? '#f87171' : job.status === 'done' ? theme.colors.primary.accent : job.status === 'processing' ? '#60a5fa' : '#f59e0b';
+                            const detail = job.validation_error || job.error || '';
                             return (
                                 <div key={job.job_id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.76rem', color: theme.colors.text.secondary }}>
-                                    <span style={{ color: statusColor, width: '5.8rem' }}>{job.status}</span>
-                                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.job_id} · {job.song_count} 首{job.error ? ` · ${job.error}` : ''}</span>
-                                    {job.status === 'failed' && (
+                                    <span style={{ color: statusColor, width: '5.8rem' }}>{isInvalid ? 'invalid' : job.status}</span>
+                                    <span title={detail} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.job_id} · {job.song_count} 首{detail ? ` · ${detail}` : ''}</span>
+                                    {job.status === 'failed' && !isInvalid && (
                                         <button disabled={isRetrying} onClick={() => handleRetryJob(job)} style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: theme.borderRadius.sm, color: '#fca5a5', cursor: isRetrying ? 'wait' : 'pointer', padding: '0.22rem 0.55rem', fontSize: '0.72rem' }}>
                                             {isRetrying ? '重试中' : '重试'}
                                         </button>

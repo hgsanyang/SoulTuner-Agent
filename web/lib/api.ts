@@ -481,6 +481,8 @@ export interface IngestJob {
     song_count: number;
     songs?: any[];
     error?: string;
+    valid?: boolean;
+    validation_error?: string;
     updated_at?: number;
 }
 
