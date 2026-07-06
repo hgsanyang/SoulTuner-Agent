@@ -74,6 +74,7 @@ from schemas.dialog_state import (
     update_dialog_result_anchors,
 )
 from schemas.refinement import build_refinement_suggestions
+from services.llm_feedback_logger import build_planning_feedback, log_planning_feedback
 
 logger = get_logger(__name__)
 
@@ -581,6 +582,22 @@ class MusicRecommendationGraph:
             retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
             retrieval_plan_dict["_user_profile"] = _profile_text  # 画像文本供 HyDE 参考
             retrieval_plan_dict["_user_id"] = user_id
+
+            try:
+                log_planning_feedback(
+                    build_planning_feedback(
+                        user_input=user_input,
+                        plan=plan,
+                        retrieval_plan=retrieval_plan_dict,
+                        provider=_intent_provider,
+                        model=_intent_model_name,
+                        user_id=user_id,
+                        dialog_delta=dialog_delta.model_dump(),
+                        refinement_options=[option.model_dump() for option in refinement.options],
+                    )
+                )
+            except Exception as feedback_error:
+                logger.debug("[LLMFeedback] 规划审计日志写入失败，已跳过: %s", feedback_error)
             
             return {
                 "intent_type": plan.intent_type,

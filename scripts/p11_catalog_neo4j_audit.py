@@ -24,7 +24,8 @@ def run_audit() -> dict:
                sum(CASE WHEN size(coalesce(s.m2d2_embedding, [])) = 768 THEN 1 ELSE 0 END) AS m2d,
                sum(CASE WHEN size(coalesce(s.omar_embedding, [])) = 1024 THEN 1 ELSE 0 END) AS omar,
                sum(CASE WHEN coalesce(s.tag_source, '') <> '' THEN 1 ELSE 0 END) AS tag_source,
-               sum(CASE WHEN s.release_year IS NOT NULL THEN 1 ELSE 0 END) AS release_year
+               sum(CASE WHEN properties(s)['release_year'] IS NOT NULL THEN 1 ELSE 0 END) AS release_year,
+               sum(CASE WHEN coalesce(s.artist, '') <> '' THEN 1 ELSE 0 END) AS artist
         """,
         {},
     )[0]

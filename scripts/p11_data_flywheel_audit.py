@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -39,6 +40,15 @@ def artist_string(raw_artists: Any) -> str:
     return "、".join(names) if names else "Unknown"
 
 
+def normalize_catalog_key(title: Any, artist: Any = "") -> str:
+    """Build a stable duplicate-diagnosis key without mutating data."""
+    text = f"{title or ''}::{artist or ''}".casefold()
+    text = re.sub(r"\([^)]*(?:live|remaster|伴奏|cover|翻唱|版)[^)]*\)", "", text)
+    text = re.sub(r"（[^）]*(?:live|remaster|伴奏|cover|翻唱|版)[^）]*）", "", text)
+    text = re.sub(r"[\s\-_/|｜:：,，.。]+", "", text)
+    return text
+
+
 def expected_basename(meta: Mapping[str, Any]) -> str:
     title = safe_filename(str(meta.get("musicName") or meta.get("title") or "Unknown"))
     artist = safe_filename(artist_string(meta.get("artist") or meta.get("artists")))
@@ -55,6 +65,8 @@ def summarize_online_acquired(root: Path = DEFAULT_ONLINE_ROOT) -> dict[str, Any
 
     rows: list[dict[str, Any]] = []
     totals = Counter()
+    duplicate_counter: Counter[str] = Counter()
+    duplicate_examples: dict[str, list[dict[str, Any]]] = {}
     for meta_file in sorted(meta_dir.glob("*_meta.json")) if meta_dir.exists() else []:
         try:
             meta = json.loads(meta_file.read_text(encoding="utf-8"))
@@ -72,6 +84,19 @@ def summarize_online_acquired(root: Path = DEFAULT_ONLINE_ROOT) -> dict[str, Any
         has_cover = (cover_dir / f"{basename}_cover.jpg").exists()
         has_lyrics = (lyrics_dir / f"{basename}.lrc").exists()
         has_release_year = bool(meta.get("release_year"))
+        title = meta.get("musicName") or meta.get("title") or ""
+        artist = artist_string(meta.get("artist") or meta.get("artists"))
+        duplicate_key = normalize_catalog_key(title, artist)
+        if duplicate_key:
+            duplicate_counter[duplicate_key] += 1
+            duplicate_examples.setdefault(duplicate_key, []).append(
+                {
+                    "file": meta_file.name,
+                    "music_id": str(meta.get("musicId") or ""),
+                    "title": title,
+                    "artist": artist,
+                }
+            )
 
         for key, present in (
             ("audio", has_audio),
@@ -85,8 +110,8 @@ def summarize_online_acquired(root: Path = DEFAULT_ONLINE_ROOT) -> dict[str, Any
             {
                 "file": meta_file.name,
                 "music_id": str(meta.get("musicId") or ""),
-                "title": meta.get("musicName") or meta.get("title") or "",
-                "artist": artist_string(meta.get("artist") or meta.get("artists")),
+                "title": title,
+                "artist": artist,
                 "basename": basename,
                 "has_audio": has_audio,
                 "has_cover": has_cover,
@@ -97,9 +122,30 @@ def summarize_online_acquired(root: Path = DEFAULT_ONLINE_ROOT) -> dict[str, Any
         )
 
     totals["metadata_files"] = len(rows)
+    duplicate_groups = [
+        {
+            "key": key,
+            "count": count,
+            "examples": duplicate_examples.get(key, [])[:5],
+        }
+        for key, count in duplicate_counter.most_common()
+        if count > 1
+    ]
+    ready_rows = [
+        row
+        for row in rows
+        if row.get("has_audio") and row.get("has_cover") and row.get("has_lyrics")
+    ]
     return {
         "root": str(root),
         "totals": dict(totals),
+        "readiness": {
+            "metadata_files": len(rows),
+            "ready_for_ingest_minimal": len([row for row in rows if row.get("has_audio")]),
+            "ready_for_enrichment": len(ready_rows),
+            "duplicate_groups": len(duplicate_groups),
+        },
+        "duplicate_groups": duplicate_groups[:20],
         "problem_rows": [
             row
             for row in rows

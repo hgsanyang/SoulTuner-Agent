@@ -4,6 +4,7 @@ from services import feedback_logger
 from services.memory_gateway import (
     MemoryGateway,
     derive_preferences_from_slate_feedback,
+    editable_memory_sections,
     reset_memory_gateway_for_tests,
     summarize_memory_profile,
 )
@@ -214,3 +215,19 @@ def test_explain_memory_includes_privacy_preserving_diagnostics():
 
     assert report["diagnostics"]["episodic_backends"] == ["mem0"]
     assert report["diagnostics"]["hot_path_has_signal"] is True
+    assert any(section["field"] == "avoid_moods" for section in report["editable_sections"])
+
+
+def test_editable_memory_sections_are_ui_ready_and_deduped():
+    sections = editable_memory_sections(
+        {
+            "avoid_moods": ["Energetic", "energetic", "Party"],
+            "activity_contexts": ["less_familiar"],
+        }
+    )
+    by_field = {section["field"]: section for section in sections}
+
+    assert by_field["avoid_moods"]["label"] == "避开情绪"
+    assert by_field["avoid_moods"]["values"] == ["Energetic", "Party"]
+    assert by_field["avoid_moods"]["deletable"] is True
+    assert by_field["activity_contexts"]["tone"] == "context"

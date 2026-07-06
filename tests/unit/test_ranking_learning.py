@@ -30,7 +30,7 @@ def _exposure(exposure_id: str, ts: int, title: str, good: bool, user_id: str = 
                 "title": title,
                 "artist": "Singer",
                 "rank": 1,
-                "source_ranks": {"dense": 1 if good else 20, "lexical": 20 if good else 1},
+                "source_ranks": {"dense": 1 if good else 20, "graph": 20 if good else 1},
                 "semantic_score": high,
                 "acoustic_score": high,
                 "personal_score": high,

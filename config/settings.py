@@ -285,7 +285,7 @@ class GlobalSettings(BaseSettings):
         description="FinalCut 最终输出条数（传给 LLM 推荐解释）",
     )
     web_search_max_results: int = Field(
-        default=5,
+        default=10,
         description="联网搜索每个引擎最大返回条数",
     )
     netease_search_limit: int = Field(

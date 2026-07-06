@@ -50,11 +50,12 @@ export default function PendingPage() {
 
     useEffect(() => { loadSongs(); loadJobs(); }, [loadSongs, loadJobs]);
 
-    const toggleSelect = (basename: string) => {
+    const toggleSelect = (song: PendingSong) => {
+        if (song.valid === false) return;
         setSelected(prev => {
             const next = new Set(prev);
-            if (next.has(basename)) next.delete(basename);
-            else next.add(basename);
+            if (next.has(song.file_basename)) next.delete(song.file_basename);
+            else next.add(song.file_basename);
             return next;
         });
     };
@@ -69,19 +70,21 @@ export default function PendingPage() {
         const matchesFormat = formatFilter === 'all' || song.format === formatFilter;
         return matchesQuery && matchesFormat;
     });
-    const allFilteredSelected = filteredSongs.length > 0 && filteredSongs.every(s => selected.has(s.file_basename));
+    const validFilteredSongs = filteredSongs.filter(song => song.valid !== false);
+    const allFilteredSelected = validFilteredSongs.length > 0 && validFilteredSongs.every(s => selected.has(s.file_basename));
     const invalidJobCount = jobs.filter(job => job.valid === false).length;
+    const invalidPendingCount = songs.filter(song => song.valid === false).length;
 
     const toggleSelectAll = () => {
         if (allFilteredSelected) {
             setSelected(new Set());
         } else {
-            setSelected(new Set(filteredSongs.map(s => s.file_basename)));
+            setSelected(new Set(validFilteredSongs.map(s => s.file_basename)));
         }
     };
 
     const handleIngest = async () => {
-        const toIngest = songs.filter(s => selected.has(s.file_basename));
+        const toIngest = songs.filter(s => selected.has(s.file_basename) && s.valid !== false);
         if (toIngest.length === 0) return;
         setIngesting(true);
         const result = await ingestPendingSongs(toIngest.map(s => ({
@@ -92,6 +95,10 @@ export default function PendingPage() {
             artist: s.artist,
             album: s.album,
             duration: s.duration,
+            release_year: s.release_year,
+            source_platform: s.source_platform,
+            source_id: s.source_id,
+            metadata_source: s.metadata_source,
         })));
         setIngesting(false);
         if (result.success) {
@@ -162,7 +169,7 @@ export default function PendingPage() {
                     <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>暂存区</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>待入库</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                        {loading ? '加载中...' : `共 ${songs.length} 首待确认，当前显示 ${filteredSongs.length} 首，已选 ${selected.size} 首`}
+                        {loading ? '加载中...' : `共 ${songs.length} 首待确认，当前显示 ${filteredSongs.length} 首，可入库 ${songs.length - invalidPendingCount} 首，已选 ${selected.size} 首`}
                     </p>
                 </div>
             </div>
@@ -192,6 +199,11 @@ export default function PendingPage() {
                     <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
                         状态：待入库 → 分析中 → 已入库
                     </span>
+                    {invalidPendingCount > 0 && (
+                        <span style={{ fontSize: '0.78rem', color: '#fca5a5' }}>
+                            {invalidPendingCount} 首缺音频，需重新获取后才能入库
+                        </span>
+                    )}
                 </div>
             )}
 
@@ -253,23 +265,30 @@ export default function PendingPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                         {filteredSongs.map((song) => {
                             const isSelected = selected.has(song.file_basename);
+                            const isInvalid = song.valid === false;
                             return (
                                 <div key={song.file_basename}
                                     style={{
                                         display: 'flex', alignItems: 'center', gap: '0.75rem',
                                         padding: '0.75rem 1rem', borderRadius: theme.borderRadius.md,
                                         backgroundColor: isSelected ? 'rgba(245,158,11,0.08)' : 'rgba(255,255,255,0.02)',
-                                        border: isSelected ? '1px solid rgba(245,158,11,0.3)' : '1px solid transparent',
-                                        transition: 'all 0.2s', cursor: 'pointer',
+                                        border: isInvalid
+                                            ? '1px solid rgba(248,113,113,0.25)'
+                                            : isSelected ? '1px solid rgba(245,158,11,0.3)' : '1px solid transparent',
+                                        transition: 'all 0.2s',
+                                        cursor: isInvalid ? 'not-allowed' : 'pointer',
+                                        opacity: isInvalid ? 0.68 : 1,
                                     }}
                                     onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
                                     onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.02)'; }}
-                                    onClick={() => toggleSelect(song.file_basename)}
+                                    onClick={() => toggleSelect(song)}
                                 >
                                     {/* Checkbox */}
                                     <div style={{
                                         width: '20px', height: '20px', borderRadius: '4px', flexShrink: 0,
-                                        border: isSelected ? '2px solid #f59e0b' : `2px solid ${theme.colors.border.focus}`,
+                                        border: isInvalid
+                                            ? '2px solid rgba(248,113,113,0.45)'
+                                            : isSelected ? '2px solid #f59e0b' : `2px solid ${theme.colors.border.focus}`,
                                         backgroundColor: isSelected ? '#f59e0b' : 'transparent',
                                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                                         transition: 'all 0.2s',
@@ -289,6 +308,15 @@ export default function PendingPage() {
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                         <div style={{ fontWeight: 600, fontSize: '0.95rem', color: theme.colors.text.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{song.title}</div>
                                         <div style={{ fontSize: '0.82rem', color: theme.colors.text.secondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{song.artist} · {song.album}</div>
+                                        {!!song.missing_assets?.length && (
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginTop: '0.25rem' }}>
+                                                {song.missing_assets.map(asset => (
+                                                    <span key={asset} style={{ fontSize: '0.66rem', padding: '0.08rem 0.35rem', borderRadius: '999px', background: 'rgba(248,113,113,0.10)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.22)' }}>
+                                                        缺 {asset}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Time */}
@@ -296,13 +324,13 @@ export default function PendingPage() {
                                         {song.acquired_at ? new Date(song.acquired_at).toLocaleDateString('zh-CN') : ''}
                                     </div>
 
-                                    <span style={{ fontSize: '0.72rem', padding: '0.16rem 0.5rem', borderRadius: '9999px', color: ingesting && isSelected ? '#60a5fa' : '#f59e0b', border: `1px solid ${ingesting && isSelected ? 'rgba(96,165,250,0.35)' : 'rgba(245,158,11,0.35)'}`, whiteSpace: 'nowrap' }}>
-                                        {ingesting && isSelected ? '分析中' : '待入库'}
+                                    <span style={{ fontSize: '0.72rem', padding: '0.16rem 0.5rem', borderRadius: '9999px', color: isInvalid ? '#fca5a5' : ingesting && isSelected ? '#60a5fa' : '#f59e0b', border: `1px solid ${isInvalid ? 'rgba(248,113,113,0.35)' : ingesting && isSelected ? 'rgba(96,165,250,0.35)' : 'rgba(245,158,11,0.35)'}`, whiteSpace: 'nowrap' }}>
+                                        {isInvalid ? '缺音频' : ingesting && isSelected ? '分析中' : '待入库'}
                                     </span>
 
                                     {/* Play */}
-                                    <button title="试听" aria-label={`试听 ${song.title}`} onClick={e => { e.stopPropagation(); playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
-                                        style={{ background: 'none', border: 'none', color: theme.colors.primary.accent, cursor: 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'transform 0.2s' }}
+                                    <button title={isInvalid ? '缺音频，无法试听' : '试听'} aria-label={isInvalid ? `${song.title} 缺音频` : `试听 ${song.title}`} disabled={isInvalid} onClick={e => { e.stopPropagation(); if (!isInvalid) playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
+                                        style={{ background: 'none', border: 'none', color: isInvalid ? theme.colors.text.muted : theme.colors.primary.accent, cursor: isInvalid ? 'not-allowed' : 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'transform 0.2s', opacity: isInvalid ? 0.4 : 1 }}
                                         onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
                                     >
@@ -340,7 +368,7 @@ export default function PendingPage() {
                             </button>
 
                             <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted }}>
-                                已选 {selected.size} / 当前 {filteredSongs.length}
+                                已选 {selected.size} / 当前可入库 {validFilteredSongs.length}
                             </span>
 
                             <div style={{ flex: 1 }} />

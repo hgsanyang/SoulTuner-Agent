@@ -1594,6 +1594,8 @@ async def get_pending_songs():
     排除已在 Neo4j 中入库的歌曲，返回待入库列表。
     """
     import json as _json
+    from services.library_quality import pending_asset_status
+
     pending = []
     meta_dir = ONLINE_AUDIO_ROOT / "metadata"
     if not meta_dir.exists():
@@ -1631,17 +1633,22 @@ async def get_pending_songs():
 
             # 检查音频文件是否存在
             audio_path = ONLINE_AUDIO_ROOT / "audio" / f"{file_basename}.{fmt}"
-            if not audio_path.exists():
+            has_audio = audio_path.exists()
+            if not has_audio:
                 # 尝试其他格式
-                found = False
                 for ext in ["mp3", "flac", "m4a"]:
                     alt = ONLINE_AUDIO_ROOT / "audio" / f"{file_basename}.{ext}"
                     if alt.exists():
                         fmt = ext
-                        found = True
+                        has_audio = True
                         break
-                if not found:
-                    continue  # 音频文件不存在，跳过
+            has_cover = (ONLINE_AUDIO_ROOT / "covers" / f"{file_basename}_cover.jpg").exists()
+            has_lyrics = (ONLINE_AUDIO_ROOT / "lyrics" / f"{file_basename}.lrc").exists()
+            asset_status = pending_asset_status(
+                has_audio=has_audio,
+                has_cover=has_cover,
+                has_lyrics=has_lyrics,
+            )
 
             pending.append({
                 "music_id": music_id,
@@ -1659,6 +1666,7 @@ async def get_pending_songs():
                 "source_platform": meta.get("source_platform") or meta.get("source", ""),
                 "source_id": str(meta.get("source_id") or meta.get("musicId", "")),
                 "metadata_source": meta.get("metadata_source", ""),
+                **asset_status,
             })
         except Exception as e:
             logger.warning(f"[pending] 解析元数据失败 {meta_file.name}: {e}")
@@ -1854,6 +1862,13 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
     """
     try:
         from retrieval.neo4j_client import get_neo4j_client
+        from services.library_quality import (
+            duplicate_key,
+            missing_fields_for_song,
+            quality_score,
+            vector_coverage_from_dims,
+        )
+
         client = get_neo4j_client()
         query = """
         MATCH (s:Song)
@@ -1915,32 +1930,32 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
 
         songs = []
         for r in results:
-            vector_coverage = {
-                "muq": int(r.get("muq_dim") or 0) == 512,
-                "m2d": int(r.get("m2d_dim") or 0) == 768,
-                "omar": int(r.get("omar_dim") or 0) == 1024,
-            }
+            title = r.get("title", "")
+            artist = r.get("artist", "Unknown")
+            vector_coverage = vector_coverage_from_dims(
+                muq_dim=r.get("muq_dim"),
+                m2d_dim=r.get("m2d_dim"),
+                omar_dim=r.get("omar_dim"),
+            )
             knowledge_cards = [
                 card
                 for card in (r.get("knowledge_cards") or [])
                 if isinstance(card, dict) and card.get("summary")
             ][:3]
-            missing_fields = []
-            for field_name, value in (
-                ("audio", r.get("audio_url")),
-                ("cover", r.get("cover_url")),
-                ("lyrics", r.get("lrc_url")),
-                ("language", r.get("language")),
-                ("release_year", r.get("release_year")),
-            ):
-                if value in (None, "", [], "Unknown", "unknown"):
-                    missing_fields.append(field_name)
-            for field_name, covered in vector_coverage.items():
-                if not covered:
-                    missing_fields.append(f"{field_name}_embedding")
+            missing_fields = missing_fields_for_song(
+                {
+                    "audio_url": r.get("audio_url"),
+                    "cover_url": r.get("cover_url"),
+                    "lrc_url": r.get("lrc_url"),
+                    "artist": artist,
+                    "language": r.get("language"),
+                    "release_year": r.get("release_year"),
+                },
+                vector_coverage,
+            )
             songs.append({
-                "title": r.get("title", ""),
-                "artist": r.get("artist", "Unknown"),
+                "title": title,
+                "artist": artist,
                 "album": r.get("album", ""),
                 "audio_url": r.get("audio_url", ""),
                 "cover_url": r.get("cover_url", ""),
@@ -1963,6 +1978,8 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "tag_confidence_json": r.get("tag_confidence_json", ""),
                 "vector_coverage": vector_coverage,
                 "missing_fields": missing_fields,
+                "quality_score": quality_score(missing_fields),
+                "duplicate_key": duplicate_key(title, artist),
                 "knowledge_cards": knowledge_cards,
             })
 

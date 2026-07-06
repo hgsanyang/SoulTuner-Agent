@@ -106,6 +106,59 @@ def test_soft_genre_gap_mixes_more_online_candidates():
     assert decision.details["tag_evidence"]["genres"]["matched"] == 0
 
 
+def test_query_inferred_rnb_gap_mixes_online_candidates_without_hint():
+    local = [
+        {"song": {"title": f"Rock {i}", "artist": "A", "preview_url": "u", "genres": ["Rock", "Folk"]}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        {"hard_constraints": {}, "soft_intent": {}, "hints": {}},
+        "想听韩语 R&B，别太吵",
+        web_enabled=True,
+    )
+
+    assert decision.action == "mix_in"
+    assert "local_genres_match_insufficient" in decision.reasons
+    assert decision.details["tag_evidence"]["genres"]["requested"] == ["R&B"]
+
+
+def test_language_inventory_gap_triggers_fallback_when_evidence_conflicts():
+    local = [
+        {"song": {"title": f"Mandarin {i}", "artist": "A", "preview_url": "u", "language": "Chinese"}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        {"hard_constraints": {}, "soft_intent": {}, "hints": {}},
+        "想听粤语港乐",
+        web_enabled=True,
+    )
+
+    assert decision.action == "fallback"
+    assert "local_language_match_insufficient" in decision.reasons
+    assert decision.details["language_evidence"]["requested"] == "cantonese"
+
+
+def test_language_gap_does_not_fire_when_catalog_has_match():
+    local = [
+        {"song": {"title": f"Canto {i}", "artist": "A", "preview_url": "u", "language": "Cantonese"}}
+        for i in range(12)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        {"hard_constraints": {}, "soft_intent": {}, "hints": {}},
+        "想听粤语港乐",
+        web_enabled=True,
+    )
+
+    assert "local_language_match_insufficient" not in decision.reasons
+    assert decision.details["language_evidence"]["matched"] == 12
+
+
 def test_soft_genre_gap_is_explained_when_web_disabled():
     local = [
         {"song": {"title": f"Rock {i}", "artist": "A", "preview_url": "u", "genres": ["Rock"]}}

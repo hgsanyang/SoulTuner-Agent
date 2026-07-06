@@ -10,7 +10,6 @@ from tools.semantic_search import semantic_search
 from tools.web_search_aggregator import _federated_search_async
 from retrieval.recall_sources import (
     graph_candidate_recall,
-    lexical_bm25_recall,
 )
 from retrieval.retrieval_fusion import (
     apply_hard_filters,
@@ -54,6 +53,10 @@ def _post_recall_config_for_user(user_id: str = GRAPH_AFFINITY_USER_ID) -> PostR
             * float(multipliers.get("longtail", 1.0)),
             exposure_penalty_weight=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_weight
             * float(multipliers.get("exposure_penalty", 1.0)),
+            semantic_preference_weight=DEFAULT_POST_RECALL_CONFIG.semantic_preference_weight
+            * float(multipliers.get("semantic_preference", 1.0)),
+            semantic_conflict_weight=DEFAULT_POST_RECALL_CONFIG.semantic_conflict_weight
+            * float(multipliers.get("semantic_conflict", 1.0)),
             delta_limit=DEFAULT_POST_RECALL_CONFIG.delta_limit,
             freshness_half_life_days=DEFAULT_POST_RECALL_CONFIG.freshness_half_life_days,
             exposure_half_life_days=DEFAULT_POST_RECALL_CONFIG.exposure_half_life_days,
@@ -596,12 +599,6 @@ class MusicHybridRetrieval:
         if not vector_desc:
             vector_desc = query
 
-        lexical_query = (
-            " ".join(graph_artist_entities + graph_song_entities)
-            if graph_entities
-            else query
-        )
-
         similarity_seed_terms = (
             "类似",
             "相似",
@@ -675,7 +672,7 @@ class MusicHybridRetrieval:
                     3,
                 )
 
-        # 2. 内容召回永远一起运行；intent_type/query profile 只改变 RRF 权重。
+        # 2. 双路内容召回永远一起运行；intent_type/query profile 只改变 RRF 权重。
         # 个性化与冷启动不是独立召回源，分别在 Graph Affinity 与探索槽中作为召回后加分/减分项。
         recall_tasks = {
             "graph": timed_recall("graph", run_sync_in_executor(
@@ -687,11 +684,6 @@ class MusicHybridRetrieval:
             "dense": timed_recall("dense", run_sync_in_executor(
                 semantic_search.invoke,
                 {"query": vector_desc, "limit": recall_limit},
-            )),
-            "lexical": timed_recall("lexical", run_sync_in_executor(
-                lexical_bm25_recall,
-                lexical_query,
-                limit=recall_limit,
             )),
         }
         recall_results = await asyncio.gather(*recall_tasks.values(), return_exceptions=True)
@@ -778,11 +770,10 @@ class MusicHybridRetrieval:
         web_started = time.perf_counter()
         if os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
             graph_empty = source_raw.get("graph") in ("", "[]")
-            lexical_empty = source_raw.get("lexical") in ("", "[]")
             if need_web_search:
                 logger.info("⚡ 意图明确要求联网: '%s'", search_keyword)
                 web_raw = await _federated_search_async(search_keyword)
-            elif graph_entities and graph_empty and lexical_empty:
+            elif graph_entities and graph_empty:
                 logger.warning("本地实体召回为空，触发联网补充: '%s'", query)
                 web_raw = await _federated_search_async(query)
 
@@ -1521,6 +1512,9 @@ class MusicHybridRetrieval:
             final_list = apply_post_recall_adjustments(
                 final_list,
                 metadata_by_title=post_metadata_by_title,
+                query_text=getattr(self, "_current_query", "") or "",
+                soft_intent=soft_intent or getattr(self, "_current_soft_intent", {}) or {},
+                hints=hints or {},
                 score_field="_rrf_score",
                 output_score_field="_post_coarse_score",
                 config=_post_recall_config_for_user(user_id),
@@ -1661,6 +1655,16 @@ class MusicHybridRetrieval:
             final_list = apply_post_recall_adjustments(
                 final_list,
                 metadata_by_title=post_metadata_by_title,
+                query_text=" ".join(
+                    part
+                    for part in (
+                        getattr(self, "_current_query", "") or "",
+                        getattr(self, "_current_hyde_text", "") or "",
+                    )
+                    if part
+                ),
+                soft_intent=soft_intent or getattr(self, "_current_soft_intent", {}) or {},
+                hints=hints or {},
                 score_field="similarity_score",
                 output_score_field="_post_final_score",
                 apply_to_similarity=True,

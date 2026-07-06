@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import re
 import time
 from typing import Any, Mapping
 
@@ -21,6 +22,8 @@ class PostRecallAdjustmentConfig:
     freshness_weight: float = 0.035
     longtail_weight: float = 0.025
     exposure_penalty_weight: float = 0.06
+    semantic_preference_weight: float = 0.035
+    semantic_conflict_weight: float = 0.055
     delta_limit: float = 0.08
     freshness_half_life_days: float = 21.0
     exposure_half_life_days: float = 7.0
@@ -98,6 +101,203 @@ def longtail_score(effective_exposure: float) -> float:
     return _clamp(1.0 / (1.0 + max(float(effective_exposure), 0.0)), 0.0, 1.0)
 
 
+_CALM_CONTEXT_TRIGGERS = (
+    "安静",
+    "柔软",
+    "柔和",
+    "轻柔",
+    "温柔",
+    "平静",
+    "低动态",
+    "不刺耳",
+    "不吵",
+    "少鼓",
+    "小声",
+    "夜里",
+    "深夜",
+    "雨天",
+    "下雨",
+    "雨声",
+    "治愈",
+    "放松",
+    "专注",
+    "学习",
+    "睡前",
+    "quiet",
+    "soft",
+    "gentle",
+    "calm",
+    "mellow",
+    "rainy",
+    "rain",
+    "lo-fi",
+    "lofi",
+    "study",
+    "focus",
+    "sleep",
+    "low dynamic",
+    "low energy",
+    "not loud",
+    "not noisy",
+)
+
+_CALM_POSITIVE_TAGS = {
+    "peaceful",
+    "relaxing",
+    "healing",
+    "dreamy",
+    "lo-fi",
+    "lofi",
+    "acoustic",
+    "folk",
+    "ambient",
+    "late night",
+    "rainy day",
+    "rainy",
+    "study",
+    "sleep",
+    "calm",
+    "soft",
+    "mellow",
+    "warm",
+    "gentle",
+    "minimal",
+    "sparse",
+}
+
+_CALM_CONFLICT_TAGS = {
+    "dance",
+    "party",
+    "workout",
+    "edm",
+    "energetic",
+    "driving",
+    "aggressive",
+    "hardcore",
+    "phonk",
+    "noise",
+    "noisy",
+    "loud",
+    "metal",
+    "punk",
+    "club",
+}
+
+_EXPLICIT_WANT_TERMS = {
+    "dance": ("dance", "舞曲", "蹦迪"),
+    "party": ("party", "派对", "聚会"),
+    "workout": ("workout", "运动", "跑步", "健身"),
+    "edm": ("edm", "电音", "电子"),
+    "energetic": ("energetic", "热血", "高能", "燃", "有劲"),
+    "driving": ("driving", "开车", "驾驶", "公路"),
+    "metal": ("metal", "金属"),
+    "punk": ("punk", "朋克"),
+}
+
+
+def _iter_terms(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value is None:
+        return []
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def _context_text(
+    query_text: str = "",
+    soft_intent: Mapping[str, Any] | None = None,
+    hints: Mapping[str, Any] | None = None,
+) -> str:
+    soft = soft_intent or {}
+    hint = hints or {}
+    parts = [
+        query_text,
+        *_iter_terms(soft.get("goal")),
+        *_iter_terms(soft.get("trajectory")),
+        *_iter_terms(soft.get("vibe")),
+        *_iter_terms(soft.get("avoid")),
+        *_iter_terms(hint.get("mood")),
+        *_iter_terms(hint.get("scenario")),
+        *_iter_terms(hint.get("genres")),
+    ]
+    return " ".join(part for part in parts if part).casefold()
+
+
+def _normalise_tag(value: Any) -> str:
+    return re.sub(r"[\W_]+", "", str(value or "").casefold())
+
+
+def _song_tokens(song: Mapping[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    for field in ("genre", "genres", "moods", "themes", "scenarios", "language", "region"):
+        raw = song.get(field)
+        values = raw if isinstance(raw, list) else [raw]
+        for item in values:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            for piece in re.split(r"[/,，;；|｜\s]+", text):
+                normalized = _normalise_tag(piece)
+                if normalized:
+                    tokens.add(normalized)
+            compact = _normalise_tag(text)
+            if compact:
+                tokens.add(compact)
+    return tokens
+
+
+def _contains_token(tokens: set[str], wanted: str) -> bool:
+    target = _normalise_tag(wanted)
+    if not target:
+        return False
+    for token in tokens:
+        if token == target:
+            return True
+        if len(token) >= 4 and len(target) >= 4 and (token in target or target in token):
+            return True
+    return False
+
+
+def _explicitly_wants(context: str, token: str) -> bool:
+    return any(term.casefold() in context for term in _EXPLICIT_WANT_TERMS.get(token, (token,)))
+
+
+def semantic_fit_scores(
+    song: Mapping[str, Any],
+    *,
+    query_text: str = "",
+    soft_intent: Mapping[str, Any] | None = None,
+    hints: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return bounded semantic fit evidence from objective catalog tags.
+
+    This is a small post-recall nudge, not a new recall route.  It currently
+    only activates for calm/quiet/rainy/focus style contexts where catalog tags
+    can give objective evidence that a candidate is fitting or conflicting.
+    """
+    context = _context_text(query_text, soft_intent, hints)
+    if not context or not any(trigger.casefold() in context for trigger in _CALM_CONTEXT_TRIGGERS):
+        return {"active": False, "positive": 0.0, "conflict": 0.0, "positive_hits": [], "conflict_hits": []}
+
+    tokens = _song_tokens(song)
+    positive_hits = sorted(tag for tag in _CALM_POSITIVE_TAGS if _contains_token(tokens, tag))
+    conflict_hits = sorted(
+        tag
+        for tag in _CALM_CONFLICT_TAGS
+        if not _explicitly_wants(context, tag) and _contains_token(tokens, tag)
+    )
+    positive = _clamp(len(positive_hits) / 3.0, 0.0, 1.0)
+    conflict = _clamp(len(conflict_hits) / 2.0, 0.0, 1.0)
+    return {
+        "active": True,
+        "positive": positive,
+        "conflict": conflict,
+        "positive_hits": positive_hits,
+        "conflict_hits": conflict_hits,
+    }
+
+
 def _metadata_for(item: Mapping[str, Any], metadata_by_title: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any]:
     song = item.get("song") or {}
     title = str(song.get("title") or "")
@@ -114,6 +314,9 @@ def apply_post_recall_adjustments(
     candidates: list[dict],
     *,
     metadata_by_title: Mapping[str, Mapping[str, Any]] | None = None,
+    query_text: str = "",
+    soft_intent: Mapping[str, Any] | None = None,
+    hints: Mapping[str, Any] | None = None,
     score_field: str = "similarity_score",
     output_score_field: str = "_post_recall_score",
     apply_to_similarity: bool = False,
@@ -156,6 +359,12 @@ def apply_post_recall_adjustments(
             now_ms=now,
             half_life_days=config.freshness_half_life_days,
         )
+        semantic = semantic_fit_scores(
+            song,
+            query_text=query_text,
+            soft_intent=soft_intent,
+            hints=hints,
+        )
         exposure = exposure_penalty(
             effective_exposure,
             pivot=config.exposure_penalty_pivot,
@@ -166,6 +375,8 @@ def apply_post_recall_adjustments(
             + config.freshness_weight * freshness
             + config.longtail_weight * longtail
             - config.exposure_penalty_weight * exposure
+            + config.semantic_preference_weight * float(semantic["positive"])
+            - config.semantic_conflict_weight * float(semantic["conflict"])
         )
         delta = _clamp(delta, -config.delta_limit, config.delta_limit)
         adjusted = _clamp(base_norm + delta, 0.0, 1.0)
@@ -174,6 +385,10 @@ def apply_post_recall_adjustments(
         item["_post_freshness_score"] = round(freshness, 4)
         item["_post_longtail_score"] = round(longtail, 4)
         item["_post_exposure_penalty"] = round(exposure, 4)
+        item["_post_semantic_positive_score"] = round(float(semantic["positive"]), 4)
+        item["_post_semantic_conflict_score"] = round(float(semantic["conflict"]), 4)
+        item["_post_semantic_positive_hits"] = semantic["positive_hits"]
+        item["_post_semantic_conflict_hits"] = semantic["conflict_hits"]
         item["_post_effective_exposure"] = round(effective_exposure, 4)
         item["_post_ts_alpha"] = round(ts_alpha, 4)
         item["_post_ts_beta"] = round(ts_beta, 4)
@@ -185,6 +400,8 @@ def apply_post_recall_adjustments(
             "freshness": item["_post_freshness_score"],
             "longtail": item["_post_longtail_score"],
             "exposure_penalty": item["_post_exposure_penalty"],
+            "semantic_positive": item["_post_semantic_positive_score"],
+            "semantic_conflict": item["_post_semantic_conflict_score"],
             "delta": item["_post_recall_delta"],
         }
 

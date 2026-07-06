@@ -6,6 +6,7 @@
 |------|------|
 | `memory_gateway.py` | 统一记忆入口（Neo4j 热路径 + GraphZep/Mem0 可选旁路） |
 | `feedback_logger.py` | 曝光、行为、歌单级反馈 JSONL 日志 |
+| `llm_feedback_logger.py` | LLM 规划与标签体系审计 JSONL 日志，不自动改标签 |
 | `ranking_learning.py` | A3 离线重放与排序策略候选学习 |
 | `ranking_policy.py` | 运行时排序策略加载、候选提升、回滚 |
 | `graphzep_client.py` | 可选 GraphZep 记忆旁路 HTTP 客户端 |
