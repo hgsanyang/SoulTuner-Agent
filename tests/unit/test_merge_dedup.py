@@ -27,7 +27,7 @@ def _item(title: str, artist: str, rank: int = 0, **song_fields) -> dict:
 def test_content_recall_sources_remain_enabled_for_every_intent():
     for intent_type in ("graph_search", "hybrid_search", "vector_search", "unknown"):
         weights = recall_weights_for_intent(intent_type)
-        assert set(weights) == {"graph", "dense", "lexical"}
+        assert set(weights) == {"graph", "dense"}
         assert all(weight > 0 for weight in weights.values())
 
 
@@ -35,11 +35,11 @@ def test_intent_only_changes_recall_weights():
     graph = recall_weights_for_intent("graph_search")
     vector = recall_weights_for_intent("vector_search")
 
-    assert graph["lexical"] > graph["dense"]
-    assert vector["dense"] > vector["lexical"]
+    assert graph["graph"] > graph["dense"]
+    assert vector["dense"] > vector["graph"]
 
 
-def test_entity_query_prioritizes_graph_and_lexical_content_recall():
+def test_entity_query_prioritizes_graph_content_recall():
     weights = recall_weights_for_intent(
         "hybrid_search",
         query="我想听周杰伦的歌",
@@ -47,10 +47,9 @@ def test_entity_query_prioritizes_graph_and_lexical_content_recall():
     )
 
     assert weights["graph"] > weights["dense"]
-    assert weights["lexical"] > weights["dense"]
 
 
-def test_scene_query_keeps_lexical_available_for_tag_and_lyric_matches():
+def test_scene_query_prioritizes_dense_audio_context_without_extra_sources():
     weights = recall_weights_for_intent(
         "hybrid_search",
         query="需要偏柔软安静的雨天专注歌单",
@@ -59,9 +58,9 @@ def test_scene_query_keeps_lexical_available_for_tag_and_lyric_matches():
     )
 
     assert weights["dense"] > weights["graph"]
-    assert weights["lexical"] >= 1.0
     assert "personal" not in weights
     assert "cold" not in weights
+    assert "lexical" not in weights
 
 
 def test_similarity_seed_keeps_dense_ahead_of_entity_exactness():
@@ -73,7 +72,6 @@ def test_similarity_seed_keeps_dense_ahead_of_entity_exactness():
     )
 
     assert weights["dense"] > weights["graph"]
-    assert weights["dense"] > weights["lexical"]
 
 
 def test_weighted_rrf_rewards_cross_source_hits():
@@ -86,13 +84,12 @@ def test_weighted_rrf_rewards_cross_source_hits():
             _item("稻香", "周杰伦", rank=0),
             _item("夜曲", "周杰伦", rank=1),
         ],
-        "lexical": [_item("稻香", "周杰伦", rank=0)],
     }
 
     fused = weighted_rrf(sources, recall_weights_for_intent("hybrid_search"))
 
     assert fused[0]["song"]["title"] == "稻香"
-    assert fused[0]["_source_ranks"] == {"graph": 2, "dense": 1, "lexical": 1}
+    assert fused[0]["_source_ranks"] == {"graph": 2, "dense": 1}
     assert fused[0]["_rrf_score"] > fused[1]["_rrf_score"]
 
 
@@ -282,7 +279,7 @@ def test_hard_filter_keeps_strict_language_matches_ahead_of_unknown_labels():
 
 def test_entity_alias_matching_is_case_and_spacing_insensitive():
     candidates = weighted_rrf(
-        {"lexical": [_item("Love Story", "Taylor Swift")]},
+        {"graph": [_item("Love Story", "Taylor Swift")]},
         recall_weights_for_intent("graph_search"),
     )
 

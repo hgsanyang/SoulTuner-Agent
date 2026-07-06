@@ -12,31 +12,26 @@ RRF_K = 60
 SOURCE_LABELS = {
     "graph": "图谱检索",
     "dense": "向量检索",
-    "lexical": "词法检索",
     "web": "联网",
 }
 
 DEFAULT_RECALL_WEIGHTS = {
     "graph": 1.0,
     "dense": 1.0,
-    "lexical": 1.0,
 }
 
 INTENT_RECALL_WEIGHTS = {
     "graph_search": {
         "graph": 1.45,
         "dense": 0.70,
-        "lexical": 1.50,
     },
     "hybrid_search": {
         "graph": 1.10,
         "dense": 1.20,
-        "lexical": 1.10,
     },
     "vector_search": {
         "graph": 0.60,
         "dense": 1.50,
-        "lexical": 0.70,
     },
 }
 
@@ -138,9 +133,10 @@ def recall_weights_for_intent(
 ) -> Dict[str, float]:
     """Return content-recall weights.
 
-    Personalization and cold-start are post-recall score adjustments, not
-    independent recall channels.  This keeps provenance labels honest while
-    still allowing later graph-affinity and exploration stages to shape order.
+    The hot path intentionally keeps only two content recall channels:
+    graph constraints/tags and dense text-to-audio retrieval. Personalization,
+    cold-start, freshness, and exposure fatigue remain bounded post-recall
+    score adjustments instead of standalone recall pools.
     """
     weights = dict(DEFAULT_RECALL_WEIGHTS)
     weights.update(INTENT_RECALL_WEIGHTS.get(str(intent_type or ""), {}))
@@ -155,13 +151,13 @@ def recall_weights_for_intent(
     if asks_personal:
         # "按我的口味" still relies on the final personal score; recall should
         # remain content-grounded so it cannot invent a separate personal pool.
-        weights.update({"graph": 0.90, "dense": 1.00, "lexical": 0.45})
+        weights.update({"graph": 0.90, "dense": 1.00})
     elif has_entity and not is_similarity:
-        weights.update({"graph": 1.65, "dense": 0.45, "lexical": 1.45})
+        weights.update({"graph": 1.70, "dense": 0.45})
     elif is_similarity:
-        weights.update({"graph": 0.75, "dense": 1.65, "lexical": 0.50})
+        weights.update({"graph": 0.75, "dense": 1.70})
     elif is_scene_acoustic:
-        weights.update({"graph": 1.20, "dense": 1.45, "lexical": 1.10})
+        weights.update({"graph": 1.20, "dense": 1.45})
 
     return weights
 

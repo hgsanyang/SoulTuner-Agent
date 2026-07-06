@@ -15,7 +15,6 @@ from typing import Any, Iterable
 FEATURE_NAMES = (
     "rrf_graph",
     "rrf_dense",
-    "rrf_lexical",
     "semantic",
     "acoustic",
     "personal",
@@ -39,7 +38,6 @@ SLATE_NEUTRAL_RATINGS = {"partial", "more_discovery", "more_niche", "closer_to_s
 BASELINE_COEFFICIENTS = {
     "rrf_graph": 0.30,
     "rrf_dense": 0.35,
-    "rrf_lexical": 0.30,
     "semantic": 0.45,
     "acoustic": 0.30,
     "personal": 0.06,
@@ -77,7 +75,6 @@ def feature_vector(item: dict[str, Any]) -> dict[str, float]:
     return {
         "rrf_graph": _rank_feature(source_ranks, "graph"),
         "rrf_dense": _rank_feature(source_ranks, "dense"),
-        "rrf_lexical": _rank_feature(source_ranks, "lexical"),
         "semantic": _safe_unit(item.get("semantic_score"), 0.5),
         "acoustic": _safe_unit(item.get("acoustic_score"), 0.5),
         "personal": _safe_unit(item.get("personal_score"), 0.5),
@@ -420,7 +417,7 @@ def derive_runtime_policy(coefficients: dict[str, float]) -> dict[str, Any]:
                 coefficients[f"rrf_{source}"],
                 BASELINE_COEFFICIENTS[f"rrf_{source}"],
             )
-            for source in ("graph", "dense", "lexical")
+            for source in ("graph", "dense")
         },
         "content_anchor_multipliers": {
             source: _bounded_multiplier(
