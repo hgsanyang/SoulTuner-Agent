@@ -65,112 +65,6 @@ def _post_recall_config_for_user(user_id: str = GRAPH_AFFINITY_USER_ID) -> PostR
     except Exception:
         return DEFAULT_POST_RECALL_CONFIG
 
-# ---- soft_intent.avoid 软否定排序参数 ----
-_SOFT_AVOID_GROUPS = {
-    "dance": {
-        "triggers": ("舞曲", "歌舞曲", "打歌", "女团", "edm", "dance", "party", "club", "蹦迪"),
-        "negative": ("dance", "party", "workout", "electronic", "edm", "energetic"),
-        "positive": ("ballad", "r&b", "soul", "folk", "acoustic", "melancholy", "romantic", "peaceful", "relaxing", "late night", "rainy day"),
-    },
-    "ballad": {
-        "triggers": ("抒情大歌", "苦情", "悲情", "sad ballad", "ballad", "slow ballad"),
-        "negative": ("ballad", "sad", "melancholy", "lonely", "heartbreak", "late night"),
-        "positive": ("happy", "hopeful", "bright", "energetic", "driving", "morning", "pop", "dance", "rock"),
-    },
-    "edm": {
-        "triggers": ("edm", "电子舞曲", "电音", "土嗨", "太炸", "太吵", "过度鸡血"),
-        "negative": ("edm", "electronic", "dance", "party", "workout", "energetic", "angry", "metal"),
-        "positive": ("peaceful", "relaxing", "dreamy", "lo-fi", "acoustic", "folk", "ambient"),
-    },
-}
-
-_SOFT_PREFERENCE_GROUPS = {
-    "quiet_soft": {
-        "triggers": (
-            "安静",
-            "柔软",
-            "柔和",
-            "轻柔",
-            "平静",
-            "温柔",
-            "低动态",
-            "不刺耳",
-            "不吵",
-            "少鼓",
-            "轻一点",
-            "夜里散步",
-            "雨天",
-            "下雨",
-            "雨声",
-            "治愈",
-            "午后",
-            "阅读",
-            "看书",
-            "学习",
-            "写代码",
-            "专注",
-            "睡前",
-            "quiet",
-            "soft",
-            "gentle",
-            "calm",
-            "rainy",
-            "rain",
-            "lo-fi",
-            "lofi",
-            "study",
-            "focus",
-            "sleep",
-            "low dynamic",
-            "low-energy",
-            "low energy",
-            "sparse",
-            "not loud",
-            "not noisy",
-        ),
-        "negative": {
-            "dance": 0.18,
-            "party": 0.18,
-            "workout": 0.18,
-            "edm": 0.18,
-            "energetic": 0.18,
-            "driving": 0.18,
-            "aggressive": 0.18,
-            "hardcore": 0.18,
-            "phonk": 0.18,
-            "noise": 0.18,
-            "noisy": 0.18,
-            "loud": 0.18,
-            "metal": 0.16,
-            "punk": 0.14,
-            "electronic": 0.12,
-            "rock": 0.10,
-            "upbeat": 0.10,
-        },
-        "positive": (
-            "peaceful",
-            "relaxing",
-            "healing",
-            "dreamy",
-            "lo-fi",
-            "acoustic",
-            "folk",
-            "ambient",
-            "late night",
-            "rainy day",
-            "melancholy",
-            "study",
-            "calm",
-            "soft",
-            "mellow",
-            "warm",
-            "sparse",
-            "gentle",
-        ),
-    },
-}
-
-
 def _norm_token(value: Any) -> str:
     return str(value or "").strip().casefold()
 
@@ -182,6 +76,16 @@ def _iter_terms(value: Any) -> List[str]:
         return []
     text = str(value).strip()
     return [text] if text else []
+
+
+def _expand_query_terms(values: List[str]) -> List[str]:
+    terms: List[str] = []
+    for value in values:
+        for part in re.split(r"[/|,，;；]+", str(value or "")):
+            text = part.strip()
+            if text and text not in terms:
+                terms.append(text)
+    return terms
 
 
 def _song_objective_tokens(song: Dict[str, Any]) -> set[str]:
@@ -217,36 +121,6 @@ def _contains_token(tokens: set[str], wanted: str) -> bool:
     return False
 
 
-def _avoid_context_fragments(text: str) -> List[str]:
-    normalized = _norm_token(text)
-    if not normalized:
-        return []
-    fragments: List[str] = []
-    for marker in ("avoiding", "avoid", "without", "no ", "not ", "不要", "别给", "别", "排除"):
-        start = normalized.find(marker)
-        if start >= 0:
-            fragments.append(normalized[start : start + 120])
-    return fragments
-
-
-def _request_explicitly_wants(context: str, tag: str) -> bool:
-    explicit_terms = {
-        "rock": ("rock", "摇滚"),
-        "dance": ("dance", "舞曲", "蹦迪"),
-        "edm": ("edm", "电音", "电子"),
-        "energetic": ("energetic", "热血", "高能", "有精神", "燃"),
-        "driving": ("driving", "开车", "驾驶", "公路"),
-        "workout": ("workout", "运动", "跑步", "健身"),
-        "party": ("party", "派对", "聚会"),
-        "electronic": ("electronic", "电子", "电音"),
-        "metal": ("metal", "金属"),
-        "punk": ("punk", "朋克"),
-        "phonk": ("phonk",),
-        "hardcore": ("hardcore", "硬核"),
-    }
-    return any(term in context for term in explicit_terms.get(tag, (tag,)))
-
-
 def rerank_with_soft_constraints(
     candidates: List[dict],
     soft_intent: Dict[str, Any] | None,
@@ -255,93 +129,43 @@ def rerank_with_soft_constraints(
     *,
     min_keep: int = 8,
 ) -> List[dict]:
-    """Demote objective-tag conflicts for explicit soft avoid phrases.
+    """Demote objective-tag conflicts from the LLM-produced plan.
 
-    Hard constraints are handled by ``apply_hard_filters``.  This step only
-    shapes ranking for phrases such as "别给我舞曲" or "不要苦情", using
-    objective catalog tags instead of generated explanations.
+    Hard constraints are handled by ``apply_hard_filters``. This step is
+    intentionally LLM-first: it does not parse the raw user query and does not
+    infer "quiet means avoid dance" in Python. If a turn should avoid Dance,
+    Driving, Party, etc., the planner must express that in ``soft_intent.avoid``.
     """
     if not candidates:
         return candidates
 
     soft = soft_intent or {}
-    avoid_terms = _iter_terms(soft.get("avoid"))
-
-    avoid_context = " ".join(avoid_terms + _avoid_context_fragments(query_text)).casefold()
-    preference_context = " ".join(
-        _iter_terms(query_text)
-        + _iter_terms(soft.get("goal"))
-        + _iter_terms(soft.get("trajectory"))
-        + _iter_terms(soft.get("vibe"))
-        + _iter_terms((hints or {}).get("mood"))
+    avoid_terms = _expand_query_terms(_iter_terms(soft.get("avoid")))
+    positive_terms = _expand_query_terms(
+        _iter_terms((hints or {}).get("mood"))
         + _iter_terms((hints or {}).get("scenario"))
         + _iter_terms((hints or {}).get("genres"))
-    ).casefold()
+    )
 
-    active_groups = [
-        group
-        for group in _SOFT_AVOID_GROUPS.values()
-        if any(trigger.casefold() in avoid_context for trigger in group["triggers"])
-    ]
-    active_preference_groups = [
-        group
-        for group in _SOFT_PREFERENCE_GROUPS.values()
-        if any(trigger.casefold() in preference_context for trigger in group["triggers"])
-    ]
-    if not active_groups and not active_preference_groups:
+    if not avoid_terms and not positive_terms:
         return candidates
 
     adjusted: List[dict] = []
     for item in candidates:
         song = item.get("song") or {}
         tokens = _song_objective_tokens(song)
-        negative_hits: set[str] = set()
-        positive_hits: set[str] = set()
+        negative_hits = {_norm_token(term) for term in avoid_terms if _contains_token(tokens, term)}
+        positive_hits = {_norm_token(term) for term in positive_terms if _contains_token(tokens, term)}
 
-        for group in active_groups:
-            negative_hits.update(
-                token for token in group["negative"] if _contains_token(tokens, token)
-            )
-            # Positive hints only boost when the current request actually asks
-            # for that family of tags. This avoids turning avoid-only requests
-            # into a broad taste preference.
-            positive_hits.update(
-                token
-                for token in group["positive"]
-                if token in preference_context and _contains_token(tokens, token)
-            )
-
-        conflict_hits: set[str] = set()
-        conflict_penalty = 0.0
-        for group in active_preference_groups:
-            for token, weight in group["negative"].items():
-                if _request_explicitly_wants(preference_context, token):
-                    continue
-                if _contains_token(tokens, token):
-                    conflict_hits.add(token)
-                    conflict_penalty += weight
-            positive_hits.update(
-                token
-                for token in group["positive"]
-                if _contains_token(tokens, token)
-            )
-
-        penalty = 0.0
-        for hit in negative_hits:
-            if hit in {"dance", "party", "workout", "edm", "energetic", "electronic"}:
-                penalty += 0.22
-            else:
-                penalty += 0.14
-        penalty += conflict_penalty
-        bonus = min(0.18, 0.04 * len(positive_hits))
-        penalty = min(0.65, penalty)
+        penalty = min(0.45, 0.16 * len(negative_hits))
+        bonus = min(0.12, 0.03 * len(positive_hits))
 
         clone = dict(item)
         base = float(clone.get("similarity_score") or clone.get("_rrf_score") or 0.0)
         clone["_soft_avoid_penalty"] = round(penalty, 4)
         clone["_soft_positive_bonus"] = round(bonus, 4)
         clone["_soft_negative_hits"] = sorted(negative_hits)
-        clone["_soft_conflict_hits"] = sorted(conflict_hits)
+        clone["_soft_conflict_hits"] = sorted(negative_hits)
         clone["_soft_positive_hits"] = sorted(positive_hits)
         clone["similarity_score"] = base - penalty + bonus
         adjusted.append(clone)
@@ -580,7 +404,14 @@ class MusicHybridRetrieval:
         need_web_search = bool(plan.get("use_web_search"))
         search_keyword = str(plan.get("web_search_keywords") or query)
 
+        vector_descs: List[str] = []
+        for item in plan.get("vector_acoustic_queries") or []:
+            text = str(item or "").strip()
+            if text and text not in vector_descs:
+                vector_descs.append(text)
         vector_desc = str(plan.get("vector_acoustic_query") or "").strip()
+        if vector_desc and vector_desc not in vector_descs:
+            vector_descs.insert(0, vector_desc)
         if not vector_desc:
             soft_parts = [
                 soft_intent.get("goal", ""),
@@ -598,33 +429,26 @@ class MusicHybridRetrieval:
             vector_desc = "; ".join(str(part) for part in soft_parts if part)
         if not vector_desc:
             vector_desc = query
+        if not vector_descs:
+            vector_descs = [vector_desc]
 
-        similarity_seed_terms = (
-            "类似",
-            "相似",
-            "听感",
-            "像",
-            "同类",
-            "similar",
-            "same vibe",
-            "sounds like",
-            "like this",
-        )
-        similarity_context = " ".join(
-            [
-                query,
-                str(soft_intent.get("goal") or ""),
-                str(soft_intent.get("vibe") or ""),
-                vector_desc,
-            ]
-        ).casefold()
         filter_hard_constraints = dict(hard_constraints)
         reference_song_entities = []
-        if graph_song_entities and any(term in similarity_context for term in similarity_seed_terms):
+        uses_song_as_acoustic_seed = bool(
+            graph_song_entities
+            and str(intent_type or "") in {"hybrid_search", "vector_search"}
+            and (
+                soft_intent.get("goal")
+                or soft_intent.get("trajectory")
+                or soft_intent.get("vibe")
+                or vector_desc != query
+            )
+        )
+        if uses_song_as_acoustic_seed:
             reference_song_entities = list(graph_song_entities)
             filter_hard_constraints["song_entities"] = []
             logger.info(
-                "[Retrieval] song_entities=%s 作为相似听感参考种子，不进入最终硬过滤",
+                "[Retrieval] song_entities=%s 由 LLM plan 判定为声学参考种子，不进入最终硬过滤",
                 graph_song_entities,
             )
 
@@ -683,7 +507,7 @@ class MusicHybridRetrieval:
             )),
             "dense": timed_recall("dense", run_sync_in_executor(
                 semantic_search.invoke,
-                {"query": vector_desc, "limit": recall_limit},
+                {"query": vector_desc, "query_variants": vector_descs, "limit": recall_limit},
             )),
         }
         recall_results = await asyncio.gather(*recall_tasks.values(), return_exceptions=True)
@@ -1726,6 +1550,7 @@ class MusicHybridRetrieval:
 
                 for i, cand in enumerate(mmr_candidates):
                     relevance = cand.get("similarity_score", 0)
+                    avoid_conflict = float(cand.get("_post_semantic_conflict_score") or 0.0)
                     cand_tags = tag_cache[id(cand)]
 
                     # 与已选集合中 Jaccard 最大的作为重叠度
@@ -1736,7 +1561,16 @@ class MusicHybridRetrieval:
                             if j > max_overlap:
                                 max_overlap = j
 
-                    mmr_score = mmr_lambda * relevance - (1 - mmr_lambda) * max_overlap
+                    # MMR should diversify within the user's current intent, not
+                    # re-promote candidates that the LLM plan explicitly marked
+                    # as avoid/conflict.  The conflict score is derived only
+                    # from soft_intent.avoid vs catalog tags in post-recall
+                    # adjustment, not from fixed query phrase triggers.
+                    mmr_score = (
+                        mmr_lambda * relevance
+                        - (1 - mmr_lambda) * max_overlap
+                        - 0.18 * avoid_conflict
+                    )
                     if mmr_score > best_score:
                         best_score = mmr_score
                         best_idx = i

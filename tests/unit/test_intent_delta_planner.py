@@ -1,7 +1,9 @@
 import asyncio
 
+import agent.intent.delta_planner as delta_planner_module
 from agent.intent.delta_planner import IntentDeltaPlanner, _parse_delta_json
-from schemas.dialog_state import DialogMusicState
+from config.settings import settings
+from schemas.dialog_state import DialogMusicState, DeltaOperation, PlanDelta
 from schemas.query_plan import HardConstraints, SoftIntent
 
 
@@ -17,11 +19,36 @@ def test_delta_json_parser_accepts_fenced_payload():
     assert delta.confidence == 0.9
 
 
-def test_delta_planner_uses_deterministic_fast_path_without_llm():
-    def fail_if_called():
-        raise AssertionError("LLM should not be called for a deterministic follow-up")
+def test_delta_planner_uses_llm_for_complex_followup(monkeypatch):
+    monkeypatch.setattr(settings, "intent_llm_provider", "dashscope")
+    monkeypatch.setattr(settings, "llm_default_provider", "dashscope")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+    called = {"llm": False}
 
-    planner = IntentDeltaPlanner(fail_if_called)
+    async def fake_post_json(*_args, **_kwargs):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": PlanDelta(
+                            operations=[
+                                DeltaOperation(op="replace", path="hard_constraints.language", value="Chinese"),
+                                DeltaOperation(op="add", path="soft_intent.vibe", value="quieter"),
+                            ],
+                            confidence=0.82,
+                        ).model_dump_json()
+                    }
+                }
+            ]
+        }
+
+    def llm_factory():
+        called["llm"] = True
+        return type("FakeLLM", (), {"model_name": "qwen3.7-plus"})()
+
+    monkeypatch.setattr(delta_planner_module, "_post_json", fake_post_json)
+
+    planner = IntentDeltaPlanner(llm_factory)
     state = DialogMusicState(
         hard_constraints=HardConstraints(language="English"),
         soft_intent=SoftIntent(vibe="dreamy"),
@@ -32,9 +59,9 @@ def test_delta_planner_uses_deterministic_fast_path_without_llm():
         planner.plan(user_input="同样的感觉，换中文并更安静", dialog_state=state)
     )
 
-    assert delta.planner_mode == "deterministic"
+    assert called["llm"] is True
+    assert delta.planner_mode == "delta_llm"
     assert [operation.path for operation in delta.operations] == [
         "hard_constraints.language",
         "soft_intent.vibe",
-        "soft_intent.avoid",
     ]

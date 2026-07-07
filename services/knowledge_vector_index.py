@@ -151,11 +151,20 @@ class QdrantKnowledgeIndex:
         return response.json()
 
     def ensure_collection(self) -> None:
-        self._request(
-            "PUT",
-            f"/collections/{self.collection}",
-            json={"vectors": {"size": self.dim, "distance": "Cosine"}},
-        )
+        try:
+            self._request("GET", f"/collections/{self.collection}")
+            return
+        except KnowledgeVectorUnavailable:
+            pass
+        try:
+            self._request(
+                "PUT",
+                f"/collections/{self.collection}",
+                json={"vectors": {"size": self.dim, "distance": "Cosine"}},
+            )
+        except KnowledgeVectorUnavailable as exc:
+            if "already exists" not in str(exc):
+                raise
 
     def upsert_cards(self, cards: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         points = []
@@ -228,4 +237,3 @@ def search_qdrant_knowledge(
     min_confidence: float = 0.0,
 ) -> list[dict[str, Any]]:
     return QdrantKnowledgeIndex().search(query, kind=kind, limit=limit, min_confidence=min_confidence)
-

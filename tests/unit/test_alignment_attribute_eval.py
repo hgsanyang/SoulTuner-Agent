@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from tests.eval.evaluate_alignment_attribute import label_matches, precision_at_k
+import json
+
+from tests.eval.evaluate_alignment_attribute import label_matches, load_query_variant_file, precision_at_k
 
 
 def test_label_matches_language_exact():
@@ -31,3 +33,18 @@ def test_precision_at_k_uses_top_k():
 def test_precision_at_k_rejects_non_positive_k():
     with pytest.raises(ValueError):
         precision_at_k(["a"], {}, {"field": "language", "equals": "chinese"}, 0)
+
+
+def test_load_query_variant_file_dedupes_and_caps(tmp_path):
+    path = tmp_path / "variants.json"
+    path.write_text(
+        json.dumps({
+            "variants": {
+                "q1": ["a", "a", "b", "c", "d", "e"],
+                "q2": "not-a-list",
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    assert load_query_variant_file(str(path)) == {"q1": ["a", "b", "c", "d"]}

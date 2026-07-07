@@ -167,6 +167,7 @@ def _dashscope_openai_client() -> Any | None:
         return OpenAI(
             api_key=api_key,
             base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            timeout=float(os.getenv("MUSIC_KNOWLEDGE_LLM_TIMEOUT_SECONDS", "120")),
         )
     except Exception:
         return None
@@ -243,6 +244,14 @@ def _llm_web_card(
             parsed=parsed,
             source="dashscope_web_search",
         )
+    except Exception:
+        return None
+
+
+async def _llm_web_card_async(**kwargs: Any) -> dict[str, Any] | None:
+    timeout = float(os.getenv("MUSIC_KNOWLEDGE_LLM_TIMEOUT_SECONDS", "120")) + 10.0
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_llm_web_card, **kwargs), timeout=timeout)
     except Exception:
         return None
 
@@ -359,7 +368,7 @@ async def enrich_artist_card(
     query = build_artist_knowledge_query(artist)
     card = None
     if use_llm_summary:
-        card = _llm_web_card(kind="artist", query=query, artist=artist, title=artist)
+        card = await _llm_web_card_async(kind="artist", query=query, artist=artist, title=artist)
     if card is None:
         snippets = await fetch_music_knowledge_snippets(query)
         card = build_card_from_snippets(
@@ -395,7 +404,7 @@ async def enrich_song_card(
     query = build_song_knowledge_query(title, artist)
     card = None
     if use_llm_summary:
-        card = _llm_web_card(kind="song", query=query, title=title, artist=artist)
+        card = await _llm_web_card_async(kind="song", query=query, title=title, artist=artist)
     if card is None:
         snippets = await fetch_music_knowledge_snippets(query)
         card = build_card_from_snippets(

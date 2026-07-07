@@ -627,6 +627,7 @@ class MusicRecommendationGraph:
                 "graph_mood_filter": None, "graph_language_filter": None, "graph_region_filter": None,
                 "use_vector": True,
                 "vector_acoustic_query": user_input,
+                "vector_acoustic_queries": [user_input],
                 "use_web_search": False, "web_search_keywords": "",
                 "_intent_type": "vector_search",
                 "_graphzep_facts": state.get("graphzep_facts", ""),
@@ -1339,6 +1340,20 @@ class MusicRecommendationGraph:
                         "local_result_count": len(local_items),
                         "degraded": False,
                     }
+
+            auto_flywheel_candidates = 0
+            try:
+                from services.online_audio_flywheel import schedule_online_recommendation_flywheel
+
+                auto_flywheel_candidates = schedule_online_recommendation_flywheel(final_results)
+            except Exception as exc:
+                logger.debug("[web_fallback] online auto flywheel scheduling skipped: %s", exc)
+            if auto_flywheel_candidates:
+                final_meta = {
+                    **final_meta,
+                    "online_auto_flywheel_candidates": auto_flywheel_candidates,
+                    "online_audio_retention": "temporary_until_user_save",
+                }
 
             from schemas.music_state import ToolOutput
             dialog_state = update_dialog_result_anchors(state.get("dialog_state"), final_results)

@@ -197,7 +197,7 @@ export default function PendingPage() {
                         {formats.map(format => <option key={format} value={format}>{format.toUpperCase()}</option>)}
                     </select>
                     <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
-                        状态：待入库 → 分析中 → 已入库
+                        状态：获取音源 → 元数据入库 → 标签/向量分析
                     </span>
                     {invalidPendingCount > 0 && (
                         <span style={{ fontSize: '0.78rem', color: '#fca5a5' }}>
@@ -315,6 +315,21 @@ export default function PendingPage() {
                                                         缺 {asset}
                                                     </span>
                                                 ))}
+                                            </div>
+                                        )}
+                                        {song.acquire_status === 'failed' && (
+                                            <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#fca5a5' }}>
+                                                音源获取失败{song.acquire_error ? `：${song.acquire_error}` : '，可稍后重新保存'}
+                                            </div>
+                                        )}
+                                        {song.audio_retention && song.acquire_status !== 'failed' && (
+                                            <div style={{ marginTop: '0.2rem', fontSize: '0.7rem', color: theme.colors.text.muted }}>
+                                                {song.audio_retention === 'saved' ? '音源：长期保存' : '音源：临时缓存（点赞、收藏或保存音源后长期保留）'}
+                                            </div>
+                                        )}
+                                        {song.is_trial && (
+                                            <div style={{ marginTop: '0.2rem', fontSize: '0.7rem', color: '#fbbf24' }}>
+                                                当前来源仅提供试听片段，不标记为完整音源
                                             </div>
                                         )}
                                     </div>

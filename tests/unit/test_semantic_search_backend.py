@@ -25,3 +25,18 @@ def test_backend_specs_use_matching_neo4j_vectors():
     }
     assert semantic_search._backend_spec("m2d")["index"] == "song_m2d2_index"
     assert semantic_search._backend_spec("m2d")["property"] == "m2d2_embedding"
+
+
+def test_plan_query_variants_default_to_m2d_only(monkeypatch):
+    monkeypatch.setattr(semantic_search.settings, "plan_query_variant_mode", "m2d")
+
+    assert semantic_search._should_apply_plan_query_variants("m2d")
+    assert not semantic_search._should_apply_plan_query_variants("muq")
+
+
+def test_plan_query_variants_can_enable_all_or_off(monkeypatch):
+    monkeypatch.setattr(semantic_search.settings, "plan_query_variant_mode", "all")
+    assert semantic_search._should_apply_plan_query_variants("muq")
+
+    monkeypatch.setattr(semantic_search.settings, "plan_query_variant_mode", "off")
+    assert not semantic_search._should_apply_plan_query_variants("m2d")

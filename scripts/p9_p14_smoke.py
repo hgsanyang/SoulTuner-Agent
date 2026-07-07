@@ -72,7 +72,12 @@ def _check_catalog_gap_and_adjustments() -> list[dict[str, Any]]:
     from retrieval.post_recall_adjustments import apply_post_recall_adjustments
 
     local = [{"song": {"title": f"Song {i}", "artist": "A", "language": "Chinese", "preview_url": "u"}} for i in range(12)]
-    plan = {"hard_constraints": {"language": "Chinese"}, "soft_intent": {"vibe": "classic"}, "hints": {}}
+    plan = {
+        "hard_constraints": {"language": "Chinese"},
+        "soft_intent": {"vibe": "classic"},
+        "hints": {},
+        "metadata_constraints": {"release_year_from": 1980, "release_year_to": 1989, "era": "80s"},
+    }
     gap = analyze_catalog_gap(local, plan, "推荐80年代的中文老歌", web_enabled=True)
     rows = [
         _ok("catalog_gap_release_fallback", ",".join(gap.reasons))
@@ -114,7 +119,8 @@ def _check_catalog_gap_and_adjustments() -> list[dict[str, Any]]:
             },
         ],
         metadata_by_title={"fresh": {"updated_at": 1_800_000_000_000, "ts_beta": 1.0}},
-        query_text="下雨天，柔软安静一点",
+        hints={"genres": ["Lo-Fi"], "mood": "Peaceful", "scenario": "Rainy Day"},
+        soft_intent={"avoid": ["Dance", "Energetic", "Driving"]},
         now_ms=1_800_000_000_000,
     )
     max_delta = max(abs(float(item.get("_post_recall_delta") or 0)) for item in adjusted)

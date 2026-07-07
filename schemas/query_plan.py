@@ -37,6 +37,16 @@ class IntentHints(BaseModel):
     scenario: Optional[str] = Field(default=None, description="场景提示")
 
 
+class MetadataConstraints(BaseModel):
+    """由 LLM 显式产出的目录/外部知识约束，供 Catalog Gap 验证本地库存。"""
+
+    release_year_from: Optional[int] = Field(default=None, description="发行年份下界，如 1980")
+    release_year_to: Optional[int] = Field(default=None, description="发行年份上界，如 1989")
+    era: Optional[str] = Field(default=None, description="用户描述的年代/时期，如 80s、oldies")
+    recency_required: bool = Field(default=False, description="是否明确要求最新/近期歌曲")
+    external_knowledge_required: bool = Field(default=False, description="是否需要榜单、背景、新闻等外部知识")
+
+
 class RetrievalPlan(BaseModel):
     """检索执行计划：分层表达硬约束、软意图与可选提示，并保留旧字段兼容。"""
 
@@ -47,6 +57,10 @@ class RetrievalPlan(BaseModel):
     hard_constraints: HardConstraints = Field(default_factory=HardConstraints, description="实体/语言/地区/纯音乐等硬约束")
     soft_intent: SoftIntent = Field(default_factory=SoftIntent, description="自由文本软意图，供向量检索和 HyDE 使用")
     hints: IntentHints = Field(default_factory=IntentHints, description="可选标签提示，不能替代软意图")
+    metadata_constraints: MetadataConstraints = Field(
+        default_factory=MetadataConstraints,
+        description="年份、时效性、外部知识等本地曲库覆盖能力约束",
+    )
 
     # 旧字段保留给现有检索链路、评测和本地小模型使用。
     graph_entities: List[str] = Field(default_factory=list, description="提取出的实体词列表，含别名/外文名（向后兼容）")
@@ -62,7 +76,14 @@ class RetrievalPlan(BaseModel):
         default=False,
         description="旧版兼容提示；R1 后不再作为稠密召回开关",
     )
-    vector_acoustic_query: Optional[str] = Field(default=None, description="用于向量检索的声学描述查询（HyDE）")
+    vector_acoustic_query: Optional[str] = Field(default=None, description="用于向量检索的主声学描述查询（HyDE）")
+    vector_acoustic_queries: List[str] = Field(
+        default_factory=list,
+        description=(
+            "用于文搜音检索的多视角声学描述。由 LLM 生成 2-4 条互补 MusicCaps 风格英文描述，"
+            "覆盖乐器/节奏/音色、能量动态、场景氛围等不同声学视角。"
+        ),
+    )
 
     use_web_search: bool = Field(default=False, description="是否启用联网搜索")
     web_search_keywords: str = Field(default="", description="搜索关键词")
@@ -110,6 +131,19 @@ class RetrievalPlan(BaseModel):
             hints.mood = self.graph_mood_filter
         if not hints.scenario and self.graph_scenario_filter:
             hints.scenario = self.graph_scenario_filter
+
+        acoustic_queries: list[str] = []
+        for item in self.vector_acoustic_queries:
+            text = str(item or "").strip()
+            if text and text not in acoustic_queries:
+                acoustic_queries.append(text)
+        if self.vector_acoustic_query:
+            primary = str(self.vector_acoustic_query).strip()
+            if primary and primary not in acoustic_queries:
+                acoustic_queries.insert(0, primary)
+        if acoustic_queries and not self.vector_acoustic_query:
+            self.vector_acoustic_query = acoustic_queries[0]
+        self.vector_acoustic_queries = acoustic_queries[:4]
 
         return self
 

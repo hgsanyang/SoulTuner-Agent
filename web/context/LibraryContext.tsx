@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { acquireSong, sendUserEvent, fetchLikedSongs, fetchDislikedSongs, removeDislike as apiRemoveDislike } from '@/lib/api';
+import { sendUserEvent, fetchLikedSongs, fetchDislikedSongs, removeDislike as apiRemoveDislike } from '@/lib/api';
 
 export interface LikedSong {
     id: string;
@@ -158,24 +158,6 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         setTimeout(() => setToast(null), 2500);
     };
 
-    const stageOnlineSongIfNeeded = (song: {
-        title: string;
-        artist: string;
-        source?: string;
-        platform?: string;
-        song_id?: string;
-    }) => {
-        if (song.source !== 'online_search') return;
-        void acquireSong({
-            title: song.title,
-            artist: song.artist,
-            song_id: song.song_id,
-            platform: song.platform || 'netease',
-        })
-            .then(() => showToast('✅ 联网歌曲已下载到「待入库」'))
-            .catch(() => showToast('⚠️ 已记录喜欢，但下载到待入库失败'));
-    };
-
     const isLiked = (title: string, artist: string) => {
         const id = `${title}_${artist}`;
         return likedSongs.some(song => song.id === id);
@@ -194,6 +176,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
                 sendUserEvent('unlike', song.title, song.artist, {
                     exposureId: song.exposure_id,
                     position: song.exposure_rank,
+                    source: song.source,
+                    platform: song.platform,
+                    songId: song.song_id,
                 });
                 return prev.filter(s => s.id !== id);
             }
@@ -201,8 +186,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             sendUserEvent('like', song.title, song.artist, {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,
+                source: song.source,
+                platform: song.platform,
+                songId: song.song_id,
             });
-            stageOnlineSongIfNeeded(song);
             return [{ ...song, id, addedAt: Date.now() }, ...prev];
         });
     };
@@ -250,8 +237,10 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             sendUserEvent('save', song.title, song.artist, {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,
+                source: song.source,
+                platform: song.platform,
+                songId: song.song_id,
             });
-            stageOnlineSongIfNeeded(song);
             return { ...c, songs: [{ ...song, id, addedAt: Date.now() }, ...c.songs] };
         }));
     };

@@ -23,6 +23,7 @@ export default function MyLibraryPage() {
     const [moodFilter, setMoodFilter] = useState('all');
     const [qualityFilter, setQualityFilter] = useState('all');
     const [selectedSong, setSelectedSong] = useState<LibrarySong | null>(null);
+    const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
     const [tagDraft, setTagDraft] = useState({
         genres: '',
         moods: '',
@@ -35,6 +36,8 @@ export default function MyLibraryPage() {
     const { playSong } = usePlayer();
     const { showToast } = useLibrary();
     const router = useRouter();
+
+    const songKey = (song: LibrarySong) => song.music_id || `${song.title}_${song.artist}_${song.audio_url || ''}`;
 
     const loadSongs = useCallback(async () => {
         setLoading(true);
@@ -99,17 +102,51 @@ export default function MyLibraryPage() {
     };
 
     const handleDelete = async (song: LibrarySong) => {
-        const key = `${song.title}_${song.artist}`;
+        const key = songKey(song);
         setDeleting(key);
         const result = await deleteSongFromLibrary(song.title, song.artist);
         setDeleting(null);
         if (result.success) {
             showToast(`🗑️ 已从曲库中移除「${song.title}」`);
-            setSongs(prev => prev.filter(s => !(s.title === song.title && s.artist === song.artist)));
+            setSongs(prev => prev.filter(s => songKey(s) !== key));
+            setSelectedKeys(prev => {
+                const next = new Set(prev);
+                next.delete(key);
+                return next;
+            });
+            if (selectedSong && songKey(selectedSong) === key) setSelectedSong(null);
             setTotal(prev => prev - 1);
         } else {
             showToast(`❌ 删除失败: ${result.message}`);
         }
+    };
+
+    const toggleSelected = (song: LibrarySong) => {
+        const key = songKey(song);
+        setSelectedKeys(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
+
+    const clearSelected = () => setSelectedKeys(new Set());
+
+    const selectFiltered = () => {
+        setSelectedKeys(new Set(filtered.map(songKey)));
+    };
+
+    const handleBulkDelete = async () => {
+        const targets = songs.filter(song => selectedKeys.has(songKey(song)));
+        if (!targets.length) return;
+        const ok = window.confirm(`确定从曲库中移除选中的 ${targets.length} 首歌曲吗？`);
+        if (!ok) return;
+        for (const song of targets) {
+            // Keep the existing safe backend delete path; each item reports its own failure.
+            await handleDelete(song);
+        }
+        clearSelected();
     };
 
     const sourceOptions = Array.from(new Set(songs.map(s => s.source || 'local'))).sort();
@@ -275,6 +312,17 @@ export default function MyLibraryPage() {
                 </select>
                 <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>显示 {filtered.length} / {total}</span>
             </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', minHeight: '2rem' }}>
+                <button onClick={selectFiltered} disabled={filtered.length === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.04)', color: theme.colors.text.secondary, cursor: filtered.length ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
+                    全选当前结果
+                </button>
+                <button onClick={clearSelected} disabled={selectedKeys.size === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.04)', color: selectedKeys.size ? theme.colors.text.secondary : theme.colors.text.muted, cursor: selectedKeys.size ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
+                    清空选择
+                </button>
+                <button onClick={handleBulkDelete} disabled={selectedKeys.size === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: '1px solid rgba(248,113,113,0.28)', background: selectedKeys.size ? 'rgba(248,113,113,0.12)' : 'rgba(255,255,255,0.03)', color: selectedKeys.size ? '#fca5a5' : theme.colors.text.muted, cursor: selectedKeys.size ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
+                    批量移除{selectedKeys.size ? ` (${selectedKeys.size})` : ''}
+                </button>
+            </div>
 
             {/* Song List */}
             {!loading && filtered.length === 0 ? (
@@ -295,7 +343,8 @@ export default function MyLibraryPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                     {filtered.map((song) => {
                         const src = sourceLabel(song.source);
-                        const key = `${song.title}_${song.artist}`;
+                        const key = songKey(song);
+                        const isSelected = selectedKeys.has(key);
                         const isDeleting = deleting === key;
                         return (
                             <div key={key}
@@ -308,18 +357,26 @@ export default function MyLibraryPage() {
                                 }}
                                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)')}
                                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.02)')}
-                                onClick={() => {
-                                    if (song.audio_url) {
-                                        const baseUrl = song.audio_url.startsWith('http') ? '' : 'http://localhost:8501';
-                                        playSong({
-                                            title: song.title, artist: song.artist,
+                                    onClick={() => {
+                                        if (song.audio_url) {
+                                            const baseUrl = song.audio_url.startsWith('http') ? '' : 'http://localhost:8501';
+                                            playSong({
+                                                title: song.title, artist: song.artist,
                                             preview_url: `${baseUrl}${song.audio_url}`,
                                             coverUrl: song.cover_url ? `${baseUrl}${song.cover_url}` : undefined,
                                             lrc_url: song.lrc_url ? `${baseUrl}${song.lrc_url}` : undefined,
-                                        });
-                                    }
-                                }}
+                                            });
+                                        }
+                                    }}
                             >
+                                <input
+                                    type="checkbox"
+                                    aria-label={`选择 ${song.title}`}
+                                    checked={isSelected}
+                                    onChange={e => { e.stopPropagation(); toggleSelected(song); }}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ width: '16px', height: '16px', accentColor: theme.colors.primary.accent, flexShrink: 0 }}
+                                />
                                 {/* Cover */}
                                 <div style={{
                                     width: '46px', height: '46px', borderRadius: '6px', flexShrink: 0,

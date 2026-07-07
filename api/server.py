@@ -55,6 +55,13 @@ async def startup_event():
         get_agent()
         logger.info("🧪 Mock 模式：跳过模型、Neo4j、GraphZep 与 KV Cache 预热")
         return
+
+    try:
+        from services.online_audio_flywheel import cleanup_expired_temporary_audio
+
+        asyncio.create_task(asyncio.to_thread(cleanup_expired_temporary_audio))
+    except Exception as exc:
+        logger.debug("联网临时音频清理任务未启动: %s", exc)
     
     # 1. CPU profile预加载M2D；GPU profile先让MuQ按需进入显存，避免两个大模型的加载峰值叠加。
     loop = asyncio.get_running_loop()
@@ -308,26 +315,55 @@ async def acquire_song_endpoint(
     from tools.acquire_music import OnlineMusicAcquirer
 
     query = f"{request.title} {request.artist}"
-    logger.info(f"🎯 [acquire-song] 用户请求下载到待入库: {query}")
+    logger.info(f"[acquire-song] 用户请求保存音源: {query}")
 
     acquirer = OnlineMusicAcquirer()
     async with aiohttp.ClientSession() as session:
-        acquired = await acquirer.search_and_acquire([query], session)
+        if request.song_id:
+            result = await acquirer.acquire_resolved_song(
+                {
+                    "id": request.song_id,
+                    "name": request.title,
+                    "artist": request.artist,
+                },
+                session,
+                retention="saved",
+                requested_by="user_save_audio",
+            )
+            acquired = [result] if result else []
+        else:
+            acquired = await acquirer.search_and_acquire([query], session)
 
     if not acquired:
         raise HTTPException(status_code=404, detail="未能获取该歌曲的音频资源(可能因版权限制)")
 
+    from services.ingest_queue import IngestQueueValidationError, enqueue_songs
+    from tools.acquire_music import _background_flywheel, _quick_ingest_to_neo4j
+
+    await _quick_ingest_to_neo4j(acquired)
+    inline_ingest = os.getenv("MUSIC_INLINE_INGEST_ENABLED", "0").lower() in {"1", "true", "yes"}
+    job_id = None
+    if inline_ingest:
+        asyncio.create_task(_background_flywheel(acquired))
+    else:
+        try:
+            job_id = enqueue_songs(acquired)
+        except IngestQueueValidationError as exc:
+            logger.warning("[acquire-song] 已下载并写入元数据，但增强队列拒绝: %s", exc)
+
     song = acquired[0]
-    logger.info(f"✅ [acquire-song] 已下载到待入库: {song['title']} - {song['artist']}")
+    logger.info(f"[acquire-song] 音源已保存并进入后台入库: {song['title']} - {song['artist']}")
     return {
         "success": True,
-        "message": f"已将《{song['title']}》下载到待入库",
+        "message": f"已保存《{song['title']}》音源，并开始后台入库分析",
+        "job_id": job_id,
         "song": {
             "title": song["title"],
             "artist": song["artist"],
             "album": song.get("album", ""),
             "audio_url": song["audio_url"],
             "cover_url": song.get("cover_url", ""),
+            "audio_retention": song.get("audio_retention", "saved"),
         }
     }
 
@@ -1059,11 +1095,26 @@ async def capture_user_event(request: UserEventRequest):
         if not result.success:
             raise HTTPException(status_code=422, detail=result.error or "user event failed")
 
+        online_flywheel_scheduled = False
+        try:
+            from services.online_audio_flywheel import schedule_online_feedback_flywheel
+
+            extra_payload = request.extra if isinstance(request.extra, dict) else {}
+            online_flywheel_scheduled = schedule_online_feedback_flywheel(
+                event_type=event,
+                title=title,
+                artist=artist,
+                extra=extra_payload,
+            )
+        except Exception as exc:
+            logger.debug("[user-event] online feedback flywheel scheduling skipped: %s", exc)
+
         return {
             "success": True,
             "event_recorded": result.description,
             "feedback_event_id": result.feedback_event_id,
             "graphzep_scheduled": result.graphzep_scheduled,
+            "online_flywheel_scheduled": online_flywheel_scheduled,
         }
 
     except HTTPException:
@@ -1666,8 +1717,16 @@ async def get_pending_songs():
                 "source_platform": meta.get("source_platform") or meta.get("source", ""),
                 "source_id": str(meta.get("source_id") or meta.get("musicId", "")),
                 "metadata_source": meta.get("metadata_source", ""),
+                "acquire_status": meta.get("acquire_status", ""),
+                "acquire_error": meta.get("acquire_error", ""),
+                "audio_retention": meta.get("audio_retention", "temporary"),
+                "requested_by": meta.get("requested_by", ""),
+                "is_trial": bool(meta.get("is_trial")),
                 **asset_status,
             })
+            if meta.get("acquire_status") == "failed":
+                pending[-1]["valid"] = False
+                pending[-1]["status"] = "failed"
         except Exception as e:
             logger.warning(f"[pending] 解析元数据失败 {meta_file.name}: {e}")
 

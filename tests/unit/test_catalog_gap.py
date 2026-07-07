@@ -8,6 +8,7 @@ def _plan(**hard):
         "hard_constraints": hard,
         "soft_intent": {"goal": "想听温暖的歌", "vibe": "classic"},
         "hints": {"genres": ["Pop"]},
+        "metadata_constraints": {},
     }
 
 
@@ -16,7 +17,10 @@ def test_release_year_gap_triggers_discovery_fallback():
 
     decision = analyze_catalog_gap(
         local,
-        _plan(language="Chinese"),
+        {
+            **_plan(language="Chinese"),
+            "metadata_constraints": {"release_year_from": 1980, "release_year_to": 1989, "era": "80s"},
+        },
         "推荐80年代的中文老歌",
         web_enabled=True,
     )
@@ -69,7 +73,10 @@ def test_background_music_is_not_external_knowledge_fallback():
     assert decision.discovery_required is False
 
 
-def test_song_background_request_still_uses_external_discovery():
+def test_song_background_request_still_uses_external_discovery(monkeypatch, tmp_path):
+    from config.settings import settings
+
+    monkeypatch.setattr(settings, "knowledge_store_path", str(tmp_path / "empty_knowledge.sqlite"), raising=False)
     local = [
         {"song": {"title": f"Song {i}", "artist": "A", "preview_url": "u"}}
         for i in range(12)
@@ -77,7 +84,7 @@ def test_song_background_request_still_uses_external_discovery():
 
     decision = analyze_catalog_gap(
         local,
-        _plan(),
+        {**_plan(), "metadata_constraints": {"external_knowledge_required": True}},
         "查一下晴天这首歌的创作背景和代表作资料",
         web_enabled=True,
     )
@@ -106,7 +113,7 @@ def test_soft_genre_gap_mixes_more_online_candidates():
     assert decision.details["tag_evidence"]["genres"]["matched"] == 0
 
 
-def test_query_inferred_rnb_gap_mixes_online_candidates_without_hint():
+def test_catalog_gap_does_not_infer_rnb_without_llm_hint():
     local = [
         {"song": {"title": f"Rock {i}", "artist": "A", "preview_url": "u", "genres": ["Rock", "Folk"]}}
         for i in range(12)
@@ -120,8 +127,8 @@ def test_query_inferred_rnb_gap_mixes_online_candidates_without_hint():
     )
 
     assert decision.action == "mix_in"
-    assert "local_genres_match_insufficient" in decision.reasons
-    assert decision.details["tag_evidence"]["genres"]["requested"] == ["R&B"]
+    assert decision.reasons == ("online_exploration",)
+    assert "genres" not in decision.details["tag_evidence"]
 
 
 def test_language_inventory_gap_triggers_fallback_when_evidence_conflicts():
@@ -132,7 +139,7 @@ def test_language_inventory_gap_triggers_fallback_when_evidence_conflicts():
 
     decision = analyze_catalog_gap(
         local,
-        {"hard_constraints": {}, "soft_intent": {}, "hints": {}},
+        {"hard_constraints": {"language": "Cantonese"}, "soft_intent": {}, "hints": {}},
         "想听粤语港乐",
         web_enabled=True,
     )
@@ -150,7 +157,7 @@ def test_language_gap_does_not_fire_when_catalog_has_match():
 
     decision = analyze_catalog_gap(
         local,
-        {"hard_constraints": {}, "soft_intent": {}, "hints": {}},
+        {"hard_constraints": {"language": "Cantonese"}, "soft_intent": {}, "hints": {}},
         "想听粤语港乐",
         web_enabled=True,
     )

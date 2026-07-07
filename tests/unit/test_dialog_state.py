@@ -24,6 +24,7 @@ def _plan(
     language: str | None = None,
     artist: list[str] | None = None,
     vibe: str = "",
+    avoid: list[str] | None = None,
     genres: list[str] | None = None,
 ):
     return MusicQueryPlan(
@@ -34,7 +35,7 @@ def _plan(
                 artist_entities=artist or [],
                 language=language,
             ),
-            soft_intent=SoftIntent(vibe=vibe),
+            soft_intent=SoftIntent(vibe=vibe, avoid=avoid or []),
             hints=IntentHints(genres=genres or []),
             use_vector=True,
             vector_acoustic_query=vibe,
@@ -42,7 +43,7 @@ def _plan(
     )
 
 
-def test_followup_inherits_previous_vibe_and_replaces_language():
+def test_full_planner_followup_does_not_inherit_previous_vibe():
     first = apply_plan_delta(
         None,
         _plan(language="English", vibe="ethereal female vocal, dreamy synth", genres=["dream pop"]),
@@ -52,12 +53,12 @@ def test_followup_inherits_previous_vibe_and_replaces_language():
     second = apply_plan_delta(first, _plan(language="Chinese"), "同样的氛围，但换成中文")
 
     assert second.hard_constraints.language == "Chinese"
-    assert second.soft_intent.vibe == "ethereal female vocal, dreamy synth"
-    assert second.hints.genres == ["dream pop"]
+    assert second.soft_intent.vibe == ""
+    assert second.hints.genres == []
     assert second.turn_count == 2
 
 
-def test_followup_delta_reports_inherited_and_replaced_fields():
+def test_full_planner_followup_reports_removed_unmentioned_fields():
     first = apply_plan_delta(
         None,
         _plan(language="English", vibe="ethereal female vocal, dreamy synth", genres=["dream pop"]),
@@ -69,7 +70,7 @@ def test_followup_delta_reports_inherited_and_replaced_fields():
     assert second.last_delta == delta
     assert delta.followup is True
     assert delta.topic_shift is False
-    assert "soft_intent.vibe" in delta.inherited
+    assert "soft_intent.vibe" in delta.removed
     assert delta.replaced["hard_constraints.language"] == "Chinese"
 
 
@@ -92,7 +93,7 @@ def test_followup_general_chat_is_coerced_to_retrieval_when_state_is_resolved():
     assert corrected.intent_type == "hybrid_search"
     assert corrected.retrieval_plan.use_vector is True
     assert corrected.retrieval_plan.hard_constraints.language == "Chinese"
-    assert "ethereal female vocal" in (corrected.retrieval_plan.vector_acoustic_query or "")
+    assert corrected.retrieval_plan.vector_acoustic_query == "同样的氛围，但换成中文"
 
 
 def test_smalltalk_general_chat_is_not_coerced_without_retrievable_state():
@@ -139,7 +140,7 @@ def test_standalone_mood_trajectory_does_not_clarify():
     assert clarification.required is False
 
 
-def test_legacy_chat_history_seeds_followup_state():
+def test_legacy_chat_history_only_seeds_turn_count():
     state = infer_dialog_state_from_history(
         [
             {"role": "user", "content": "推荐几首空灵的英文女声"},
@@ -148,12 +149,12 @@ def test_legacy_chat_history_seeds_followup_state():
     )
     updated = apply_plan_delta(state, _plan(language="Chinese"), "同样的氛围，但换成中文")
 
+    assert state.turn_count == 1
     assert updated.hard_constraints.language == "Chinese"
-    assert "ethereal" in updated.soft_intent.vibe
-    assert "female vocal" in updated.soft_intent.vibe
+    assert updated.soft_intent.vibe == ""
 
 
-def test_legacy_chat_history_extracts_artist_and_work_context():
+def test_legacy_chat_history_does_not_extract_artist_or_work_context():
     state = infer_dialog_state_from_history(
         [
             {"role": "user", "content": "林俊杰的歌"},
@@ -162,8 +163,9 @@ def test_legacy_chat_history_extracts_artist_and_work_context():
         ]
     )
 
-    assert "林俊杰" in state.hard_constraints.artist_entities
-    assert state.hints.scenario == "工作"
+    assert state.turn_count == 2
+    assert state.hard_constraints.artist_entities == []
+    assert state.hints.scenario is None
 
 
 def test_legacy_chat_history_does_not_turn_scene_phrase_into_artist():
@@ -180,8 +182,8 @@ def test_legacy_chat_history_does_not_turn_scene_phrase_into_artist():
     )
 
     assert updated.hard_constraints.artist_entities == []
-    assert updated.hints.scenario == "Rainy Day"
-    assert "low dynamic" in updated.soft_intent.vibe
+    assert updated.hints.scenario is None
+    assert updated.soft_intent.vibe == "quiet, soft"
 
 
 def test_planner_artist_phrase_guard_drops_contextual_false_artist():
@@ -256,7 +258,7 @@ def test_invalid_delta_path_is_rejected():
         DeltaOperation(op="replace", path="retrieval_plan.use_web_search", value=True)
 
 
-def test_common_followup_builds_small_delta_instead_of_full_plan():
+def test_common_followup_does_not_use_deterministic_semantic_delta():
     state = DialogMusicState(
         hard_constraints=HardConstraints(language="English"),
         soft_intent=SoftIntent(vibe="ethereal"),
@@ -264,13 +266,7 @@ def test_common_followup_builds_small_delta_instead_of_full_plan():
     )
     delta = build_deterministic_plan_delta("同样氛围，换成中文并更安静", state)
 
-    assert delta is not None
-    assert delta.planner_mode == "deterministic"
-    assert {operation.path for operation in delta.operations} == {
-        "hard_constraints.language",
-        "soft_intent.avoid",
-        "soft_intent.vibe",
-    }
+    assert delta is None
 
 
 def test_compile_delta_state_preserves_unmentioned_constraints():
@@ -307,28 +303,27 @@ def test_result_anchors_enable_later_song_references():
     assert should_clarify_before_planning("刚才那首歌类似的", state).required is False
 
 
-def test_rainy_followup_inherits_scene_and_adds_soft_low_dynamic_bias():
-    first = infer_dialog_state_from_history(
-        [
-            {"role": "user", "content": "今天下雨，给我一点适合雨天的"},
-            {"role": "assistant", "content": "推荐了一些雨天氛围歌曲。"},
-        ]
+def test_full_planner_followup_does_not_inherit_scene_unless_llm_outputs_it():
+    first = DialogMusicState(
+        soft_intent=SoftIntent(vibe="rainy, indoor"),
+        hints=IntentHints(scenario="Rainy Day"),
+        turn_count=1,
     )
     assert first.hints.scenario == "Rainy Day"
 
     second, delta = apply_plan_delta_with_report(
         first,
-        _plan(vibe="soft and quiet"),
+        _plan(vibe="soft and quiet", avoid=["energetic", "driving", "party"]),
         "偏柔软安静一点",
     )
 
     assert delta.followup is True
-    assert second.hints.scenario == "Rainy Day"
-    assert "low dynamic" in second.soft_intent.vibe
+    assert second.hints.scenario is None
+    assert "soft and quiet" in second.soft_intent.vibe
     assert {"energetic", "driving", "party"}.issubset(set(second.soft_intent.avoid))
 
 
-def test_deterministic_delta_preserves_rainy_scene_for_soft_followup():
+def test_deterministic_delta_noops_for_semantic_followup():
     state = DialogMusicState(
         soft_intent=SoftIntent(vibe="rainy, indoor, gentle"),
         hints=IntentHints(scenario="Rainy Day"),
@@ -336,7 +331,4 @@ def test_deterministic_delta_preserves_rainy_scene_for_soft_followup():
     )
     delta = build_deterministic_plan_delta("偏柔软安静一点", state)
 
-    assert delta is not None
-    paths = [operation.path for operation in delta.operations]
-    assert "soft_intent.vibe" in paths
-    assert "soft_intent.avoid" in paths
+    assert delta is None

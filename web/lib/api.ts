@@ -168,6 +168,12 @@ export async function sendUserEvent(
         playDurationMs?: number;
         progressRatio?: number;
         sessionId?: string;
+        source?: string;
+        platform?: string;
+        songId?: string;
+        musicId?: string;
+        album?: string;
+        duration?: number;
     } = {},
 ): Promise<void> {
     try {
@@ -184,6 +190,12 @@ export async function sendUserEvent(
                     play_duration_ms: options.playDurationMs,
                     progress_ratio: options.progressRatio,
                     session_id: options.sessionId,
+                    source: options.source,
+                    platform: options.platform,
+                    song_id: options.songId,
+                    music_id: options.musicId,
+                    album: options.album,
+                    duration: options.duration,
                 },
             }),
         });
@@ -368,7 +380,7 @@ export async function acquireSong(song: {
     artist: string;
     song_id?: string;
     platform?: string;
-}): Promise<{ success: boolean; message: string; song?: any }> {
+}): Promise<{ success: boolean; message: string; song?: any; job_id?: string }> {
     const resp = await fetch('http://localhost:8501/api/acquire-song', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -480,6 +492,11 @@ export interface PendingSong {
     source_platform?: string;
     source_id?: string;
     metadata_source?: string;
+    acquire_status?: string;
+    acquire_error?: string;
+    audio_retention?: 'temporary' | 'saved' | string;
+    requested_by?: string;
+    is_trial?: boolean;
 }
 
 export interface IngestJob {

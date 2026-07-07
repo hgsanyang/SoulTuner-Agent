@@ -113,19 +113,19 @@ def test_post_recall_delta_limit_prevents_adjustment_from_dominating():
     assert by_title["strong base"]["similarity_score"] >= 0.86
 
 
-def test_semantic_fit_only_activates_for_matching_context():
+def test_semantic_fit_uses_llm_plan_terms_not_query_triggers():
     calm_song = {"genres": ["Lo-Fi"], "moods": ["Peaceful"], "scenarios": ["Rainy Day"]}
     energetic_song = {"genres": ["Dance"], "moods": ["Energetic"], "scenarios": ["Driving"]}
 
-    inactive = semantic_fit_scores(calm_song, query_text="来点开车用的摇滚")
-    calm = semantic_fit_scores(calm_song, query_text="下雨天，柔软安静一点")
-    conflict = semantic_fit_scores(energetic_song, query_text="下雨天，柔软安静一点")
+    query_only = semantic_fit_scores(calm_song, query_text="下雨天，柔软安静一点")
+    calm = semantic_fit_scores(calm_song, hints={"genres": ["Lo-Fi"], "mood": "Peaceful", "scenario": "Rainy Day"})
+    conflict = semantic_fit_scores(energetic_song, soft_intent={"avoid": ["Dance", "Driving", "Energetic"]})
 
-    assert inactive["active"] is False
+    assert query_only["active"] is False
     assert calm["positive"] > 0
     assert calm["conflict"] == 0
     assert conflict["conflict"] > 0
-    assert {"dance", "driving", "energetic"} & set(conflict["conflict_hits"])
+    assert {"Dance", "Driving", "Energetic"} & set(conflict["conflict_hits"])
 
 
 def test_post_recall_semantic_context_nudges_near_ties_but_stays_bounded():
@@ -137,7 +137,8 @@ def test_post_recall_semantic_context_nudges_near_ties_but_stays_bounded():
 
     adjusted = apply_post_recall_adjustments(
         candidates,
-        query_text="下雨天，柔软安静一点，别太吵",
+        hints={"genres": ["Lo-Fi"], "mood": "Peaceful", "scenario": "Rainy Day"},
+        soft_intent={"avoid": ["Dance", "Energetic", "Driving"]},
         apply_to_similarity=True,
         now_ms=NOW,
     )
@@ -150,7 +151,7 @@ def test_post_recall_semantic_context_nudges_near_ties_but_stays_bounded():
     assert max(abs(item["_post_recall_delta"]) for item in adjusted) <= 0.08
 
 
-def test_post_recall_semantic_context_respects_explicit_driving_request():
+def test_post_recall_semantic_context_does_not_infer_conflicts_from_plain_query():
     candidate = _candidate(
         "road song",
         0.8,
@@ -165,4 +166,4 @@ def test_post_recall_semantic_context_respects_explicit_driving_request():
         now_ms=NOW,
     )
 
-    assert "driving" not in adjusted[0]["_post_semantic_conflict_hits"]
+    assert adjusted[0]["_post_semantic_conflict_hits"] == []

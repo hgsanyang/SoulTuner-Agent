@@ -19,6 +19,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 CLAMP3_EMBEDDING_DIM = 768
 DEFAULT_BATCH_SIZE = 20
+DEFAULT_ENCODE_BATCH_SIZE = 20
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -136,29 +137,58 @@ def write_embeddings(driver, vectors: dict[str, list[float]], batch_size: int) -
     return written
 
 
-def build_vectors_from_audio(rows: list[dict[str, Any]], roots: list[Path]) -> tuple[dict[str, list[float]], int, int]:
-    from retrieval.clamp3_embedder import encode_audio_file_to_clamp3
+def build_vectors_from_audio(
+    rows: list[dict[str, Any]],
+    roots: list[Path],
+    encode_batch_size: int = DEFAULT_ENCODE_BATCH_SIZE,
+) -> tuple[dict[str, list[float]], int, int]:
+    from retrieval.clamp3_embedder import encode_audio_files_to_clamp3
 
     vectors: dict[str, list[float]] = {}
     missing = 0
     errors = 0
-    for index, row in enumerate(rows, start=1):
-        music_id = str(row["music_id"])
+    pending: list[tuple[str, Path, str]] = []
+    for row in rows:
         audio_path = resolve_audio_path(row.get("audio_url"), roots)
         if audio_path is None:
             missing += 1
             continue
+        pending.append((str(row["music_id"]), audio_path, str(row.get("title") or row["music_id"])))
+
+    safe_batch_size = max(1, int(encode_batch_size or DEFAULT_ENCODE_BATCH_SIZE))
+    for start in range(0, len(pending), safe_batch_size):
+        batch = pending[start : start + safe_batch_size]
         try:
-            vector = encode_audio_file_to_clamp3(audio_path)
-            if len(vector) != CLAMP3_EMBEDDING_DIM:
-                raise ValueError(f"wrong dimension: {len(vector)}")
-            vectors[music_id] = vector
+            encoded = encode_audio_files_to_clamp3([audio_path for _, audio_path, _ in batch], strict=False)
         except Exception as exc:
-            errors += 1
+            errors += len(batch)
             if errors <= 5:
-                logger.warning("Failed to encode %s (%s): %s", row.get("title") or music_id, audio_path.name, exc)
-        if index % 20 == 0:
-            logger.info("Encoded %s/%s | vectors=%s missing=%s errors=%s", index, len(rows), len(vectors), missing, errors)
+                titles = ", ".join(title for _, _, title in batch[:3])
+                logger.warning("Failed to encode batch starting at %s (%s): %s", start + 1, titles, exc)
+            continue
+
+        for music_id, audio_path, title in batch:
+            vector = encoded.get(str(audio_path))
+            if vector is None:
+                errors += 1
+                if errors <= 5:
+                    logger.warning("Missing CLaMP3 vector for %s (%s)", title, audio_path.name)
+                continue
+            if len(vector) != CLAMP3_EMBEDDING_DIM:
+                errors += 1
+                if errors <= 5:
+                    logger.warning("Wrong CLaMP3 dimension for %s: %s", title, len(vector))
+                continue
+            vectors[music_id] = vector
+
+        logger.info(
+            "Encoded %s/%s | vectors=%s missing=%s errors=%s",
+            min(start + safe_batch_size, len(pending)),
+            len(pending),
+            len(vectors),
+            missing,
+            errors,
+        )
     return vectors, missing, errors
 
 
@@ -187,6 +217,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Show counts and exit without writing")
     parser.add_argument("--limit", type=int, default=0, help="Optional limit for smoke bake-off")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--encode-batch-size", type=int, default=DEFAULT_ENCODE_BATCH_SIZE)
     args = parser.parse_args()
 
     from retrieval.clamp3_embedder import Clamp3UnavailableError, clamp3_repo_dir
@@ -207,7 +238,7 @@ def main() -> None:
         logger.info("Candidate songs: %s | coverage=%s", len(rows), coverage_report(driver))
         if args.dry_run:
             return
-        vectors, missing, errors = build_vectors_from_audio(rows, roots)
+        vectors, missing, errors = build_vectors_from_audio(rows, roots, encode_batch_size=args.encode_batch_size)
         written = write_embeddings(driver, vectors, args.batch_size)
         logger.info("Done: written=%s missing_files=%s errors=%s coverage=%s", written, missing, errors, coverage_report(driver))
 
