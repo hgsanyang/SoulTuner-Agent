@@ -27,6 +27,14 @@ SEMANTIC_CONFLICT_FIELDS = {
     "avoid_artists": "add_artists",
 }
 
+CANDIDATE_RELATION_BY_SONG_RELATION = {
+    "LIKES": "LIKES_CANDIDATE",
+    "SAVES": "SAVES_CANDIDATE",
+    "LISTENED_TO": "LISTENED_TO_CANDIDATE",
+    "DISLIKES": "DISLIKES_CANDIDATE",
+    "SKIPPED": "SKIPPED_CANDIDATE",
+}
+
 
 class UserMemoryManager:
 
@@ -57,13 +65,12 @@ class UserMemoryManager:
         if self.neo4j_client:
             self.neo4j_client.execute_query(query, {"user_id": user_id, "username": username})
             logger.info(f"确保用户存在: {user_id}")
-    def _find_or_create_song(self, song_title: str, artist: str):
+    def _find_existing_song(self, song_title: str, artist: str):
         """
-        【修复】优先匹配已入库的 Song 节点，避免创建裸副本。
+        优先匹配已入库的 Song 节点，找不到时不创建裸 Song。
         匹配策略（按优先级）：
           1. 精确匹配 title + artist 属性
           2. 匹配 title + PERFORMED_BY Artist 节点名称
-          3. 以上都找不到时才 MERGE 新节点
         """
         query = """
         // 策略1: 精确匹配 title + artist 属性
@@ -80,6 +87,69 @@ class UserMemoryManager:
         result = self.neo4j_client.execute_query(query, {"title": song_title, "artist": artist})
         return result[0]["song_id"] if result else None
 
+    # Backwards-compatible alias for older tests/call sites. It no longer creates.
+    _find_or_create_song = _find_existing_song
+
+    def _record_external_candidate_relation(
+        self,
+        *,
+        user_id: str,
+        song_title: str,
+        artist: str,
+        rel_type: str,
+        weight: float = 1.0,
+        duration: int = 0,
+    ) -> None:
+        """Record feedback for a not-yet-ingested online candidate without creating Song."""
+        if not self.neo4j_client:
+            return
+        rel = CANDIDATE_RELATION_BY_SONG_RELATION.get(rel_type)
+        if not rel:
+            return
+        query = f"""
+        MATCH (u:User {{id: $user_id}})
+        MERGE (c:ExternalTrackCandidate {{title: $song_title, artist: $artist}})
+        ON CREATE SET c.created_at = timestamp(), c.status = 'pending_acquire'
+        SET c.updated_at = timestamp(),
+            c.source = coalesce(c.source, 'online_search')
+        MERGE (u)-[r:{rel}]->(c)
+        ON CREATE SET r.created_at = timestamp(), r.weight = $weight, r.duration = $duration
+        ON MATCH SET r.weight = coalesce(r.weight, 0) + 0.1,
+                     r.duration = coalesce(r.duration, 0) + $duration,
+                     r.updated_at = timestamp()
+        """
+        self.neo4j_client.execute_query(
+            query,
+            {
+                "user_id": user_id,
+                "song_title": song_title,
+                "artist": artist,
+                "weight": weight,
+                "duration": duration,
+            },
+        )
+
+    def _delete_candidate_relations(
+        self,
+        user_id: str,
+        song_title: str,
+        artist: str,
+        rel_types: tuple[str, ...],
+    ) -> None:
+        candidate_rels = [CANDIDATE_RELATION_BY_SONG_RELATION.get(rel) for rel in rel_types]
+        candidate_rels = [rel for rel in candidate_rels if rel]
+        if not self.neo4j_client or not candidate_rels:
+            return
+        rel_pattern = "|".join(candidate_rels)
+        query = f"""
+        MATCH (u:User {{id: $user_id}})-[r:{rel_pattern}]->(c:ExternalTrackCandidate {{title: $song_title, artist: $artist}})
+        DELETE r
+        """
+        self.neo4j_client.execute_query(
+            query,
+            {"user_id": user_id, "song_title": song_title, "artist": artist},
+        )
+
     def _delete_user_song_relations(
         self,
         user_id: str,
@@ -92,7 +162,7 @@ class UserMemoryManager:
             return
 
         rel_pattern = "|".join(rel_types)
-        song_id = self._find_or_create_song(song_title, artist)
+        song_id = self._find_existing_song(song_title, artist)
         if song_id is not None:
             query = f"""
             MATCH (u:User {{id: $user_id}})-[r:{rel_pattern}]->(s:Song)
@@ -100,6 +170,7 @@ class UserMemoryManager:
             DELETE r
             """
             self.neo4j_client.execute_query(query, {"user_id": user_id, "song_id": song_id})
+            self._delete_candidate_relations(user_id, song_title, artist, rel_types)
             return
 
         fallback_query = f"""
@@ -112,6 +183,7 @@ class UserMemoryManager:
             fallback_query,
             {"user_id": user_id, "song_title": song_title, "artist": artist},
         )
+        self._delete_candidate_relations(user_id, song_title, artist, rel_types)
 
     def record_liked_song(self, user_id: str, song_title: str, artist: str):
         """记录用户收藏/红心歌曲（优先关联已有 Song，避免创建裸副本）"""
@@ -119,7 +191,7 @@ class UserMemoryManager:
             logger.warning(f"跳过记录喜欢歌曲（缺少必要信息）: title={song_title}, artist={artist}")
             return
         if self.neo4j_client:
-            existing_id = self._find_or_create_song(song_title, artist)
+            existing_id = self._find_existing_song(song_title, artist)
             if existing_id is not None:
                 # 关联到已有 Song 节点
                 query = """
@@ -131,17 +203,13 @@ class UserMemoryManager:
                 """
                 self.neo4j_client.execute_query(query, {"user_id": user_id, "song_id": existing_id})
             else:
-                # 歌库中不存在，创建新 Song 节点并建立 PERFORMED_BY 关系
-                query = """
-                MATCH (u:User {id: $user_id})
-                MERGE (s:Song {title: $song_title, artist: $artist})
-                MERGE (a:Artist {name: $artist})
-                MERGE (s)-[:PERFORMED_BY]->(a)
-                MERGE (u)-[r:LIKES]->(s)
-                ON CREATE SET r.created_at = timestamp(), r.weight = 1.0
-                ON MATCH SET r.weight = r.weight + 0.1
-                """
-                self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
+                self._record_external_candidate_relation(
+                    user_id=user_id,
+                    song_title=song_title,
+                    artist=artist,
+                    rel_type="LIKES",
+                    weight=1.0,
+                )
             logger.info(f"记录用户 {user_id} 喜欢歌曲: {song_title} - {artist}")
     def record_listened_song(self, user_id: str, song_title: str, artist: str, duration: int = 0):
         """记录用户播放历史（优先关联已有 Song）"""
@@ -149,7 +217,7 @@ class UserMemoryManager:
             logger.warning(f"跳过记录收听歌曲（缺少必要信息）: title={song_title}, artist={artist}")
             return
         if self.neo4j_client:
-            existing_id = self._find_or_create_song(song_title, artist)
+            existing_id = self._find_existing_song(song_title, artist)
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
@@ -160,16 +228,14 @@ class UserMemoryManager:
                 """
                 self.neo4j_client.execute_query(query, {"user_id": user_id, "song_id": existing_id, "duration": duration})
             else:
-                query = """
-                MATCH (u:User {id: $user_id})
-                MERGE (s:Song {title: $song_title, artist: $artist})
-                MERGE (a:Artist {name: $artist})
-                MERGE (s)-[:PERFORMED_BY]->(a)
-                MERGE (u)-[r:LISTENED_TO]->(s)
-                ON CREATE SET r.play_count = 1, r.total_duration = $duration, r.last_played = timestamp()
-                ON MATCH SET r.play_count = r.play_count + 1, r.total_duration = r.total_duration + $duration, r.last_played = timestamp()
-                """
-                self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist, "duration": duration})
+                self._record_external_candidate_relation(
+                    user_id=user_id,
+                    song_title=song_title,
+                    artist=artist,
+                    rel_type="LISTENED_TO",
+                    weight=0.4,
+                    duration=duration,
+                )
             logger.info(f"记录用户 {user_id} 收听歌曲: {song_title}")
     def record_saved_song(self, user_id: str, song_title: str, artist: str):
         """记录用户收藏歌曲 → SAVES 关系（优先关联已有 Song）"""
@@ -177,7 +243,7 @@ class UserMemoryManager:
             logger.warning(f"跳过记录收藏（缺少必要信息）: title={song_title}, artist={artist}")
             return
         if self.neo4j_client:
-            existing_id = self._find_or_create_song(song_title, artist)
+            existing_id = self._find_existing_song(song_title, artist)
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
@@ -188,16 +254,13 @@ class UserMemoryManager:
                 """
                 self.neo4j_client.execute_query(query, {"user_id": user_id, "song_id": existing_id})
             else:
-                query = """
-                MATCH (u:User {id: $user_id})
-                MERGE (s:Song {title: $song_title, artist: $artist})
-                MERGE (a:Artist {name: $artist})
-                MERGE (s)-[:PERFORMED_BY]->(a)
-                MERGE (u)-[r:SAVES]->(s)
-                ON CREATE SET r.created_at = timestamp(), r.weight = 0.8
-                ON MATCH SET r.weight = r.weight + 0.1
-                """
-                self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
+                self._record_external_candidate_relation(
+                    user_id=user_id,
+                    song_title=song_title,
+                    artist=artist,
+                    rel_type="SAVES",
+                    weight=0.8,
+                )
             logger.info(f"记录用户 {user_id} 收藏歌曲: {song_title} - {artist}")
     def record_dislike(self, user_id: str, song_title: str, artist: str):
         """记录用户明确不喜欢 → DISLIKES 关系（优先关联已有 Song）。
@@ -211,7 +274,7 @@ class UserMemoryManager:
             self._delete_user_song_relations(user_id, song_title, artist, ("LIKES", "SAVES"))
 
             # ② 创建 DISLIKES 关系
-            existing_id = self._find_or_create_song(song_title, artist)
+            existing_id = self._find_existing_song(song_title, artist)
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
@@ -221,15 +284,13 @@ class UserMemoryManager:
                 """
                 self.neo4j_client.execute_query(query, {"user_id": user_id, "song_id": existing_id})
             else:
-                query = """
-                MATCH (u:User {id: $user_id})
-                MERGE (s:Song {title: $song_title, artist: $artist})
-                MERGE (a:Artist {name: $artist})
-                MERGE (s)-[:PERFORMED_BY]->(a)
-                MERGE (u)-[r:DISLIKES]->(s)
-                ON CREATE SET r.created_at = timestamp(), r.weight = 1.0
-                """
-                self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
+                self._record_external_candidate_relation(
+                    user_id=user_id,
+                    song_title=song_title,
+                    artist=artist,
+                    rel_type="DISLIKES",
+                    weight=1.0,
+                )
             logger.info(f"记录用户 {user_id} 不喜欢歌曲: {song_title} - {artist} (已清理 LIKES/SAVES)")
     def record_skipped(self, user_id: str, song_title: str, artist: str):
         """记录用户跳过 → SKIPPED 关系（优先关联已有 Song）"""
@@ -237,7 +298,7 @@ class UserMemoryManager:
             logger.warning(f"跳过记录skip（缺少必要信息）: title={song_title}, artist={artist}")
             return
         if self.neo4j_client:
-            existing_id = self._find_or_create_song(song_title, artist)
+            existing_id = self._find_existing_song(song_title, artist)
             if existing_id is not None:
                 query = """
                 MATCH (u:User {id: $user_id})
@@ -248,16 +309,13 @@ class UserMemoryManager:
                 """
                 self.neo4j_client.execute_query(query, {"user_id": user_id, "song_id": existing_id})
             else:
-                query = """
-                MATCH (u:User {id: $user_id})
-                MERGE (s:Song {title: $song_title, artist: $artist})
-                MERGE (a:Artist {name: $artist})
-                MERGE (s)-[:PERFORMED_BY]->(a)
-                MERGE (u)-[r:SKIPPED]->(s)
-                ON CREATE SET r.skip_count = 1, r.first_skipped = timestamp(), r.last_skipped = timestamp()
-                ON MATCH SET r.skip_count = r.skip_count + 1, r.last_skipped = timestamp()
-                """
-                self.neo4j_client.execute_query(query, {"user_id": user_id, "song_title": song_title, "artist": artist})
+                self._record_external_candidate_relation(
+                    user_id=user_id,
+                    song_title=song_title,
+                    artist=artist,
+                    rel_type="SKIPPED",
+                    weight=0.3,
+                )
             logger.info(f"记录用户 {user_id} 跳过歌曲: {song_title} - {artist}")
     def remove_like(self, user_id: str, song_title: str, artist: str):
         """取消点赞 → 删除 LIKES 关系"""

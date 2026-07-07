@@ -72,10 +72,27 @@ def run_audit() -> dict:
         """,
         {},
     )
+    unplayable = client.execute_query(
+        """
+        MATCH (s:Song)
+        WHERE coalesce(s.audio_url, '') = ''
+        RETURN coalesce(s.title, '') AS title,
+               coalesce(s.artist, '') AS artist,
+               coalesce(toString(s.music_id), '') AS music_id,
+               coalesce(s.source, 'unknown') AS source,
+               coalesce(toString(s.source_id), '') AS source_id,
+               coalesce(properties(s)['audio_status'], '') AS audio_status,
+               coalesce(properties(s)['acquire_status'], '') AS acquire_status
+        ORDER BY source, title
+        LIMIT 50
+        """,
+        {},
+    )
     return {
         "summary": summary,
         "tag_relationship_coverage": tags,
         "source_breakdown": sources,
+        "unplayable_examples": unplayable,
         "duplicate_title_artist_top20": duplicate_title_artist,
         "duplicate_title_top20": duplicate_titles,
     }

@@ -35,59 +35,6 @@ INTENT_RECALL_WEIGHTS = {
     },
 }
 
-SIMILARITY_TERMS = (
-    "类似",
-    "相似",
-    "听感",
-    "像",
-    "同类",
-    "same vibe",
-    "sounds like",
-    "like this",
-    "similar",
-)
-
-SCENE_ACOUSTIC_TERMS = (
-    "安静",
-    "温柔",
-    "柔软",
-    "雨天",
-    "雨夜",
-    "专注",
-    "学习",
-    "工作",
-    "睡前",
-    "助眠",
-    "放松",
-    "治愈",
-    "平静",
-    "轻柔",
-    "lo-fi",
-    "lofi",
-    "quiet",
-    "soft",
-    "rainy",
-    "focus",
-    "study",
-    "sleep",
-    "calm",
-    "gentle",
-    "relax",
-    "healing",
-    "late night",
-)
-
-PERSONAL_REQUEST_TERMS = (
-    "按我的口味",
-    "我喜欢的",
-    "我的偏好",
-    "根据我",
-    "personalized",
-    "my taste",
-    "for me",
-)
-
-
 def normalize_text(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
     return re.sub(r"[,，、/\\\s()（）【】\[\]《》'\"`]+", "", text)
@@ -118,11 +65,6 @@ def _collect_context_text(*values: Any) -> str:
     return " ".join(parts)
 
 
-def _contains_any(context: str, terms: Iterable[str]) -> bool:
-    normalized = normalize_text(context)
-    return any(normalize_text(term) in normalized for term in terms)
-
-
 def recall_weights_for_intent(
     intent_type: str | None,
     *,
@@ -143,20 +85,24 @@ def recall_weights_for_intent(
 
     hard = dict(hard_constraints or {})
     has_entity = bool(hard.get("artist_entities") or hard.get("song_entities"))
-    context = _collect_context_text(query, soft_intent or {}, hints or {})
-    is_similarity = _contains_any(context, SIMILARITY_TERMS)
-    is_scene_acoustic = _contains_any(context, SCENE_ACOUSTIC_TERMS)
-    asks_personal = _contains_any(context, PERSONAL_REQUEST_TERMS)
+    soft = dict(soft_intent or {})
+    hint = dict(hints or {})
+    has_llm_soft_signal = bool(
+        _collect_context_text(
+            soft.get("goal"),
+            soft.get("trajectory"),
+            soft.get("vibe"),
+            soft.get("avoid"),
+            hint.get("mood"),
+            hint.get("scenario"),
+        )
+    )
 
-    if asks_personal:
-        # "按我的口味" still relies on the final personal score; recall should
-        # remain content-grounded so it cannot invent a separate personal pool.
-        weights.update({"graph": 0.90, "dense": 1.00})
-    elif has_entity and not is_similarity:
+    if has_entity and not has_llm_soft_signal:
         weights.update({"graph": 1.70, "dense": 0.45})
-    elif is_similarity:
-        weights.update({"graph": 0.75, "dense": 1.70})
-    elif is_scene_acoustic:
+    elif str(intent_type or "") == "vector_search":
+        weights.update({"graph": 0.60, "dense": 1.70})
+    elif has_llm_soft_signal:
         weights.update({"graph": 1.20, "dense": 1.45})
 
     return weights

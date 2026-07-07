@@ -1,9 +1,10 @@
-"""Structured dialogue state tracking for multi-turn music intent.
+"""Structured dialogue state storage for multi-turn music intent.
 
-The LLM still creates the current turn ``MusicQueryPlan``.  This module keeps
-cross-turn inheritance deterministic by applying that plan as a delta to a
-small, explicit state object.  It also contains conservative clarification
-triggers for follow-up queries that cannot be resolved safely.
+The LLM is the highest-priority interpreter of complex user intent and
+cross-turn context.  This module stores the explicit state produced by the
+planner, validates LLM-generated deltas, and applies them deterministically
+after the model has made the semantic decision.  It must not replace the
+planner with phrase-based follow-up or vibe interpretation rules.
 """
 
 from __future__ import annotations
@@ -15,33 +16,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from schemas.query_plan import HardConstraints, IntentHints, MusicQueryPlan, SoftIntent
 
-
-FOLLOWUP_CUES = (
-    "类似",
-    "同样",
-    "这种",
-    "那种",
-    "这个",
-    "那个",
-    "刚才",
-    "上一首",
-    "前面",
-    "换成",
-    "保留",
-    "再",
-    "更",
-    "一点",
-    "偏",
-    "少一点",
-    "别再",
-    "不要再",
-    "不要这种",
-    "similar",
-    "same vibe",
-    "that vibe",
-    "like that",
-    "more like",
-)
 
 UNRESOLVED_REFERENCE_CUES = (
     "类似的",
@@ -277,15 +251,16 @@ def is_followup_turn(
     user_input: str,
     dialog_state: DialogMusicState | dict[str, Any] | None,
 ) -> bool:
-    """Return whether a turn should mutate an established music state."""
+    """Return whether a previous state exists for the LLM delta planner.
+
+    This intentionally does not inspect follow-up keywords. If a semantic
+    inheritance decision is needed, the LLM delta planner decides it.
+    """
     state = load_dialog_state(dialog_state)
     if state.pending_clarification is not None:
         return True
-    if state.turn_count <= 0:
-        return False
-    if _has_any(user_input, ("换个话题", "重新开始", "不要管上面", "from scratch", "new topic")):
-        return False
-    return _has_any(user_input, FOLLOWUP_CUES)
+    _ = user_input
+    return state.turn_count > 0
 
 
 def _get_state_path(state: DialogMusicState, path: str) -> Any:
@@ -411,55 +386,15 @@ def build_deterministic_plan_delta(
     user_input: str,
     dialog_state: DialogMusicState | dict[str, Any] | None,
 ) -> PlanDelta | None:
-    """Resolve common unambiguous follow-ups without another network call."""
-    state = load_dialog_state(dialog_state)
-    if state.turn_count <= 0:
-        return None
-    text = _norm(user_input)
-    operations: list[DeltaOperation] = []
-    resolved: list[str] = []
+    """Compatibility hook; complex intent deltas are intentionally LLM-first.
 
-    language_map = (
-        (r"中文|国语|华语|mandarin|chinese", "Chinese"),
-        (r"英文|英语|english", "English"),
-        (r"日语|日文|japanese", "Japanese"),
-        (r"韩语|韩文|korean", "Korean"),
-        (r"粤语|cantonese", "Cantonese"),
-    )
-    for pattern, language in language_map:
-        if re.search(pattern, text):
-            operations.append(DeltaOperation(op="replace", path="hard_constraints.language", value=language))
-            break
-
-    if re.search(r"无人声|没人声|纯音乐|instrumental|no vocals?", text):
-        operations.append(DeltaOperation(op="replace", path="hard_constraints.instrumental", value=True))
-    elif re.search(r"要人声|有人声|with vocals?", text):
-        operations.append(DeltaOperation(op="replace", path="hard_constraints.instrumental", value=False))
-
-    if re.search(r"更安静|安静一点|柔软|温柔|低动态|不刺耳|不吵|quiet(er)?|softer?|low dynamic|not loud", text):
-        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="quieter, softer, low dynamic, low energy"))
-        operations.append(DeltaOperation(op="add", path="soft_intent.avoid", value=["energetic", "driving", "party", "edm", "aggressive"]))
-    if re.search(r"雨天|下雨|雨声|rainy|rain", text):
-        operations.append(DeltaOperation(op="replace", path="hints.scenario", value="Rainy Day"))
-        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="rainy, indoor, gentle"))
-    if re.search(r"更有精神|更明亮|振作|uplift|brighter", text):
-        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="uplifting, hopeful, brighter energy"))
-    if re.search(r"更有节奏|更带劲|more rhythmic|more energetic", text):
-        operations.append(DeltaOperation(op="add", path="soft_intent.vibe", value="more rhythmic, energetic"))
-    if re.search(r"少人声|人声少|less vocals?", text):
-        operations.append(DeltaOperation(op="add", path="soft_intent.avoid", value=["prominent vocals"]))
-    if re.search(r"不要.*伤|别.*伤|别太丧|not sad|less sad", text):
-        operations.append(DeltaOperation(op="add", path="soft_intent.avoid", value=["sad", "melancholy", "悲伤", "丧"]))
-
-    if operations and _has_any(text, FOLLOWUP_CUES):
-        if _has_any(text, ("同样", "类似", "这种", "那种", "same vibe", "like that")):
-            resolved.append("previous_music_state")
-        return PlanDelta(
-            operations=operations,
-            resolved_references=resolved,
-            confidence=0.98,
-            planner_mode="deterministic",
-        )
+    Earlier versions used regex rules here for follow-up phrases such as
+    "quieter" or "rainy". That made context inheritance fast, but it also
+    encoded brittle taste assumptions in Python. Keep the public function so
+    old callers do not break, but let the IntentDeltaPlanner/LLM own all
+    semantic delta decisions.
+    """
+    _ = user_input, dialog_state
     return None
 
 
@@ -710,21 +645,16 @@ def load_dialog_state(raw: DialogMusicState | dict[str, Any] | None) -> DialogMu
 
 
 def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMusicState:
-    """Build a small deterministic seed state from legacy chat_history.
+    """Build a minimal legacy seed state without semantic regex extraction.
 
-    This is a bridge for callers/eval cases that have not yet started sending
-    explicit ``dialog_state``.  It intentionally extracts only high-confidence
-    language and vibe hints; the current turn's LLM plan is still authoritative.
+    ``dialog_state`` should be produced by the planner delta path.  Legacy
+    chat history is kept only to indicate that a prior turn exists; semantic
+    inheritance remains LLM-first.
     """
     if not chat_history:
         return DialogMusicState()
 
-    hard = HardConstraints()
-    soft = SoftIntent()
-    hints = IntentHints()
     user_turns = 0
-    extracted = False
-
     for message in chat_history:
         role = getattr(message, "type", None) or getattr(message, "role", None)
         content = getattr(message, "content", None)
@@ -733,87 +663,10 @@ def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMus
             content = message.get("content", content)
         if role not in ("user", "human"):
             continue
-        text = _norm(content)
-        if not text:
-            continue
-        user_turns += 1
+        if _norm(content):
+            user_turns += 1
 
-        if re.search(r"中文|国语|华语|mandarin|chinese", text):
-            hard.language = "Chinese"
-            extracted = True
-        elif re.search(r"英文|英语|english", text):
-            hard.language = "English"
-            extracted = True
-        elif re.search(r"日语|日文|japanese", text):
-            hard.language = "Japanese"
-            extracted = True
-        elif re.search(r"韩语|韩文|korean", text):
-            hard.language = "Korean"
-            extracted = True
-        elif re.search(r"粤语|cantonese", text):
-            hard.language = "Cantonese"
-            extracted = True
-
-        vibe_parts: list[str] = []
-        if re.search(r"空灵|ethereal|airy", text):
-            vibe_parts.append("ethereal, airy")
-        if re.search(r"女声|female vocal|female vocals", text):
-            vibe_parts.append("female vocal")
-        if re.search(r"梦幻|dreamy", text):
-            vibe_parts.append("dreamy")
-        if vibe_parts:
-            soft.vibe = ", ".join(vibe_parts)
-            extracted = True
-
-        if re.search(r"运动|健身|workout|gym", text):
-            hints.scenario = "运动"
-            extracted = True
-        if re.search(r"工作|写代码|coding|focus|专注", text):
-            hints.scenario = "工作"
-            extracted = True
-        if re.search(r"雨天|下雨|雨声|rainy|rain", text):
-            hints.scenario = "Rainy Day"
-            soft.vibe = soft.vibe or "rainy, indoor, gentle"
-            extracted = True
-        if re.search(r"放松|relax|calm", text):
-            hints.mood = "放松"
-            extracted = True
-        if re.search(r"治愈|healing", text):
-            hints.mood = "治愈"
-            soft.vibe = soft.vibe or "healing, gentle, warm"
-            extracted = True
-        if re.search(r"悲伤|难过|想哭|sad|cry", text):
-            hints.mood = "悲伤"
-            soft.vibe = soft.vibe or "sad, melancholy, gentle"
-            extracted = True
-        if re.search(r"钢琴|piano", text):
-            hints.genres = _merge_unique(hints.genres, ["piano"])
-            extracted = True
-        if re.search(r"流行|pop", text):
-            hints.genres = _merge_unique(hints.genres, ["pop"])
-            extracted = True
-        if re.search(r"摇滚|rock", text):
-            hints.genres = _merge_unique(hints.genres, ["rock"])
-            extracted = True
-        if re.search(r"安静|quiet|低动态|柔软|温柔|不刺耳|不吵", text):
-            soft.vibe = soft.vibe or "quiet, soft, low dynamic, low energy"
-            extracted = True
-        artist_match = re.search(r"([\w\u4e00-\u9fff·・\-. ]{2,32})的歌", text)
-        if artist_match:
-            artist = str(artist_match.group(1)).strip(" ，,。.!！")
-            if _is_plausible_artist_entity(artist):
-                hard.artist_entities = _merge_unique(hard.artist_entities, [artist])
-                extracted = True
-
-    if not extracted:
-        return DialogMusicState()
-    return DialogMusicState(
-        hard_constraints=hard,
-        soft_intent=soft,
-        hints=hints,
-        last_query="",
-        turn_count=user_turns,
-    )
+    return DialogMusicState(turn_count=user_turns)
 
 
 def apply_plan_delta_with_report(
@@ -825,9 +678,12 @@ def apply_plan_delta_with_report(
     prev = load_dialog_state(previous)
     rp = plan.retrieval_plan
     topic_shift = _looks_like_topic_shift(user_input, plan)
-    followup = _has_any(user_input, FOLLOWUP_CUES) and not topic_shift
+    followup = prev.turn_count > 0 and not topic_shift
 
-    base = prev if followup else DialogMusicState()
+    # Full planner output is already expected to be a complete LLM-produced
+    # plan. Do not fill missing fields from previous state here; that would
+    # reintroduce deterministic inheritance outside the LLM.
+    base = DialogMusicState()
     hard = HardConstraints(
         artist_entities=_clean_artist_entities(
             _merge_unique(
@@ -855,44 +711,6 @@ def apply_plan_delta_with_report(
         mood=rp.hints.mood or (base.hints.mood if followup else None),
         scenario=rp.hints.scenario or (base.hints.scenario if followup else None),
     )
-
-    # Lightweight deterministic overrides for very common follow-up language.
-    text = _norm(user_input)
-    if re.search(r"中文|国语|华语|mandarin|chinese", text):
-        hard.language = "Chinese"
-    elif re.search(r"英文|英语|english", text):
-        hard.language = "English"
-    elif re.search(r"日语|日文|japanese", text):
-        hard.language = "Japanese"
-    elif re.search(r"韩语|韩文|korean", text):
-        hard.language = "Korean"
-    elif re.search(r"粤语|cantonese", text):
-        hard.language = "Cantonese"
-
-    if re.search(r"无人声|没人声|纯音乐|instrumental|no vocals?", text):
-        hard.instrumental = True
-    if re.search(r"雨天|下雨|雨声|rainy|rain", text):
-        hints.scenario = "Rainy Day"
-        soft.vibe = soft.vibe or "rainy, indoor, gentle"
-    if re.search(r"人声再少|人声少|别打扰|不打扰|写代码|focus|coding", text):
-        soft.vibe = soft.vibe or "unobtrusive, sparse vocals, focus-friendly"
-        soft.avoid = _merge_unique(soft.avoid, ["prominent vocals", "distracting vocals"])
-    if re.search(r"柔软|温柔|低动态|不刺耳|不吵|安静一点|更安静|quiet|soft|low dynamic|not loud", text):
-        low_dynamic_vibe = "quiet, soft, low dynamic, low energy"
-        if not soft.vibe:
-            soft.vibe = low_dynamic_vibe
-        elif "low dynamic" not in _norm(soft.vibe):
-            soft.vibe = f"{soft.vibe}; {low_dynamic_vibe}"
-        soft.avoid = _merge_unique(soft.avoid, ["energetic", "driving", "party", "edm", "aggressive"])
-    if re.search(r"别.*(苦情|抒情)|不要.*(苦情|抒情)|not.*sad ballad|not the sad ballads", text):
-        soft.avoid = _merge_unique(soft.avoid, ["sad ballad", "melancholy ballad", "苦情", "抒情大歌"])
-    if re.search(r"不要.*伤|别.*伤|别太丧|not sad|less sad", text):
-        soft.avoid = _merge_unique(soft.avoid, ["sad", "melancholy", "悲伤", "丧"])
-    if re.search(r"拉起来|振作|有精神|upbeat|uplift", text):
-        soft.vibe = soft.vibe or "uplifting, hopeful, brighter energy"
-    if re.search(r"危险感|danger|dark", text):
-        soft.vibe = soft.vibe or "dark, tense, dangerous"
-        soft.avoid = _merge_unique(soft.avoid, ["healing", "gentle", "治愈"])
 
     updated = DialogMusicState(
         hard_constraints=hard,
@@ -982,7 +800,8 @@ def coerce_followup_general_chat_to_retrieval(
     state = load_dialog_state(dialog_state)
     if plan.intent_type != "general_chat":
         return plan
-    if not (state.last_delta.followup or _has_any(user_input, FOLLOWUP_CUES)):
+    _ = user_input
+    if not state.last_delta.followup:
         return plan
     if not has_retrievable_dialog_state(state):
         return plan

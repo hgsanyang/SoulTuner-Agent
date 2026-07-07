@@ -36,7 +36,7 @@ def test_dance_avoid_prefers_korean_ballad_candidates():
 
     ranked = rerank_with_soft_constraints(
         candidates,
-        {"avoid": ["打歌舞曲"]},
+        {"avoid": ["Dance", "Energetic", "Party"]},
         query_text="韩语抒情慢歌，别给我打歌舞曲",
         min_keep=3,
     )
@@ -47,10 +47,10 @@ def test_dance_avoid_prefers_korean_ballad_candidates():
         "rnb slow",
         "acoustic",
     ]
-    assert all(not item.get("_soft_negative_hits") for item in ranked)
+    assert all("dance" not in item.get("_soft_negative_hits", []) for item in ranked)
 
 
-def test_soft_avoid_trigger_can_come_from_original_query_text():
+def test_soft_avoid_does_not_trigger_from_original_query_text():
     candidates = [
         _candidate("dance pop", ["Dance", "K-Pop"], ["Energetic"], ["Party"], 0.95),
         _candidate("clean ballad", ["Ballad", "Folk"], ["Melancholy"], ["Late Night"], 0.60),
@@ -66,6 +66,7 @@ def test_soft_avoid_trigger_can_come_from_original_query_text():
     )
 
     assert [item["song"]["title"] for item in ranked] == [
+        "dance pop",
         "clean ballad",
         "rnb slow",
         "acoustic",
@@ -90,7 +91,7 @@ def test_pop_and_kpop_tags_are_not_dance_avoid_hits_by_themselves():
     by_title = {item["song"]["title"]: item for item in ranked}
     assert by_title["plain pop"]["_soft_negative_hits"] == []
     assert by_title["kpop"]["_soft_negative_hits"] == []
-    assert set(by_title["dance pop"]["_soft_negative_hits"]) == {"dance", "energetic", "party"}
+    assert set(by_title["dance pop"]["_soft_negative_hits"]) == {"dance"}
 
 
 def test_soft_avoid_falls_back_to_penalized_order_when_too_few_clean_candidates():
@@ -102,7 +103,7 @@ def test_soft_avoid_falls_back_to_penalized_order_when_too_few_clean_candidates(
 
     ranked = rerank_with_soft_constraints(
         candidates,
-        {"avoid": ["打歌舞曲"]},
+        {"avoid": ["Dance", "Energetic", "Party"]},
         query_text="韩语抒情慢歌，别给我打歌舞曲",
         min_keep=5,
     )
@@ -112,7 +113,7 @@ def test_soft_avoid_falls_back_to_penalized_order_when_too_few_clean_candidates(
     assert ranked[-1]["song"]["title"] == "dance pop"
 
 
-def test_quiet_soft_request_demotes_high_energy_conflicts():
+def test_quiet_soft_request_needs_llm_avoid_to_demote_high_energy_conflicts():
     candidates = [
         _candidate("wild heart", ["Dance", "Rock"], ["Energetic"], ["Driving"], 0.98),
         _candidate("rain room", ["Alternative"], ["Dreamy", "Healing"], ["Rainy Day"], 0.78),
@@ -130,12 +131,11 @@ def test_quiet_soft_request_demotes_high_energy_conflicts():
     )
 
     titles = [item["song"]["title"] for item in ranked]
-    assert "wild heart" not in titles[:3]
-    assert "wild heart" not in titles
+    assert titles[0] == "wild heart"
 
     fallback_ranked = rerank_with_soft_constraints(
         candidates,
-        {"vibe": "柔软安静的雨天感觉"},
+        {"vibe": "柔软安静的雨天感觉", "avoid": ["Dance", "Energetic", "Driving"]},
         {"scenario": "Rainy Day", "mood": "Calm"},
         query_text="今天是下雨天，需要偏柔软安静的感觉",
         min_keep=6,
@@ -146,7 +146,7 @@ def test_quiet_soft_request_demotes_high_energy_conflicts():
     assert by_title["rain room"]["_soft_positive_hits"]
 
 
-def test_low_dynamic_request_demotes_noisy_and_hardcore_tags():
+def test_low_dynamic_request_needs_llm_avoid_to_demote_noisy_and_hardcore_tags():
     candidates = [
         _candidate("noisy phonk", ["Phonk", "Hardcore Hip-Hop"], ["Energetic"], ["Workout"], 0.96),
         _candidate("soft room", ["Folk", "Acoustic"], ["Mellow", "Peaceful"], ["Rainy Day"], 0.70),
@@ -163,12 +163,11 @@ def test_low_dynamic_request_demotes_noisy_and_hardcore_tags():
     )
 
     titles = [item["song"]["title"] for item in ranked]
-    assert titles[:3] == ["soft room", "warm lofi", "gentle night"]
-    assert "noisy phonk" not in titles[:3]
+    assert titles[0] == "noisy phonk"
 
     fallback_ranked = rerank_with_soft_constraints(
         candidates,
-        {"vibe": "低动态，不刺耳，温柔一点"},
+        {"vibe": "低动态，不刺耳，温柔一点", "avoid": ["Phonk", "Hardcore", "Energetic", "Workout"]},
         {"scenario": "Rainy Day"},
         query_text="下雨天，低动态，不刺耳，温柔一点",
         min_keep=8,

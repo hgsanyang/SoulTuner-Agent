@@ -11,7 +11,7 @@
 
 import json
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from langchain_core.tools import tool
 
 from retrieval.neo4j_client import get_neo4j_client
@@ -171,7 +171,7 @@ _PRECISION_QUERY_TERMS = (
 
 
 def _dense_query_variant_mode() -> str:
-    raw = str(getattr(settings, "dense_query_variant_mode", "") or os.getenv("MUSIC_DENSE_QUERY_VARIANTS", "auto"))
+    raw = str(getattr(settings, "dense_query_variant_mode", "") or os.getenv("MUSIC_DENSE_QUERY_VARIANTS", "off"))
     mode = raw.strip().lower()
     if mode in {"1", "true", "yes"}:
         return "on"
@@ -195,6 +195,28 @@ def _should_use_dense_query_variants(text: str) -> bool:
     ):
         return False
     return any(term in normalized for term in _VARIANT_TRIGGER_TERMS)
+
+
+def _plan_query_variant_mode() -> str:
+    raw = str(getattr(settings, "plan_query_variant_mode", "") or os.getenv("MUSIC_PLAN_QUERY_VARIANTS", "m2d"))
+    mode = raw.strip().lower()
+    if mode in {"1", "true", "yes", "on"}:
+        return "all"
+    if mode in {"0", "false", "no"}:
+        return "off"
+    if mode not in {"off", "m2d", "all"}:
+        logger.warning("[SemanticSearch] 未知 MUSIC_PLAN_QUERY_VARIANTS=%s，回退 m2d", raw)
+        return "m2d"
+    return mode
+
+
+def _should_apply_plan_query_variants(backend: str) -> bool:
+    mode = _plan_query_variant_mode()
+    if mode == "all":
+        return True
+    if mode == "m2d":
+        return backend == "m2d"
+    return False
 
 
 def build_dense_query_variants(text: str) -> List[str]:
@@ -240,8 +262,30 @@ def _encode_single_query_for_backend(text: str, backend: str) -> List[float]:
     return encode_text_to_embedding(text)
 
 
-def _encode_query_for_backend(text: str, backend: str) -> List[float]:
-    variants = build_dense_query_variants(text) if _should_use_dense_query_variants(text) else [text]
+def _clean_explicit_query_variants(query: str, query_variants: Optional[List[str]] = None) -> List[str]:
+    variants: List[str] = []
+    for item in query_variants or []:
+        text = str(item or "").strip()
+        if text and text not in variants:
+            variants.append(text)
+    base = str(query or "").strip()
+    if base and base not in variants:
+        variants.insert(0, base)
+    return variants[:4]
+
+
+def _encode_query_for_backend(
+    text: str,
+    backend: str,
+    query_variants: Optional[List[str]] = None,
+) -> List[float]:
+    explicit_variants = _clean_explicit_query_variants(text, query_variants)
+    if query_variants and _should_apply_plan_query_variants(backend):
+        variants = explicit_variants
+    else:
+        variants = build_dense_query_variants(text) if _should_use_dense_query_variants(text) else explicit_variants
+        if query_variants:
+            variants = [text] if text else explicit_variants[:1]
     vectors = [_normalize_vector(_encode_single_query_for_backend(variant, backend)) for variant in variants if variant]
     query_vector = _mean_vectors(vectors) if len(vectors) > 1 else vectors[0]
     if len(vectors) > 1:
@@ -277,7 +321,8 @@ def _translate_query(query: str) -> str:
 
 
 @tool
-def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_filter: str = "",
+def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[str]] = None,
+                    artist_filter: str = "", genre_filter: str = "",
                     language_filter: str = "", region_filter: str = "") -> str:
     """
     【V2 升级】Neo4j 原生图向量语义搜索工具
@@ -289,6 +334,7 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
     Args:
         query: 用户的音乐描述（如 "适合雨天听的悲伤钢琴曲"）
         limit: 返回结果数量（默认读取 settings.semantic_search_limit）
+        query_variants: 可选，由 LLM plan 生成的多条声学描述。传入时直接使用，不再依赖固定触发词。
         artist_filter: 可选，按歌手名过滤（如 "周杰伦"）
         genre_filter: 可选，按流派过滤（如 "Pop"）
         language_filter: 可选，按语言过滤（如 "Chinese"）
@@ -312,7 +358,7 @@ def semantic_search(query: str, limit: int = 0, artist_filter: str = "", genre_f
                 return []
 
             logger.info("[SemanticSearch] 正在用 %s 编码查询文本...", spec["name"])
-            query_vector = _encode_query_for_backend(search_text, backend)
+            query_vector = _encode_query_for_backend(search_text, backend, query_variants=query_variants)
             logger.info("[SemanticSearch] %s 编码完成，向量维度: %d", spec["name"], len(query_vector))
 
             if artist_filter or genre_filter or language_filter or region_filter:

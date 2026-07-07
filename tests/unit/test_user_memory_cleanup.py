@@ -50,7 +50,7 @@ def test_record_dislike_cleans_like_and_save_by_resolved_song_id_before_dislike(
     assert "elementId(s) = $song_id" in cleanup_call["query"]
     assert cleanup_call["params"] == {"user_id": "u1", "song_id": "song-1"}
 
-    dislike_call = client.calls[3]
+    dislike_call = next(call for call in client.calls if "MERGE (u)-[r:DISLIKES]->(s)" in call["query"])
     assert "MERGE (u)-[r:DISLIKES]->(s)" in dislike_call["query"]
     assert dislike_call["params"] == {"user_id": "u1", "song_id": "song-1"}
 
@@ -108,3 +108,26 @@ def test_clear_semantic_preferences_only_resets_learned_fields():
     assert "u.preferred_genres" not in clear_call["query"]
     assert "u.mood_tendency = ''" in clear_call["query"]
     assert clear_call["params"] == {"user_id": "u1"}
+
+
+def test_record_like_for_missing_song_uses_external_candidate_not_bare_song():
+    client = _Neo4jClient([[]])
+    manager = UserMemoryManager(neo4j_client=client)
+
+    manager.record_liked_song("u1", "联网歌曲", "歌手A")
+
+    write_call = client.calls[1]
+    assert "ExternalTrackCandidate" in write_call["query"]
+    assert "LIKES_CANDIDATE" in write_call["query"]
+    assert "MERGE (s:Song" not in write_call["query"]
+
+
+def test_record_save_for_existing_song_keeps_hot_path_relation():
+    client = _Neo4jClient([[{"song_id": "song-1"}]])
+    manager = UserMemoryManager(neo4j_client=client)
+
+    manager.record_saved_song("u1", "本地歌曲", "歌手A")
+
+    write_call = client.calls[1]
+    assert "MERGE (u)-[r:SAVES]->(s)" in write_call["query"]
+    assert "ExternalTrackCandidate" not in write_call["query"]

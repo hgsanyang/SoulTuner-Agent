@@ -115,6 +115,8 @@ def apply_routing_guardrails(plan: MusicQueryPlan, user_input: str) -> MusicQuer
         plan.retrieval_plan.vector_acoustic_query = (
             plan.retrieval_plan.vector_acoustic_query or user_input
         )
+        if not plan.retrieval_plan.vector_acoustic_queries:
+            plan.retrieval_plan.vector_acoustic_queries = [plan.retrieval_plan.vector_acoustic_query]
         plan.retrieval_plan.soft_intent.vibe = (
             plan.retrieval_plan.soft_intent.vibe or user_input
         )
@@ -151,6 +153,7 @@ class IntentPlanner:
                     "use_vector": True,
                     "soft_intent": {"vibe": user_input},
                     "vector_acoustic_query": user_input,
+                    "vector_acoustic_queries": [user_input],
                 },
                 "reasoning": "mock mode",
             })

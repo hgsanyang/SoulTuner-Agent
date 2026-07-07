@@ -101,100 +101,6 @@ def longtail_score(effective_exposure: float) -> float:
     return _clamp(1.0 / (1.0 + max(float(effective_exposure), 0.0)), 0.0, 1.0)
 
 
-_CALM_CONTEXT_TRIGGERS = (
-    "安静",
-    "柔软",
-    "柔和",
-    "轻柔",
-    "温柔",
-    "平静",
-    "低动态",
-    "不刺耳",
-    "不吵",
-    "少鼓",
-    "小声",
-    "夜里",
-    "深夜",
-    "雨天",
-    "下雨",
-    "雨声",
-    "治愈",
-    "放松",
-    "专注",
-    "学习",
-    "睡前",
-    "quiet",
-    "soft",
-    "gentle",
-    "calm",
-    "mellow",
-    "rainy",
-    "rain",
-    "lo-fi",
-    "lofi",
-    "study",
-    "focus",
-    "sleep",
-    "low dynamic",
-    "low energy",
-    "not loud",
-    "not noisy",
-)
-
-_CALM_POSITIVE_TAGS = {
-    "peaceful",
-    "relaxing",
-    "healing",
-    "dreamy",
-    "lo-fi",
-    "lofi",
-    "acoustic",
-    "folk",
-    "ambient",
-    "late night",
-    "rainy day",
-    "rainy",
-    "study",
-    "sleep",
-    "calm",
-    "soft",
-    "mellow",
-    "warm",
-    "gentle",
-    "minimal",
-    "sparse",
-}
-
-_CALM_CONFLICT_TAGS = {
-    "dance",
-    "party",
-    "workout",
-    "edm",
-    "energetic",
-    "driving",
-    "aggressive",
-    "hardcore",
-    "phonk",
-    "noise",
-    "noisy",
-    "loud",
-    "metal",
-    "punk",
-    "club",
-}
-
-_EXPLICIT_WANT_TERMS = {
-    "dance": ("dance", "舞曲", "蹦迪"),
-    "party": ("party", "派对", "聚会"),
-    "workout": ("workout", "运动", "跑步", "健身"),
-    "edm": ("edm", "电音", "电子"),
-    "energetic": ("energetic", "热血", "高能", "燃", "有劲"),
-    "driving": ("driving", "开车", "驾驶", "公路"),
-    "metal": ("metal", "金属"),
-    "punk": ("punk", "朋克"),
-}
-
-
 def _iter_terms(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -204,24 +110,27 @@ def _iter_terms(value: Any) -> list[str]:
     return [text] if text else []
 
 
-def _context_text(
-    query_text: str = "",
+def _semantic_terms(
     soft_intent: Mapping[str, Any] | None = None,
     hints: Mapping[str, Any] | None = None,
-) -> str:
+) -> tuple[list[str], list[str]]:
     soft = soft_intent or {}
     hint = hints or {}
-    parts = [
-        query_text,
-        *_iter_terms(soft.get("goal")),
-        *_iter_terms(soft.get("trajectory")),
-        *_iter_terms(soft.get("vibe")),
-        *_iter_terms(soft.get("avoid")),
-        *_iter_terms(hint.get("mood")),
-        *_iter_terms(hint.get("scenario")),
-        *_iter_terms(hint.get("genres")),
-    ]
-    return " ".join(part for part in parts if part).casefold()
+    positive: list[str] = []
+    for value in (
+        hint.get("genres"),
+        hint.get("mood"),
+        hint.get("scenario"),
+    ):
+        for term in _iter_terms(value):
+            if term and term not in positive:
+                positive.append(term)
+
+    conflicts: list[str] = []
+    for term in _iter_terms(soft.get("avoid")):
+        if term and term not in conflicts:
+            conflicts.append(term)
+    return positive, conflicts
 
 
 def _normalise_tag(value: Any) -> str:
@@ -259,10 +168,6 @@ def _contains_token(tokens: set[str], wanted: str) -> bool:
     return False
 
 
-def _explicitly_wants(context: str, token: str) -> bool:
-    return any(term.casefold() in context for term in _EXPLICIT_WANT_TERMS.get(token, (token,)))
-
-
 def semantic_fit_scores(
     song: Mapping[str, Any],
     *,
@@ -272,21 +177,19 @@ def semantic_fit_scores(
 ) -> dict[str, Any]:
     """Return bounded semantic fit evidence from objective catalog tags.
 
-    This is a small post-recall nudge, not a new recall route.  It currently
-    only activates for calm/quiet/rainy/focus style contexts where catalog tags
-    can give objective evidence that a candidate is fitting or conflicting.
+    This is a small post-recall nudge, not a new recall route.  It deliberately
+    does not infer user intent from fixed phrase lists.  It only compares the
+    LLM-produced plan fields (`hints` and `soft_intent.avoid`) with objective
+    catalog tags already present on a recalled candidate.
     """
-    context = _context_text(query_text, soft_intent, hints)
-    if not context or not any(trigger.casefold() in context for trigger in _CALM_CONTEXT_TRIGGERS):
+    del query_text
+    positive_terms, conflict_terms = _semantic_terms(soft_intent, hints)
+    if not positive_terms and not conflict_terms:
         return {"active": False, "positive": 0.0, "conflict": 0.0, "positive_hits": [], "conflict_hits": []}
 
     tokens = _song_tokens(song)
-    positive_hits = sorted(tag for tag in _CALM_POSITIVE_TAGS if _contains_token(tokens, tag))
-    conflict_hits = sorted(
-        tag
-        for tag in _CALM_CONFLICT_TAGS
-        if not _explicitly_wants(context, tag) and _contains_token(tokens, tag)
-    )
+    positive_hits = sorted(term for term in positive_terms if _contains_token(tokens, term))
+    conflict_hits = sorted(term for term in conflict_terms if _contains_token(tokens, term))
     positive = _clamp(len(positive_hits) / 3.0, 0.0, 1.0)
     conflict = _clamp(len(conflict_hits) / 2.0, 0.0, 1.0)
     return {

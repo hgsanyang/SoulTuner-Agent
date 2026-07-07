@@ -81,7 +81,7 @@ export default function SongCard({
     try {
       await acquireSong({ title, artist, song_id, platform });
       setAcquireState('done');
-      showToast('✅ 已下载到待入库，请前往「待入库」确认入库');
+      showToast('✅ 音源已设为长期保存，后台正在补齐标签和向量');
     } catch (err: any) {
       setAcquireState('error');
       showToast(`❌ ${err.message || '下载失败'}`);
@@ -122,6 +122,9 @@ export default function SongCard({
     sendUserEvent('dislike', title, artist, {
       exposureId: exposure_id,
       position: exposure_rank,
+      source,
+      platform,
+      songId: song_id,
     });
     showToast('👎 已标记为不喜欢');
     onRemove?.();
@@ -270,9 +273,11 @@ export default function SongCard({
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="1" y1="12" x2="5" y2="12" /><line x1="3" y1="10" x2="3" y2="14" /></svg>
             )}
           </button>
-          <button onClick={handleAcquire} title={acquireState === 'done' ? '已下载到待入库' : acquireState === 'loading' ? '正在下载...' : '下载到待入库'} aria-label={`${acquireState === 'done' ? '已下载到待入库' : acquireState === 'loading' ? '正在下载' : '下载到待入库'} ${title}`} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
-            {acquireState === 'done' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>) : acquireState === 'loading' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f0a500" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>) : (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>)}
-          </button>
+          {source === 'online_search' && (
+            <button onClick={handleAcquire} title={acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源...' : '保存音源'} aria-label={`${acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源' : '保存音源'} ${title}`} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+              {acquireState === 'done' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>) : acquireState === 'loading' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f0a500" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>) : (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>)}
+            </button>
+          )}
           <button onClick={handleLike} title={liked ? '取消喜欢' : '添加到喜欢'} aria-label={liked ? `取消喜欢 ${title}` : `添加到喜欢 ${title}`} style={actionBtnStyle(liked ? '#e91e63' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill={liked ? '#e91e63' : 'none'} stroke={liked ? '#e91e63' : 'currentColor'} strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>
           </button>

@@ -25,7 +25,12 @@ def test_release_year_gap_uses_local_knowledge_cards(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "knowledge_gap_min_confidence", 0.55, raising=False)
 
     local = [_song(f"Old Song {index}") for index in range(12)]
-    decision = analyze_catalog_gap(local, {}, "推荐80年代的老歌", web_enabled=True)
+    decision = analyze_catalog_gap(
+        local,
+        {"metadata_constraints": {"release_year_from": 1980, "release_year_to": 1989, "era": "80s"}},
+        "推荐80年代的老歌",
+        web_enabled=True,
+    )
 
     assert "metadata_release_year_missing" not in decision.reasons
     assert decision.details["knowledge_evidence"]["local_song_release_year_hits"] == 5
@@ -46,7 +51,12 @@ def test_external_knowledge_request_uses_local_knowledge_store(monkeypatch, tmp_
     monkeypatch.setattr(settings, "knowledge_gap_min_confidence", 0.55, raising=False)
 
     local = [_song(f"Song {index}", artist="The Cure") for index in range(12)]
-    decision = analyze_catalog_gap(local, {}, "讲讲 The Cure 的歌手背景和风格", web_enabled=True)
+    decision = analyze_catalog_gap(
+        local,
+        {"metadata_constraints": {"external_knowledge_required": True}},
+        "讲讲 The Cure 的歌手背景和风格",
+        web_enabled=True,
+    )
 
     assert "external_knowledge_required" not in decision.reasons
     assert decision.details["knowledge_evidence"]["query_hits"] >= 1
@@ -75,7 +85,12 @@ def test_external_knowledge_request_records_qdrant_evidence(monkeypatch, tmp_pat
     )
 
     local = [_song(f"Song {index}", artist="Fishmans") for index in range(12)]
-    decision = analyze_catalog_gap(local, {}, "讲讲 Fishmans 的迷幻梦幻流行风格", web_enabled=True)
+    decision = analyze_catalog_gap(
+        local,
+        {"metadata_constraints": {"external_knowledge_required": True}},
+        "讲讲 Fishmans 的迷幻梦幻流行风格",
+        web_enabled=True,
+    )
 
     evidence = decision.details["knowledge_evidence"]
     assert "external_knowledge_required" not in decision.reasons

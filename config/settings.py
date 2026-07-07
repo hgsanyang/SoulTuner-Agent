@@ -268,9 +268,14 @@ class GlobalSettings(BaseSettings):
         description="文搜音稠密召回后端：muq / m2d / both；MuQ 失败时自动回退 M2D",
     )
     dense_query_variant_mode: str = Field(
-        default="auto",
+        default="off",
         validation_alias="MUSIC_DENSE_QUERY_VARIANTS",
-        description="多描述文搜音集成：off / auto / on；auto 仅对场景、情绪、听感类查询启用",
+        description="兼容旧版固定触发词多描述：off / auto / on；默认 off，推荐使用 LLM plan 的 vector_acoustic_queries",
+    )
+    plan_query_variant_mode: str = Field(
+        default="m2d",
+        validation_alias="MUSIC_PLAN_QUERY_VARIANTS",
+        description="LLM plan 多声学描述启用范围：off / m2d / all；默认只用于 M2D fallback",
     )
     graph_search_limit: int = Field(
         default=24,
@@ -301,6 +306,21 @@ class GlobalSettings(BaseSettings):
         default=10,
         validation_alias="WEB_FALLBACK_COUNT",
         description="本地曲库缺口触发联网兜底时返回的联网候选数量",
+    )
+    online_auto_flywheel_enabled: bool = Field(
+        default=True,
+        validation_alias="MUSIC_ONLINE_AUTO_FLYWHEEL_ENABLED",
+        description="联网推荐候选是否默认后台进入临时入库飞轮",
+    )
+    online_auto_flywheel_limit: int = Field(
+        default=10,
+        validation_alias="MUSIC_ONLINE_AUTO_FLYWHEEL_LIMIT",
+        description="每次推荐最多后台获取并入库的联网候选数量",
+    )
+    online_temp_audio_ttl_hours: int = Field(
+        default=24,
+        validation_alias="MUSIC_ONLINE_TEMP_AUDIO_TTL_HOURS",
+        description="未被用户保存的联网临时音频缓存保留时长；0 表示不自动释放",
     )
     catalog_gap_min_local_results: int = Field(
         default=8,

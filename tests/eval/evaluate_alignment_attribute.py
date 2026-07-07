@@ -120,6 +120,28 @@ def precision_at_k(ranked_ids: list[str], labels_by_id: dict[str, dict[str, Any]
     return hits / len(top)
 
 
+def load_query_variant_file(path: str) -> dict[str, list[str]]:
+    """Load frozen LLM-generated acoustic HyDE variants keyed by query id."""
+    if not path:
+        return {}
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw_variants = payload.get("variants", payload)
+    if not isinstance(raw_variants, dict):
+        raise ValueError("query variant file must contain a 'variants' object")
+    cleaned: dict[str, list[str]] = {}
+    for query_id, values in raw_variants.items():
+        if not isinstance(values, list):
+            continue
+        variants: list[str] = []
+        for value in values:
+            text = str(value or "").strip()
+            if text and text not in variants:
+                variants.append(text)
+        if variants:
+            cleaned[str(query_id)] = variants[:4]
+    return cleaned
+
+
 def _fetch_common_corpus() -> tuple[list[str], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     _load_env_file(REPO_ROOT / ".env")
     from neo4j import GraphDatabase
@@ -186,6 +208,7 @@ def evaluate_attribute_alignment(
     calibration_path: str = "",
     adapter_path: str = "",
     query_variants: bool = False,
+    query_variant_file: str = "",
     include_clamp3: bool = False,
 ) -> dict[str, Any]:
     from retrieval.audio_embedder import encode_text_to_embedding
@@ -199,6 +222,7 @@ def evaluate_attribute_alignment(
         os.environ["MUSIC_ALIGNMENT_CALIBRATION_PATH"] = calibration_path
     if adapter_path:
         os.environ["MUSIC_ALIGNMENT_ADAPTER_PATH"] = adapter_path
+    llm_query_variants = load_query_variant_file(query_variant_file)
     ids, labels_by_id, corpora = _fetch_common_corpus()
     rows = []
     grouped: dict[str, dict[str, list[float]]] = {}
@@ -206,6 +230,7 @@ def evaluate_attribute_alignment(
     clamp3_status = "not_requested"
     clamp3_model = ""
     encode_text_to_clamp3 = None
+    encode_texts_to_clamp3 = None
     if include_clamp3:
         if "clamp3" not in corpora:
             clamp3_status = "missing_corpus"
@@ -215,27 +240,47 @@ def evaluate_attribute_alignment(
                     CLAMP3_REPO_URL,
                     clamp3_repo_dir,
                     encode_text_to_clamp3 as _encode_text_to_clamp3,
+                    encode_texts_to_clamp3 as _encode_texts_to_clamp3,
                 )
 
                 clamp3_repo_dir()
                 encode_text_to_clamp3 = _encode_text_to_clamp3
+                encode_texts_to_clamp3 = _encode_texts_to_clamp3
                 clamp3_status = "available"
                 clamp3_model = CLAMP3_REPO_URL
                 backends.append("clamp3")
             except Exception as exc:
                 clamp3_status = f"unavailable: {exc}"
 
-    def _encode_text(text: str, backend: str) -> list[float]:
+    def _texts_for_query(query: dict[str, Any]) -> list[str]:
+        text = str(query["text"])
+        variants = llm_query_variants.get(str(query["id"]), [])
+        if not variants and query_variants:
+            variants = build_dense_query_variants(text)
+        return variants or [text]
+
+    clamp3_text_cache: dict[str, list[float]] = {}
+    if encode_texts_to_clamp3 is not None:
+        clamp3_texts: list[str] = []
+        seen_texts: set[str] = set()
+        for query in FROZEN_ATTRIBUTE_QUERIES:
+            for text in _texts_for_query(query):
+                if text and text not in seen_texts:
+                    seen_texts.add(text)
+                    clamp3_texts.append(text)
+        clamp3_vectors = encode_texts_to_clamp3(clamp3_texts)
+        clamp3_text_cache = dict(zip(clamp3_texts, clamp3_vectors))
+
+    def _encode_text(query: dict[str, Any], backend: str) -> list[float]:
+        texts = _texts_for_query(query)
         if backend == "clamp3":
             if encode_text_to_clamp3 is None:
                 raise RuntimeError("CLaMP3 text encoder is unavailable")
-            encoder = encode_text_to_clamp3
+            vectors = [clamp3_text_cache.get(text) or encode_text_to_clamp3(text) for text in texts if text]
+            return _mean_vectors(vectors) if len(vectors) > 1 else vectors[0]
         else:
             encoder = encode_text_to_muq if backend == "muq" else encode_text_to_embedding
-        if not query_variants:
-            return encoder(text)
-        variants = build_dense_query_variants(text)
-        vectors = [encoder(variant) for variant in variants if variant]
+        vectors = [encoder(text) for text in texts if text]
         return _mean_vectors(vectors) if len(vectors) > 1 else vectors[0]
 
     try:
@@ -251,7 +296,7 @@ def evaluate_attribute_alignment(
                     top_ids_by_backend[backend] = []
                     continue
                 query_vector = apply_alignment_calibration(
-                    _encode_text(query["text"], backend),
+                    _encode_text(query, backend),
                     backend,
                 )
                 ranked = _rank_ids(query_vector, corpus["matrix"], corpus["ids"])
@@ -306,6 +351,8 @@ def evaluate_attribute_alignment(
         "calibration_path": calibration_path or "",
         "adapter_path": adapter_path or "",
         "query_variants": bool(query_variants),
+        "query_variant_file": query_variant_file or "",
+        "query_variant_file_count": len(llm_query_variants),
         "include_clamp3": bool(include_clamp3),
         "clamp3_status": clamp3_status,
         "k": k,
@@ -325,6 +372,7 @@ def main() -> None:
     parser.add_argument("--calibration-path", default="", help="Optional alignment calibration JSON")
     parser.add_argument("--adapter-path", default="", help="Optional learned text-side alignment adapter JSON")
     parser.add_argument("--query-variants", action="store_true", help="Evaluate multi-view dense query variants")
+    parser.add_argument("--query-variant-file", default="", help="Frozen LLM-generated acoustic query variants JSON")
     parser.add_argument("--include-clamp3", action="store_true", help="Include optional CLaMP3 backend if clamp3_embedding exists")
     args = parser.parse_args()
 
@@ -333,6 +381,7 @@ def main() -> None:
         calibration_path=args.calibration_path,
         adapter_path=args.adapter_path,
         query_variants=args.query_variants,
+        query_variant_file=args.query_variant_file,
         include_clamp3=args.include_clamp3,
     )
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -343,6 +392,7 @@ def main() -> None:
         + datetime.now().strftime("%Y%m%d_%H%M%S")
         + ".json"
     )
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     metrics = report["metrics"]
@@ -360,6 +410,8 @@ def main() -> None:
         print(f"Adapter: {report['adapter_path']}")
     if report.get("query_variants"):
         print("Query variants: enabled")
+    if report.get("query_variant_file"):
+        print(f"Query variant file: {report['query_variant_file']} ({report['query_variant_file_count']} queries)")
     print("Overall: " + " | ".join(f"{name.upper()}={value:.3f}" for name, value in metrics["overall"].items()))
     for lang, values in metrics["by_query_language"].items():
         print(f"{lang}: " + " | ".join(f"{name.upper()}={value:.3f}" for name, value in values.items()))

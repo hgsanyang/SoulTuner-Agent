@@ -67,6 +67,126 @@ def _safe_filename(text: str) -> str:
     return "".join(c for c in text if c not in r'\/:*?"<>|').strip()
 
 
+def _artist_names_from_payload(song: Dict[str, Any]) -> List[str]:
+    """Return artist names from Netease search/detail shaped payloads."""
+    artists = song.get("artists") or song.get("ar") or []
+    names: list[str] = []
+    for artist in artists:
+        if isinstance(artist, dict):
+            name = str(artist.get("name") or "").strip()
+        elif isinstance(artist, (list, tuple)) and artist:
+            name = str(artist[0] or "").strip()
+        else:
+            name = str(artist or "").strip()
+        if name:
+            names.append(name)
+    if not names and song.get("artist"):
+        names = [part.strip() for part in str(song.get("artist")).replace("/", "、").split("、") if part.strip()]
+    return names
+
+
+def _artist_ids_from_payload(song: Dict[str, Any]) -> List[str]:
+    artists = song.get("artists") or song.get("ar") or []
+    ids: list[str] = []
+    for artist in artists:
+        if isinstance(artist, dict) and artist.get("id"):
+            ids.append(str(artist.get("id")))
+    return ids
+
+
+def _album_from_payload(song: Dict[str, Any]) -> Dict[str, Any]:
+    album = song.get("album") or song.get("al") or {}
+    return album if isinstance(album, dict) else {}
+
+
+def _meta_music_id(song_id: str) -> int | str:
+    try:
+        return int(song_id)
+    except (TypeError, ValueError):
+        return str(song_id or "")
+
+
+def _write_meta_file(file_basename: str, meta: Dict[str, Any]) -> None:
+    _ensure_dirs()
+    meta_path = os.path.join(ONLINE_META_DIR, f"{file_basename}_meta.json")
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def mark_online_audio_retained(
+    *,
+    title: str,
+    artist: str,
+    song_id: str = "",
+    retention_reason: str = "user_saved",
+) -> bool:
+    """Mark an already acquired online audio file as long-term retained."""
+    _ensure_dirs()
+    safe_title = _safe_filename(title)
+    safe_artist = _safe_filename(artist)
+    expected = f"{safe_title} - {safe_artist}_meta.json"
+    candidates = [os.path.join(ONLINE_META_DIR, expected)]
+    candidates.extend(
+        os.path.join(ONLINE_META_DIR, name)
+        for name in os.listdir(ONLINE_META_DIR)
+        if name.endswith("_meta.json")
+    )
+
+    seen: set[str] = set()
+    for meta_path in candidates:
+        if meta_path in seen or not os.path.exists(meta_path):
+            continue
+        seen.add(meta_path)
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            meta_title = str(meta.get("musicName") or "").strip()
+            artists = meta.get("artist") or []
+            meta_artist = "、".join([a[0] if isinstance(a, list) else str(a) for a in artists]) if artists else ""
+            meta_id = str(meta.get("musicId") or meta.get("source_id") or "")
+            if song_id and meta_id and meta_id != str(song_id):
+                continue
+            if not song_id and (meta_title != title or meta_artist != artist):
+                continue
+            meta["audio_retention"] = "saved"
+            meta["retention_reason"] = retention_reason
+            meta["retained_at"] = datetime.now().isoformat()
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as exc:
+            logger.debug("标记在线音频保留失败: %s", exc)
+    return False
+
+
+def _promote_external_candidate_feedback(client: Any, *, title: str, artist: str) -> None:
+    """Move feedback from an external candidate onto the newly ingested Song."""
+    relation_pairs = (
+        ("LIKES_CANDIDATE", "LIKES", "r.weight = coalesce(old.weight, 1.0), r.created_at = coalesce(old.created_at, timestamp())"),
+        ("SAVES_CANDIDATE", "SAVES", "r.weight = coalesce(old.weight, 0.8), r.created_at = coalesce(old.created_at, timestamp())"),
+        ("DISLIKES_CANDIDATE", "DISLIKES", "r.weight = coalesce(old.weight, 1.0), r.created_at = coalesce(old.created_at, timestamp())"),
+        ("SKIPPED_CANDIDATE", "SKIPPED", "r.skip_count = coalesce(old.skip_count, 1), r.last_skipped = timestamp()"),
+        ("LISTENED_TO_CANDIDATE", "LISTENED_TO", "r.play_count = coalesce(old.play_count, 1), r.total_duration = coalesce(old.duration, 0), r.last_played = timestamp()"),
+    )
+    for candidate_rel, song_rel, set_clause in relation_pairs:
+        query = f"""
+        MATCH (u:User)-[old:{candidate_rel}]->(c:ExternalTrackCandidate {{title: $title, artist: $artist}})
+        MATCH (s:Song {{title: $title, artist: $artist}})
+        MERGE (u)-[r:{song_rel}]->(s)
+        SET {set_clause}
+        DELETE old
+        """
+        client.execute_query(query, {"title": title, "artist": artist})
+    client.execute_query(
+        """
+        MATCH (c:ExternalTrackCandidate {title: $title, artist: $artist})
+        WHERE NOT (c)--()
+        DELETE c
+        """,
+        {"title": title, "artist": artist},
+    )
+
+
 class OnlineMusicAcquirer:
     """联网音乐获取器：搜索 → 下载 → 快速入库 → 后台飞轮"""
 
@@ -112,14 +232,33 @@ class OnlineMusicAcquirer:
                 logger.warning(f"搜索无结果: {query}")
                 return None
 
-        # 取第一首
-        song = songs[0]
-        song_id = str(song["id"])
-        title = song.get("name", "Unknown")
-        artists = [a["name"] for a in song.get("artists", [])]
-        artist_ids = [str(a.get("id")) for a in song.get("artists", []) if a.get("id")]
+        return await self.acquire_resolved_song(
+            songs[0],
+            session,
+            retention="saved",
+            requested_by="explicit_acquire",
+        )
+
+    async def acquire_resolved_song(
+        self,
+        song: Dict[str, Any],
+        session: aiohttp.ClientSession,
+        *,
+        retention: str = "temporary",
+        requested_by: str = "auto_recommendation",
+    ) -> Optional[Dict[str, Any]]:
+        """Download a specific resolved online song by source id, avoiding fuzzy re-search."""
+
+        song_id = str(song.get("id") or song.get("song_id") or song.get("source_id") or "").strip()
+        if not song_id:
+            logger.warning("跳过联网获取：缺少 song_id: %s", song)
+            return None
+
+        title = str(song.get("name") or song.get("title") or "Unknown").strip() or "Unknown"
+        artists = _artist_names_from_payload(song)
+        artist_ids = _artist_ids_from_payload(song)
         artist_str = "、".join(artists) if artists else "Unknown"
-        album_info = song.get("album", {}) or {}
+        album_info = _album_from_payload(song)
         album = album_info.get("name", "Unknown")
         album_id = str(album_info.get("id") or "")
         duration = song.get("duration", 0)
@@ -137,15 +276,42 @@ class OnlineMusicAcquirer:
                 break
 
         if existing_audio:
-            logger.info(f"⏭️ 已存在，跳过下载: {file_basename}")
+            logger.info(f"已存在，跳过下载: {file_basename}")
             ext = os.path.splitext(existing_audio)[1].lstrip(".")
             has_lyrics = os.path.exists(os.path.join(ONLINE_LYRICS_DIR, f"{file_basename}.lrc"))
+            is_trial = False
+            existing_meta = os.path.join(ONLINE_META_DIR, f"{file_basename}_meta.json")
+            if os.path.exists(existing_meta):
+                try:
+                    with open(existing_meta, "r", encoding="utf-8") as f:
+                        is_trial = bool(json.load(f).get("is_trial"))
+                except Exception:
+                    pass
+            if retention == "saved":
+                mark_online_audio_retained(
+                    title=title,
+                    artist=artist_str,
+                    song_id=song_id,
+                    retention_reason=requested_by,
+                )
             return self._build_result(
-                song_id, title, artist_str, album, duration, file_basename, ext, has_lyrics
+                song_id,
+                title,
+                artist_str,
+                album,
+                duration,
+                file_basename,
+                ext,
+                has_lyrics,
+                source_platform="netease",
+                metadata_source="netease",
+                retention=retention,
+                requested_by=requested_by,
+                is_trial=is_trial,
             )
 
         # 2. 并发获取播放链接 + 歌词 + 封面
-        play_url, lyrics_text, cover_url, song_detail = await asyncio.gather(
+        play_result, lyrics_text, cover_url, song_detail = await asyncio.gather(
             self._get_play_url(song_id, session),
             self._get_lyrics(song_id, session),
             self._get_cover_url(song_id, session),
@@ -154,8 +320,10 @@ class OnlineMusicAcquirer:
         )
 
         # 处理异常
-        if isinstance(play_url, Exception):
-            play_url = None
+        if isinstance(play_result, Exception):
+            play_url, is_trial = None, False
+        else:
+            play_url, is_trial = play_result
         if isinstance(lyrics_text, Exception):
             lyrics_text = None
         if isinstance(cover_url, Exception):
@@ -164,7 +332,18 @@ class OnlineMusicAcquirer:
             song_detail = {}
 
         if not play_url:
-            logger.warning(f"⚠️ 无法获取播放链接（版权限制）: {title} - {artist_str}")
+            logger.warning(f"无法获取播放链接（版权限制）: {title} - {artist_str}")
+            self._write_failed_meta(
+                title=title,
+                artist=artist_str,
+                song_id=song_id,
+                album=album,
+                duration=duration,
+                file_basename=file_basename,
+                error="play_url_unavailable",
+                retention=retention,
+                requested_by=requested_by,
+            )
             return None
 
         # 3. 下载音频
@@ -172,9 +351,20 @@ class OnlineMusicAcquirer:
         audio_path = os.path.join(ONLINE_AUDIO_DIR, f"{file_basename}.{ext}")
         downloaded = await self._download_file(play_url, audio_path, session)
         if not downloaded:
+            self._write_failed_meta(
+                title=title,
+                artist=artist_str,
+                song_id=song_id,
+                album=album,
+                duration=duration,
+                file_basename=file_basename,
+                error="audio_download_failed",
+                retention=retention,
+                requested_by=requested_by,
+            )
             return None
 
-        logger.info(f"✅ 音频下载成功: {file_basename}.{ext}")
+        logger.info(f"音频下载成功: {file_basename}.{ext}")
 
         # 4. 保存歌词
         has_lyrics = False
@@ -183,7 +373,7 @@ class OnlineMusicAcquirer:
             try:
                 with open(lrc_path, "w", encoding="utf-8") as f:
                     f.write(lyrics_text)
-                logger.info(f"✅ 歌词保存成功: {file_basename}.lrc")
+                logger.info(f"歌词保存成功: {file_basename}.lrc")
                 has_lyrics = True
             except Exception as e:
                 logger.warning(f"歌词保存失败: {e}")
@@ -196,7 +386,7 @@ class OnlineMusicAcquirer:
         # 6. 保存元数据(兼容 ingest_to_neo4j.py 的 _meta.json 格式)
         release_year = extract_release_year(song_detail if isinstance(song_detail, dict) else {})
         meta = {
-            "musicId": int(song_id),
+            "musicId": _meta_music_id(song_id),
             "musicName": title,
             "artist": [[a, 0] for a in artists],  # NCM 格式: [[name, id], ...]
             "album": album,
@@ -216,11 +406,14 @@ class OnlineMusicAcquirer:
             "artist_ids": artist_ids,
             "aliases": song_detail.get("alia", []) if isinstance(song_detail, dict) else [],
             "popularity": song_detail.get("pop") if isinstance(song_detail, dict) else None,
+            "acquire_status": "ready",
+            "audio_retention": retention,
+            "retention_reason": requested_by if retention == "saved" else "",
+            "requested_by": requested_by,
+            "is_trial": is_trial,
         }
-        meta_path = os.path.join(ONLINE_META_DIR, f"{file_basename}_meta.json")
         try:
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
+            _write_meta_file(file_basename, meta)
         except Exception as e:
             logger.warning(f"元数据保存失败: {e}")
 
@@ -236,7 +429,46 @@ class OnlineMusicAcquirer:
             release_year=release_year,
             source_platform="netease",
             metadata_source="netease",
+            retention=retention,
+            requested_by=requested_by,
+            is_trial=is_trial,
         )
+
+    def _write_failed_meta(
+        self,
+        *,
+        title: str,
+        artist: str,
+        song_id: str,
+        album: str,
+        duration: int,
+        file_basename: str,
+        error: str,
+        retention: str,
+        requested_by: str,
+    ) -> None:
+        meta = {
+            "musicId": _meta_music_id(song_id),
+            "musicName": title,
+            "artist": [[artist, 0]] if artist else [],
+            "album": album or "Unknown",
+            "duration": duration or 0,
+            "format": "mp3",
+            "source": "online",
+            "source_platform": "netease",
+            "source_id": song_id,
+            "metadata_source": "netease",
+            "acquired_at": datetime.now().isoformat(),
+            "acquire_status": "failed",
+            "acquire_error": error,
+            "audio_retention": retention,
+            "retention_reason": requested_by if retention == "saved" else "",
+            "requested_by": requested_by,
+        }
+        try:
+            _write_meta_file(file_basename, meta)
+        except Exception as exc:
+            logger.warning("失败元数据保存失败: %s", exc)
 
     def _build_result(
         self,
@@ -252,6 +484,9 @@ class OnlineMusicAcquirer:
         release_year=None,
         source_platform="netease",
         metadata_source="netease",
+        retention="temporary",
+        requested_by="auto_recommendation",
+        is_trial=False,
     ) -> Dict[str, Any]:
         """构建返回结果"""
         lrc_url = f"{STATIC_PREFIX_ONLINE_LYRICS}/{file_basename}.lrc" if has_lyrics else ""
@@ -273,13 +508,16 @@ class OnlineMusicAcquirer:
             "source_id": song_id,
             "metadata_source": metadata_source,
             "release_year": release_year,
+            "audio_retention": retention,
+            "requested_by": requested_by,
+            "is_trial": bool(is_trial),
         }
 
     # ---- NeteaseAPI 辅助方法 ----
 
     async def _get_play_url(
         self, song_id: str, session: aiohttp.ClientSession
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], bool]:
         """获取音频播放/下载链接（含 30s 试听检测）"""
         url = f"{self.api_base}/song/url?id={song_id}&level=exhigh"
         async with session.get(url, timeout=settings.netease_api_timeout) as resp:
@@ -292,11 +530,11 @@ class OnlineMusicAcquirer:
                     trial_info = item.get("freeTrialInfo")
                     if trial_info is not None:
                         logger.warning(
-                            f"⚠️ 歌曲 {song_id} 为试听版 "
+                            f"歌曲 {song_id} 为试听版 "
                             f"(freeTrialInfo: {trial_info.get('start',0)}-{trial_info.get('end',30)}s)"
                         )
-                    return item["url"]
-        return None
+                    return item["url"], trial_info is not None
+        return None, False
 
     async def _get_lyrics(
         self, song_id: str, session: aiohttp.ClientSession
@@ -348,7 +586,7 @@ class OnlineMusicAcquirer:
                 with open(save_path, "wb") as f:
                     f.write(content)
                 size_mb = len(content) / 1024 / 1024
-                logger.info(f"📥 已下载 {size_mb:.1f}MB → {os.path.basename(save_path)}")
+                logger.info(f"已下载 {size_mb:.1f}MB -> {os.path.basename(save_path)}")
                 return True
         except Exception as e:
             logger.warning(f"下载异常: {e}")
@@ -399,11 +637,14 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.metadata_source = $metadata_source,
                     s.release_year = $release_year,
                     s.album_id = $album_id,
+                    s.audio_retention = $audio_retention,
+                    s.audio_status = 'cached',
+                    s.is_trial = $is_trial,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
                 """
-                logger.info(f"🔄 Neo4j 更新已有歌曲: {title} - {artist}")
+                logger.info(f"Neo4j 更新已有歌曲: {title} - {artist}")
             else:
                 # ── 不存在：创建新节点 ──
                 query = """
@@ -420,6 +661,9 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.metadata_source = $metadata_source,
                     s.release_year = $release_year,
                     s.album_id = $album_id,
+                    s.audio_retention = $audio_retention,
+                    s.audio_status = 'cached',
+                    s.is_trial = $is_trial,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
@@ -427,7 +671,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 MERGE (a:Artist {name: $artist_name})
                 MERGE (s)-[:PERFORMED_BY]->(a)
                 """
-                logger.info(f"✅ Neo4j 秒级入库: {title} - {artist}")
+                logger.info(f"Neo4j 秒级入库: {title} - {artist}")
 
             normalized_meta = normalize_acquisition_metadata(
                 {
@@ -461,9 +705,12 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 "metadata_source": normalized_meta.get("metadata_source", "netease"),
                 "release_year": normalized_meta.get("release_year"),
                 "album_id": normalized_meta.get("album_id", ""),
+                "audio_retention": song.get("audio_retention") or "temporary",
+                "is_trial": bool(song.get("is_trial")),
                 "acquired_at": datetime.now().isoformat(),
             }
             client.execute_query(query, params)
+            _promote_external_candidate_feedback(client, title=title, artist=artist)
 
     except Exception as e:
         logger.error(f"Neo4j 快速入库失败: {e}")
@@ -473,7 +720,7 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
     """
     后台异步数据飞轮：歌词标签提取 + 向量提取 + Neo4j 更新。    在后台静默运行，不阻塞用户交互。    """
     try:
-        logger.info(f"🔄 [后台飞轮] 开始处理 {len(songs)} 首歌...")
+        logger.info(f"[后台飞轮] 开始处理 {len(songs)} 首歌...")
 
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
@@ -565,7 +812,7 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                             "tag_confidence_json": enriched_tags.get("tag_confidence_json", "{}"),
                             "tag_sources_json": enriched_tags.get("tag_sources_json", "{}"),
                         })
-                        logger.info(f"🏷️ [后台飞轮] 歌词标签入库: {song['title']}")
+                        logger.info(f"[后台飞轮] 歌词标签入库: {song['title']}")
                 except Exception as e:
                     logger.warning(f"[后台飞轮] 歌词标签提取失败 {song['title']}: {e}")
 
@@ -587,11 +834,11 @@ async def _background_flywheel(songs: List[Dict[str, Any]]):
                             "omar_embedding": embeddings.get("omar_embedding", []),
                             "muq_embedding": embeddings.get("muq_embedding", []),
                         })
-                        logger.info(f"🧠 [后台飞轮] 向量入库: {song['title']}")
+                        logger.info(f"[后台飞轮] 向量入库: {song['title']}")
                 except Exception as e:
                     logger.warning(f"[后台飞轮] 向量提取失败 {song['title']}: {e}")
 
-        logger.info(f"✅ [后台飞轮] 全部完成！{len(songs)} 首歌已入库")
+        logger.info(f"[后台飞轮] 全部完成，{len(songs)} 首歌已入库")
 
     except Exception as e:
         logger.error(f"[后台飞轮] 整体失败: {e}")
@@ -712,7 +959,7 @@ async def acquire_online_music(song_queries: list[str]) -> ToolOutput:
         song_queries: 要获取的歌曲列表，格式为 ["歌名 歌手", "歌名 歌手", ...]
                       例如 ["稻香 周杰伦", "平凡之路 朴树"]
     """
-    logger.info(f"🎵 开始联网获取 {len(song_queries)} 首歌曲..")
+    logger.info(f"开始联网获取 {len(song_queries)} 首歌曲")
 
     async with aiohttp.ClientSession() as session:
         acquired = await _acquirer.search_and_acquire(song_queries, session)

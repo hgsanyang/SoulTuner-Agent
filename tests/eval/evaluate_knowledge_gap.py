@@ -79,7 +79,8 @@ def run_eval() -> dict[str, Any]:
 
         rows: list[dict[str, Any]] = []
 
-        decision = analyze_catalog_gap(local_oldies, {}, "推荐80年代的老歌", web_enabled=True)
+        era_plan = {"metadata_constraints": {"release_year_from": 1980, "release_year_to": 1989, "era": "80s"}}
+        decision = analyze_catalog_gap(local_oldies, era_plan, "推荐80年代的老歌", web_enabled=True)
         rows.append(
             _case_result(
                 "era_request_uses_local_year_cards",
@@ -88,7 +89,8 @@ def run_eval() -> dict[str, Any]:
             )
         )
 
-        decision = analyze_catalog_gap(local_cure, {}, "讲讲 The Cure 的歌手背景和风格", web_enabled=True)
+        knowledge_plan = {"metadata_constraints": {"external_knowledge_required": True}}
+        decision = analyze_catalog_gap(local_cure, knowledge_plan, "讲讲 The Cure 的歌手背景和风格", web_enabled=True)
         rows.append(
             _case_result(
                 "artist_style_uses_local_knowledge",
@@ -99,7 +101,7 @@ def run_eval() -> dict[str, Any]:
         )
 
         same_era = [_song("恋曲1980", artist="罗大佑"), *_song_list("Old Song", 11)]
-        decision = analyze_catalog_gap(same_era, {}, "找几首和恋曲1980同年代的歌", web_enabled=True)
+        decision = analyze_catalog_gap(same_era, era_plan, "找几首和恋曲1980同年代的歌", web_enabled=True)
         rows.append(
             _case_result(
                 "same_era_similarity_uses_song_knowledge",
@@ -108,7 +110,12 @@ def run_eval() -> dict[str, Any]:
             )
         )
 
-        decision = analyze_catalog_gap([], {}, "找几首80年代粤语老歌", web_enabled=True)
+        decision = analyze_catalog_gap(
+            [],
+            {"hard_constraints": {"language": "Cantonese"}, **era_plan},
+            "找几首80年代粤语老歌",
+            web_enabled=True,
+        )
         rows.append(
             _case_result(
                 "inventory_gap_triggers_online_fallback",

@@ -29,6 +29,10 @@ _TEXT_EMB_CACHE: dict[str, list[float]] = {}
 _TEXT_EMB_CACHE_MAX = 32
 
 
+def _local_files_only() -> bool:
+    return os.getenv("MUQ_MULAN_LOCAL_FILES_ONLY", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
 def _get_device() -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
@@ -47,7 +51,16 @@ def _use_fp16(device: torch.device) -> bool:
 def _download(repo_id: str, filename: str) -> str:
     from huggingface_hub import hf_hub_download
 
-    return hf_hub_download(repo_id, filename)
+    local_only = _local_files_only()
+    try:
+        return hf_hub_download(repo_id, filename, local_files_only=local_only)
+    except Exception:
+        if local_only:
+            logger.warning(
+                "[MuQ-MuLan] %s not found in local cache. Set MUQ_MULAN_LOCAL_FILES_ONLY=0 for first-time download.",
+                filename,
+            )
+        raise
 
 
 def get_muq_model():
@@ -60,10 +73,17 @@ def get_muq_model():
         if _MUQ_MODEL is not None:
             return _MUQ_MODEL
 
-        from muq import MuQMuLan
-
         device = _get_device()
         logger.info("[MuQ-MuLan] Loading %s on %s", MUQ_REPO_ID, device)
+        if _local_files_only():
+            # MuQ-MuLan internally loads an OpenMuQ audio backbone.  Keep that
+            # internal HuggingFace lookup offline as well, otherwise a cached
+            # outer model can still block startup on HEAD retries.
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+        from muq import MuQMuLan
+
         config_path = _download(MUQ_REPO_ID, "config.json")
         with open(config_path, encoding="utf-8") as fh:
             config: dict[str, Any] = json.load(fh)

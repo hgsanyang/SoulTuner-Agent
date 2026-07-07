@@ -135,15 +135,6 @@ _QUERY_TAG_TERMS = {
         "driving": "Driving",
     },
 }
-_LANGUAGE_TEXT_PATTERNS = {
-    "Cantonese": ("粤语", "广东歌", "港乐", "cantonese"),
-    "Korean": ("韩语", "韩国歌", "korean"),
-    "Japanese": ("日语", "日文", "japanese"),
-    "English": ("英文", "英语", "english"),
-    "Chinese": ("中文", "国语", "华语", "mandarin", "chinese"),
-}
-
-
 def _song_dict(item: Mapping[str, Any]) -> Mapping[str, Any]:
     nested = item.get("song")
     return nested if isinstance(nested, Mapping) else item
@@ -248,26 +239,14 @@ def _dedupe_terms(terms: Sequence[str]) -> list[str]:
     return result
 
 
-def _query_tag_terms(text: str) -> dict[str, list[str]]:
-    lowered = text.casefold()
-    inferred: dict[str, list[str]] = {"genres": [], "moods": [], "scenarios": []}
-    if not lowered:
-        return inferred
-    for tag_field, mapping in _QUERY_TAG_TERMS.items():
-        for needle, label in mapping.items():
-            if needle.casefold() in lowered:
-                inferred[tag_field].append(label)
-    return {tag_field: _dedupe_terms(values) for tag_field, values in inferred.items()}
-
-
-def _requested_tag_terms(retrieval_plan: Mapping[str, Any] | None, text: str = "") -> dict[str, list[str]]:
+def _requested_tag_terms(retrieval_plan: Mapping[str, Any] | None) -> dict[str, list[str]]:
+    """Return only LLM-planned tag hints; this is not a second intent parser."""
     plan = dict(retrieval_plan or {})
     hints = dict(plan.get("hints") or {})
-    inferred = _query_tag_terms(text)
     return {
-        "genres": _dedupe_terms([*_iter_terms(hints.get("genres")), *inferred["genres"]]),
-        "moods": _dedupe_terms([*_iter_terms(hints.get("mood")), *inferred["moods"]]),
-        "scenarios": _dedupe_terms([*_iter_terms(hints.get("scenario")), *inferred["scenarios"]]),
+        "genres": _dedupe_terms(_iter_terms(hints.get("genres"))),
+        "moods": _dedupe_terms(_iter_terms(hints.get("mood"))),
+        "scenarios": _dedupe_terms(_iter_terms(hints.get("scenario"))),
     }
 
 
@@ -322,14 +301,10 @@ def _soft_inventory_gap_reasons(
     return reasons
 
 
-def _requested_language(hard: Mapping[str, Any], text: str) -> str:
+def _requested_language(hard: Mapping[str, Any]) -> str:
     hard_language = _canonical_language(hard.get("language"))
     if hard_language:
         return hard_language
-    lowered = text.casefold()
-    for language, needles in _LANGUAGE_TEXT_PATTERNS.items():
-        if any(needle.casefold() in lowered for needle in needles):
-            return language
     return ""
 
 
@@ -397,6 +372,32 @@ def _metadata_coverage(search_results: Sequence[Mapping[str, Any]]) -> dict[str,
     }
 
 
+def _metadata_constraints(retrieval_plan: Mapping[str, Any] | None) -> dict[str, Any]:
+    plan = dict(retrieval_plan or {})
+    metadata = dict(plan.get("metadata_constraints") or {})
+    # Be forgiving for older locally generated plans while keeping the source
+    # of truth in the LLM plan, not raw query phrase matching.
+    for legacy_key in (
+        "release_year_from",
+        "release_year_to",
+        "era",
+        "recency_required",
+        "external_knowledge_required",
+    ):
+        if legacy_key not in metadata and legacy_key in plan:
+            metadata[legacy_key] = plan.get(legacy_key)
+    return metadata
+
+
+def _has_release_constraint(metadata: Mapping[str, Any]) -> bool:
+    return bool(
+        metadata.get("era")
+        or metadata.get("release_year_from") is not None
+        or metadata.get("release_year_to") is not None
+        or metadata.get("release_year_required")
+    )
+
+
 def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Read local offline knowledge cards as gap evidence without networking."""
 
@@ -413,6 +414,8 @@ def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) 
         query_hits = store.search(text, limit=5, min_confidence=min_conf)
         query_vector_hits = sum(1 for card in query_hits if card.get("_vector_score") is not None)
         local_hits = []
+        local_artist_hits = []
+        seen_artists: set[str] = set()
         release_hits = 0
         for item in list(search_results or [])[:20]:
             song = _song_dict(item)
@@ -425,12 +428,18 @@ def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) 
                 local_hits.append(card)
                 if card.get("release_year"):
                     release_hits += 1
+            if artist and artist.casefold() not in seen_artists:
+                seen_artists.add(artist.casefold())
+                artist_card = store.get_artist_card(artist)
+                if artist_card and float(artist_card.get("confidence") or 0) >= min_conf:
+                    local_artist_hits.append(artist_card)
         return {
             "enabled": True,
             "available": True,
             "query_hits": len(query_hits),
             "query_vector_hits": query_vector_hits,
             "local_song_hits": len(local_hits),
+            "local_artist_hits": len(local_artist_hits),
             "local_song_release_year_hits": release_hits,
             "cards": [
                 {
@@ -444,7 +453,7 @@ def _knowledge_evidence(text: str, search_results: Sequence[Mapping[str, Any]]) 
                     "vector_score": card.get("_vector_score"),
                     "style_tags": card.get("style_tags", []),
                 }
-                for card in (query_hits + local_hits)[:6]
+                for card in (query_hits + local_hits + local_artist_hits)[:6]
             ],
         }
     except Exception as exc:
@@ -476,8 +485,9 @@ def analyze_catalog_gap(
     artists, songs, hard = layered_constraints(plan)
     count = len(search_results or [])
     coverage = _metadata_coverage(search_results)
-    tag_evidence = _tag_evidence(search_results, _requested_tag_terms(plan, text))
-    language_evidence = _language_evidence(search_results, _requested_language(hard, text))
+    metadata_constraints = _metadata_constraints(plan)
+    tag_evidence = _tag_evidence(search_results, _requested_tag_terms(plan))
+    language_evidence = _language_evidence(search_results, _requested_language(hard))
     knowledge_evidence = _knowledge_evidence(text, search_results)
     reasons: list[str] = []
     soft_reasons: list[str] = []
@@ -487,9 +497,9 @@ def analyze_catalog_gap(
     if explicit_fallback.required:
         reasons.append(explicit_fallback.reason or "explicit_constraint_gap")
 
-    requires_release = _matches_any(text, _ERA_PATTERNS) or _matches_any(text, _RELEASE_PATTERNS)
-    requires_recency = _matches_any(text, _RECENCY_PATTERNS)
-    requires_external = _matches_any(text, _EXTERNAL_KNOWLEDGE_PATTERNS)
+    requires_release = _has_release_constraint(metadata_constraints)
+    requires_recency = bool(metadata_constraints.get("recency_required"))
+    requires_external = bool(metadata_constraints.get("external_knowledge_required"))
     if requires_release:
         discovery_required = True
         local_release_with_cards = (
@@ -503,7 +513,12 @@ def analyze_catalog_gap(
         reasons.append("recency_required")
     if requires_external:
         discovery_required = True
-        if int(knowledge_evidence.get("query_hits") or 0) <= 0:
+        local_knowledge_hits = (
+            int(knowledge_evidence.get("query_hits") or 0)
+            + int(knowledge_evidence.get("local_song_hits") or 0)
+            + int(knowledge_evidence.get("local_artist_hits") or 0)
+        )
+        if local_knowledge_hits <= 0:
             reasons.append("external_knowledge_required")
 
     if count < min_local_results and (artists or songs or hard or requires_release or requires_recency):
@@ -529,6 +544,7 @@ def analyze_catalog_gap(
         "tag_evidence": tag_evidence,
         "language_evidence": language_evidence,
         "knowledge_evidence": knowledge_evidence,
+        "metadata_constraints": metadata_constraints,
     }
     if strict_gap and not web_enabled:
         return CatalogGapDecision(
@@ -569,7 +585,21 @@ def analyze_catalog_gap(
             details=details,
         )
 
-    exact_song_request = bool(songs) and not re.search(r"类似|相似|听感|same vibe|sounds like|like this", text)
+    soft = dict(plan.get("soft_intent") or {})
+    hints = dict(plan.get("hints") or {})
+    exact_song_request = bool(songs) and not any(
+        [
+            soft.get("goal"),
+            soft.get("trajectory"),
+            soft.get("vibe"),
+            soft.get("avoid"),
+            hints.get("genres"),
+            hints.get("mood"),
+            hints.get("scenario"),
+            plan.get("vector_acoustic_query"),
+            plan.get("vector_acoustic_queries"),
+        ]
+    )
     if web_enabled and count >= min_local_results and not exact_song_request:
         return CatalogGapDecision(
             action="mix_in",

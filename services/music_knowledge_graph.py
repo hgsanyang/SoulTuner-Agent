@@ -59,6 +59,11 @@ WHERE $kind = 'song'
 WITH k, s
 FOREACH (_ IN CASE WHEN s IS NULL THEN [] ELSE [1] END |
     MERGE (s)-[:HAS_KNOWLEDGE]->(k)
+    SET s.release_year_source = CASE
+            WHEN s.release_year IS NULL AND $release_year IS NOT NULL THEN 'knowledge_card'
+            ELSE s.release_year_source
+        END,
+        s.release_year = coalesce(s.release_year, $release_year)
 )
 RETURN k.key AS key
 """

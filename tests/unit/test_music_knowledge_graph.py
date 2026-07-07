@@ -24,3 +24,8 @@ def test_knowledge_graph_query_does_not_create_song_nodes():
     assert "OPTIONAL MATCH (s:Song)" in UPSERT_KNOWLEDGE_CARD_CYPHER
     assert "MERGE (s:Song" not in UPSERT_KNOWLEDGE_CARD_CYPHER
     assert "MERGE (k:KnowledgeCard" in UPSERT_KNOWLEDGE_CARD_CYPHER
+
+
+def test_knowledge_graph_can_backfill_existing_song_release_year():
+    assert "s.release_year = coalesce(s.release_year, $release_year)" in UPSERT_KNOWLEDGE_CARD_CYPHER
+    assert "s.release_year_source" in UPSERT_KNOWLEDGE_CARD_CYPHER
