@@ -15,6 +15,7 @@ import {
     fetchPendingSongs,
     ingestPendingSongs,
     deletePendingSong,
+    retainOnlineAudio,
     fetchIngestJobs,
     retryIngestJob,
     PendingSong,
@@ -29,6 +30,7 @@ export default function PendingPage() {
     const [jobs, setJobs] = useState<IngestJob[]>([]);
     const [jobCounts, setJobCounts] = useState<Record<string, number>>({});
     const [retryingJob, setRetryingJob] = useState<string | null>(null);
+    const [retainingSong, setRetainingSong] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [formatFilter, setFormatFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
@@ -142,6 +144,25 @@ export default function PendingPage() {
                 next.delete(song.file_basename);
                 return next;
             });
+        }
+    };
+
+    const handleRetainAudio = async (song: PendingSong) => {
+        if (song.valid === false || song.audio_retention === 'saved') return;
+        setRetainingSong(song.file_basename);
+        const result = await retainOnlineAudio({
+            file_basename: song.file_basename,
+            ext: song.format,
+            music_id: song.music_id,
+            title: song.title,
+            artist: song.artist,
+        });
+        setRetainingSong(null);
+        if (result.success) {
+            showToast(`✅ 「${song.title}」音源已长期保存`);
+            setSongs(prev => prev.map(item => item.file_basename === song.file_basename ? { ...item, audio_retention: 'saved' } : item));
+        } else {
+            showToast(`❌ 保存音源失败: ${result.error || result.message || '未知错误'}`);
         }
     };
 
@@ -370,6 +391,20 @@ export default function PendingPage() {
                                         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
                                     >
                                         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                                    </button>
+
+                                    <button title={song.audio_retention === 'saved' ? '音源已长期保存' : isInvalid ? '缺音频，无法保存' : '长期保存音源'} aria-label={`${song.audio_retention === 'saved' ? '音源已长期保存' : '长期保存音源'} ${song.title}`} disabled={isInvalid || song.audio_retention === 'saved' || retainingSong === song.file_basename} onClick={e => { e.stopPropagation(); handleRetainAudio(song); }}
+                                        style={{ background: 'none', border: 'none', color: song.audio_retention === 'saved' ? theme.colors.primary.accent : isInvalid ? theme.colors.text.muted : '#fbbf24', cursor: isInvalid || song.audio_retention === 'saved' ? 'not-allowed' : 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'color 0.2s', opacity: isInvalid ? 0.4 : 1 }}
+                                        onMouseEnter={e => { if (!isInvalid && song.audio_retention !== 'saved') e.currentTarget.style.color = '#fde68a'; }}
+                                        onMouseLeave={e => { e.currentTarget.style.color = song.audio_retention === 'saved' ? theme.colors.primary.accent : isInvalid ? theme.colors.text.muted : '#fbbf24'; }}
+                                    >
+                                        {retainingSong === song.file_basename ? (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>
+                                        ) : song.audio_retention === 'saved' ? (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+                                        ) : (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+                                        )}
                                     </button>
 
                                     {/* Delete */}

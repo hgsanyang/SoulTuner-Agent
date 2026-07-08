@@ -1830,6 +1830,76 @@ class PendingDeleteRequest(BaseModel):
     ext: str = "mp3"
 
 
+class OnlineAudioRetentionRequest(BaseModel):
+    file_basename: str = ""
+    ext: str = "mp3"
+    music_id: str = ""
+    song_id: str = ""
+    title: str = ""
+    artist: str = ""
+
+
+@app.post("/api/online-audio/retain")
+async def retain_online_audio_endpoint(
+    request: OnlineAudioRetentionRequest,
+    _: None = Depends(require_admin_api_key),
+):
+    """Promote a temporary online audio file to long-term retention."""
+
+    reject_shared_safe_action("retain online audio")
+    try:
+        from services.online_audio_retention import retain_online_audio
+
+        result = retain_online_audio(
+            ONLINE_AUDIO_ROOT,
+            file_basename=request.file_basename,
+            ext=request.ext,
+            title=request.title,
+            artist=request.artist,
+            song_id=request.song_id or request.music_id,
+            retention_reason="user_saved",
+        )
+        if not result.get("success"):
+            status = 404 if result.get("reason") == "metadata_not_found" else 400
+            raise HTTPException(status_code=status, detail=result.get("reason") or "retain_failed")
+
+        try:
+            from retrieval.neo4j_client import get_neo4j_client
+
+            client = get_neo4j_client()
+            client.execute_query(
+                """
+                MATCH (s:Song)
+                WHERE ($music_id <> '' AND toString(s.music_id) = $music_id)
+                   OR ($source_id <> '' AND toString(s.source_id) = $source_id)
+                   OR ($music_id = '' AND $source_id = '' AND s.title = $title AND coalesce(s.artist, '') = $artist)
+                SET s.audio_retention = 'saved',
+                    s.audio_status = 'cached',
+                    s.audio_url = coalesce(NULLIF(s.audio_url, ''), $audio_url),
+                    s.updated_at = timestamp()
+                RETURN count(s) AS updated
+                """,
+                {
+                    "music_id": request.music_id or result.get("song_id", ""),
+                    "source_id": request.song_id or result.get("song_id", ""),
+                    "title": request.title or result.get("title", ""),
+                    "artist": request.artist or result.get("artist", ""),
+                    "audio_url": result.get("audio_url", ""),
+                },
+            )
+        except Exception as neo4j_error:
+            logger.warning("[online-retain] Neo4j 同步失败，仅本地元数据已保存: %s", neo4j_error)
+
+        return {"success": True, "message": "音源已设为长期保存", **result}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("[online-retain] 保存音源失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
 @app.delete("/api/pending-songs")
 async def delete_pending_song(
     file_basename: str,
