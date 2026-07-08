@@ -20,6 +20,15 @@ from config.settings import settings
 
 logger = get_logger(__name__)
 
+
+def _playable_song_where(alias: str = "song") -> str:
+    return (
+        f"coalesce(properties({alias})['unplayable_stub'], false) <> true "
+        f"AND {alias}.audio_url IS NOT NULL "
+        f"AND trim(toString({alias}.audio_url)) <> ''"
+    )
+
+
 # 【V2 升级】常见中文情绪词 → 英文声学描述缓存
 # 命中缓存时直接用英文去编码向量，跳过 LLM 翻译调用
 _TRANSLATION_CACHE = {
@@ -189,12 +198,10 @@ def _should_use_dense_query_variants(text: str) -> bool:
         return False
     if mode == "on":
         return True
-    normalized = str(text or "").casefold()
-    if any(term in normalized for term in _PRECISION_QUERY_TERMS) and not any(
-        term in normalized for term in ("类似", "相似", "听感", "similar", "same vibe")
-    ):
-        return False
-    return any(term in normalized for term in _VARIANT_TRIGGER_TERMS)
+    # auto mode is intentionally conservative: online retrieval should not infer
+    # complex context from fixed phrases. Use LLM-planned vector_acoustic_queries
+    # for production, or force MUSIC_DENSE_QUERY_VARIANTS=on for offline bake-offs.
+    return False
 
 
 def _plan_query_variant_mode() -> str:
@@ -365,7 +372,7 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                 # ============================================================
                 # 联合查询：硬过滤 + 向量软排序
                 # ============================================================
-                where_clauses = []
+                where_clauses = [_playable_song_where("s")]
                 params = {"query_vector": query_vector, "limit": limit}
 
                 match_pattern = "(s:Song)"
@@ -443,6 +450,8 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                 base_cypher = f"""
                 CALL db.index.vector.queryNodes('{spec["index"]}', $wide, $query_vector)
                 YIELD node AS song, score
+                WITH song, score
+                WHERE {_playable_song_where("song")}
                 OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
                 OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
                 OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
@@ -521,6 +530,8 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
             cypher = f"""
             CALL db.index.vector.queryNodes('{spec["index"]}', $limit, $query_vector)
             YIELD node AS song, score
+            WITH song, score
+            WHERE {_playable_song_where("song")}
             OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
             OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
             OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)

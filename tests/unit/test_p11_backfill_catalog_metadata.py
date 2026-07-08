@@ -1,6 +1,8 @@
 from scripts.p11_backfill_catalog_metadata import (
     artist_string,
     backfill_language_relationships,
+    backfill_release_year_from_knowledge_cards,
+    mark_unplayable_stubs,
     normalize_artist_name,
     normalize_title,
     release_year_from_metadata,
@@ -33,7 +35,7 @@ class _FakeClient:
 
     def execute_query(self, cypher, params=None):
         self.calls.append(cypher)
-        if "RETURN count(s) AS n" in cypher:
+        if "RETURN count(s) AS n" in cypher or "RETURN count(DISTINCT s) AS n" in cypher:
             return [{"n": 3}]
         return []
 
@@ -52,3 +54,36 @@ def test_backfill_language_relationships_uses_existing_language_property():
     assert len(client.calls) == 2
     assert "MERGE (lang:Language" in client.calls[1]
     assert "properties(s)['language']" in client.calls[1]
+
+
+def test_mark_unplayable_stubs_is_dry_run_safe():
+    client = _FakeClient()
+
+    assert mark_unplayable_stubs(client, dry_run=True) == 3
+    assert len(client.calls) == 1
+
+
+def test_mark_unplayable_stubs_marks_missing_audio_without_deleting():
+    client = _FakeClient()
+
+    assert mark_unplayable_stubs(client, dry_run=False) == 3
+    assert len(client.calls) == 2
+    assert "SET s.unplayable_stub = true" in client.calls[1]
+    assert "DELETE" not in client.calls[1].upper()
+
+
+def test_backfill_release_year_from_knowledge_cards_is_dry_run_safe():
+    client = _FakeClient()
+
+    assert backfill_release_year_from_knowledge_cards(client, dry_run=True) == 3
+    assert len(client.calls) == 1
+    assert "KnowledgeCard" in client.calls[0]
+
+
+def test_backfill_release_year_from_knowledge_cards_uses_source_backed_cards():
+    client = _FakeClient()
+
+    assert backfill_release_year_from_knowledge_cards(client, dry_run=False) == 3
+    assert len(client.calls) == 2
+    assert "HAS_KNOWLEDGE" in client.calls[1]
+    assert "release_year_source = 'knowledge_card'" in client.calls[1]

@@ -15,6 +15,12 @@ def has_value(value: Any) -> bool:
     return value not in UNKNOWN_VALUES and str(value).strip() not in UNKNOWN_VALUES
 
 
+def is_playable_song(song: Mapping[str, Any]) -> bool:
+    if song.get("unplayable_stub") is True:
+        return False
+    return has_value(song.get("audio_url") or song.get("preview_url") or song.get("play_url"))
+
+
 def vector_coverage_from_dims(*, muq_dim: Any = 0, m2d_dim: Any = 0, omar_dim: Any = 0) -> dict[str, bool]:
     def _int(value: Any) -> int:
         try:

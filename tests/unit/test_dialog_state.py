@@ -9,6 +9,7 @@ from schemas.dialog_state import (
     apply_plan_delta,
     apply_plan_delta_with_report,
     build_deterministic_plan_delta,
+    clarification_from_plan_conflict,
     compile_dialog_state_to_plan,
     coerce_followup_general_chat_to_retrieval,
     infer_dialog_state_from_history,
@@ -23,9 +24,11 @@ def _plan(
     intent_type: str = "hybrid_search",
     language: str | None = None,
     artist: list[str] | None = None,
+    songs: list[str] | None = None,
     vibe: str = "",
     avoid: list[str] | None = None,
     genres: list[str] | None = None,
+    instrumental: bool = False,
 ):
     return MusicQueryPlan(
         intent_type=intent_type,
@@ -33,7 +36,9 @@ def _plan(
         retrieval_plan=RetrievalPlan(
             hard_constraints=HardConstraints(
                 artist_entities=artist or [],
+                song_entities=songs or [],
                 language=language,
+                instrumental=instrumental,
             ),
             soft_intent=SoftIntent(vibe=vibe, avoid=avoid or []),
             hints=IntentHints(genres=genres or []),
@@ -72,6 +77,19 @@ def test_full_planner_followup_reports_removed_unmentioned_fields():
     assert delta.topic_shift is False
     assert "soft_intent.vibe" in delta.removed
     assert delta.replaced["hard_constraints.language"] == "Chinese"
+
+
+def test_reference_song_entity_in_followup_does_not_force_topic_shift():
+    first = DialogMusicState(turn_count=1)
+    second, delta = apply_plan_delta_with_report(
+        first,
+        _plan(songs=["心要野"], vibe="controlled less crowded rock", avoid=["high energy"], genres=["rock"]),
+        "和刚才第一首相似，但别再那么热闹",
+    )
+
+    assert second.turn_count == 2
+    assert delta.followup is True
+    assert delta.topic_shift is False
 
 
 def test_followup_general_chat_is_coerced_to_retrieval_when_state_is_resolved():
@@ -290,6 +308,28 @@ def test_severe_conflict_uses_high_precision_clarification():
     assert clarification.required is True
     assert clarification.reason == "severe_conflict"
     assert len(clarification.options) == 3
+
+
+def test_instrumental_and_vocal_rap_conflict_asks_clarification():
+    clarification = should_clarify_before_planning("既要完全无歌词又要中文说唱，最好还能突出人声", None)
+
+    assert clarification.required is True
+    assert clarification.reason == "severe_conflict"
+    assert "hard_constraints.instrumental" in clarification.unresolved_paths
+
+
+def test_llm_plan_conflict_can_trigger_clarification_without_raw_phrase_routing():
+    plan = _plan(
+        instrumental=True,
+        genres=["hip-hop"],
+        vibe="Chinese rap with prominent vocal presence",
+    )
+
+    clarification = clarification_from_plan_conflict(plan)
+
+    assert clarification.required is True
+    assert clarification.reason == "severe_conflict"
+    assert "hard_constraints.instrumental" in clarification.unresolved_paths
 
 
 def test_result_anchors_enable_later_song_references():

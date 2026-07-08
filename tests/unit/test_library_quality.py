@@ -1,5 +1,6 @@
 from services.library_quality import (
     duplicate_key,
+    is_playable_song,
     missing_fields_for_song,
     pending_asset_status,
     quality_score,
@@ -40,3 +41,10 @@ def test_pending_asset_status_marks_missing_audio_invalid():
     assert status["valid"] is False
     assert status["status"] == "invalid"
     assert status["missing_assets"] == ["audio", "lyrics"]
+
+
+def test_is_playable_song_rejects_stubs_and_missing_audio():
+    assert is_playable_song({"audio_url": "/static/audio/a.mp3"})
+    assert is_playable_song({"preview_url": "/static/audio/a.mp3"})
+    assert not is_playable_song({"audio_url": ""})
+    assert not is_playable_song({"audio_url": "/static/audio/a.mp3", "unplayable_stub": True})

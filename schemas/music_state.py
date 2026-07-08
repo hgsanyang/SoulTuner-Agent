@@ -5,7 +5,15 @@
 from typing import TypedDict, List, Dict, Any, Optional, Annotated
 from pydantic import BaseModel, Field
 from langchain_core.messages import BaseMessage
-from langgraph.graph.message import add_messages
+try:
+    from langgraph.graph.message import add_messages
+except ModuleNotFoundError:  # pragma: no cover - exercised only in minimal CI envs
+    def add_messages(left, right):
+        if left is None:
+            left = []
+        if right is None:
+            right = []
+        return [*left, *right]
 
 class ToolOutput(BaseModel):
     """标准的工具返回值格式"""

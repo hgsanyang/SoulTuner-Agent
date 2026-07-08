@@ -471,6 +471,8 @@ export default function MyLibraryPage() {
                         <div>格式：{selectedSong.format || '未知'}</div>
                         <div>时长：{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : '未知'}</div>
                         <div>标签来源：{selectedSong.tag_source || '未记录'}</div>
+                        <div>音源保留：{selectedSong.audio_retention === 'saved' ? '长期保存' : selectedSong.audio_retention === 'temporary' ? '临时缓存' : '未记录'}</div>
+                        <div>入库状态：{selectedSong.acquire_status || selectedSong.audio_status || '正常'}</div>
                         <div>质量分：{Math.round((selectedSong.quality_score ?? 0) * 100)}%</div>
                         <div>去重键：{selectedSong.duplicate_key || '未生成'}</div>
                     </div>

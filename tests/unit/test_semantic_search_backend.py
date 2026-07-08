@@ -40,3 +40,23 @@ def test_plan_query_variants_can_enable_all_or_off(monkeypatch):
 
     monkeypatch.setattr(semantic_search.settings, "plan_query_variant_mode", "off")
     assert not semantic_search._should_apply_plan_query_variants("m2d")
+
+
+def test_semantic_search_filters_unplayable_song_nodes():
+    where = semantic_search._playable_song_where("song")
+
+    assert "song.audio_url IS NOT NULL" in where
+    assert "unplayable_stub" in where
+
+
+def test_dense_query_variant_auto_mode_does_not_use_fixed_phrases(monkeypatch):
+    monkeypatch.setattr(semantic_search.settings, "dense_query_variant_mode", "auto")
+
+    assert not semantic_search._should_use_dense_query_variants("需要安静温柔的雨天歌")
+    assert not semantic_search._should_use_dense_query_variants("similar songs with the same vibe")
+
+
+def test_dense_query_variant_manual_on_still_available(monkeypatch):
+    monkeypatch.setattr(semantic_search.settings, "dense_query_variant_mode", "on")
+
+    assert semantic_search._should_use_dense_query_variants("任何查询都用于离线 bake-off")

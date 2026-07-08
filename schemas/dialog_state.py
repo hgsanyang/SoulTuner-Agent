@@ -23,6 +23,8 @@ UNRESOLVED_REFERENCE_CUES = (
     "同样的氛围",
     "同样的感觉",
     "刚才那首",
+    "刚才第一首",
+    "第一首",
     "上一首",
     "换一个",
     "换首",
@@ -565,6 +567,8 @@ def _looks_like_topic_shift(user_input: str, plan: MusicQueryPlan) -> bool:
     hard = plan.retrieval_plan.hard_constraints
     text = _norm(user_input)
     explicit_new_entity = bool(hard.artist_entities or hard.song_entities)
+    if _has_any(text, UNRESOLVED_REFERENCE_CUES):
+        explicit_new_entity = False
     reset_words = ("换个话题", "重新开始", "新歌单", "不要管上面", "from scratch", "new topic")
     return explicit_new_entity or _has_any(text, reset_words)
 
@@ -583,6 +587,10 @@ def should_clarify_before_planning(
         re.search(r"安静|助眠|睡前|quiet|sleep", text)
         and re.search(r"炸裂|蹦迪|狂暴|extremely loud|raging party", text)
     )
+    instrumental_voice_conflict = (
+        re.search(r"完全无歌词|无歌词|纯音乐|器乐|无人声|instrumental|without vocals|no vocals|no lyrics", text)
+        and re.search(r"中文说唱|说唱|rap|突出人声|人声|vocal|vocals", text)
+    )
     if severe_conflict:
         return ClarificationRequest(
             required=True,
@@ -590,6 +598,14 @@ def should_clarify_before_planning(
             question="“安静助眠”和“炸裂蹦迪”是两个相反方向。你希望这次更偏哪一边？",
             options=["安静助眠", "有节奏但不吵", "直接来高能量"],
             unresolved_paths=["soft_intent.vibe", "hints.scenario"],
+        )
+    if instrumental_voice_conflict:
+        return ClarificationRequest(
+            required=True,
+            reason="severe_conflict",
+            question="“完全无歌词/纯音乐”和“说唱/突出人声”会互相冲突。你这次更想保留哪一个方向？",
+            options=["完全无歌词", "中文说唱人声", "保留节奏但弱化人声"],
+            unresolved_paths=["hard_constraints.instrumental", "soft_intent.vibe", "hints.genres"],
         )
     if _has_any(user_input, PRIVATE_MEMORY_REFERENCE_CUES) and not has_state:
         return ClarificationRequest(
@@ -634,6 +650,55 @@ def should_clarify_before_planning(
             "描述想保留的氛围",
         ],
     )
+
+
+def clarification_from_plan_conflict(plan: MusicQueryPlan) -> ClarificationRequest:
+    """Ask when the LLM-produced plan contains mutually exclusive constraints."""
+
+    rp = plan.retrieval_plan
+    hard = rp.hard_constraints
+    evidence = _norm(
+        " ".join(
+            str(part or "")
+            for part in (
+                rp.graph_genre_filter,
+                rp.graph_mood_filter,
+                rp.graph_scenario_filter,
+                " ".join(rp.hints.genres or []),
+                rp.hints.mood,
+                rp.hints.scenario,
+                rp.soft_intent.goal,
+                rp.soft_intent.trajectory,
+                rp.soft_intent.vibe,
+                " ".join(rp.soft_intent.avoid or []),
+                rp.vector_acoustic_query,
+                " ".join(rp.vector_acoustic_queries or []),
+            )
+        )
+    )
+    voice_forward = _has_any(
+        evidence,
+        (
+            "说唱",
+            "rap",
+            "hip-hop",
+            "hip hop",
+            "人声",
+            "vocal",
+            "vocals",
+            "voice-forward",
+            "voice forward",
+        ),
+    )
+    if hard.instrumental and voice_forward:
+        return ClarificationRequest(
+            required=True,
+            reason="severe_conflict",
+            question="“完全无歌词/纯音乐”和“中文说唱/突出人声”会互相冲突。你这次更想保留哪一个方向？",
+            options=["完全无歌词", "中文说唱人声", "保留节奏但弱化人声"],
+            unresolved_paths=["hard_constraints.instrumental", "soft_intent.vibe", "hints.genres"],
+        )
+    return ClarificationRequest()
 
 
 def load_dialog_state(raw: DialogMusicState | dict[str, Any] | None) -> DialogMusicState:

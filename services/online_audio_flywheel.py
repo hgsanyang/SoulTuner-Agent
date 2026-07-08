@@ -220,7 +220,12 @@ def cleanup_expired_temporary_audio(
 ) -> dict[str, Any]:
     """Release stale temporary MP3 files while keeping metadata and embeddings."""
     from services.ingest_queue import list_jobs
-    from tools.acquire_music import ONLINE_AUDIO_DIR, ONLINE_META_DIR
+
+    if metadata_dir is None or audio_dir is None:
+        from tools.acquire_music import ONLINE_AUDIO_DIR, ONLINE_META_DIR
+    else:
+        ONLINE_AUDIO_DIR = audio_dir
+        ONLINE_META_DIR = metadata_dir
 
     ttl = int(ttl_hours if ttl_hours is not None else getattr(settings, "online_temp_audio_ttl_hours", 24))
     if ttl <= 0:
