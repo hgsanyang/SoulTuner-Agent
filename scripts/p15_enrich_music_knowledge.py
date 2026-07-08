@@ -19,7 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from retrieval.neo4j_client import get_neo4j_client  # noqa: E402
 from services.knowledge_vector_index import upsert_cards_to_qdrant  # noqa: E402
-from services.music_knowledge_enrichment import enrich_artist_card, enrich_song_card  # noqa: E402
+from services.music_knowledge_enrichment import enrich_artist_card, enrich_song_card, enrich_song_cards_batch  # noqa: E402
 from services.music_knowledge_store import MusicKnowledgeStore  # noqa: E402
 
 
@@ -126,6 +126,56 @@ async def run(args: argparse.Namespace) -> dict:
             if result.get("error"):
                 errors.append({"item": str(result.get("label") or ""), "error": str(result["error"])})
 
+    async def _run_song_batch(songs: list[dict[str, str]]) -> None:
+        if (
+            args.batch_size <= 1
+            or not args.use_llm_summary
+            or args.allow_snippet_fallback
+            or args.artist
+            or args.song
+        ):
+            await _run_batch(
+                [f"{song['title']}::{song.get('artist', '')}" for song in songs],
+                [
+                    (
+                        lambda song=song: enrich_song_card(
+                            song["title"],
+                            song.get("artist", ""),
+                            store=store,
+                            dry_run=args.dry_run,
+                            use_llm_summary=args.use_llm_summary,
+                            allow_snippet_fallback=args.allow_snippet_fallback,
+                        )
+                    )
+                    for song in songs
+                ],
+            )
+            return
+
+        chunks = [songs[idx : idx + args.batch_size] for idx in range(0, len(songs), args.batch_size)]
+        semaphore = asyncio.Semaphore(max(1, int(args.concurrency)))
+
+        async def _chunk(chunk: list[dict[str, str]]) -> dict[str, Any]:
+            label = "; ".join(f"{song['title']}::{song.get('artist', '')}" for song in chunk)
+            async with semaphore:
+                try:
+                    return {
+                        "label": label,
+                        "cards": await enrich_song_cards_batch(
+                            chunk,
+                            store=store,
+                            dry_run=args.dry_run,
+                            use_llm_summary=args.use_llm_summary,
+                        ),
+                    }
+                except Exception as exc:
+                    return {"label": label, "error": str(exc)[:240]}
+
+        for result in await asyncio.gather(*(_chunk(chunk) for chunk in chunks)):
+            cards.extend(result.get("cards") or [])
+            if result.get("error"):
+                errors.append({"item": str(result.get("label") or ""), "error": str(result["error"])})
+
     if args.artist:
         card = await enrich_artist_card(
             args.artist,
@@ -167,40 +217,10 @@ async def run(args: argparse.Namespace) -> dict:
         )
     if args.from_neo4j_songs:
         songs = load_seed_songs(limit=args.limit)
-        await _run_batch(
-            [f"{song['title']}::{song.get('artist', '')}" for song in songs],
-            [
-                (
-                    lambda song=song: enrich_song_card(
-                        song["title"],
-                        song.get("artist", ""),
-                        store=store,
-                        dry_run=args.dry_run,
-                        use_llm_summary=args.use_llm_summary,
-                        allow_snippet_fallback=args.allow_snippet_fallback,
-                    )
-                )
-                for song in songs
-            ],
-        )
+        await _run_song_batch(songs)
     if args.from_neo4j_missing_years:
         songs = load_missing_release_year_songs(limit=args.limit)
-        await _run_batch(
-            [f"{song['title']}::{song.get('artist', '')}" for song in songs],
-            [
-                (
-                    lambda song=song: enrich_song_card(
-                        song["title"],
-                        song.get("artist", ""),
-                        store=store,
-                        dry_run=args.dry_run,
-                        use_llm_summary=args.use_llm_summary,
-                        allow_snippet_fallback=args.allow_snippet_fallback,
-                    )
-                )
-                for song in songs
-            ],
-        )
+        await _run_song_batch(songs)
 
     result = {
         "store_path": str(store.path),
@@ -250,6 +270,12 @@ def main() -> None:
     )
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--concurrency", type=int, default=1, help="Batch concurrency for Neo4j seed enrichment")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Group this many songs into one Qwen web-search request. Use 3-5 for backlog jobs; 1 keeps per-song precision.",
+    )
     parser.add_argument("--store-path", default="")
     parser.add_argument("--dry-run", action="store_true")
     parser.set_defaults(use_llm_summary=True)

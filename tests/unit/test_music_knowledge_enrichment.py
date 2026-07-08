@@ -6,6 +6,7 @@ from services.music_knowledge_enrichment import (
     normalize_snippets,
     _extract_json_object,
     _llm_web_card,
+    _llm_web_song_cards_batch,
     _normalise_llm_card,
 )
 
@@ -166,3 +167,42 @@ def test_llm_card_allows_non_search_baike_source_urls():
 
     assert card is not None
     assert card["source_url"].startswith("https://baike.baidu.com/")
+
+
+def test_qwen_batch_web_search_card_parses_multiple_cards(monkeypatch):
+    class FakeResponses:
+        def create(self, **kwargs):
+            assert kwargs["tools"] == [{"type": "web_search"}]
+            assert "歌曲列表" in kwargs["input"]
+
+            class Response:
+                output_text = (
+                    '{"cards":['
+                    '{"title":"Song A","artist":"Artist A","summary":"A summary.",'
+                    '"facts":["A fact."],"style_tags":["Rock"],"release_year":1999,'
+                    '"details":{"album":"Album A"},"confidence":0.8,'
+                    '"sources":["https://example.com/a"]},'
+                    '{"title":"Song B","artist":"Artist B","summary":"B summary.",'
+                    '"facts":["B fact."],"style_tags":["Folk"],"release_year":2001,'
+                    '"details":{"album":"Album B"},"confidence":0.9,'
+                    '"sources":["https://example.com/b"]}'
+                    ']}'
+                )
+
+            return Response()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr("services.music_knowledge_enrichment._dashscope_openai_client", lambda: FakeClient())
+
+    cards = _llm_web_song_cards_batch(
+        [
+            {"title": "Song A", "artist": "Artist A"},
+            {"title": "Song B", "artist": "Artist B"},
+        ]
+    )
+
+    assert [card["title"] for card in cards] == ["Song A", "Song B"]
+    assert cards[0]["source"] == "dashscope_web_search_batch"
+    assert cards[1]["details"]["album"] == "Album B"
