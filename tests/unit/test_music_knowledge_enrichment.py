@@ -6,6 +6,7 @@ from services.music_knowledge_enrichment import (
     normalize_snippets,
     _extract_json_object,
     _llm_web_card,
+    _llm_web_artist_cards_batch,
     _llm_web_song_cards_batch,
     _normalise_llm_card,
 )
@@ -206,3 +207,37 @@ def test_qwen_batch_web_search_card_parses_multiple_cards(monkeypatch):
     assert [card["title"] for card in cards] == ["Song A", "Song B"]
     assert cards[0]["source"] == "dashscope_web_search_batch"
     assert cards[1]["details"]["album"] == "Album B"
+
+
+def test_qwen_batch_artist_cards_parse_multiple_cards(monkeypatch):
+    class FakeResponses:
+        def create(self, **kwargs):
+            assert kwargs["tools"] == [{"type": "web_search"}]
+            assert "艺人列表" in kwargs["input"]
+
+            class Response:
+                output_text = (
+                    '{"cards":['
+                    '{"artist":"Artist A","summary":"A band.",'
+                    '"facts":["A fact."],"style_tags":["Rock"],"release_year":null,'
+                    '"details":{"artist_type":"band"},"confidence":0.8,'
+                    '"sources":["https://example.com/artist-a"]},'
+                    '{"artist":"Artist B","summary":"A singer.",'
+                    '"facts":["B fact."],"style_tags":["Folk"],"release_year":null,'
+                    '"details":{"artist_type":"solo"},"confidence":0.9,'
+                    '"sources":["https://example.com/artist-b"]}'
+                    ']}'
+                )
+
+            return Response()
+
+    class FakeClient:
+        responses = FakeResponses()
+
+    monkeypatch.setattr("services.music_knowledge_enrichment._dashscope_openai_client", lambda: FakeClient())
+
+    cards = _llm_web_artist_cards_batch(["Artist A", "Artist B"])
+
+    assert [card["artist"] for card in cards] == ["Artist A", "Artist B"]
+    assert cards[0]["source"] == "dashscope_web_search_batch"
+    assert cards[1]["details"]["artist_type"] == "solo"

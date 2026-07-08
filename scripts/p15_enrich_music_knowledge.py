@@ -19,7 +19,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from retrieval.neo4j_client import get_neo4j_client  # noqa: E402
 from services.knowledge_vector_index import upsert_cards_to_qdrant  # noqa: E402
-from services.music_knowledge_enrichment import enrich_artist_card, enrich_song_card, enrich_song_cards_batch  # noqa: E402
+from services.music_knowledge_enrichment import (  # noqa: E402
+    enrich_artist_card,
+    enrich_artist_cards_batch,
+    enrich_song_card,
+    enrich_song_cards_batch,
+)
 from services.music_knowledge_store import MusicKnowledgeStore  # noqa: E402
 
 
@@ -176,6 +181,49 @@ async def run(args: argparse.Namespace) -> dict:
             if result.get("error"):
                 errors.append({"item": str(result.get("label") or ""), "error": str(result["error"])})
 
+    async def _run_artist_batch(artists: list[str]) -> None:
+        if args.batch_size <= 1 or not args.use_llm_summary or args.allow_snippet_fallback:
+            await _run_batch(
+                artists,
+                [
+                    (
+                        lambda artist=artist: enrich_artist_card(
+                            artist,
+                            store=store,
+                            dry_run=args.dry_run,
+                            use_llm_summary=args.use_llm_summary,
+                            allow_snippet_fallback=args.allow_snippet_fallback,
+                        )
+                    )
+                    for artist in artists
+                ],
+            )
+            return
+
+        chunks = [artists[idx : idx + args.batch_size] for idx in range(0, len(artists), args.batch_size)]
+        semaphore = asyncio.Semaphore(max(1, int(args.concurrency)))
+
+        async def _chunk(chunk: list[str]) -> dict[str, Any]:
+            label = "; ".join(chunk)
+            async with semaphore:
+                try:
+                    return {
+                        "label": label,
+                        "cards": await enrich_artist_cards_batch(
+                            chunk,
+                            store=store,
+                            dry_run=args.dry_run,
+                            use_llm_summary=args.use_llm_summary,
+                        ),
+                    }
+                except Exception as exc:
+                    return {"label": label, "error": str(exc)[:240]}
+
+        for result in await asyncio.gather(*(_chunk(chunk) for chunk in chunks)):
+            cards.extend(result.get("cards") or [])
+            if result.get("error"):
+                errors.append({"item": str(result.get("label") or ""), "error": str(result["error"])})
+
     if args.artist:
         card = await enrich_artist_card(
             args.artist,
@@ -200,21 +248,7 @@ async def run(args: argparse.Namespace) -> dict:
             cards.append(card)
     if args.from_neo4j_artists:
         artists = load_seed_artists(limit=args.limit)
-        await _run_batch(
-            artists,
-            [
-                (
-                    lambda artist=artist: enrich_artist_card(
-                        artist,
-                        store=store,
-                        dry_run=args.dry_run,
-                        use_llm_summary=args.use_llm_summary,
-                        allow_snippet_fallback=args.allow_snippet_fallback,
-                    )
-                )
-                for artist in artists
-            ],
-        )
+        await _run_artist_batch(artists)
     if args.from_neo4j_songs:
         songs = load_seed_songs(limit=args.limit)
         await _run_song_batch(songs)
