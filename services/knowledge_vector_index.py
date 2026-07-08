@@ -45,6 +45,16 @@ def text_for_card(card: Mapping[str, Any]) -> str:
 
     facts = card.get("facts") or []
     style_tags = card.get("style_tags") or []
+    details = card.get("details") or {}
+    details_text = ""
+    if isinstance(details, Mapping):
+        details_text = " ".join(
+            str(part or "")
+            for part in (
+                " ".join(str(key) for key in details.keys()),
+                " ".join(str(value) for value in details.values()),
+            )
+        )
     return " ".join(
         str(part or "")
         for part in (
@@ -54,6 +64,7 @@ def text_for_card(card: Mapping[str, Any]) -> str:
             card.get("summary"),
             " ".join(str(tag) for tag in style_tags),
             " ".join(str(fact) for fact in facts),
+            details_text,
             card.get("release_year"),
         )
         if part
@@ -103,6 +114,7 @@ def payload_for_card(card: Mapping[str, Any]) -> dict[str, Any]:
         "summary": str(card.get("summary") or ""),
         "facts": list(card.get("facts") or [])[:8],
         "style_tags": list(card.get("style_tags") or [])[:12],
+        "details": dict(card.get("details") or {}) if isinstance(card.get("details"), Mapping) else {},
         "release_year": card.get("release_year"),
         "source": str(card.get("source") or card.get("source_provider") or "web"),
         "source_url": str(card.get("source_url") or ""),

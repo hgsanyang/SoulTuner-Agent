@@ -39,31 +39,41 @@ GRAPH_AFFINITY_USER_ID = "local_admin" # 图距离计算的用户 ID
 
 def _post_recall_config_for_user(user_id: str = GRAPH_AFFINITY_USER_ID) -> PostRecallAdjustmentConfig:
     """Apply only bounded, validation-gated feedback multipliers."""
+    multipliers: Dict[str, float] = {}
     try:
         from services.ranking_policy import runtime_policy_for_user
 
         policy = runtime_policy_for_user(user_id)
-        multipliers = (policy or {}).get("post_recall_multipliers") or {}
-        return PostRecallAdjustmentConfig(
-            personal_weight=DEFAULT_POST_RECALL_CONFIG.personal_weight
-            * float(multipliers.get("personal", 1.0)),
-            freshness_weight=DEFAULT_POST_RECALL_CONFIG.freshness_weight
-            * float(multipliers.get("freshness", 1.0)),
-            longtail_weight=DEFAULT_POST_RECALL_CONFIG.longtail_weight
-            * float(multipliers.get("longtail", 1.0)),
-            exposure_penalty_weight=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_weight
-            * float(multipliers.get("exposure_penalty", 1.0)),
-            semantic_preference_weight=DEFAULT_POST_RECALL_CONFIG.semantic_preference_weight
-            * float(multipliers.get("semantic_preference", 1.0)),
-            semantic_conflict_weight=DEFAULT_POST_RECALL_CONFIG.semantic_conflict_weight
-            * float(multipliers.get("semantic_conflict", 1.0)),
-            delta_limit=DEFAULT_POST_RECALL_CONFIG.delta_limit,
-            freshness_half_life_days=DEFAULT_POST_RECALL_CONFIG.freshness_half_life_days,
-            exposure_half_life_days=DEFAULT_POST_RECALL_CONFIG.exposure_half_life_days,
-            exposure_penalty_pivot=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_pivot,
-        )
+        multipliers.update((policy or {}).get("post_recall_multipliers") or {})
     except Exception:
-        return DEFAULT_POST_RECALL_CONFIG
+        multipliers = {}
+    try:
+        from services.policy_memory import policy_runtime_payload_for_user
+
+        memory_payload = policy_runtime_payload_for_user(user_id) or {}
+        memory_multipliers = memory_payload.get("post_recall_multipliers") or {}
+        for key, value in memory_multipliers.items():
+            multipliers[key] = float(multipliers.get(key, 1.0)) * float(value)
+    except Exception:
+        pass
+    return PostRecallAdjustmentConfig(
+        personal_weight=DEFAULT_POST_RECALL_CONFIG.personal_weight
+        * float(multipliers.get("personal", 1.0)),
+        freshness_weight=DEFAULT_POST_RECALL_CONFIG.freshness_weight
+        * float(multipliers.get("freshness", 1.0)),
+        longtail_weight=DEFAULT_POST_RECALL_CONFIG.longtail_weight
+        * float(multipliers.get("longtail", 1.0)),
+        exposure_penalty_weight=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_weight
+        * float(multipliers.get("exposure_penalty", 1.0)),
+        semantic_preference_weight=DEFAULT_POST_RECALL_CONFIG.semantic_preference_weight
+        * float(multipliers.get("semantic_preference", 1.0)),
+        semantic_conflict_weight=DEFAULT_POST_RECALL_CONFIG.semantic_conflict_weight
+        * float(multipliers.get("semantic_conflict", 1.0)),
+        delta_limit=DEFAULT_POST_RECALL_CONFIG.delta_limit,
+        freshness_half_life_days=DEFAULT_POST_RECALL_CONFIG.freshness_half_life_days,
+        exposure_half_life_days=DEFAULT_POST_RECALL_CONFIG.exposure_half_life_days,
+        exposure_penalty_pivot=DEFAULT_POST_RECALL_CONFIG.exposure_penalty_pivot,
+    )
 
 def _norm_token(value: Any) -> str:
     return str(value or "").strip().casefold()

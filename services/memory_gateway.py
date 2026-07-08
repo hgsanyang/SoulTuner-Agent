@@ -603,6 +603,12 @@ class MemoryGateway:
             invalidate_user_pref_cache(user_id)
         except Exception:
             pass
+        try:
+            from services.policy_memory import invalidate_policy_memory_cache
+
+            invalidate_policy_memory_cache(user_id)
+        except Exception:
+            pass
 
 
 _gateway: MemoryGateway | None = None

@@ -6,6 +6,7 @@ from services.music_knowledge_enrichment import (
     normalize_snippets,
     _extract_json_object,
     _llm_web_card,
+    _normalise_llm_card,
 )
 
 
@@ -107,6 +108,7 @@ def test_qwen_web_search_card_parses_responses_api_json(monkeypatch):
                     '"facts":["代表作包括 Boys Don’t Cry。"],'
                     '"style_tags":["Post-Punk","Gothic Rock"],'
                     '"release_year":null,'
+                    '"details":{"country_or_region":"United Kingdom","artist_type":"band"},'
                     '"confidence":0.86,'
                     '"sources":["https://example.com/the-cure"]}'
                 )
@@ -126,3 +128,41 @@ def test_qwen_web_search_card_parses_responses_api_json(monkeypatch):
     assert card["source"] == "dashscope_web_search"
     assert card["source_url"] == "https://example.com/the-cure"
     assert "Gothic Rock" in card["style_tags"]
+    assert card["details"]["artist_type"] == "band"
+
+
+def test_llm_card_rejects_search_aggregator_source_urls():
+    card = _normalise_llm_card(
+        kind="song",
+        title="Some Song",
+        artist="Some Artist",
+        parsed={
+            "summary": "A sourced-looking but unsupported summary.",
+            "facts": ["Fact"],
+            "style_tags": ["Pop"],
+            "release_year": 2000,
+            "confidence": 0.9,
+            "sources": ["https://tavily.com/search?q=some-song"],
+        },
+    )
+
+    assert card is None
+
+
+def test_llm_card_allows_non_search_baike_source_urls():
+    card = _normalise_llm_card(
+        kind="song",
+        title="Some Song",
+        artist="Some Artist",
+        parsed={
+            "summary": "A supported summary.",
+            "facts": ["Fact"],
+            "style_tags": ["Pop"],
+            "release_year": 2000,
+            "confidence": 0.9,
+            "sources": ["https://baike.baidu.com/item/some-song"],
+        },
+    )
+
+    assert card is not None
+    assert card["source_url"].startswith("https://baike.baidu.com/")

@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -34,6 +35,18 @@ STYLE_KEYWORDS = {
 }
 
 PROJECT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+BLOCKED_SOURCE_HOSTS = {
+    "tavily.com",
+    "www.tavily.com",
+    "google.com",
+    "www.google.com",
+    "bing.com",
+    "www.bing.com",
+    "baidu.com",
+    "www.baidu.com",
+    "search.brave.com",
+}
+BLOCKED_SOURCE_PARENT_HOSTS = {"tavily.com"}
 
 
 @dataclass(frozen=True)
@@ -119,6 +132,48 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _is_traceable_source_url(url: str) -> bool:
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    host = parsed.netloc.casefold()
+    if host in BLOCKED_SOURCE_HOSTS:
+        return False
+    if any(host.endswith("." + blocked) for blocked in BLOCKED_SOURCE_PARENT_HOSTS):
+        return False
+    if "/search" in parsed.path.casefold() and host in {"google.com", "www.google.com", "bing.com", "www.bing.com"}:
+        return False
+    return True
+
+
+def _first_traceable_source_url(items: Any) -> str:
+    if isinstance(items, str):
+        items = [items]
+    for item in items or []:
+        raw = str(item or "").strip()
+        if _is_traceable_source_url(raw):
+            return raw
+    return ""
+
+
+def _details_from_parsed(kind: str, parsed: Mapping[str, Any]) -> dict[str, Any]:
+    raw = parsed.get("details") or {}
+    if not isinstance(raw, Mapping):
+        raw = {}
+    details = dict(raw)
+    if kind == "song":
+        release_year = parsed.get("release_year") or details.get("original_release_year") or details.get("release_year")
+        if release_year:
+            details.setdefault("original_release_year", release_year)
+    return details
+
+
 def _load_dashscope_env() -> str:
     try:
         from dotenv import load_dotenv
@@ -145,19 +200,26 @@ def _normalise_llm_card(
     sources = parsed.get("sources") or parsed.get("source_urls") or []
     if isinstance(sources, str):
         sources = [sources]
-    first_source = source_url or next((str(item).strip() for item in sources if str(item).strip()), "")
+    first_source = source_url if _is_traceable_source_url(source_url) else _first_traceable_source_url(sources)
+    if not first_source:
+        return None
+    details = _details_from_parsed(kind, parsed)
+    release_year = parsed.get("release_year")
+    if kind == "song" and not release_year:
+        release_year = details.get("original_release_year") or details.get("release_year")
     return {
         "kind": "artist" if kind == "artist" else "song",
         "title": title,
         "artist": artist,
         "summary": summary[:900],
         "facts": [str(item)[:220] for item in parsed.get("facts") or [] if str(item).strip()][:8],
+        "details": details,
         "source": source,
         "source_url": first_source,
         "confidence": clamp_confidence(parsed.get("confidence"), default=0.74),
         "style_tags": [str(item)[:80] for item in parsed.get("style_tags") or [] if str(item).strip()][:8],
         "source_title": source_title or "Qwen web search",
-        "release_year": parsed.get("release_year"),
+        "release_year": release_year,
     }
 
 
@@ -222,6 +284,7 @@ def _llm_web_card(
   "facts": ["最多5条可由联网结果支持的事实"],
   "style_tags": ["最多6个音乐风格/类型/场景标签"],
   "release_year": 歌曲首发年份或 null，歌手卡可为 null,
+  "details": {{}},
   "confidence": 0.0到1.0,
   "sources": ["至少1个用于支撑摘要的网页URL"]
 }}
@@ -232,6 +295,9 @@ def _llm_web_card(
 - sources 必须填写真实网页 URL，不要填写搜索聚合页、空字符串或无法追溯的来源。
 - 如果同名歌曲/歌手有歧义，降低 confidence，并在 facts 里说明歧义。
 - 发行年份优先原曲首发年份，不把重制版、精选集、Live 专辑年份当作首发年份。
+- artist details 建议字段: aliases, artist_type, country_or_region, active_years, members, genres, styles, languages, representative_works, achievements, similar_artists, sound_traits, lyrical_themes。
+- song details 建议字段: album, original_release_year, release_type, version_note, writers, composers, lyricists, producers, genres, styles, moods, themes, scenarios, language, era, region, instrumentation, vocal_style, energy_descriptor, tempo_descriptor, lyrical_theme, known_context。
+- 冷门歌曲资料不足时，不要硬填；可把 details 留空或只填能被来源支持的字段。
 """.strip()
     try:
         response = client.responses.create(
@@ -392,6 +458,7 @@ async def enrich_artist_card(
             summary=card["summary"],
             style_tags=card.get("style_tags", []),
             facts=card.get("facts", []),
+            details=card.get("details") or {},
             source_url=card.get("source_url", ""),
             source_title=card.get("source_title", ""),
             source_provider=card.get("source", "web"),
@@ -431,6 +498,7 @@ async def enrich_song_card(
             release_year=card.get("release_year"),
             style_tags=card.get("style_tags", []),
             facts=card.get("facts", []),
+            details=card.get("details") or {},
             source_url=card.get("source_url", ""),
             source_title=card.get("source_title", ""),
             source_provider=card.get("source", "web"),

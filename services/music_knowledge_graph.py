@@ -14,6 +14,7 @@ def knowledge_card_params(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     card = normalize_knowledge_card(payload)
     style_tags = payload.get("style_tags") or []
+    details = card.get("details") or {}
     release_year = payload.get("release_year")
     key = knowledge_key(card["kind"], card.get("title", ""), card.get("artist", ""))
     return {
@@ -24,6 +25,7 @@ def knowledge_card_params(payload: Mapping[str, Any]) -> dict[str, Any]:
         "summary": card.get("summary", ""),
         "facts_json": json.dumps(card.get("facts") or [], ensure_ascii=False, sort_keys=True),
         "style_tags_json": json.dumps(style_tags if isinstance(style_tags, list) else [], ensure_ascii=False, sort_keys=True),
+        "details_json": json.dumps(details if isinstance(details, dict) else {}, ensure_ascii=False, sort_keys=True),
         "release_year": release_year,
         "source": card.get("source", "web"),
         "source_url": card.get("source_url", ""),
@@ -39,6 +41,7 @@ SET k.kind = $kind,
     k.summary = $summary,
     k.facts_json = $facts_json,
     k.style_tags_json = $style_tags_json,
+    k.details_json = $details_json,
     k.release_year = $release_year,
     k.source = $source,
     k.source_url = $source_url,

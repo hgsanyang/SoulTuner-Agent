@@ -80,6 +80,30 @@ def _loads(value: Any) -> list[Any]:
         return []
 
 
+def _dumps_object(value: Any) -> str:
+    return json.dumps(value if isinstance(value, dict) else {}, ensure_ascii=False, sort_keys=True)
+
+
+def _loads_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        loaded = json.loads(str(value or "{}"))
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        return {}
+
+
+def _details_text(details: Mapping[str, Any] | None) -> str:
+    if not details:
+        return ""
+    try:
+        raw = json.dumps(details, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        raw = str(details)
+    return re.sub(r"[{}\[\]\":,]", " ", raw)
+
+
 def _clean_query(query: str) -> str:
     tokens = re.findall(r"[\w\u4e00-\u9fff]+", str(query or "").casefold())
     tokens = [token for token in tokens if token and token not in FTS_STOPWORDS]
@@ -109,6 +133,7 @@ def _row_to_card(row: sqlite3.Row, kind: CardKind) -> dict[str, Any]:
     base["kind"] = kind
     base["facts"] = _loads(base.pop("facts_json", "[]"))
     base["style_tags"] = _loads(base.pop("style_tags_json", "[]"))
+    base["details"] = _loads_object(base.pop("details_json", "{}"))
     return base
 
 
@@ -173,6 +198,7 @@ class MusicKnowledgeStore:
                     summary TEXT DEFAULT '',
                     style_tags_json TEXT DEFAULT '[]',
                     facts_json TEXT DEFAULT '[]',
+                    details_json TEXT DEFAULT '{}',
                     source_id INTEGER,
                     confidence REAL NOT NULL DEFAULT 0.5,
                     updated_at INTEGER NOT NULL,
@@ -187,6 +213,7 @@ class MusicKnowledgeStore:
                     release_year INTEGER,
                     style_tags_json TEXT DEFAULT '[]',
                     facts_json TEXT DEFAULT '[]',
+                    details_json TEXT DEFAULT '{}',
                     source_id INTEGER,
                     confidence REAL NOT NULL DEFAULT 0.5,
                     updated_at INTEGER NOT NULL,
@@ -202,6 +229,17 @@ class MusicKnowledgeStore:
                 );
                 """
             )
+            self._ensure_optional_columns(conn)
+
+    @staticmethod
+    def _ensure_optional_columns(conn: sqlite3.Connection) -> None:
+        for table in ("artist_cards", "song_cards"):
+            columns = {
+                str(row["name"])
+                for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if "details_json" not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN details_json TEXT DEFAULT '{{}}'")
 
     def upsert_source(
         self,
@@ -247,6 +285,7 @@ class MusicKnowledgeStore:
         summary: str = "",
         style_tags: Iterable[str] | None = None,
         facts: Iterable[str] | None = None,
+        details: Mapping[str, Any] | None = None,
         source_url: str = "",
         source_title: str = "",
         source_provider: str = "web",
@@ -262,21 +301,23 @@ class MusicKnowledgeStore:
         confidence = clamp_confidence(confidence)
         facts_json = _dumps(list(facts or [])[:8])
         style_json = _dumps(list(style_tags or [])[:12])
+        details_json = _dumps_object(dict(details or {}))
         updated_at = _now_ms()
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO artist_cards(artist, summary, style_tags_json, facts_json, source_id, confidence, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO artist_cards(artist, summary, style_tags_json, facts_json, details_json, source_id, confidence, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(artist) DO UPDATE SET
                     summary = excluded.summary,
                     style_tags_json = excluded.style_tags_json,
                     facts_json = excluded.facts_json,
+                    details_json = excluded.details_json,
                     source_id = excluded.source_id,
                     confidence = excluded.confidence,
                     updated_at = excluded.updated_at
                 """,
-                (artist, summary, style_json, facts_json, source_id, confidence, updated_at),
+                (artist, summary, style_json, facts_json, details_json, source_id, confidence, updated_at),
             )
             row = conn.execute(
                 """
@@ -291,7 +332,7 @@ class MusicKnowledgeStore:
                 conn,
                 table="artist_cards_fts",
                 row_id=int(row["id"]),
-                values=(artist, summary, " ".join(style_tags or []), " ".join(facts or [])),
+                values=(artist, summary, " ".join(style_tags or []), " ".join(facts or []) + " " + _details_text(details)),
             )
             return _row_to_card(row, "artist")
 
@@ -304,6 +345,7 @@ class MusicKnowledgeStore:
         release_year: int | None = None,
         style_tags: Iterable[str] | None = None,
         facts: Iterable[str] | None = None,
+        details: Mapping[str, Any] | None = None,
         source_url: str = "",
         source_title: str = "",
         source_provider: str = "web",
@@ -319,22 +361,24 @@ class MusicKnowledgeStore:
         confidence = clamp_confidence(confidence)
         facts_json = _dumps(list(facts or [])[:8])
         style_json = _dumps(list(style_tags or [])[:12])
+        details_json = _dumps_object(dict(details or {}))
         updated_at = _now_ms()
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO song_cards(title, artist, summary, release_year, style_tags_json, facts_json, source_id, confidence, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO song_cards(title, artist, summary, release_year, style_tags_json, facts_json, details_json, source_id, confidence, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(title, artist) DO UPDATE SET
                     summary = excluded.summary,
                     release_year = excluded.release_year,
                     style_tags_json = excluded.style_tags_json,
                     facts_json = excluded.facts_json,
+                    details_json = excluded.details_json,
                     source_id = excluded.source_id,
                     confidence = excluded.confidence,
                     updated_at = excluded.updated_at
                 """,
-                (title, artist, summary, release_year, style_json, facts_json, source_id, confidence, updated_at),
+                (title, artist, summary, release_year, style_json, facts_json, details_json, source_id, confidence, updated_at),
             )
             row = conn.execute(
                 """
@@ -349,7 +393,7 @@ class MusicKnowledgeStore:
                 conn,
                 table="song_cards_fts",
                 row_id=int(row["id"]),
-                values=(title, artist, summary, " ".join(style_tags or []), " ".join(facts or [])),
+                values=(title, artist, summary, " ".join(style_tags or []), " ".join(facts or []) + " " + _details_text(details)),
             )
             return _row_to_card(row, "song")
 
@@ -496,6 +540,7 @@ class MusicKnowledgeStore:
                 summary=card.get("summary", ""),
                 style_tags=card.get("style_tags") or [],
                 facts=card.get("facts", []),
+                details=card.get("details") or {},
                 source_url=card.get("source_url", ""),
                 source_provider=card.get("source", "web"),
                 confidence=float(card.get("confidence") or 0.5),
@@ -507,6 +552,7 @@ class MusicKnowledgeStore:
             release_year=card.get("release_year"),
             style_tags=card.get("style_tags") or [],
             facts=card.get("facts", []),
+            details=card.get("details") or {},
             source_url=card.get("source_url", ""),
             source_provider=card.get("source", "web"),
             confidence=float(card.get("confidence") or 0.5),
