@@ -54,7 +54,7 @@ function onlineAudioStatusLabel(props: {
   audio_status?: string;
   acquire_status?: string;
 }): { text: string; color: string; background: string; border: string } | null {
-  const isOnline = props.source === 'online_search' || props.source === 'web';
+  const isOnline = props.source === 'online_search' || props.source === 'web' || props.source === 'online';
   const status = (props.acquire_status || props.audio_status || '').toLowerCase();
   const retention = (props.audio_retention || '').toLowerCase();
   if (!isOnline && !status && !retention) return null;
@@ -134,6 +134,7 @@ export default function SongCard({
     ...((recall_sources || retrieval_sources || []).map(source => SOURCE_LABELS[source] || source)),
   ].filter(Boolean)));
   const onlineAudioStatus = onlineAudioStatusLabel({ source, audio_retention, audio_status, acquire_status });
+  const isOnlineSource = source === 'online_search' || source === 'web' || source === 'online';
 
   const togglePlay = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -310,7 +311,7 @@ export default function SongCard({
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="1" y1="12" x2="5" y2="12" /><line x1="3" y1="10" x2="3" y2="14" /></svg>
             )}
           </button>
-          {source === 'online_search' && (
+          {isOnlineSource && (
             <button onClick={handleAcquire} title={acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源...' : '保存音源并长期保留 MP3'} aria-label={`${acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源' : '保存音源'} ${title}`} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
               {acquireState === 'done' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>) : acquireState === 'loading' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f0a500" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>) : (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>)}
             </button>

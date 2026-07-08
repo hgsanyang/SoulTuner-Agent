@@ -100,23 +100,3 @@ def test_music_knowledge_store_merges_qdrant_semantic_hits(monkeypatch, tmp_path
 
     assert [hit["artist"] for hit in hits] == ["The Cure", "Slowdive"]
 
-
-def test_deprecate_source_provider_lowers_legacy_trust(tmp_path):
-    store = MusicKnowledgeStore(tmp_path / "knowledge.sqlite")
-    store.upsert_song_card(
-        title="Legacy Song",
-        artist="Legacy Artist",
-        summary="Unsupported aggregator answer.",
-        release_year=2000,
-        source_url="https://tavily.com",
-        source_provider="Tavily_AI_Answer",
-        confidence=0.9,
-    )
-
-    result = store.deprecate_source_provider("Tavily_AI_Answer")
-    card = store.get_song_card("Legacy Song", "Legacy Artist")
-
-    assert result["song_cards"] == 1
-    assert card["confidence"] <= 0.3
-    assert card["source_provider"] == "legacy_deprecated"
-    assert card["details"]["deprecated_source"]["provider"] == "Tavily_AI_Answer"

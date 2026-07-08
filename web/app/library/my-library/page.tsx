@@ -11,7 +11,7 @@ import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { useRouter } from 'next/navigation';
-import { fetchLibrarySongs, deleteSongFromLibrary, updateLibrarySongTags, LibrarySong } from '@/lib/api';
+import { fetchLibrarySongs, deleteSongFromLibrary, retainOnlineAudio, updateLibrarySongTags, LibrarySong } from '@/lib/api';
 
 export default function MyLibraryPage() {
     const [songs, setSongs] = useState<LibrarySong[]>([]);
@@ -32,6 +32,7 @@ export default function MyLibraryPage() {
         language: '',
     });
     const [savingTags, setSavingTags] = useState(false);
+    const [retainingAudio, setRetainingAudio] = useState(false);
     const [deleting, setDeleting] = useState<string | null>(null);
     const { playSong } = usePlayer();
     const { showToast } = useLibrary();
@@ -101,6 +102,26 @@ export default function MyLibraryPage() {
         }
     };
 
+    const retainSelectedAudio = async () => {
+        if (!selectedSong) return;
+        setRetainingAudio(true);
+        const result = await retainOnlineAudio({
+            music_id: selectedSong.music_id,
+            song_id: selectedSong.source_id,
+            title: selectedSong.title,
+            artist: selectedSong.artist,
+        });
+        setRetainingAudio(false);
+        if (result.success) {
+            const updatedSong = { ...selectedSong, audio_retention: 'saved', audio_status: 'cached' };
+            setSelectedSong(updatedSong);
+            setSongs(prev => prev.map(song => songKey(song) === songKey(selectedSong) ? updatedSong : song));
+            showToast(`✅ 「${selectedSong.title}」音源已长期保存`);
+        } else {
+            showToast(`❌ 保存音源失败: ${result.error || result.message || '未知错误'}`);
+        }
+    };
+
     const handleDelete = async (song: LibrarySong) => {
         const key = songKey(song);
         setDeleting(key);
@@ -152,6 +173,11 @@ export default function MyLibraryPage() {
     const sourceOptions = Array.from(new Set(songs.map(s => s.source || 'local'))).sort();
     const languageOptions = Array.from(new Set(songs.map(s => s.language || '').filter(Boolean))).sort();
     const moodOptions = Array.from(new Set(songs.flatMap(s => s.moods || []).filter(Boolean))).sort();
+    const duplicateKeyCounts = songs.reduce((acc, song) => {
+        const key = song.duplicate_key || '';
+        if (key) acc.set(key, (acc.get(key) || 0) + 1);
+        return acc;
+    }, new Map<string, number>());
 
     const filtered = songs.filter(s => {
         const q = searchQuery.trim().toLowerCase();
@@ -171,9 +197,12 @@ export default function MyLibraryPage() {
         const matchesQuality = qualityFilter === 'all'
             || (qualityFilter === 'ready' && missingCount === 0)
             || (qualityFilter === 'missing' && missingCount > 0)
-            || (qualityFilter === 'low' && (s.quality_score ?? 1) < 0.8);
+            || (qualityFilter === 'low' && (s.quality_score ?? 1) < 0.8)
+            || (qualityFilter === 'duplicate' && (duplicateKeyCounts.get(s.duplicate_key || '') || 0) > 1);
         return matchesQuery && matchesSource && matchesLanguage && matchesMood && matchesQuality;
     });
+
+    const duplicateGroups = Array.from(duplicateKeyCounts.entries()).filter(([, count]) => count > 1);
 
     const sourceLabel = (src: string) => {
         switch (src) {
@@ -309,8 +338,12 @@ export default function MyLibraryPage() {
                     <option value="ready">资料完整</option>
                     <option value="missing">待补资料</option>
                     <option value="low">低质量优先</option>
+                    <option value="duplicate">疑似重复</option>
                 </select>
                 <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>显示 {filtered.length} / {total}</span>
+                {duplicateGroups.length > 0 && (
+                    <span style={{ fontSize: '0.78rem', color: '#fde68a' }}>疑似重复组 {duplicateGroups.length}</span>
+                )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', minHeight: '2rem' }}>
                 <button onClick={selectFiltered} disabled={filtered.length === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.04)', color: theme.colors.text.secondary, cursor: filtered.length ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
@@ -486,6 +519,25 @@ export default function MyLibraryPage() {
                             </span>
                         ))}
                     </div>
+                    {selectedSong.source === 'online' && selectedSong.audio_retention !== 'saved' && selectedSong.audio_url && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.75rem', border: '1px solid rgba(251,191,36,0.22)', borderRadius: theme.borderRadius.sm, background: 'rgba(251,191,36,0.08)' }}>
+                            <div style={{ fontSize: '0.78rem', color: '#fde68a', lineHeight: 1.5 }}>
+                                这首来自联网临时入库。长期保存后，退出应用或清理临时缓存时不会释放 MP3 文件。
+                            </div>
+                            <button
+                                onClick={retainSelectedAudio}
+                                disabled={retainingAudio}
+                                style={{ background: retainingAudio ? 'rgba(255,255,255,0.08)' : 'rgba(251,191,36,0.18)', border: '1px solid rgba(251,191,36,0.35)', borderRadius: theme.borderRadius.sm, color: '#fde68a', cursor: retainingAudio ? 'wait' : 'pointer', padding: '0.45rem 0.75rem', fontWeight: 700, fontSize: '0.76rem', whiteSpace: 'nowrap' }}
+                            >
+                                {retainingAudio ? '保存中...' : '长期保存音源'}
+                            </button>
+                        </div>
+                    )}
+                    {(duplicateKeyCounts.get(selectedSong.duplicate_key || '') || 0) > 1 && (
+                        <div style={{ padding: '0.65rem 0.75rem', border: '1px solid rgba(250,204,21,0.18)', borderRadius: theme.borderRadius.sm, background: 'rgba(250,204,21,0.06)', color: '#fde68a', fontSize: '0.76rem' }}>
+                            疑似重复：同一标准化键下有 {duplicateKeyCounts.get(selectedSong.duplicate_key || '')} 首。建议人工确认版本、Live、Remaster 或翻唱后再删除。
+                        </div>
+                    )}
                     {!!selectedSong.knowledge_cards?.length && (
                         <div style={{ display: 'grid', gap: '0.55rem', padding: '0.75rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, background: 'rgba(255,255,255,0.025)' }}>
                             <div style={{ fontSize: '0.78rem', fontWeight: 700, color: theme.colors.text.primary }}>知识卡摘要</div>

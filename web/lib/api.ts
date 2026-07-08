@@ -565,6 +565,31 @@ export async function deletePendingSong(
     }
 }
 
+export async function retainOnlineAudio(song: {
+    file_basename?: string;
+    ext?: string;
+    music_id?: string;
+    song_id?: string;
+    title?: string;
+    artist?: string;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+        const resp = await fetch('http://localhost:8501/api/online-audio/retain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(song),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: '保存音源失败' }));
+            return { success: false, error: err.detail || `保存音源失败: ${resp.status}` };
+        }
+        return resp.json();
+    } catch (err: any) {
+        console.warn('[API] retainOnlineAudio 失败:', err);
+        return { success: false, error: err.message || '保存音源失败' };
+    }
+}
+
 export async function fetchIngestJobs(limit: number = 30): Promise<{ jobs: IngestJob[]; counts: Record<string, number> }> {
     try {
         const resp = await fetch(`http://localhost:8501/api/ingest-jobs?limit=${limit}`);
