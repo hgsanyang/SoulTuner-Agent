@@ -24,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from retrieval.neo4j_client import get_neo4j_client  # noqa: E402
+from services.catalog_enrichment import prepare_tag_enrichment  # noqa: E402
 
 DEFAULT_ONLINE_META_DIR = PROJECT_ROOT.parent / "data" / "online_acquired" / "metadata"
 
@@ -290,6 +291,77 @@ def backfill_release_year_from_knowledge_cards(client: Any, *, dry_run: bool = F
     return int(result[0].get("n") or 0) if result else 0
 
 
+def backfill_tag_provenance_from_relationships(
+    client: Any,
+    *,
+    dry_run: bool = False,
+    source: str = "legacy_graph",
+    confidence: float = 0.78,
+) -> int:
+    """Backfill auditable tag provenance from existing graph relationships.
+
+    Older ingests already created Genre/Mood/Theme/Scenario/Language nodes, but
+    did not store where those tags came from on the Song node.  This promotes
+    the already visible graph tags into the standard provenance JSON fields
+    without creating any new labels or inventing tags.
+    """
+
+    rows = client.execute_query(
+        """
+        MATCH (s:Song)
+        WHERE coalesce(s.tag_source, '') = ''
+        OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
+        OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
+        OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
+        OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
+        OPTIONAL MATCH (s)-[:HAS_LANGUAGE]->(l:Language)
+        WITH s,
+             [x IN collect(DISTINCT g.name) WHERE x IS NOT NULL AND trim(x) <> ''] AS genres,
+             [x IN collect(DISTINCT m.name) WHERE x IS NOT NULL AND trim(x) <> ''] AS moods,
+             [x IN collect(DISTINCT t.name) WHERE x IS NOT NULL AND trim(x) <> ''] AS themes,
+             [x IN collect(DISTINCT sc.name) WHERE x IS NOT NULL AND trim(x) <> ''] AS scenarios,
+             [x IN collect(DISTINCT l.name) WHERE x IS NOT NULL AND trim(x) <> ''] AS languages
+        WHERE size(genres) + size(moods) + size(themes) + size(scenarios) + size(languages) > 0
+        RETURN elementId(s) AS eid,
+               genres, moods, themes, scenarios, languages
+        """
+    )
+    if dry_run:
+        return len(rows)
+    updated = 0
+    for row in rows:
+        enriched = prepare_tag_enrichment(
+            {
+                "genres": row.get("genres") or [],
+                "moods": row.get("moods") or [],
+                "themes": row.get("themes") or [],
+                "scenarios": row.get("scenarios") or [],
+                "languages": row.get("languages") or [],
+            },
+            source=source,
+            confidence=confidence,
+        )
+        result = client.execute_query(
+            """
+            MATCH (s:Song)
+            WHERE elementId(s) = $eid
+            SET s.tag_source = $tag_source,
+                s.tag_confidence_json = $tag_confidence_json,
+                s.tag_sources_json = $tag_sources_json,
+                s.updated_at = timestamp()
+            RETURN count(s) AS n
+            """,
+            {
+                "eid": row["eid"],
+                "tag_source": enriched["tag_source"],
+                "tag_confidence_json": enriched["tag_confidence_json"],
+                "tag_sources_json": enriched["tag_sources_json"],
+            },
+        )
+        updated += int(result[0].get("n") or 0) if result else 0
+    return updated
+
+
 def mark_unplayable_stubs(client: Any, *, dry_run: bool = False) -> int:
     rows = client.execute_query(
         """
@@ -325,7 +397,11 @@ def duplicate_diagnosis(client: Any, *, limit: int = 20) -> list[dict[str, Any]]
             music_id: s.music_id,
             title: s.title,
             artist: s.artist,
-            source: s.source
+            source: s.source,
+            audio_url: s.audio_url,
+            audio_retention: s.audio_retention,
+            acquire_status: s.acquire_status,
+            unplayable_stub: coalesce(s.unplayable_stub, false)
         }) AS songs, count(s) AS n
         WHERE key <> '' AND n > 1
         RETURN key, n, songs[0..5] AS examples
@@ -334,7 +410,49 @@ def duplicate_diagnosis(client: Any, *, limit: int = 20) -> list[dict[str, Any]]
         """,
         {"limit": int(limit)},
     )
+    for row in rows:
+        row["resolution_hint"] = duplicate_resolution_hint(row.get("examples") or [])
     return rows
+
+
+def duplicate_resolution_hint(examples: list[dict[str, Any]]) -> dict[str, str]:
+    """Return an auditable duplicate strategy without mutating catalog data."""
+
+    playable = [
+        row for row in examples
+        if row.get("audio_url") and row.get("unplayable_stub") is not True
+    ]
+    saved = [row for row in playable if row.get("audio_retention") == "saved"]
+    local = [
+        row for row in playable
+        if str(row.get("source") or "").lower() in {"local", "netease", "ingested"}
+    ]
+    if saved:
+        canonical = saved[0]
+        reason = "prefer saved playable audio as canonical"
+    elif local:
+        canonical = local[0]
+        reason = "prefer local/ingested playable audio as canonical"
+    elif playable:
+        canonical = playable[0]
+        reason = "prefer any playable audio as review candidate"
+    elif examples:
+        canonical = examples[0]
+        reason = "no playable audio; keep manual review only"
+    else:
+        canonical = {}
+        reason = "empty duplicate group"
+
+    action = "manual_review"
+    if canonical and playable:
+        action = "review_merge_metadata_only"
+    if canonical and not playable:
+        action = "do_not_merge_until_audio_resolved"
+    return {
+        "action": action,
+        "canonical_music_id": str(canonical.get("music_id") or ""),
+        "reason": reason,
+    }
 
 
 def main() -> None:
@@ -353,6 +471,7 @@ def main() -> None:
         "title_artist_key_updates": backfill_title_artist_keys(client, dry_run=args.dry_run),
         "online_metadata_updates": backfill_online_metadata(client, metadata_rows, dry_run=args.dry_run),
         "language_relationship_updates": backfill_language_relationships(client, dry_run=args.dry_run),
+        "tag_provenance_updates": backfill_tag_provenance_from_relationships(client, dry_run=args.dry_run),
         "release_year_from_knowledge_updates": backfill_release_year_from_knowledge_cards(
             client,
             dry_run=args.dry_run,

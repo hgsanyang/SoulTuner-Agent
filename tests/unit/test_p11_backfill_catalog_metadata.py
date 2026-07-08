@@ -2,6 +2,8 @@ from scripts.p11_backfill_catalog_metadata import (
     artist_string,
     backfill_language_relationships,
     backfill_release_year_from_knowledge_cards,
+    backfill_tag_provenance_from_relationships,
+    duplicate_resolution_hint,
     mark_unplayable_stubs,
     normalize_artist_name,
     normalize_title,
@@ -87,3 +89,62 @@ def test_backfill_release_year_from_knowledge_cards_uses_source_backed_cards():
     assert len(client.calls) == 2
     assert "HAS_KNOWLEDGE" in client.calls[1]
     assert "release_year_source = 'knowledge_card'" in client.calls[1]
+
+
+def test_backfill_tag_provenance_from_relationships_is_dry_run_safe():
+    client = _FakeClient()
+
+    assert backfill_tag_provenance_from_relationships(client, dry_run=True) == 0
+    assert len(client.calls) == 1
+    assert "BELONGS_TO_GENRE" in client.calls[0]
+
+
+def test_backfill_tag_provenance_from_relationships_sets_json_without_new_tags():
+    class Client:
+        def __init__(self):
+            self.calls = []
+            self.params = []
+
+        def execute_query(self, cypher, params=None):
+            self.calls.append(cypher)
+            self.params.append(params or {})
+            if "RETURN elementId(s) AS eid" in cypher:
+                return [
+                    {
+                        "eid": "song-1",
+                        "genres": ["Indie", "Rock"],
+                        "moods": ["Melancholy"],
+                        "themes": [],
+                        "scenarios": ["Late Night"],
+                        "languages": ["English"],
+                    }
+                ]
+            if "RETURN count(s) AS n" in cypher:
+                return [{"n": 1}]
+            return []
+
+    client = Client()
+
+    assert backfill_tag_provenance_from_relationships(client, dry_run=False) == 1
+    assert "SET s.tag_source = $tag_source" in client.calls[1]
+    assert "MERGE (g:Genre" not in client.calls[1]
+    assert client.params[1]["tag_source"] == "legacy_graph"
+    assert "Indie" in client.params[1]["tag_sources_json"]
+
+
+def test_duplicate_resolution_hint_prefers_saved_playable_audio():
+    hint = duplicate_resolution_hint([
+        {"music_id": "stub", "audio_url": "", "source": "online_search", "unplayable_stub": True},
+        {"music_id": "saved", "audio_url": "/static/audio/a.mp3", "audio_retention": "saved", "source": "online_search"},
+    ])
+
+    assert hint["action"] == "review_merge_metadata_only"
+    assert hint["canonical_music_id"] == "saved"
+
+
+def test_duplicate_resolution_hint_blocks_when_no_audio():
+    hint = duplicate_resolution_hint([
+        {"music_id": "stub", "audio_url": "", "source": "online_search", "unplayable_stub": True},
+    ])
+
+    assert hint["action"] == "do_not_merge_until_audio_resolved"

@@ -49,6 +49,39 @@ def load_seed_songs(limit: int = 20) -> list[dict[str, str]]:
     return [{"title": row.get("title", ""), "artist": row.get("artist", "")} for row in rows]
 
 
+def load_missing_release_year_songs(limit: int = 20) -> list[dict[str, str]]:
+    """Prioritize songs whose canonical catalog record still lacks release_year.
+
+    A song may already have a knowledge card without a year.  This loader still
+    selects it so a stronger web-search pass can update the existing card.
+    """
+
+    client = get_neo4j_client()
+    rows = client.execute_query(
+        """
+        MATCH (s:Song)
+        WHERE coalesce(s.title, '') <> ''
+          AND properties(s)['release_year'] IS NULL
+        OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        WITH s, coalesce(s.artist, a.name, '') AS artist
+        WHERE artist <> ''
+        OPTIONAL MATCH (s)-[:HAS_KNOWLEDGE]->(k:KnowledgeCard)
+        WITH s.title AS title,
+             artist,
+             count(DISTINCT s) AS catalog_count,
+             max(coalesce(s.updated_at, 0)) AS updated_at,
+             sum(CASE WHEN properties(k)['release_year'] IS NULL THEN 0 ELSE 1 END) AS cards_with_year,
+             count(k) AS knowledge_cards
+        WHERE cards_with_year = 0
+        RETURN title, artist
+        ORDER BY knowledge_cards ASC, catalog_count DESC, updated_at DESC, title
+        LIMIT $limit
+        """,
+        {"limit": int(limit)},
+    )
+    return [{"title": row.get("title", ""), "artist": row.get("artist", "")} for row in rows]
+
+
 def load_seed_artists(limit: int = 20) -> list[str]:
     client = get_neo4j_client()
     rows = client.execute_query(
@@ -99,6 +132,7 @@ async def run(args: argparse.Namespace) -> dict:
             store=store,
             dry_run=args.dry_run,
             use_llm_summary=args.use_llm_summary,
+            allow_snippet_fallback=args.allow_snippet_fallback,
         )
         if card:
             cards.append(card)
@@ -110,6 +144,7 @@ async def run(args: argparse.Namespace) -> dict:
             store=store,
             dry_run=args.dry_run,
             use_llm_summary=args.use_llm_summary,
+            allow_snippet_fallback=args.allow_snippet_fallback,
         )
         if card:
             cards.append(card)
@@ -124,6 +159,7 @@ async def run(args: argparse.Namespace) -> dict:
                         store=store,
                         dry_run=args.dry_run,
                         use_llm_summary=args.use_llm_summary,
+                        allow_snippet_fallback=args.allow_snippet_fallback,
                     )
                 )
                 for artist in artists
@@ -141,6 +177,25 @@ async def run(args: argparse.Namespace) -> dict:
                         store=store,
                         dry_run=args.dry_run,
                         use_llm_summary=args.use_llm_summary,
+                        allow_snippet_fallback=args.allow_snippet_fallback,
+                    )
+                )
+                for song in songs
+            ],
+        )
+    if args.from_neo4j_missing_years:
+        songs = load_missing_release_year_songs(limit=args.limit)
+        await _run_batch(
+            [f"{song['title']}::{song.get('artist', '')}" for song in songs],
+            [
+                (
+                    lambda song=song: enrich_song_card(
+                        song["title"],
+                        song.get("artist", ""),
+                        store=store,
+                        dry_run=args.dry_run,
+                        use_llm_summary=args.use_llm_summary,
+                        allow_snippet_fallback=args.allow_snippet_fallback,
                     )
                 )
                 for song in songs
@@ -188,6 +243,11 @@ def main() -> None:
     parser.add_argument("--song", default="", help="Enrich one song as 'title::artist'")
     parser.add_argument("--from-neo4j-artists", action="store_true", help="Batch enrich artists from Neo4j")
     parser.add_argument("--from-neo4j-songs", action="store_true", help="Batch enrich songs from Neo4j")
+    parser.add_argument(
+        "--from-neo4j-missing-years",
+        action="store_true",
+        help="Batch enrich songs whose Neo4j release_year is still missing.",
+    )
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--concurrency", type=int, default=1, help="Batch concurrency for Neo4j seed enrichment")
     parser.add_argument("--store-path", default="")
@@ -202,7 +262,12 @@ def main() -> None:
         "--no-llm-summary",
         action="store_false",
         dest="use_llm_summary",
-        help="Disable DashScope/Qwen and fall back to external search snippets plus deterministic summarization.",
+        help="Disable DashScope/Qwen. No card is generated unless --allow-snippet-fallback is also set.",
+    )
+    parser.add_argument(
+        "--allow-snippet-fallback",
+        action="store_true",
+        help="Explicitly allow legacy Tavily/Zhipu/SearxNG snippet fallback when Qwen web_search fails.",
     )
     parser.add_argument("--sync-qdrant", action="store_true", help="Mirror generated cards into Qdrant.")
     args = parser.parse_args()

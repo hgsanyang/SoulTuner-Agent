@@ -18,6 +18,9 @@ interface SongCardProps {
   song_id?: string;
   platform?: string;
   source?: string;
+  audio_retention?: string;
+  audio_status?: string;
+  acquire_status?: string;
   recall_sources?: string[];
   recall_source_labels?: string[];
   retrieval_sources?: string[];
@@ -45,6 +48,34 @@ const SOURCE_LABELS: Record<string, string> = {
   online_search: '联网',
 };
 
+function onlineAudioStatusLabel(props: {
+  source?: string;
+  audio_retention?: string;
+  audio_status?: string;
+  acquire_status?: string;
+}): { text: string; color: string; background: string; border: string } | null {
+  const isOnline = props.source === 'online_search' || props.source === 'web';
+  const status = (props.acquire_status || props.audio_status || '').toLowerCase();
+  const retention = (props.audio_retention || '').toLowerCase();
+  if (!isOnline && !status && !retention) return null;
+  if (retention === 'saved' || status === 'saved') {
+    return { text: '音源已保存', color: '#86efac', background: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.28)' };
+  }
+  if (status === 'failed' || status === 'error') {
+    return { text: '获取失败', color: '#fca5a5', background: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.28)' };
+  }
+  if (status === 'released') {
+    return { text: '音源已释放', color: '#c4b5fd', background: 'rgba(139,92,246,0.12)', border: 'rgba(139,92,246,0.28)' };
+  }
+  if (status === 'processing' || status === 'pending') {
+    return { text: '后台入库中', color: '#93c5fd', background: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.28)' };
+  }
+  if (retention === 'temporary' || isOnline) {
+    return { text: '临时入库', color: '#fde68a', background: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.28)' };
+  }
+  return null;
+}
+
 export default function SongCard({
   title,
   artist,
@@ -57,6 +88,9 @@ export default function SongCard({
   song_id,
   platform,
   source,
+  audio_retention,
+  audio_status,
+  acquire_status,
   recall_sources,
   recall_source_labels,
   retrieval_sources,
@@ -70,7 +104,9 @@ export default function SongCard({
   const { isLiked, toggleLike, collections, addToCollection, showToast } = useLibrary();
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
-  const [acquireState, setAcquireState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [acquireState, setAcquireState] = useState<'idle' | 'loading' | 'done' | 'error'>(() =>
+    audio_retention === 'saved' || acquire_status === 'saved' ? 'done' : acquire_status === 'failed' ? 'error' : 'idle',
+  );
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteState, setDeleteState] = useState<'idle' | 'loading'>('idle');
 
@@ -97,6 +133,7 @@ export default function SongCard({
     ...(recall_source_labels || retrieval_source_labels || []),
     ...((recall_sources || retrieval_sources || []).map(source => SOURCE_LABELS[source] || source)),
   ].filter(Boolean)));
+  const onlineAudioStatus = onlineAudioStatusLabel({ source, audio_retention, audio_status, acquire_status });
 
   const togglePlay = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -274,7 +311,7 @@ export default function SongCard({
             )}
           </button>
           {source === 'online_search' && (
-            <button onClick={handleAcquire} title={acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源...' : '保存音源'} aria-label={`${acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源' : '保存音源'} ${title}`} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+            <button onClick={handleAcquire} title={acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源...' : '保存音源并长期保留 MP3'} aria-label={`${acquireState === 'done' ? '音源已保存' : acquireState === 'loading' ? '正在保存音源' : '保存音源'} ${title}`} style={actionBtnStyle(acquireState === 'done' ? '#1DB954' : acquireState === 'loading' ? '#f0a500' : undefined)} onMouseEnter={e => acquireState === 'idle' && (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.22)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
               {acquireState === 'done' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>) : acquireState === 'loading' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f0a500" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>) : (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>)}
             </button>
           )}
@@ -384,7 +421,7 @@ export default function SongCard({
       </div>
 
       {/* 第二行：标签（genre/mood） */}
-      {(genre || mood || sourceLabels.length > 0 || inQueue) && (
+      {(genre || mood || sourceLabels.length > 0 || onlineAudioStatus || inQueue) && (
         <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem', flexWrap: 'wrap', paddingLeft: '68px' }}>
           {genre && (
             <span style={{ padding: '0.2rem 0.55rem', fontSize: '0.7rem', backgroundColor: 'rgba(255,255,255,0.06)', color: theme.colors.text.secondary, borderRadius: theme.borderRadius.full, border: `1px solid ${theme.colors.border.default}` }}>
@@ -401,6 +438,11 @@ export default function SongCard({
               {label}
             </span>
           ))}
+          {onlineAudioStatus && (
+            <span style={{ padding: '0.2rem 0.55rem', fontSize: '0.68rem', backgroundColor: onlineAudioStatus.background, color: onlineAudioStatus.color, borderRadius: theme.borderRadius.full, border: `1px solid ${onlineAudioStatus.border}` }}>
+              {onlineAudioStatus.text}
+            </span>
+          )}
           {inQueue && (
             <span style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', backgroundColor: 'rgba(29,185,84,0.12)', color: theme.colors.primary.accent, borderRadius: theme.borderRadius.full, border: '1px solid rgba(29,185,84,0.2)' }}>
               ▶ 播放列表

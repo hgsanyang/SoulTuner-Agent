@@ -4,7 +4,12 @@ import pytest
 
 import json
 
-from tests.eval.evaluate_alignment_attribute import label_matches, load_query_variant_file, precision_at_k
+from tests.eval.evaluate_alignment_attribute import (
+    label_matches,
+    load_query_variant_file,
+    precision_at_k,
+    precision_means_by_bucket,
+)
 
 
 def test_label_matches_language_exact():
@@ -48,3 +53,17 @@ def test_load_query_variant_file_dedupes_and_caps(tmp_path):
     )
 
     assert load_query_variant_file(str(path)) == {"q1": ["a", "b", "c", "d"]}
+
+
+def test_precision_means_by_bucket_groups_nested_fields():
+    rows = [
+        {"target": {"field": "moods"}, "precision_at_k": {"muq": 0.8, "m2d": 0.2}},
+        {"target": {"field": "moods"}, "precision_at_k": {"muq": 0.6, "m2d": 0.4}},
+        {"target": {"field": "genres"}, "precision_at_k": {"muq": 0.3, "m2d": None}},
+    ]
+
+    metrics = precision_means_by_bucket(rows, ["muq", "m2d"], bucket_key="target.field")
+
+    assert metrics["moods"]["muq"] == pytest.approx(0.7)
+    assert metrics["moods"]["m2d"] == pytest.approx(0.3)
+    assert metrics["genres"] == {"muq": 0.3, "m2d": 0.0}

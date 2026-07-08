@@ -31,6 +31,7 @@ export default function PendingPage() {
     const [retryingJob, setRetryingJob] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [formatFilter, setFormatFilter] = useState('all');
+    const [statusFilter, setStatusFilter] = useState('all');
     const { playSong } = usePlayer();
     const { showToast } = useLibrary();
     const router = useRouter();
@@ -68,7 +69,14 @@ export default function PendingPage() {
             (song.artist || '').toLowerCase().includes(q) ||
             (song.album || '').toLowerCase().includes(q);
         const matchesFormat = formatFilter === 'all' || song.format === formatFilter;
-        return matchesQuery && matchesFormat;
+        const matchesStatus =
+            statusFilter === 'all' ||
+            (statusFilter === 'ready' && song.valid !== false && song.acquire_status !== 'failed') ||
+            (statusFilter === 'invalid' && song.valid === false) ||
+            (statusFilter === 'failed' && song.acquire_status === 'failed') ||
+            (statusFilter === 'temporary' && song.audio_retention === 'temporary') ||
+            (statusFilter === 'saved' && song.audio_retention === 'saved');
+        return matchesQuery && matchesFormat && matchesStatus;
     });
     const validFilteredSongs = filteredSongs.filter(song => song.valid !== false);
     const allFilteredSelected = validFilteredSongs.length > 0 && validFilteredSongs.every(s => selected.has(s.file_basename));
@@ -195,6 +203,18 @@ export default function PendingPage() {
                     >
                         <option value="all">全部格式</option>
                         {formats.map(format => <option key={format} value={format}>{format.toUpperCase()}</option>)}
+                    </select>
+                    <select
+                        value={statusFilter}
+                        onChange={e => setStatusFilter(e.target.value)}
+                        style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary, fontSize: '0.88rem', outline: 'none' }}
+                    >
+                        <option value="all">全部状态</option>
+                        <option value="ready">可入库</option>
+                        <option value="temporary">临时音源</option>
+                        <option value="saved">长期保存</option>
+                        <option value="failed">获取失败</option>
+                        <option value="invalid">缺音频</option>
                     </select>
                     <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
                         状态：获取音源 → 元数据入库 → 标签/向量分析

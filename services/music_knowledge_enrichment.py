@@ -61,7 +61,11 @@ def normalize_snippets(raw_results: list[Mapping[str, Any]]) -> list[WebSnippet]
 
 
 async def fetch_music_knowledge_snippets(query: str) -> list[WebSnippet]:
-    """Run federated web search and return structured snippets."""
+    """Run legacy federated web search and return structured snippets.
+
+    This is kept for explicit diagnostics only.  Production knowledge-card
+    enrichment uses DashScope/Qwen web_search as the default source of truth.
+    """
 
     async with aiohttp.ClientSession() as session:
         results = await asyncio.gather(
@@ -208,7 +212,7 @@ def _llm_web_card(
         return None
     subject = f"artist={artist or title}" if kind == "artist" else f"title={title}, artist={artist}"
     prompt = f"""
-你是音乐资料整理助手。请调用联网搜索核对资料，只整理和音乐相关的事实，不要编造。
+你是音乐资料整理助手。你必须实际调用联网搜索工具核对资料，只整理搜索结果能支持的音乐事实，不要凭模型记忆编造。
 对象: {kind}; {subject}
 搜索意图: {query}
 
@@ -224,6 +228,8 @@ def _llm_web_card(
 
 规则:
 - 只输出 JSON，不要 Markdown。
+- 必须使用联网搜索结果；如果搜索不到可靠来源，summary 为空字符串，release_year 为 null，confidence <= 0.3。
+- sources 必须填写真实网页 URL，不要填写搜索聚合页、空字符串或无法追溯的来源。
 - 如果同名歌曲/歌手有歧义，降低 confidence，并在 facts 里说明歧义。
 - 发行年份优先原曲首发年份，不把重制版、精选集、Live 专辑年份当作首发年份。
 """.strip()
@@ -364,12 +370,13 @@ async def enrich_artist_card(
     store: MusicKnowledgeStore | None = None,
     dry_run: bool = False,
     use_llm_summary: bool = False,
+    allow_snippet_fallback: bool = False,
 ) -> dict[str, Any] | None:
     query = build_artist_knowledge_query(artist)
     card = None
     if use_llm_summary:
         card = await _llm_web_card_async(kind="artist", query=query, artist=artist, title=artist)
-    if card is None:
+    if card is None and allow_snippet_fallback:
         snippets = await fetch_music_knowledge_snippets(query)
         card = build_card_from_snippets(
             kind="artist",
@@ -400,12 +407,13 @@ async def enrich_song_card(
     store: MusicKnowledgeStore | None = None,
     dry_run: bool = False,
     use_llm_summary: bool = False,
+    allow_snippet_fallback: bool = False,
 ) -> dict[str, Any] | None:
     query = build_song_knowledge_query(title, artist)
     card = None
     if use_llm_summary:
         card = await _llm_web_card_async(kind="song", query=query, title=title, artist=artist)
-    if card is None:
+    if card is None and allow_snippet_fallback:
         snippets = await fetch_music_knowledge_snippets(query)
         card = build_card_from_snippets(
             kind="song",
