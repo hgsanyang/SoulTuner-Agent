@@ -65,6 +65,7 @@ from schemas.dialog_state import (
     apply_plan_delta_operations,
     apply_plan_delta_with_report,
     clarification_from_delta,
+    clarification_from_plan_conflict,
     coerce_followup_general_chat_to_retrieval,
     compile_dialog_state_to_plan,
     infer_dialog_state_from_history,
@@ -438,13 +439,35 @@ class MusicRecommendationGraph:
                             "step_count": state.get("step_count", 0) + 1,
                             "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
                         }
-                    if plan_delta.operations:
+                    if plan_delta.ambiguity_reasons:
+                        logger.info(
+                            "[DST] Delta 存在歧义，回退 full planner: %s",
+                            "; ".join(plan_delta.ambiguity_reasons[:2]),
+                        )
+                    elif plan_delta.operations:
                         dialog_state, dialog_delta = apply_plan_delta_operations(
                             previous_dialog_state,
                             plan_delta,
                             user_input,
                         )
                         plan = compile_dialog_state_to_plan(dialog_state, user_input)
+                        plan_conflict = clarification_from_plan_conflict(plan)
+                        if plan_conflict.required:
+                            dialog_state.pending_clarification = plan_conflict
+                            return {
+                                "intent_type": "clarification",
+                                "intent_parameters": {"query": user_input},
+                                "intent_context": plan_conflict.reason,
+                                "clarification": plan_conflict.model_dump(),
+                                "clarification_options": list(plan_conflict.options),
+                                "dialog_state": dialog_state.model_dump(),
+                                "dialog_delta": dialog_state.last_delta.model_dump(),
+                                "intent_confidence": plan_delta.confidence,
+                                "refinement_options": [],
+                                "final_response": plan_conflict.question,
+                                "step_count": state.get("step_count", 0) + 1,
+                                "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                            }
                         dialog_state.last_complete_plan = plan.model_dump()
                         refinement = build_refinement_suggestions(
                             user_input=user_input,
@@ -552,6 +575,35 @@ class MusicRecommendationGraph:
                 previous_plan=_previous_plan_text,
                 graphzep_facts=state.get("graphzep_facts", ""),
             )
+            plan_conflict = clarification_from_plan_conflict(plan)
+            if plan_conflict.required:
+                logger.info("[DST] LLM plan 触发澄清反问: %s", plan_conflict.reason)
+                pending_state = load_dialog_state(previous_dialog_state).model_copy(deep=True)
+                pending_state.pending_clarification = plan_conflict
+                clarification_delta = {
+                    "followup": False,
+                    "topic_shift": False,
+                    "confidence": 0.0,
+                    "reason": plan_conflict.reason,
+                    "inherited": [],
+                    "added": {},
+                    "replaced": {},
+                    "removed": [],
+                }
+                return {
+                    "intent_type": "clarification",
+                    "intent_parameters": {"query": user_input},
+                    "intent_context": plan_conflict.reason,
+                    "clarification": plan_conflict.model_dump(),
+                    "clarification_options": list(plan_conflict.options),
+                    "dialog_state": pending_state.model_dump(),
+                    "dialog_delta": clarification_delta,
+                    "intent_confidence": 0.0,
+                    "refinement_options": [],
+                    "final_response": plan_conflict.question,
+                    "step_count": state.get("step_count", 0) + 1,
+                    "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                }
             dialog_state, dialog_delta = apply_plan_delta_with_report(previous_dialog_state, plan, user_input)
             plan = apply_dialog_state_to_plan(plan, dialog_state)
             plan = coerce_followup_general_chat_to_retrieval(plan, dialog_state, user_input)

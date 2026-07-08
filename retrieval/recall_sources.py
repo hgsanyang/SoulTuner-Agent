@@ -26,6 +26,14 @@ def _public_url(path: str | None) -> str | None:
     return f"{settings.api_base_url}{encoded}"
 
 
+def _playable_song_where(alias: str = "s") -> str:
+    return (
+        f"coalesce(properties({alias})['unplayable_stub'], false) <> true "
+        f"AND {alias}.audio_url IS NOT NULL "
+        f"AND trim(toString({alias}.audio_url)) <> ''"
+    )
+
+
 def _record_to_song(record: Mapping[str, Any]) -> dict:
     genres = _clean_list(record.get("genres"))
     moods = _clean_list(record.get("moods"))
@@ -79,6 +87,7 @@ def graph_candidate_recall(
 
     query = """
     MATCH (s:Song)
+    WHERE {playable_where}
     OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
     OPTIONAL MATCH (s)-[:BELONGS_TO_GENRE]->(g:Genre)
     OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
@@ -94,7 +103,7 @@ def graph_candidate_recall(
            collect(DISTINCT t.name) AS themes,
            collect(DISTINCT sc.name) AS scenarios,
            coalesce(s.updated_at, 0) AS updated_at
-    """
+    """.format(playable_where=_playable_song_where("s"))
     client = get_neo4j_client()
     rows = client.execute_query(query)
 

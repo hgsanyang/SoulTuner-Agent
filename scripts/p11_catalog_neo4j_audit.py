@@ -19,7 +19,9 @@ def run_audit() -> dict:
         """
         MATCH (s:Song)
         RETURN count(s) AS total,
-               sum(CASE WHEN coalesce(s.audio_url, '') <> '' THEN 1 ELSE 0 END) AS playable,
+               sum(CASE WHEN coalesce(properties(s)['unplayable_stub'], false) <> true
+                          AND coalesce(s.audio_url, '') <> '' THEN 1 ELSE 0 END) AS playable,
+               sum(CASE WHEN coalesce(properties(s)['unplayable_stub'], false) = true THEN 1 ELSE 0 END) AS unplayable_stub,
                sum(CASE WHEN size(coalesce(s.muq_embedding, [])) = 512 THEN 1 ELSE 0 END) AS muq,
                sum(CASE WHEN size(coalesce(s.m2d2_embedding, [])) = 768 THEN 1 ELSE 0 END) AS m2d,
                sum(CASE WHEN size(coalesce(s.omar_embedding, [])) = 1024 THEN 1 ELSE 0 END) AS omar,
@@ -72,15 +74,28 @@ def run_audit() -> dict:
         """,
         {},
     )
+    knowledge = client.execute_query(
+        """
+        MATCH (s:Song)
+        RETURN sum(CASE WHEN EXISTS { MATCH (s)-[:HAS_KNOWLEDGE]->(:KnowledgeCard) } THEN 1 ELSE 0 END) AS songs_with_knowledge,
+               sum(CASE WHEN coalesce(s.release_year_source, '') = 'knowledge_card' THEN 1 ELSE 0 END) AS release_year_from_knowledge,
+               count { MATCH (:KnowledgeCard {kind: 'song'}) } AS song_cards,
+               count { MATCH (:KnowledgeCard {kind: 'artist'}) } AS artist_cards,
+               count { MATCH (:KnowledgeCard) } AS total_cards
+        """,
+        {},
+    )[0]
     unplayable = client.execute_query(
         """
         MATCH (s:Song)
-        WHERE coalesce(s.audio_url, '') = ''
+        WHERE coalesce(properties(s)['unplayable_stub'], false) = true
+           OR coalesce(s.audio_url, '') = ''
         RETURN coalesce(s.title, '') AS title,
                coalesce(s.artist, '') AS artist,
                coalesce(toString(s.music_id), '') AS music_id,
                coalesce(s.source, 'unknown') AS source,
                coalesce(toString(s.source_id), '') AS source_id,
+               coalesce(toString(properties(s)['unplayable_stub']), '') AS unplayable_stub,
                coalesce(properties(s)['audio_status'], '') AS audio_status,
                coalesce(properties(s)['acquire_status'], '') AS acquire_status
         ORDER BY source, title
@@ -91,6 +106,7 @@ def run_audit() -> dict:
     return {
         "summary": summary,
         "tag_relationship_coverage": tags,
+        "knowledge_coverage": knowledge,
         "source_breakdown": sources,
         "unplayable_examples": unplayable,
         "duplicate_title_artist_top20": duplicate_title_artist,

@@ -5,6 +5,7 @@ This script performs only source-backed updates:
 - release/source/retention facts from local online-acquired metadata JSON.
 - HAS_LANGUAGE relationships from existing Song.language properties.
 - normalized artist/title keys for duplicate diagnosis.
+- release_year from already source-backed KnowledgeCard metadata.
 
 It never deletes duplicate Song nodes and never invents release years.
 """
@@ -73,7 +74,7 @@ def release_year_from_metadata(meta: Mapping[str, Any]) -> int | None:
             # Avoid pulling in pandas/dateutil for one deterministic field.
             import datetime as _dt
 
-            return _dt.datetime.fromtimestamp(timestamp_ms / 1000, _dt.UTC).year
+            return _dt.datetime.fromtimestamp(timestamp_ms / 1000, _dt.timezone.utc).year
     except Exception:
         return None
     return None
@@ -254,6 +255,68 @@ def backfill_language_relationships(client: Any, *, dry_run: bool = False) -> in
     return int(result[0].get("n") or 0) if result else 0
 
 
+def backfill_release_year_from_knowledge_cards(client: Any, *, dry_run: bool = False) -> int:
+    rows = client.execute_query(
+        """
+        MATCH (s:Song)-[:HAS_KNOWLEDGE]->(k:KnowledgeCard)
+        WHERE properties(s)['release_year'] IS NULL
+          AND properties(k)['release_year'] IS NOT NULL
+          AND toInteger(k.release_year) >= 1900
+          AND toInteger(k.release_year) <= 2100
+          AND coalesce(toFloat(k.confidence), 0.0) >= 0.55
+        RETURN count(DISTINCT s) AS n
+        """
+    )
+    count = int(rows[0].get("n") or 0) if rows else 0
+    if dry_run or count <= 0:
+        return count
+    result = client.execute_query(
+        """
+        MATCH (s:Song)-[:HAS_KNOWLEDGE]->(k:KnowledgeCard)
+        WHERE properties(s)['release_year'] IS NULL
+          AND properties(k)['release_year'] IS NOT NULL
+          AND toInteger(k.release_year) >= 1900
+          AND toInteger(k.release_year) <= 2100
+          AND coalesce(toFloat(k.confidence), 0.0) >= 0.55
+        WITH s, k
+        ORDER BY coalesce(toFloat(k.confidence), 0.0) DESC, k.updated_at DESC
+        WITH s, collect(k)[0] AS best
+        SET s.release_year = toInteger(best.release_year),
+            s.release_year_source = 'knowledge_card',
+            s.updated_at = timestamp()
+        RETURN count(s) AS n
+        """
+    )
+    return int(result[0].get("n") or 0) if result else 0
+
+
+def mark_unplayable_stubs(client: Any, *, dry_run: bool = False) -> int:
+    rows = client.execute_query(
+        """
+        MATCH (s:Song)
+        WHERE coalesce(properties(s)['unplayable_stub'], false) <> true
+          AND (s.audio_url IS NULL OR trim(toString(s.audio_url)) = '')
+        RETURN count(s) AS n
+        """
+    )
+    count = int(rows[0].get("n") or 0) if rows else 0
+    if dry_run or count <= 0:
+        return count
+    result = client.execute_query(
+        """
+        MATCH (s:Song)
+        WHERE coalesce(properties(s)['unplayable_stub'], false) <> true
+          AND (s.audio_url IS NULL OR trim(toString(s.audio_url)) = '')
+        SET s.unplayable_stub = true,
+            s.audio_status = coalesce(s.audio_status, 'missing'),
+            s.acquire_status = coalesce(s.acquire_status, 'needs_audio'),
+            s.updated_at = timestamp()
+        RETURN count(s) AS n
+        """
+    )
+    return int(result[0].get("n") or 0) if result else 0
+
+
 def duplicate_diagnosis(client: Any, *, limit: int = 20) -> list[dict[str, Any]]:
     rows = client.execute_query(
         """
@@ -290,6 +353,11 @@ def main() -> None:
         "title_artist_key_updates": backfill_title_artist_keys(client, dry_run=args.dry_run),
         "online_metadata_updates": backfill_online_metadata(client, metadata_rows, dry_run=args.dry_run),
         "language_relationship_updates": backfill_language_relationships(client, dry_run=args.dry_run),
+        "release_year_from_knowledge_updates": backfill_release_year_from_knowledge_cards(
+            client,
+            dry_run=args.dry_run,
+        ),
+        "unplayable_stub_updates": mark_unplayable_stubs(client, dry_run=args.dry_run),
         "duplicates": duplicate_diagnosis(client, limit=args.duplicate_limit) if not args.dry_run else [],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

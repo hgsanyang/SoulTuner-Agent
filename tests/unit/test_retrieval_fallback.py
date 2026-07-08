@@ -45,6 +45,22 @@ def test_similarity_reference_song_does_not_force_web_fallback():
     assert not decision.required
 
 
+def test_similarity_reference_song_is_excluded_from_web_results():
+    plan = _plan(songs=["心要野", "Xin Yao Ye"])
+    plan["soft_intent"] = {"goal": "找类似听感", "vibe": "similar controlled rock", "avoid": []}
+
+    terms = avoid_terms(plan, "和刚才第一首相似，但别再那么热闹")
+
+    assert "心要野" in terms
+    rows = [
+        {"name": "心要野", "artists": [{"name": "后海大鲨鱼"}]},
+        {"name": "别的歌", "artists": [{"name": "后海大鲨鱼"}]},
+    ]
+    kept, excluded = filter_results_by_avoid(rows, terms)
+    assert excluded == 1
+    assert kept[0]["name"] == "别的歌"
+
+
 def test_explicit_song_allows_title_suffix_but_not_truncated_alias():
     live_version = [{"song": {"title": "晴天 (Live)", "artist": "歌手"}}]
     assert not decide_online_fallback(live_version, _plan(songs=["晴天"])).required

@@ -187,9 +187,13 @@ def _query_avoid_terms(query: str = "") -> list[str]:
 
 
 def avoid_terms(retrieval_plan: Mapping[str, Any] | None, query: str = "") -> list[str]:
-    soft = dict((retrieval_plan or {}).get("soft_intent") or {})
+    plan = dict(retrieval_plan or {})
+    soft = dict(plan.get("soft_intent") or {})
     terms = [str(term).strip() for term in soft.get("avoid") or [] if str(term).strip()]
     terms.extend(_query_avoid_terms(query))
+    _artists, songs, _hard = layered_constraints(plan)
+    if songs and _song_entities_are_similarity_seeds(plan, query):
+        terms.extend(str(song).strip() for song in songs if str(song).strip())
     return list(dict.fromkeys(terms))
 
 

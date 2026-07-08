@@ -615,6 +615,9 @@ export interface LibrarySong {
     source_platform?: string;
     source_id?: string;
     metadata_source?: string;
+    audio_retention?: 'temporary' | 'saved' | string;
+    audio_status?: string;
+    acquire_status?: string;
     tag_source?: string;
     tag_confidence_json?: string;
     vector_coverage?: {

@@ -52,3 +52,10 @@ def test_graph_language_constraint_is_a_recall_signal(monkeypatch):
     assert [row["title"] for row in rows] == ["晚风心里吹"]
     assert rows[0]["language"] == "Cantonese"
     assert rows[0]["similarity_score"] == 4.0
+
+
+def test_graph_recall_filters_unplayable_song_nodes():
+    where = recall_sources._playable_song_where("s")
+
+    assert "s.audio_url IS NOT NULL" in where
+    assert "unplayable_stub" in where
