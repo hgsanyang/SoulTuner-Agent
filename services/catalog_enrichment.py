@@ -56,6 +56,26 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def _clean_detail_value(value: Any, *, depth: int = 0) -> Any:
+    """Keep structured knowledge-card details compact and JSON-safe."""
+
+    if depth > 3:
+        return None
+    if isinstance(value, Mapping):
+        cleaned = {
+            _clean_text(key, max_length=80): _clean_detail_value(item, depth=depth + 1)
+            for key, item in value.items()
+            if _clean_text(key, max_length=80)
+        }
+        return {key: item for key, item in cleaned.items() if item not in (None, "", [], {})}
+    if isinstance(value, (list, tuple, set)):
+        cleaned_list = [_clean_detail_value(item, depth=depth + 1) for item in value]
+        return [item for item in cleaned_list if item not in (None, "", [], {})][:16]
+    if isinstance(value, (int, float, bool)):
+        return value
+    return _clean_text(value, max_length=260)
+
+
 def _parse_epoch_year(value: Any) -> int | None:
     try:
         numeric = int(value)
@@ -211,6 +231,9 @@ def normalize_knowledge_card(payload: Mapping[str, Any]) -> dict[str, Any]:
         for tag in payload.get("style_tags") or []
         if _clean_text(tag, max_length=80)
     ][:12]
+    details = _clean_detail_value(payload.get("details") or {})
+    if not isinstance(details, dict):
+        details = {}
     try:
         release_year = int(payload.get("release_year") or 0)
     except (TypeError, ValueError):
@@ -222,6 +245,7 @@ def normalize_knowledge_card(payload: Mapping[str, Any]) -> dict[str, Any]:
         "summary": summary,
         "facts": facts,
         "style_tags": style_tags,
+        "details": details,
         "release_year": release_year if 1900 <= release_year <= 2100 else None,
         "source": source,
         "source_url": source_url,

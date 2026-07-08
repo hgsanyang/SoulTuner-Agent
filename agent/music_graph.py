@@ -80,6 +80,25 @@ from services.llm_feedback_logger import build_planning_feedback, log_planning_f
 logger = get_logger(__name__)
 
 
+def _schedule_recommended_knowledge_backfill(recommendations: Any, *, context: str) -> None:
+    """Queue missing knowledge-card enrichment for songs that were actually shown."""
+
+    if not recommendations:
+        return
+    try:
+        from services.recommendation_knowledge_backfill import schedule_recommendation_knowledge_backfill
+
+        meta = schedule_recommendation_knowledge_backfill(recommendations)
+        if meta.get("scheduled"):
+            logger.info(
+                "[KnowledgeBackfill] %s queued %s recommended songs",
+                context,
+                meta.get("scheduled"),
+            )
+    except Exception as exc:
+        logger.debug("[KnowledgeBackfill] %s scheduling skipped: %s", context, exc)
+
+
 def _web_search_enabled() -> bool:
     return os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1").lower() not in {"0", "false", "no", "off"}
 
@@ -865,6 +884,8 @@ class MusicRecommendationGraph:
                 state.get("dialog_state"),
                 search_results,
             )
+            if gap_decision.action != "blocked":
+                _schedule_recommended_knowledge_backfill(search_results, context="search_songs")
             recommendations_payload = (
                 []
                 if gap_decision.action == "blocked"
@@ -1406,6 +1427,7 @@ class MusicRecommendationGraph:
                     "online_auto_flywheel_candidates": auto_flywheel_candidates,
                     "online_audio_retention": "temporary_until_user_save",
                 }
+            _schedule_recommended_knowledge_backfill(final_results, context="web_fallback")
 
             from schemas.music_state import ToolOutput
             dialog_state = update_dialog_result_anchors(state.get("dialog_state"), final_results)
@@ -1675,6 +1697,7 @@ class MusicRecommendationGraph:
                         raw_markdown="\n".join(md_lines),
                     )
                     logger.info(f"[Favorites] 两层推荐完成: Seeds={len(playable_seeds)}, Discoveries={len(discoveries)}, Total={len(merged)}")
+                    _schedule_recommended_knowledge_backfill(merged, context="favorites")
                     return {
                         "recommendations": result,
                         "step_count": state.get("step_count", 0) + 1
@@ -1702,6 +1725,7 @@ class MusicRecommendationGraph:
                 recommendations = []
                 
             logger.info(f"生成了 {len(recommendations)} 条推荐")
+            _schedule_recommended_knowledge_backfill(recommendations, context="generate_recommendations")
             
             return {
                 "recommendations": raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else [], # 完整保存 ToolOutput 对象供解释节点用
@@ -2160,6 +2184,7 @@ class MusicRecommendationGraph:
                     recommendations = []
             
             logger.info(f"生成了 {len(recommendations)} 条增强推荐")
+            _schedule_recommended_knowledge_backfill(recommendations, context="enhanced_recommendations")
             
             return {
                 "recommendations": recommendations,

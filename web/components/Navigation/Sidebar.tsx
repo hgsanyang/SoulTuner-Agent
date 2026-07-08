@@ -114,6 +114,18 @@ const navGroups: NavGroup[] = [
           </svg>
         ),
       },
+      {
+        href: '/memory',
+        label: '我的记忆',
+        description: '编辑学习偏好',
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M12 4a4 4 0 0 0-4 4v1H7a3 3 0 0 0-3 3c0 1.3.84 2.4 2 2.82V16a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-1.18A3 3 0 0 0 20 12a3 3 0 0 0-3-3h-1V8a4 4 0 0 0-4-4z" />
+            <path d="M9 13h6" />
+            <path d="M10 16h4" />
+          </svg>
+        ),
+      },
     ],
   },
   {

@@ -120,6 +120,37 @@ def precision_at_k(ranked_ids: list[str], labels_by_id: dict[str, dict[str, Any]
     return hits / len(top)
 
 
+def precision_means_by_bucket(
+    rows: list[dict[str, Any]],
+    backends: list[str],
+    *,
+    bucket_key: str,
+) -> dict[str, dict[str, float]]:
+    """Aggregate per-query precision scores by a stable report bucket."""
+
+    buckets: dict[str, dict[str, list[float]]] = {}
+    for row in rows:
+        raw_bucket = row
+        for part in bucket_key.split("."):
+            raw_bucket = raw_bucket.get(part, {}) if isinstance(raw_bucket, dict) else {}
+        if not raw_bucket:
+            continue
+        bucket = str(raw_bucket)
+        buckets.setdefault(bucket, {backend: [] for backend in backends})
+        for backend in backends:
+            value = row.get("precision_at_k", {}).get(backend)
+            if value is not None:
+                buckets[bucket].setdefault(backend, []).append(float(value))
+
+    return {
+        bucket: {
+            backend: (float(sum(values) / len(values)) if values else 0.0)
+            for backend, values in scores.items()
+        }
+        for bucket, scores in sorted(buckets.items())
+    }
+
+
 def load_query_variant_file(path: str) -> dict[str, list[str]]:
     """Load frozen LLM-generated acoustic HyDE variants keyed by query id."""
     if not path:
@@ -360,6 +391,18 @@ def evaluate_attribute_alignment(
         "metrics": {
             "overall": {backend: mean(values) for backend, values in all_scores.items()},
             "by_query_language": by_language,
+            "by_target_field": precision_means_by_bucket(rows, backends, bucket_key="target.field"),
+            "by_query_language_and_target_field": precision_means_by_bucket(
+                [
+                    {
+                        **row,
+                        "language_field_bucket": f"{row.get('query_language')}:{row.get('target', {}).get('field')}",
+                    }
+                    for row in rows
+                ],
+                backends,
+                bucket_key="language_field_bucket",
+            ),
         },
         "queries": rows,
     }

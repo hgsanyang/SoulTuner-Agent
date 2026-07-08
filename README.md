@@ -43,6 +43,12 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 ## 🖼️ Feature Preview
 
+<p align="center">
+  <a href="https://www.bilibili.com/video/BV11dQLBDEeF/">
+    <img src="https://img.shields.io/badge/▶_Demo_Video_—_Watch_on_Bilibili_|_BV11dQLBDEeF-00A1D6?style=for-the-badge&logo=bilibili&logoColor=white&labelColor=FB7299" alt="Demo Video" />
+  </a>
+</p>
+
 ### 🏠 Home · 💬 Chat · 🎵 Recommend · 🎧 Player · 🗺️ Journey
 
 <table>
@@ -127,7 +133,7 @@ If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
 | 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
 | 🤖 **Smart Intent Recognition** | Layered intent plan: `hard_constraints / soft_intent / hints` + multi-turn inheritance |
 | 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j hot path + long-term memory sidecars |
-| 🌐 **Web Search Fallback** | Enabled by default; mixes a few online candidates when local results are healthy, and triggers SearxNG/Tavily/Zhipu discovery + Netease playable resolution when the catalog falls short |
+| 🌐 **Web Search Fallback** | Enabled by default; mixes a few online candidates when local results are healthy, and triggers online candidate discovery + playable resolution when the catalog falls short |
 | 🎼 **Music Journey** | LLM Story → Emotion breakdown → Step-by-step retrieval, real-time SSE streaming |
 | ♻️ **Data Flywheel** | Download → Stage → Preview → Confirm Ingest → Ingest queue → Tag extraction → Vector encoding → Neo4j |
 | 📋 **Library Mgmt** | Pending staging area + queue status/retry + My Library full-graph management (search/play/tag edit/delete) |
@@ -196,7 +202,7 @@ If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
 | **Audio Embeddings** | MuQ-MuLan (primary text-to-music, 512d) + M2D-CLAP (semantic fallback/rerank, 768d) + OMAR-RQ (acoustic auxiliary, 1024d) |
 | **LLMs** | Default `dashscope / qwen3.7-plus`; other providers are advanced overrides |
 | **Long-term Memory**| MemoryGateway (Neo4j hot path + optional GraphZep/Mem0 episodic sidecars) |
-| **Web Search** | SearxNG federated search + Tavily + Zhipu WebSearch |
+| **Web Search** | Catalog Gap Detector + online candidate discovery + playable resolution |
 | **Ranking Algorithm**| Content-anchor rerank (Semantic+Acoustic) + bounded post-recall adjustments + Thompson Sampling + MMR |
 | **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
 | **Containerization** | Docker Compose CPU/GPU entrypoints; CPU includes the full online stack, GPU adds the ingestion worker |
@@ -299,7 +305,7 @@ Frontend profile settings, song feedback, and slate-level feedback can gradually
 ├── tools/                      # Tool executions
 │   ├── graphrag_search.py      # Neo4j Cypher definitions
 │   ├── semantic_search.py      # MuQ primary, M2D fallback, OMAR-assisted retrieval
-│   ├── web_search_aggregator.py# SearxNG + Tavily routers
+│   ├── web_search_aggregator.py# optional web discovery adapters
 │   └── acquire_music.py        # Song acquisition and pending-ingest tools
 │
 ├── llms/                       # LLMs

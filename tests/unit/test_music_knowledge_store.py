@@ -9,15 +9,18 @@ def test_music_knowledge_store_upserts_and_searches_artist(tmp_path):
         summary="English post-punk and gothic rock band with atmospheric guitar textures.",
         style_tags=["Post-Punk", "Gothic Rock"],
         facts=["Formed in Crawley."],
+        details={"country_or_region": "United Kingdom", "artist_type": "band"},
         source_url="https://example.com/the-cure",
         confidence=0.82,
     )
 
     assert card["artist"] == "The Cure"
+    assert card["details"]["artist_type"] == "band"
     hits = store.search("The Cure gothic rock", kind="artist", min_confidence=0.7)
     assert hits[0]["artist"] == "The Cure"
     assert hits[0]["source_url"] == "https://example.com/the-cure"
     assert "Gothic Rock" in hits[0]["style_tags"]
+    assert hits[0]["details"]["country_or_region"] == "United Kingdom"
 
 
 def test_music_knowledge_store_upserts_song_release_year_and_source(tmp_path):
@@ -30,6 +33,7 @@ def test_music_knowledge_store_upserts_song_release_year_and_source(tmp_path):
         release_year=1985,
         style_tags=["Synth-Pop", "Art Pop"],
         facts=["Originally released in 1985."],
+        details={"album": "Hounds of Love", "original_release_year": 1985},
         source_url="https://example.com/running-up-that-hill",
         confidence=0.9,
     )
@@ -37,6 +41,7 @@ def test_music_knowledge_store_upserts_song_release_year_and_source(tmp_path):
     card = store.get_song_card("Running Up That Hill", "Kate Bush")
     assert card is not None
     assert card["release_year"] == 1985
+    assert card["details"]["album"] == "Hounds of Love"
     assert card["source_url"] == "https://example.com/running-up-that-hill"
 
     hits = store.search("1985 synth pop Kate Bush", kind="song", min_confidence=0.8)
@@ -54,6 +59,7 @@ def test_music_knowledge_store_normalized_payload_keeps_style_and_year(tmp_path)
             "summary": "华语流行里的经典民谣摇滚作品。",
             "facts": ["常被归入华语经典老歌。"],
             "style_tags": ["Folk", "Chinese Pop"],
+            "details": {"language": "Mandarin", "era": "1980s"},
             "release_year": 1982,
             "source": "web",
             "source_url": "https://example.com/1980",
@@ -63,6 +69,7 @@ def test_music_knowledge_store_normalized_payload_keeps_style_and_year(tmp_path)
 
     assert card["release_year"] == 1982
     assert "Chinese Pop" in card["style_tags"]
+    assert card["details"]["era"] == "1980s"
 
 
 def test_music_knowledge_store_merges_qdrant_semantic_hits(monkeypatch, tmp_path):
@@ -92,3 +99,24 @@ def test_music_knowledge_store_merges_qdrant_semantic_hits(monkeypatch, tmp_path
     hits = store.search("gothic shoegaze band", kind="artist", limit=4, min_confidence=0.5)
 
     assert [hit["artist"] for hit in hits] == ["The Cure", "Slowdive"]
+
+
+def test_deprecate_source_provider_lowers_legacy_trust(tmp_path):
+    store = MusicKnowledgeStore(tmp_path / "knowledge.sqlite")
+    store.upsert_song_card(
+        title="Legacy Song",
+        artist="Legacy Artist",
+        summary="Unsupported aggregator answer.",
+        release_year=2000,
+        source_url="https://tavily.com",
+        source_provider="Tavily_AI_Answer",
+        confidence=0.9,
+    )
+
+    result = store.deprecate_source_provider("Tavily_AI_Answer")
+    card = store.get_song_card("Legacy Song", "Legacy Artist")
+
+    assert result["song_cards"] == 1
+    assert card["confidence"] <= 0.3
+    assert card["source_provider"] == "legacy_deprecated"
+    assert card["details"]["deprecated_source"]["provider"] == "Tavily_AI_Answer"

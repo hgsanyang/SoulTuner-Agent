@@ -153,6 +153,16 @@ class GlobalSettings(BaseSettings):
         validation_alias="EVAL_DISABLE_SIDE_EFFECTS",
         description="离线评测时关闭后台偏好提取、GraphZep 写入、画像刷新等副作用",
     )
+    knowledge_background_enrichment_enabled: bool = Field(
+        default=True,
+        validation_alias="KNOWLEDGE_BACKGROUND_ENRICHMENT_ENABLED",
+        description="真实推荐命中缺资料歌曲时，后台按需补充知识卡；离线评测会自动关闭",
+    )
+    knowledge_background_enrichment_limit: int = Field(
+        default=3,
+        validation_alias="KNOWLEDGE_BACKGROUND_ENRICHMENT_LIMIT",
+        description="单轮推荐最多后台补充多少首歌曲知识，避免 API 额度被批量任务消耗",
+    )
 
     planner_cache_ttl_seconds: int = Field(
         default=300,

@@ -11,6 +11,7 @@ def test_knowledge_card_params_are_graph_safe():
             "artist": "Teleman",
             "summary": "A gentle indie song.",
             "facts": ["Fact A"],
+            "details": {"album": "Good Nature"},
             "source": "web",
         }
     )
@@ -18,6 +19,7 @@ def test_knowledge_card_params_are_graph_safe():
     assert params["key"] == "song::anchor::teleman"
     assert params["confidence"] == 0.68
     assert json.loads(params["facts_json"]) == ["Fact A"]
+    assert json.loads(params["details_json"]) == {"album": "Good Nature"}
 
 
 def test_knowledge_graph_query_does_not_create_song_nodes():

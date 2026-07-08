@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -34,6 +35,18 @@ STYLE_KEYWORDS = {
 }
 
 PROJECT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+BLOCKED_SOURCE_HOSTS = {
+    "tavily.com",
+    "www.tavily.com",
+    "google.com",
+    "www.google.com",
+    "bing.com",
+    "www.bing.com",
+    "baidu.com",
+    "www.baidu.com",
+    "search.brave.com",
+}
+BLOCKED_SOURCE_PARENT_HOSTS = {"tavily.com"}
 
 
 @dataclass(frozen=True)
@@ -61,7 +74,11 @@ def normalize_snippets(raw_results: list[Mapping[str, Any]]) -> list[WebSnippet]
 
 
 async def fetch_music_knowledge_snippets(query: str) -> list[WebSnippet]:
-    """Run federated web search and return structured snippets."""
+    """Run legacy federated web search and return structured snippets.
+
+    This is kept for explicit diagnostics only.  Production knowledge-card
+    enrichment uses DashScope/Qwen web_search as the default source of truth.
+    """
 
     async with aiohttp.ClientSession() as session:
         results = await asyncio.gather(
@@ -115,6 +132,48 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _is_traceable_source_url(url: str) -> bool:
+    raw = str(url or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+    host = parsed.netloc.casefold()
+    if host in BLOCKED_SOURCE_HOSTS:
+        return False
+    if any(host.endswith("." + blocked) for blocked in BLOCKED_SOURCE_PARENT_HOSTS):
+        return False
+    if "/search" in parsed.path.casefold() and host in {"google.com", "www.google.com", "bing.com", "www.bing.com"}:
+        return False
+    return True
+
+
+def _first_traceable_source_url(items: Any) -> str:
+    if isinstance(items, str):
+        items = [items]
+    for item in items or []:
+        raw = str(item or "").strip()
+        if _is_traceable_source_url(raw):
+            return raw
+    return ""
+
+
+def _details_from_parsed(kind: str, parsed: Mapping[str, Any]) -> dict[str, Any]:
+    raw = parsed.get("details") or {}
+    if not isinstance(raw, Mapping):
+        raw = {}
+    details = dict(raw)
+    if kind == "song":
+        release_year = parsed.get("release_year") or details.get("original_release_year") or details.get("release_year")
+        if release_year:
+            details.setdefault("original_release_year", release_year)
+    return details
+
+
 def _load_dashscope_env() -> str:
     try:
         from dotenv import load_dotenv
@@ -141,19 +200,26 @@ def _normalise_llm_card(
     sources = parsed.get("sources") or parsed.get("source_urls") or []
     if isinstance(sources, str):
         sources = [sources]
-    first_source = source_url or next((str(item).strip() for item in sources if str(item).strip()), "")
+    first_source = source_url if _is_traceable_source_url(source_url) else _first_traceable_source_url(sources)
+    if not first_source:
+        return None
+    details = _details_from_parsed(kind, parsed)
+    release_year = parsed.get("release_year")
+    if kind == "song" and not release_year:
+        release_year = details.get("original_release_year") or details.get("release_year")
     return {
         "kind": "artist" if kind == "artist" else "song",
         "title": title,
         "artist": artist,
         "summary": summary[:900],
         "facts": [str(item)[:220] for item in parsed.get("facts") or [] if str(item).strip()][:8],
+        "details": details,
         "source": source,
         "source_url": first_source,
         "confidence": clamp_confidence(parsed.get("confidence"), default=0.74),
         "style_tags": [str(item)[:80] for item in parsed.get("style_tags") or [] if str(item).strip()][:8],
         "source_title": source_title or "Qwen web search",
-        "release_year": parsed.get("release_year"),
+        "release_year": release_year,
     }
 
 
@@ -208,7 +274,7 @@ def _llm_web_card(
         return None
     subject = f"artist={artist or title}" if kind == "artist" else f"title={title}, artist={artist}"
     prompt = f"""
-你是音乐资料整理助手。请调用联网搜索核对资料，只整理和音乐相关的事实，不要编造。
+你是音乐资料整理助手。你必须实际调用联网搜索工具核对资料，只整理搜索结果能支持的音乐事实，不要凭模型记忆编造。
 对象: {kind}; {subject}
 搜索意图: {query}
 
@@ -218,14 +284,20 @@ def _llm_web_card(
   "facts": ["最多5条可由联网结果支持的事实"],
   "style_tags": ["最多6个音乐风格/类型/场景标签"],
   "release_year": 歌曲首发年份或 null，歌手卡可为 null,
+  "details": {{}},
   "confidence": 0.0到1.0,
   "sources": ["至少1个用于支撑摘要的网页URL"]
 }}
 
 规则:
 - 只输出 JSON，不要 Markdown。
+- 必须使用联网搜索结果；如果搜索不到可靠来源，summary 为空字符串，release_year 为 null，confidence <= 0.3。
+- sources 必须填写真实网页 URL，不要填写搜索聚合页、空字符串或无法追溯的来源。
 - 如果同名歌曲/歌手有歧义，降低 confidence，并在 facts 里说明歧义。
 - 发行年份优先原曲首发年份，不把重制版、精选集、Live 专辑年份当作首发年份。
+- artist details 建议字段: aliases, artist_type, country_or_region, active_years, members, genres, styles, languages, representative_works, achievements, similar_artists, sound_traits, lyrical_themes。
+- song details 建议字段: album, original_release_year, release_type, version_note, writers, composers, lyricists, producers, genres, styles, moods, themes, scenarios, language, era, region, instrumentation, vocal_style, energy_descriptor, tempo_descriptor, lyrical_theme, known_context。
+- 冷门歌曲资料不足时，不要硬填；可把 details 留空或只填能被来源支持的字段。
 """.strip()
     try:
         response = client.responses.create(
@@ -248,12 +320,184 @@ def _llm_web_card(
         return None
 
 
+def _llm_web_song_cards_batch(songs: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Ask Qwen to enrich several songs in one web-search request.
+
+    This is for offline backlog reduction only.  Each returned card still needs
+    its own traceable source URL; cards without source evidence are dropped.
+    """
+
+    client = _dashscope_openai_client()
+    if client is None or not hasattr(client, "responses") or not songs:
+        return []
+    seed_lines = []
+    for idx, song in enumerate(songs, start=1):
+        seed_lines.append(
+            f"{idx}. title={str(song.get('title') or '').strip()} | artist={str(song.get('artist') or '').strip()}"
+        )
+    prompt = f"""
+你是音乐资料整理助手。你必须实际调用联网搜索工具核对资料，只整理搜索结果能支持的音乐事实，不要凭模型记忆编造。
+
+请为下面每一首歌曲分别整理知识卡。每首歌都必须独立保留 source_url；找不到可靠来源的歌曲可以省略，不要硬填。
+歌曲列表:
+{chr(10).join(seed_lines)}
+
+请输出严格 JSON:
+{{
+  "cards": [
+    {{
+      "title": "歌曲名，保持输入中的对应歌曲名",
+      "artist": "歌手，保持输入中的对应歌手",
+      "summary": "120字以内中文摘要，覆盖风格、背景、代表性信息",
+      "facts": ["最多5条可由联网结果支持的事实"],
+      "style_tags": ["最多6个音乐风格/类型/场景标签"],
+      "release_year": 歌曲首发年份或 null,
+      "details": {{}},
+      "confidence": 0.0到1.0,
+      "sources": ["至少1个用于支撑该歌曲摘要的网页URL"]
+    }}
+  ]
+}}
+
+规则:
+- 只输出 JSON，不要 Markdown。
+- 必须使用联网搜索结果；没有可靠来源的歌曲不要放进 cards。
+- sources 必须是真实网页 URL，不要填写搜索聚合页、空字符串或无法追溯的来源。
+- 同名歌曲/版本有歧义时降低 confidence，并在 facts/details.version_note 说明。
+- 发行年份优先原曲首发年份，不把重制版、精选集、Live 专辑年份当作首发年份。
+- details 建议字段: album, original_release_year, release_type, version_note, writers, composers, lyricists, producers, genres, styles, moods, themes, scenarios, language, era, region, instrumentation, vocal_style, energy_descriptor, tempo_descriptor, lyrical_theme, known_context。
+""".strip()
+    try:
+        response = client.responses.create(
+            model=_knowledge_llm_model(),
+            input=prompt,
+            tools=[{"type": "web_search"}],
+            extra_body={"enable_thinking": True},
+        )
+        parsed = _extract_json_object(_response_text(response))
+        raw_cards = parsed.get("cards") if isinstance(parsed, Mapping) else None
+        if not isinstance(raw_cards, list):
+            return []
+        seeds_by_key = {
+            (str(song.get("title") or "").casefold(), str(song.get("artist") or "").casefold()): song
+            for song in songs
+        }
+        cards: list[dict[str, Any]] = []
+        for raw in raw_cards:
+            if not isinstance(raw, Mapping):
+                continue
+            title = str(raw.get("title") or "").strip()
+            artist = str(raw.get("artist") or "").strip()
+            seed = seeds_by_key.get((title.casefold(), artist.casefold()))
+            if seed is None and len(songs) == 1:
+                seed = songs[0]
+            normalized = _normalise_llm_card(
+                kind="song",
+                title=str((seed or raw).get("title") or title),
+                artist=str((seed or raw).get("artist") or artist),
+                parsed=raw,
+                source="dashscope_web_search_batch",
+            )
+            if normalized:
+                cards.append(normalized)
+        return cards
+    except Exception:
+        return []
+
+
+def _llm_web_artist_cards_batch(artists: list[str]) -> list[dict[str, Any]]:
+    """Ask Qwen to enrich several artists in one web-search request."""
+
+    client = _dashscope_openai_client()
+    cleaned_artists = [str(artist or "").strip() for artist in artists if str(artist or "").strip()]
+    if client is None or not hasattr(client, "responses") or not cleaned_artists:
+        return []
+    seed_lines = [f"{idx}. artist={artist}" for idx, artist in enumerate(cleaned_artists, start=1)]
+    prompt = f"""
+你是音乐资料整理助手。你必须实际调用联网搜索工具核对资料，只整理搜索结果能支持的音乐事实，不要凭模型记忆编造。
+
+请为下面每一位歌手/乐队分别整理知识卡。每位艺人都必须独立保留 source_url；找不到可靠来源的艺人可以省略，不要硬填。
+艺人列表:
+{chr(10).join(seed_lines)}
+
+请输出严格 JSON:
+{{
+  "cards": [
+    {{
+      "artist": "艺人名，保持输入中的对应艺人名",
+      "summary": "120字以内中文摘要，覆盖风格、背景、代表性信息",
+      "facts": ["最多5条可由联网结果支持的事实"],
+      "style_tags": ["最多6个音乐风格/类型/场景标签"],
+      "release_year": null,
+      "details": {{}},
+      "confidence": 0.0到1.0,
+      "sources": ["至少1个用于支撑该艺人摘要的网页URL"]
+    }}
+  ]
+}}
+
+规则:
+- 只输出 JSON，不要 Markdown。
+- 必须使用联网搜索结果；没有可靠来源的艺人不要放进 cards。
+- sources 必须是真实网页 URL，不要填写搜索聚合页、空字符串或无法追溯的来源。
+- 同名艺人/乐队有歧义时降低 confidence，并在 facts/details.version_note 说明。
+- details 建议字段: aliases, artist_type, country_or_region, active_years, members, genres, styles, languages, representative_works, achievements, similar_artists, influences, sound_traits, lyrical_themes。
+- 冷门艺人资料不足时，不要硬填；可把 details 留空或只填能被来源支持的字段。
+""".strip()
+    try:
+        response = client.responses.create(
+            model=_knowledge_llm_model(),
+            input=prompt,
+            tools=[{"type": "web_search"}],
+            extra_body={"enable_thinking": True},
+        )
+        parsed = _extract_json_object(_response_text(response))
+        raw_cards = parsed.get("cards") if isinstance(parsed, Mapping) else None
+        if not isinstance(raw_cards, list):
+            return []
+        seeds = {artist.casefold(): artist for artist in cleaned_artists}
+        cards: list[dict[str, Any]] = []
+        for raw in raw_cards:
+            if not isinstance(raw, Mapping):
+                continue
+            artist = str(raw.get("artist") or raw.get("title") or "").strip()
+            seed_artist = seeds.get(artist.casefold()) or artist
+            normalized = _normalise_llm_card(
+                kind="artist",
+                title=seed_artist,
+                artist=seed_artist,
+                parsed=raw,
+                source="dashscope_web_search_batch",
+            )
+            if normalized:
+                cards.append(normalized)
+        return cards
+    except Exception:
+        return []
+
+
 async def _llm_web_card_async(**kwargs: Any) -> dict[str, Any] | None:
     timeout = float(os.getenv("MUSIC_KNOWLEDGE_LLM_TIMEOUT_SECONDS", "120")) + 10.0
     try:
         return await asyncio.wait_for(asyncio.to_thread(_llm_web_card, **kwargs), timeout=timeout)
     except Exception:
         return None
+
+
+async def _llm_web_song_cards_batch_async(songs: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    timeout = float(os.getenv("MUSIC_KNOWLEDGE_LLM_TIMEOUT_SECONDS", "120")) + 30.0
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_llm_web_song_cards_batch, songs), timeout=timeout)
+    except Exception:
+        return []
+
+
+async def _llm_web_artist_cards_batch_async(artists: list[str]) -> list[dict[str, Any]]:
+    timeout = float(os.getenv("MUSIC_KNOWLEDGE_LLM_TIMEOUT_SECONDS", "120")) + 30.0
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_llm_web_artist_cards_batch, artists), timeout=timeout)
+    except Exception:
+        return []
 
 
 def _llm_card_from_snippets(
@@ -364,12 +608,13 @@ async def enrich_artist_card(
     store: MusicKnowledgeStore | None = None,
     dry_run: bool = False,
     use_llm_summary: bool = False,
+    allow_snippet_fallback: bool = False,
 ) -> dict[str, Any] | None:
     query = build_artist_knowledge_query(artist)
     card = None
     if use_llm_summary:
         card = await _llm_web_card_async(kind="artist", query=query, artist=artist, title=artist)
-    if card is None:
+    if card is None and allow_snippet_fallback:
         snippets = await fetch_music_knowledge_snippets(query)
         card = build_card_from_snippets(
             kind="artist",
@@ -385,6 +630,7 @@ async def enrich_artist_card(
             summary=card["summary"],
             style_tags=card.get("style_tags", []),
             facts=card.get("facts", []),
+            details=card.get("details") or {},
             source_url=card.get("source_url", ""),
             source_title=card.get("source_title", ""),
             source_provider=card.get("source", "web"),
@@ -400,12 +646,13 @@ async def enrich_song_card(
     store: MusicKnowledgeStore | None = None,
     dry_run: bool = False,
     use_llm_summary: bool = False,
+    allow_snippet_fallback: bool = False,
 ) -> dict[str, Any] | None:
     query = build_song_knowledge_query(title, artist)
     card = None
     if use_llm_summary:
         card = await _llm_web_card_async(kind="song", query=query, title=title, artist=artist)
-    if card is None:
+    if card is None and allow_snippet_fallback:
         snippets = await fetch_music_knowledge_snippets(query)
         card = build_card_from_snippets(
             kind="song",
@@ -423,9 +670,71 @@ async def enrich_song_card(
             release_year=card.get("release_year"),
             style_tags=card.get("style_tags", []),
             facts=card.get("facts", []),
+            details=card.get("details") or {},
             source_url=card.get("source_url", ""),
             source_title=card.get("source_title", ""),
             source_provider=card.get("source", "web"),
             confidence=card.get("confidence", 0.6),
         )
     return card
+
+
+async def enrich_song_cards_batch(
+    songs: list[Mapping[str, Any]],
+    *,
+    store: MusicKnowledgeStore | None = None,
+    dry_run: bool = False,
+    use_llm_summary: bool = True,
+) -> list[dict[str, Any]]:
+    """Batch-enrich songs with one Qwen web-search request per chunk."""
+
+    if not songs or not use_llm_summary:
+        return []
+    cards = await _llm_web_song_cards_batch_async(songs)
+    if cards and not dry_run:
+        store = store or MusicKnowledgeStore()
+        for card in cards:
+            store.upsert_song_card(
+                title=card.get("title", ""),
+                artist=card.get("artist", ""),
+                summary=card["summary"],
+                release_year=card.get("release_year"),
+                style_tags=card.get("style_tags", []),
+                facts=card.get("facts", []),
+                details=card.get("details") or {},
+                source_url=card.get("source_url", ""),
+                source_title=card.get("source_title", ""),
+                source_provider=card.get("source", "dashscope_web_search_batch"),
+                confidence=card.get("confidence", 0.6),
+            )
+    return cards
+
+
+async def enrich_artist_cards_batch(
+    artists: list[str],
+    *,
+    store: MusicKnowledgeStore | None = None,
+    dry_run: bool = False,
+    use_llm_summary: bool = True,
+) -> list[dict[str, Any]]:
+    """Batch-enrich artists with one Qwen web-search request per chunk."""
+
+    if not artists or not use_llm_summary:
+        return []
+    cards = await _llm_web_artist_cards_batch_async(artists)
+    if cards and not dry_run:
+        store = store or MusicKnowledgeStore()
+        for card in cards:
+            artist = card.get("artist") or card.get("title") or ""
+            store.upsert_artist_card(
+                artist=artist,
+                summary=card["summary"],
+                style_tags=card.get("style_tags", []),
+                facts=card.get("facts", []),
+                details=card.get("details") or {},
+                source_url=card.get("source_url", ""),
+                source_title=card.get("source_title", ""),
+                source_provider=card.get("source", "dashscope_web_search_batch"),
+                confidence=card.get("confidence", 0.6),
+            )
+    return cards
