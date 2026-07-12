@@ -26,6 +26,7 @@ from .adapters import (
 
 logger = get_logger(__name__)
 LOCAL_PROVIDERS = {"sglang", "vllm", "ollama"}
+UNIFIED_PLANNER_PROMPT_VERSION = "unified_planner_2026_07_10"
 MUSIC_REQUEST_CUES = (
     "歌",
     "音乐",
@@ -37,6 +38,16 @@ MUSIC_REQUEST_CUES = (
     "song",
     "music",
 )
+HK_REGION_ALIASES = {"hk", "hong kong", "香港", "hongkong"}
+CANTONESE_CONTEXT_CUES = (
+    "港乐",
+    "港樂",
+    "粤语",
+    "粵語",
+    "cantopop",
+    "cantonese",
+)
+MANDARIN_CONTEXT_CUES = ("国语", "國語", "普通话", "mandarin")
 
 
 class PlannerResultCache:
@@ -64,6 +75,7 @@ class PlannerResultCache:
         provider: str,
         model_name: str,
         current_date: str,
+        user_id: str = "",
     ) -> str:
         profile_context = json.dumps(
             [user_preferences, chat_history, previous_plan, graphzep_facts],
@@ -72,7 +84,7 @@ class PlannerResultCache:
         )
         profile_hash = hashlib.sha256(profile_context.encode("utf-8")).hexdigest()
         material = "\0".join(
-            [user_input.strip(), profile_hash, provider, model_name, current_date]
+            [user_input.strip(), profile_hash, provider, model_name, current_date, user_id]
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
@@ -124,6 +136,46 @@ def apply_routing_guardrails(plan: MusicQueryPlan, user_input: str) -> MusicQuer
     return plan
 
 
+def normalize_planner_grounding(plan: MusicQueryPlan, user_input: str) -> MusicQueryPlan:
+    """Normalize source-grounded music constraints without replacing LLM intent.
+
+    The LLM remains responsible for intent understanding.  This helper only
+    fixes a narrow catalog-grounding gap observed in eval: "港乐/Cantopop"
+    often comes back as region=Hong Kong without the Cantonese language
+    preference, which makes downstream language checks and ranking too weak.
+    """
+    rp = plan.retrieval_plan
+    hard = rp.hard_constraints
+    text = " ".join(
+        [
+            user_input,
+            str(rp.graph_region_filter or ""),
+            str(hard.region or ""),
+            " ".join(rp.hints.genres or []),
+            str(rp.soft_intent.vibe or ""),
+            str(rp.soft_intent.goal or ""),
+        ]
+    ).casefold()
+    region = str(hard.region or rp.graph_region_filter or "").strip().casefold()
+    has_hk_region = region in HK_REGION_ALIASES or any(alias in text for alias in HK_REGION_ALIASES)
+    wants_cantopop = any(cue.casefold() in text for cue in CANTONESE_CONTEXT_CUES)
+    wants_mandarin = any(cue.casefold() in text for cue in MANDARIN_CONTEXT_CUES)
+
+    generic_chinese = str(hard.language or "").strip().casefold() in {"", "chinese", "中文", "华语"}
+    if has_hk_region and wants_cantopop and not wants_mandarin and generic_chinese:
+        hard.language = "Cantonese"
+        rp.graph_language_filter = "Cantonese"
+        if not hard.region:
+            hard.region = "Hong Kong"
+        if not rp.graph_region_filter:
+            rp.graph_region_filter = "Hong Kong"
+        logger.info("[IntentPlanner] normalized HK/Cantopop grounding to Cantonese")
+
+    # Re-validate so layered and legacy fields stay synchronized.
+    plan.retrieval_plan = type(rp).model_validate(rp.model_dump())
+    return plan
+
+
 class IntentPlanner:
     """Select a provider adapter and return one validated query plan."""
 
@@ -142,6 +194,7 @@ class IntentPlanner:
         chat_history: str,
         previous_plan: str,
         graphzep_facts: str = "",
+        user_id: str = "local_admin",
     ) -> MusicQueryPlan:
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
             return MusicQueryPlan.model_validate({
@@ -175,6 +228,7 @@ class IntentPlanner:
             provider=provider,
             model_name=model_name,
             current_date=current_date,
+            user_id=user_id,
         )
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -185,6 +239,7 @@ class IntentPlanner:
             graphzep_facts=graphzep_facts,
             chat_history=chat_history,
             total_budget=0,
+            user_id=user_id,
         )
         payload = PlannerPayload(
             user_input=user_input,
@@ -228,6 +283,7 @@ class IntentPlanner:
                 payload,
             )
         plan = apply_routing_guardrails(plan, user_input)
+        plan = normalize_planner_grounding(plan, user_input)
         try:
             from services.teacher_log import log_teacher_example
 
@@ -235,7 +291,13 @@ class IntentPlanner:
                 "planner",
                 inputs=payload.as_dict(),
                 output=plan,
-                metadata={"provider": provider, "model": model_name, "temperature": settings.intent_temperature},
+                metadata={
+                    "provider": provider,
+                    "model": model_name,
+                    "temperature": settings.intent_temperature,
+                    "prompt_version": UNIFIED_PLANNER_PROMPT_VERSION,
+                    "planner_quality_mode": settings.planner_quality_mode,
+                },
             )
         except Exception:
             pass

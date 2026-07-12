@@ -1,8 +1,9 @@
-"""Optional teacher-data logging for later local-model distillation.
+"""Teacher-data logging for later local-model distillation.
 
-The logger is off by default.  Set ``TEACHER_LOG=1`` to write JSONL rows under
-``data/teacher/``.  By default text fields are hashed/redacted; set
-``TEACHER_LOG_STORE_TEXT=1`` only for private local SFT collection.
+The logger is safely on by default and writes JSONL rows under
+``data/teacher/``.  Text fields are hashed/redacted unless
+``TEACHER_LOG_STORE_TEXT=1`` is explicitly enabled for private local SFT
+collection.  Set ``TEACHER_LOG=0`` to disable collection entirely.
 """
 
 from __future__ import annotations
@@ -12,18 +13,30 @@ import json
 import os
 import time
 from pathlib import Path
+
+from services.runtime_mode import side_effects_disabled
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEACHER_DIR_ENV = "TEACHER_LOG_DIR"
+ALLOW_FAST_ENV = "TEACHER_LOG_ALLOW_FAST"
 
 
 def teacher_log_enabled() -> bool:
-    return os.getenv("TEACHER_LOG", "").strip().lower() in {"1", "true", "yes", "on"}
+    return not side_effects_disabled() and os.getenv("TEACHER_LOG", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def teacher_log_stores_text() -> bool:
     return os.getenv("TEACHER_LOG_STORE_TEXT", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def teacher_log_allows_fast() -> bool:
+    return os.getenv(ALLOW_FAST_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _sha256_text(value: str) -> str:
@@ -57,6 +70,12 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _metadata_marks_fast(metadata: dict[str, Any]) -> bool:
+    quality_mode = str(metadata.get("planner_quality_mode") or metadata.get("quality_mode") or "").strip().lower()
+    teacher_quality = str(metadata.get("teacher_quality") or "").strip().lower()
+    return quality_mode == "fast" or teacher_quality == "fast"
+
+
 def _teacher_dir() -> Path:
     configured = os.getenv(TEACHER_DIR_ENV, "").strip()
     root = Path(configured) if configured else PROJECT_ROOT / "data" / "teacher"
@@ -79,6 +98,9 @@ def log_teacher_example(
     """
     if not teacher_log_enabled():
         return None
+    raw_metadata = _jsonable(metadata or {})
+    if isinstance(raw_metadata, dict) and _metadata_marks_fast(raw_metadata) and not teacher_log_allows_fast():
+        return None
     safe_kind = "".join(ch for ch in str(kind).lower() if ch.isalnum() or ch in {"_", "-"})
     if not safe_kind:
         safe_kind = "teacher"
@@ -88,7 +110,7 @@ def log_teacher_example(
         "text_mode": "full" if teacher_log_stores_text() else "hashed",
         "inputs": _redact(_jsonable(inputs)),
         "output": _redact(_jsonable(output)),
-        "metadata": _redact(_jsonable(metadata or {})),
+        "metadata": raw_metadata,
     }
     path = _teacher_dir() / f"{safe_kind}.jsonl"
     try:

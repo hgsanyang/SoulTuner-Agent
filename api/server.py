@@ -87,6 +87,33 @@ async def startup_event():
             logger.error(f"  ❌ M2D-CLAP 模型预加载失败: {e}")
     else:
         logger.info("  ⏭️ M2D-CLAP 启动预热已关闭，将在语义精排首次使用时按需加载")
+
+    # MuQ text encoder is the default text-to-music anchor.  Loading it on the
+    # first recommendation can add a large one-time delay, so warm it in the
+    # background when MuQ is enabled.  This keeps service startup responsive
+    # while making the first real dense query much less spiky.
+    try:
+        from config.settings import settings as _settings
+
+        dense_backend = str(getattr(_settings, "dense_text_audio_backend", "muq") or "muq").lower()
+        muq_warmup = os.getenv("MUSIC_MUQ_TEXT_WARMUP", "background").lower()
+        if dense_backend in {"muq", "both"} and muq_warmup not in {"0", "false", "off"}:
+            from retrieval.muq_embedder import encode_text_to_muq
+
+            async def _warmup_muq_text_encoder_background():
+                try:
+                    await loop.run_in_executor(None, lambda: encode_text_to_muq("warmup quiet soft music"))
+                    logger.info(f"  ✅ MuQ-MuLan 文本编码器后台预热完成 ({_t.time()-_t0:.1f}s)")
+                except Exception as warmup_error:
+                    logger.warning(f"  ⚠️ MuQ-MuLan 文本编码器后台预热失败，首次向量召回可能变慢: {warmup_error}")
+
+            if muq_warmup in {"blocking", "sync"}:
+                await _warmup_muq_text_encoder_background()
+            else:
+                asyncio.create_task(_warmup_muq_text_encoder_background())
+                logger.info("  🔄 MuQ-MuLan 文本编码器后台预热已启动")
+    except Exception as e:
+        logger.warning(f"  ⚠️ MuQ-MuLan 预热配置失败（不影响启动）: {e}")
     
     # 2. 预初始化 Agent 实例（编译 LangGraph 工作流 + MemorySaver）
     try:

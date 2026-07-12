@@ -15,7 +15,7 @@ class HardConstraints(BaseModel):
 
     artist_entities: List[str] = Field(default_factory=list, description="歌手/乐队实体及别名")
     song_entities: List[str] = Field(default_factory=list, description="歌曲/专辑实体及别名")
-    language: Optional[str] = Field(default=None, description="语言硬约束，如 Chinese/English/Japanese/Instrumental")
+    language: Optional[str] = Field(default=None, description="语言硬约束，如 Chinese/English/Japanese；Instrumental 属于声学需求")
     region: Optional[str] = Field(default=None, description="地区硬约束，如 Mainland China/Japan/Western")
     instrumental: bool = Field(default=False, description="是否明确要求纯音乐/器乐/无人声")
 
@@ -106,18 +106,28 @@ class RetrievalPlan(BaseModel):
         if not self.graph_entities:
             self.graph_entities = list(dict.fromkeys(self.graph_artist_entities + self.graph_song_entities))
 
+        language_is_instrumental = str(hard.language or self.graph_language_filter or "").strip().casefold() in {
+            "instrumental",
+            "纯音乐",
+            "器乐",
+        }
+        if language_is_instrumental:
+            hard.instrumental = True
+            hard.language = None
+            self.graph_language_filter = None
+
         if hard.language and not self.graph_language_filter:
             self.graph_language_filter = hard.language
         if hard.region and not self.graph_region_filter:
             self.graph_region_filter = hard.region
-        if hard.instrumental and not self.graph_language_filter:
-            self.graph_language_filter = "Instrumental"
         if not hard.language and self.graph_language_filter:
             hard.language = self.graph_language_filter
         if not hard.region and self.graph_region_filter:
             hard.region = self.graph_region_filter
-        if self.graph_language_filter == "Instrumental":
+        if str(self.graph_language_filter or "").strip().casefold() in {"instrumental", "纯音乐", "器乐"}:
             hard.instrumental = True
+            hard.language = None
+            self.graph_language_filter = None
 
         if hints.genres and not self.graph_genre_filter:
             self.graph_genre_filter = hints.genres[0]
@@ -156,6 +166,7 @@ class MusicQueryPlan(BaseModel):
       - graph_search: 图谱精确检索（有具体实体：歌手/歌名/流派/语言/地区）
       - hybrid_search: 混合检索（实体 + 无法用标签穷举的主观声学描述）
       - vector_search: 纯向量检索（纯氛围/情绪，无具体实体）
+      - clarification: 澄清反问（引用不明、严重矛盾、关键槽缺失时不硬猜）
       - general_chat: 闲聊
       - web_search: 联网检索（时效性内容）
 
@@ -171,6 +182,7 @@ class MusicQueryPlan(BaseModel):
         "graph_search",
         "hybrid_search",
         "vector_search",
+        "clarification",
         "general_chat",
         "web_search",
         "acquire_music",

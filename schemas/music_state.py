@@ -28,6 +28,7 @@ class MusicAgentState(TypedDict, total=False):
     """音乐推荐Agent的状态"""
 
     # 用户输入
+    user_id: str  # 当前用户身份；业务节点必须从状态读取，不能硬编码默认用户
     input: str  # 用户查询/请求
     chat_history: Annotated[list[BaseMessage], add_messages]  # 对话历史
 

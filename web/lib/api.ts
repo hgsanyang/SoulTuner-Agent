@@ -159,7 +159,7 @@ export function streamRecommendations(
 
 // ---- 用户行为事件上报 ----
 export async function sendUserEvent(
-    eventType: 'like' | 'unlike' | 'save' | 'skip' | 'dislike' | 'full_play' | 'repeat' | 'play_start',
+    eventType: 'like' | 'unlike' | 'save' | 'unsave' | 'skip' | 'dislike' | 'full_play' | 'repeat' | 'play_start',
     songTitle: string,
     artist: string,
     options: {
@@ -177,7 +177,7 @@ export async function sendUserEvent(
     } = {},
 ): Promise<void> {
     try {
-        await fetch('http://localhost:8501/api/user-event', {
+        const response = await fetch('http://localhost:8501/api/user-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -199,6 +199,10 @@ export async function sendUserEvent(
                 },
             }),
         });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success === false) {
+            throw new Error(payload.detail || payload.error || `HTTP ${response.status}`);
+        }
     } catch (err) {
         console.warn('[UserEvent] 上报失败:', err);
     }

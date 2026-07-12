@@ -1,6 +1,7 @@
 from retrieval.post_recall_adjustments import (
     DAY_MS,
     PostRecallAdjustmentConfig,
+    acoustic_probe_fit_scores,
     apply_post_recall_adjustments,
     decayed_exposure_count,
     exposure_penalty,
@@ -167,3 +168,99 @@ def test_post_recall_semantic_context_does_not_infer_conflicts_from_plain_query(
     )
 
     assert adjusted[0]["_post_semantic_conflict_hits"] == []
+
+
+def test_acoustic_probe_fit_uses_plan_fields_not_plain_query():
+    vocal_loud = {
+        "acoustic_vocalness": 0.9,
+        "acoustic_drumness": 0.8,
+        "acoustic_energy": 0.85,
+    }
+    quiet_instrumental = {
+        "acoustic_vocalness": 0.1,
+        "acoustic_drumness": 0.15,
+        "acoustic_energy": 0.2,
+    }
+
+    inactive = acoustic_probe_fit_scores(vocal_loud, soft_intent={}, hints={})
+    conflict = acoustic_probe_fit_scores(
+        vocal_loud,
+        soft_intent={"avoid": ["vocals", "drums", "high energy"], "vibe": "low energy no vocals"},
+        hints={"scenario": "Sleep"},
+    )
+    fit = acoustic_probe_fit_scores(
+        quiet_instrumental,
+        soft_intent={"avoid": ["vocals", "drums", "high energy"], "vibe": "low energy no vocals"},
+        hints={"scenario": "Sleep"},
+    )
+
+    assert inactive["active"] is False
+    assert conflict["conflict"] > fit["conflict"]
+    assert fit["positive"] > conflict["positive"]
+
+
+def test_post_recall_acoustic_probe_nudges_near_ties():
+    candidates = [
+        _candidate("vocal loud", 0.82, acoustic_vocalness=0.9, acoustic_drumness=0.8, acoustic_energy=0.85),
+        _candidate("quiet instrumental", 0.80, acoustic_vocalness=0.1, acoustic_drumness=0.15, acoustic_energy=0.2),
+    ]
+
+    adjusted = apply_post_recall_adjustments(
+        candidates,
+        soft_intent={"avoid": ["vocals", "drums", "high energy"], "vibe": "low energy no vocals"},
+        hints={"scenario": "Sleep"},
+        apply_to_similarity=True,
+        enable_acoustic_probe=True,
+        now_ms=NOW,
+    )
+    by_title = {item["song"]["title"]: item for item in adjusted}
+
+    assert by_title["vocal loud"]["_post_acoustic_conflict_score"] > by_title["quiet instrumental"]["_post_acoustic_conflict_score"]
+    assert by_title["quiet instrumental"]["similarity_score"] > by_title["vocal loud"]["similarity_score"]
+    assert max(abs(item["_post_recall_delta"]) for item in adjusted) <= 0.08
+
+
+def test_acoustic_probe_preserves_positive_drums_and_high_energy_direction():
+    energetic = {
+        "acoustic_vocalness": 0.7,
+        "acoustic_drumness": 0.9,
+        "acoustic_energy": 0.9,
+    }
+    quiet = {
+        "acoustic_vocalness": 0.5,
+        "acoustic_drumness": 0.1,
+        "acoustic_energy": 0.1,
+    }
+
+    energetic_fit = acoustic_probe_fit_scores(
+        energetic,
+        soft_intent={"goal": "I want energetic music", "vibe": "prominent drums high energy"},
+    )
+    quiet_fit = acoustic_probe_fit_scores(
+        quiet,
+        soft_intent={"goal": "I want energetic music", "vibe": "prominent drums high energy"},
+    )
+
+    assert "drums" in energetic_fit["positive_hits"]
+    assert "high_energy" in energetic_fit["positive_hits"]
+    assert energetic_fit["positive"] > quiet_fit["positive"]
+    assert energetic_fit["conflict"] < quiet_fit["conflict"]
+
+
+def test_acoustic_probe_ranking_is_disabled_by_default():
+    candidate = _candidate(
+        "quiet instrumental",
+        0.8,
+        acoustic_vocalness=0.1,
+        acoustic_drumness=0.1,
+        acoustic_energy=0.1,
+    )
+
+    adjusted = apply_post_recall_adjustments(
+        [candidate],
+        soft_intent={"vibe": "low energy no vocals"},
+        now_ms=NOW,
+    )
+
+    assert adjusted[0]["_post_acoustic_positive_score"] == 0.0
+    assert adjusted[0]["_post_acoustic_conflict_score"] == 0.0

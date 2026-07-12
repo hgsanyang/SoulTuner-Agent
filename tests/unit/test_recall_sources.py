@@ -4,9 +4,12 @@ from retrieval import recall_sources
 
 
 class _Client:
-    def execute_query(self, _query, _params=None):
+    def execute_query(self, query, _params=None):
+        if "RETURN DISTINCT elementId(s) AS eid" in query:
+            return [{"eid": "1"}, {"eid": "2"}]
         return [
             {
+                "eid": "1",
                 "title": "晚风心里吹",
                 "artists": ["阿梨粤"],
                 "album": "Single",
@@ -22,6 +25,7 @@ class _Client:
                 "updated_at": 2,
             },
             {
+                "eid": "2",
                 "title": "普通话歌曲",
                 "artists": ["歌手"],
                 "album": "Single",

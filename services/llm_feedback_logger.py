@@ -14,12 +14,14 @@ from pathlib import Path
 from typing import Any, Mapping
 import uuid
 
+from services.runtime_mode import side_effects_disabled
+
 
 LOG_FILE = "planning_feedback.jsonl"
 
 
 def feedback_log_enabled() -> bool:
-    return os.getenv("MUSIC_LLM_FEEDBACK_LOG_ENABLED", "1").lower() not in {
+    return not side_effects_disabled() and os.getenv("MUSIC_LLM_FEEDBACK_LOG_ENABLED", "1").lower() not in {
         "0",
         "false",
         "no",

@@ -92,6 +92,42 @@ def test_reference_song_entity_in_followup_does_not_force_topic_shift():
     assert delta.topic_shift is False
 
 
+def test_resolved_same_artist_entity_keeps_followup_state():
+    first = apply_plan_delta(
+        None,
+        _plan(artist=["陈绮贞"], vibe="quiet acoustic folk", genres=["folk"]),
+        "陈绮贞安静一点的歌",
+    )
+
+    second, delta = apply_plan_delta_with_report(
+        first,
+        _plan(artist=["陈绮贞"], vibe="other quiet works", genres=["folk"]),
+        "这个歌手的其它安静作品",
+    )
+
+    assert second.turn_count == 2
+    assert delta.followup is True
+    assert delta.topic_shift is False
+
+
+def test_history_inference_keeps_explicit_artist_anchor_for_followup_report():
+    state = infer_dialog_state_from_history(
+        [
+            {"role": "user", "content": "来点陈绮贞的歌"},
+            {"role": "assistant", "content": "推荐了一些陈绮贞的歌。"},
+        ]
+    )
+    _, delta = apply_plan_delta_with_report(
+        state,
+        _plan(artist=["陈绮贞"], vibe="other quiet works", genres=["folk"]),
+        "这个歌手的其它安静作品",
+    )
+
+    assert state.last_result_artists == ["陈绮贞"]
+    assert delta.followup is True
+    assert delta.topic_shift is False
+
+
 def test_followup_general_chat_is_coerced_to_retrieval_when_state_is_resolved():
     first = apply_plan_delta(
         None,
@@ -318,6 +354,12 @@ def test_instrumental_and_vocal_rap_conflict_asks_clarification():
     assert "hard_constraints.instrumental" in clarification.unresolved_paths
 
 
+def test_instrumental_with_negative_voice_constraint_does_not_clarify():
+    clarification = should_clarify_before_planning("睡前纯音乐，不要人声、不要鼓、不要突然变响", None)
+
+    assert clarification.required is False
+
+
 def test_llm_plan_conflict_can_trigger_clarification_without_raw_phrase_routing():
     plan = _plan(
         instrumental=True,
@@ -330,6 +372,32 @@ def test_llm_plan_conflict_can_trigger_clarification_without_raw_phrase_routing(
     assert clarification.required is True
     assert clarification.reason == "severe_conflict"
     assert "hard_constraints.instrumental" in clarification.unresolved_paths
+
+
+def test_plan_conflict_ignores_voice_terms_inside_avoid():
+    plan = _plan(
+        instrumental=True,
+        genres=["ambient"],
+        avoid=["人声", "鼓点"],
+        vibe="sleepy instrumental background music",
+    )
+
+    clarification = clarification_from_plan_conflict(plan)
+
+    assert clarification.required is False
+
+
+def test_plan_conflict_ignores_negative_vocal_acoustic_query():
+    plan = _plan(
+        instrumental=True,
+        genres=["ambient"],
+        avoid=["vocals", "drums"],
+        vibe="purely instrumental music with no vocals and no heavy drums",
+    )
+
+    clarification = clarification_from_plan_conflict(plan)
+
+    assert clarification.required is False
 
 
 def test_result_anchors_enable_later_song_references():

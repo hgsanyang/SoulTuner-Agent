@@ -314,6 +314,68 @@ def _has_vector_index(client, index_name: str) -> bool:
         return False
 
 
+def _fetch_song_details_for_ranked_eids(
+    client,
+    ranked: List[Dict[str, Any]],
+    *,
+    backend: str,
+    backend_name: str,
+) -> List[Dict[str, Any]]:
+    """Fetch graph metadata after vector KNN has selected a small eid list.
+
+    Keeping vector KNN separate from OPTIONAL MATCH-heavy metadata expansion
+    avoids Neo4j falling back to the interpreted engine for the hot query.
+    """
+    items = [
+        {"eid": str(item.get("_eid") or ""), "score": float(item.get("similarity_score") or 0.0), "rank": idx}
+        for idx, item in enumerate(ranked)
+        if item.get("_eid")
+    ]
+    if not items:
+        return []
+    cypher = """
+    UNWIND $items AS item
+    MATCH (song)
+    WHERE elementId(song) = item.eid
+    OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
+    OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
+    OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
+    OPTIONAL MATCH (song)-[:HAS_THEME]->(theme:Theme)
+    OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
+    RETURN item.rank AS _rank,
+           elementId(song) AS _eid,
+           song.title AS title, head(collect(DISTINCT art.name)) AS artist,
+           song.album AS album, song.audio_url AS audio_url,
+           song.cover_url AS cover_url, song.lrc_url AS lrc_url,
+           coalesce(song.language, 'Unknown') AS language,
+           coalesce(song.region, 'Unknown') AS region,
+           (
+             coalesce(properties(song)['is_instrumental'], properties(song)['instrumental'], false)
+             OR toLower(toString(coalesce(song.language, ''))) CONTAINS 'instrumental'
+             OR toString(coalesce(song.language, '')) CONTAINS '纯音乐'
+             OR toString(coalesce(song.language, '')) CONTAINS '器乐'
+           ) AS is_instrumental,
+           properties(song)['has_vocal'] AS has_vocal,
+           properties(song)['has_drums'] AS has_drums,
+           properties(song)['energy_level'] AS energy_level,
+           properties(song)['acoustic_vocalness'] AS acoustic_vocalness,
+           properties(song)['acoustic_drumness'] AS acoustic_drumness,
+           properties(song)['acoustic_energy'] AS acoustic_energy,
+           properties(song)['acoustic_probe_version'] AS acoustic_probe_version,
+           collect(DISTINCT genre.name) AS genres,
+           collect(DISTINCT mood.name) AS moods,
+           collect(DISTINCT theme.name) AS themes,
+           collect(DISTINCT scenario.name) AS scenarios,
+           item.score AS similarity_score
+    ORDER BY _rank ASC
+    """
+    rows = client.execute_query(cypher, {"items": items})
+    for row in rows or []:
+        row["_vector_backend"] = backend
+        row["_vector_backend_name"] = backend_name
+    return rows or []
+
+
 def _translate_query(query: str) -> str:
     """
     【V2 升级】查询预处理：中文情绪词命中缓存则直接翻译，
@@ -415,6 +477,19 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                        s.cover_url AS cover_url, s.lrc_url AS lrc_url,
                        coalesce(s.language, 'Unknown') AS language,
                        coalesce(s.region, 'Unknown') AS region,
+                       (
+                         coalesce(properties(s)['is_instrumental'], properties(s)['instrumental'], false)
+                         OR toLower(toString(coalesce(s.language, ''))) CONTAINS 'instrumental'
+                         OR toString(coalesce(s.language, '')) CONTAINS '纯音乐'
+                         OR toString(coalesce(s.language, '')) CONTAINS '器乐'
+                       ) AS is_instrumental,
+                       properties(s)['has_vocal'] AS has_vocal,
+                       properties(s)['has_drums'] AS has_drums,
+                       properties(s)['energy_level'] AS energy_level,
+                       properties(s)['acoustic_vocalness'] AS acoustic_vocalness,
+                       properties(s)['acoustic_drumness'] AS acoustic_drumness,
+                       properties(s)['acoustic_energy'] AS acoustic_energy,
+                       properties(s)['acoustic_probe_version'] AS acoustic_probe_version,
                        collect(DISTINCT genre.name) AS genres,
                        collect(DISTINCT mood.name) AS moods,
                        collect(DISTINCT theme.name) AS themes,
@@ -452,22 +527,7 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                 YIELD node AS song, score
                 WITH song, score
                 WHERE {_playable_song_where("song")}
-                OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
-                OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
-                OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
-                OPTIONAL MATCH (song)-[:HAS_THEME]->(theme:Theme)
-                OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
-                RETURN song.title AS title, art.name AS artist,
-                       song.album AS album, song.audio_url AS audio_url,
-                       song.cover_url AS cover_url, song.lrc_url AS lrc_url,
-                       coalesce(song.language, 'Unknown') AS language,
-                       coalesce(song.region, 'Unknown') AS region,
-                       collect(DISTINCT genre.name) AS genres,
-                       collect(DISTINCT mood.name) AS moods,
-                       collect(DISTINCT theme.name) AS themes,
-                       collect(DISTINCT scenario.name) AS scenarios,
-                       score AS similarity_score,
-                       elementId(song) AS _eid
+                RETURN elementId(song) AS _eid, score AS similarity_score
                 """
                 base_results = client.execute_query(base_cypher, {"query_vector": query_vector, "wide": wide})
                 logger.info("[SemanticSearch] Phase 1 %s KNN: %d 候选", spec["name"], len(base_results))
@@ -515,10 +575,15 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                         score = 0.7 * base_s + 0.3 * omar_s
                     else:
                         score = base_s
-                    fused.append({**r, "similarity_score": score, "_vector_backend": backend, "_vector_backend_name": spec["name"]})
+                    fused.append({"_eid": r["_eid"], "similarity_score": score})
 
                 fused.sort(key=lambda x: x["similarity_score"], reverse=True)
-                rows = fused[:limit]
+                rows = _fetch_song_details_for_ranked_eids(
+                    client,
+                    fused[:limit],
+                    backend=backend,
+                    backend_name=spec["name"],
+                )
                 logger.info(
                     "[SemanticSearch] Phase 3 融合排序完成，返回 %d 首(limit=%d, OMAR加权=%d)",
                     len(rows),
@@ -532,28 +597,16 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
             YIELD node AS song, score
             WITH song, score
             WHERE {_playable_song_where("song")}
-            OPTIONAL MATCH (song)-[:PERFORMED_BY]->(art:Artist)
-            OPTIONAL MATCH (song)-[:BELONGS_TO_GENRE]->(genre:Genre)
-            OPTIONAL MATCH (song)-[:HAS_MOOD]->(mood:Mood)
-            OPTIONAL MATCH (song)-[:HAS_THEME]->(theme:Theme)
-            OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
-            RETURN song.title AS title, art.name AS artist,
-                   song.album AS album, song.audio_url AS audio_url,
-                   song.cover_url AS cover_url, song.lrc_url AS lrc_url,
-                   coalesce(song.language, 'Unknown') AS language,
-                   coalesce(song.region, 'Unknown') AS region,
-                   collect(DISTINCT genre.name) AS genres,
-                   collect(DISTINCT mood.name) AS moods,
-                   collect(DISTINCT theme.name) AS themes,
-                   collect(DISTINCT scenario.name) AS scenarios,
-                   score AS similarity_score
+            RETURN elementId(song) AS _eid, score AS similarity_score
             """
             logger.info("[SemanticSearch] 执行单模型 %s KNN 检索", spec["name"])
-            rows = client.execute_query(cypher, {"query_vector": query_vector, "limit": limit})
-            for row in rows:
-                row["_vector_backend"] = backend
-                row["_vector_backend_name"] = spec["name"]
-            return rows
+            ranked_rows = client.execute_query(cypher, {"query_vector": query_vector, "limit": limit})
+            return _fetch_song_details_for_ranked_eids(
+                client,
+                ranked_rows,
+                backend=backend,
+                backend_name=spec["name"],
+            )
 
         configured_backend = _dense_backend()
         backend_order = ["muq", "m2d"] if configured_backend == "both" else [configured_backend]
@@ -632,6 +685,10 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                 "scenarios": scenarios,
                 "language": record.get("language", "Unknown"),
                 "region": record.get("region", "Unknown"),
+                "is_instrumental": bool(record.get("is_instrumental") or False),
+                "has_vocal": record.get("has_vocal"),
+                "has_drums": record.get("has_drums"),
+                "energy_level": record.get("energy_level"),
                 "source": f"Neo4j SemanticSearch ({vector_backend_name})",
                 "vector_backend": vector_backend,
                 "similarity_score": float(similarity),

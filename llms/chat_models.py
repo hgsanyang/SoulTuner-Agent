@@ -115,7 +115,16 @@ def get_intent_chat_model():
     """Return the Planner LLM, falling back to the main LLM settings."""
     try:
         provider = _settings_value("intent_llm_provider", "") or _settings_value("llm_default_provider", "dashscope")
-        model_name = _settings_value("intent_llm_model", "") or _settings_value("llm_default_model", "") or None
+        quality_mode = str(_settings_value("planner_quality_mode", "teacher") or "teacher").strip().lower()
+        if quality_mode == "fast":
+            model_name = (
+                _settings_value("intent_llm_fast_model", "")
+                or _settings_value("intent_llm_model", "")
+                or _settings_value("llm_default_model", "")
+                or None
+            )
+        else:
+            model_name = _settings_value("intent_llm_model", "") or _settings_value("llm_default_model", "") or None
         max_tokens = _settings_value("intent_max_tokens", 2048)
         temperature = _settings_value("intent_temperature", 0.3)
         return get_chat_model(provider=provider, model_name=model_name, temperature=temperature, max_tokens=max_tokens)

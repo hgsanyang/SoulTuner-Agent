@@ -15,6 +15,7 @@ from typing import Any, Protocol
 
 from retrieval.user_memory import UserMemoryManager
 from services.feedback_logger import log_slate_feedback, log_user_event
+from services.runtime_mode import side_effects_disabled
 
 logger = logging.getLogger(__name__)
 
@@ -166,18 +167,25 @@ class GraphZepAdapter:
 
     async def remember_text(self, description: str, *, user_id: str = "local_admin", extra: dict[str, Any] | None = None) -> bool:
         try:
-            from services.graphzep_client import get_graphzep_client
+            from services.graphzep_client import get_graphzep_client, group_id_for_user
 
-            return await get_graphzep_client().add_user_event(event_description=description)
+            return await get_graphzep_client().add_user_event(
+                event_description=description,
+                group_id=group_id_for_user(user_id),
+            )
         except Exception as exc:
             logger.debug("[MemoryGateway] GraphZep side-write skipped: %s", exc)
             return False
 
     async def retrieve_context(self, query: str, *, user_id: str = "local_admin", max_facts: int = 8) -> str:
         try:
-            from services.graphzep_client import get_graphzep_client
+            from services.graphzep_client import get_graphzep_client, group_id_for_user
 
-            return await get_graphzep_client().search_facts(query=query, max_facts=max_facts)
+            return await get_graphzep_client().search_facts(
+                query=query,
+                group_ids=[group_id_for_user(user_id)],
+                max_facts=max_facts,
+            )
         except Exception:
             return "暂无用户长期记忆（GraphZep 服务不可用）"
 
@@ -425,6 +433,8 @@ class MemoryGateway:
         exposure_id: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         if event_type not in SUPPORTED_USER_EVENTS:
             return MemoryWriteResult(success=False, error="Unsupported user event type")
 
@@ -466,6 +476,8 @@ class MemoryGateway:
         user_id: str = "local_admin",
         extra: dict[str, Any] | None = None,
     ) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         feedback_id = log_slate_feedback(
             exposure_id=exposure_id,
             rating=rating,
@@ -500,6 +512,8 @@ class MemoryGateway:
         )
 
     def remember_preference(self, *, user_id: str, preferences: dict[str, Any]) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         self.primary.remember_preference(user_id, preferences)
         self._invalidate_hot_profile(user_id)
         return MemoryWriteResult(success=True, preference_update=preferences)
@@ -511,6 +525,8 @@ class MemoryGateway:
         user_id: str = "local_admin",
         extra: dict[str, Any] | None = None,
     ) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         scheduled = self._schedule_sidecar_write(description, user_id=user_id, extra=extra or {})
         return MemoryWriteResult(
             success=True,

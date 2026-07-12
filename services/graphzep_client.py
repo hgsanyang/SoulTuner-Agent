@@ -4,18 +4,24 @@ GraphZep 微服务 HTTP 客户端
 """
 
 import httpx
-import asyncio
+import hashlib
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 from config.logging_config import get_logger
+from config.settings import settings
 
 logger = get_logger(__name__)
 
-from config.settings import settings
-
 GRAPHZEP_BASE_URL = settings.graphzep_base_url
 DEFAULT_GROUP_ID = "music-agent-memory"
+
+
+def group_id_for_user(user_id: str) -> str:
+    """Return a stable non-PII GraphZep group id for one application user."""
+    normalized = str(user_id or "local_admin").strip() or "local_admin"
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
+    return f"{DEFAULT_GROUP_ID}:{digest}"
 
 
 class GraphZepClient:

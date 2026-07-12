@@ -36,6 +36,21 @@ MIN_DIVERSE_RESULTS = 6               # 多样性过滤后的最少结果数
 # ---- Neo4j 图距离加权参数（从 settings 读取，此处为 fallback 默认值） ----
 GRAPH_AFFINITY_USER_ID = "local_admin" # 图距离计算的用户 ID
 
+USER_EXPOSURE_UPDATE_QUERY = """
+UNWIND $songs AS row
+MERGE (u:User {id: $user_id})
+ON CREATE SET u.created_at = timestamp()
+WITH u, row
+MATCH (s:Song)
+WHERE s.title = row.title
+  AND (row.artist = '' OR coalesce(s.artist, '') = row.artist)
+MERGE (u)-[e:EXPOSED]->(s)
+ON CREATE SET e.ts_alpha = 1.0, e.ts_beta = 1.0, e.count = 0
+SET e.ts_beta = coalesce(e.ts_beta, 1.0) + 0.3,
+    e.count = coalesce(e.count, 0) + 1,
+    e.last_exposed_at = timestamp()
+"""
+
 
 def _post_recall_config_for_user(user_id: str = GRAPH_AFFINITY_USER_ID) -> PostRecallAdjustmentConfig:
     """Apply only bounded, validation-gated feedback multipliers."""
@@ -100,7 +115,7 @@ def _expand_query_terms(values: List[str]) -> List[str]:
 
 def _song_objective_tokens(song: Dict[str, Any]) -> set[str]:
     tokens: set[str] = set()
-    for field in ("genre", "genres", "moods", "themes", "scenarios", "language", "region"):
+    for field in ("genre", "genres", "moods", "themes", "scenarios", "language", "region", "energy_level"):
         value = song.get(field)
         values = value if isinstance(value, list) else [value]
         for item in values:
@@ -111,6 +126,18 @@ def _song_objective_tokens(song: Dict[str, Any]) -> set[str]:
             for part in re.split(r"[/|,，\s]+", normalized):
                 if part:
                     tokens.add(part)
+    if song.get("is_instrumental") or song.get("instrumental"):
+        tokens.update({"instrumental", "withoutvocals", "no vocals"})
+    if song.get("has_vocal") is False:
+        tokens.update({"instrumental", "withoutvocals", "no vocals"})
+    elif song.get("has_vocal") is True:
+        tokens.update({"vocal", "vocals"})
+    if song.get("has_drums") is False:
+        tokens.update({"nodrums", "no drums", "withoutdrums"})
+    elif song.get("has_drums") is True:
+        tokens.add("drums")
+    if _norm_token(song.get("energy_level")) in {"low", "lowenergy", "quiet", "calm"}:
+        tokens.update({"lowenergy", "low energy", "quiet"})
     return tokens
 
 
@@ -315,12 +342,12 @@ class MusicHybridRetrieval:
     def __init__(self, llm_client=None):
         # 保存 llm_client 引用（预留，供未来扩展使用）
         self.llm_client = llm_client
-        self._disliked_cache: set = None  # 同一请求内缓存
+        self._disliked_cache_by_user: Dict[str, set[str]] = {}
 
     def _get_disliked_titles(self, user_id: str = GRAPH_AFFINITY_USER_ID) -> set:
         """查询用户 DISLIKES 的歌曲标题集合（同一实例内缓存）"""
-        if self._disliked_cache is not None:
-            return self._disliked_cache
+        if user_id in self._disliked_cache_by_user:
+            return self._disliked_cache_by_user[user_id]
         try:
             from retrieval.neo4j_client import get_neo4j_client
             client = get_neo4j_client()
@@ -329,14 +356,15 @@ class MusicHybridRetrieval:
             RETURN collect(s.title) AS titles
             """
             result = client.execute_query(query, {"uid": user_id})
-            self._disliked_cache = set(result[0]["titles"]) if result and result[0].get("titles") else set()
-            if self._disliked_cache:
-                logger.info(f"[DislikeFilter] 加载到 {len(self._disliked_cache)} 首不喜欢的歌")
-            return self._disliked_cache
+            titles = set(result[0]["titles"]) if result and result[0].get("titles") else set()
+            self._disliked_cache_by_user[user_id] = titles
+            if titles:
+                logger.info("[DislikeFilter] 用户 %s 加载到 %d 首不喜欢的歌", user_id, len(titles))
+            return titles
         except Exception as e:
             logger.warning(f"[DislikeFilter] 查询失败: {e}")
-            self._disliked_cache = set()
-            return self._disliked_cache
+            self._disliked_cache_by_user[user_id] = set()
+            return self._disliked_cache_by_user[user_id]
 
     async def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
         """
@@ -351,6 +379,7 @@ class MusicHybridRetrieval:
         retrieval_started = time.perf_counter()
         timings: Dict[str, float] = {}
         logger.info(f"[Retrieval] 开始处理请求: {query}")
+        self._skip_tri_anchor_for_entity_graph = False
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
             from retrieval.mock_retrieval import mock_retrieve
             logger.info("[Retrieval] MUSIC_MOCK_MODE enabled")
@@ -372,13 +401,21 @@ class MusicHybridRetrieval:
 
         if not hard_constraints:
             legacy_language = plan.get("graph_language_filter")
+            legacy_instrumental = str(legacy_language or "").strip().casefold() in {
+                "instrumental",
+                "纯音乐",
+                "器乐",
+            }
             hard_constraints = {
                 "artist_entities": list(plan.get("graph_artist_entities") or []),
                 "song_entities": list(plan.get("graph_song_entities") or []),
-                "language": legacy_language,
+                "language": None if legacy_instrumental else legacy_language,
                 "region": plan.get("graph_region_filter"),
-                "instrumental": str(legacy_language or "").casefold() == "instrumental",
+                "instrumental": legacy_instrumental,
             }
+        elif str(hard_constraints.get("language") or "").strip().casefold() in {"instrumental", "纯音乐", "器乐"}:
+            hard_constraints["language"] = None
+            hard_constraints["instrumental"] = True
         if not hints:
             hints = {
                 "genres": [plan["graph_genre_filter"]] if plan.get("graph_genre_filter") else [],
@@ -506,33 +543,60 @@ class MusicHybridRetrieval:
                     3,
                 )
 
-        # 2. 双路内容召回永远一起运行；intent_type/query profile 只改变 RRF 权重。
-        # 个性化与冷启动不是独立召回源，分别在 Graph Affinity 与探索槽中作为召回后加分/减分项。
-        recall_tasks = {
-            "graph": timed_recall("graph", run_sync_in_executor(
+        def _count_recall_rows(raw: str) -> int:
+            try:
+                return len(json.loads(raw)) if raw else 0
+            except (json.JSONDecodeError, TypeError):
+                return 0
+
+        # 2. 内容召回：场景/听感类保持 graph+dense 并行；明确实体类先跑图谱。
+        # 如果歌手/歌名硬约束已经由图谱给出足够候选，就跳过全库 dense，
+        # 避免 MuQ 冷启动/文本编码拖慢精确实体查询。
+        source_raw: Dict[str, str] = {}
+        entity_constrained = bool(graph_artist_entities or (graph_song_entities and not uses_song_as_acoustic_seed))
+        enough_entity_graph = False
+        if entity_constrained:
+            graph_result = await timed_recall("graph", run_sync_in_executor(
                 graph_candidate_recall,
                 hard_constraints,
                 hints,
                 limit=recall_limit,
-            )),
-            "dense": timed_recall("dense", run_sync_in_executor(
+            ))
+            if isinstance(graph_result, Exception):
+                logger.error("[Recall:graph] 异常: %s: %s", type(graph_result).__name__, graph_result)
+                source_raw["graph"] = ""
+            else:
+                source_raw["graph"] = graph_result or ""
+            graph_count = _count_recall_rows(source_raw["graph"])
+            logger.info("[Recall:graph] 返回 %d 条", graph_count)
+            enough_entity_graph = graph_count >= 3
+
+        if entity_constrained and enough_entity_graph:
+            source_raw["dense"] = ""
+            timings["recall_dense_ms"] = 0.0
+            self._skip_tri_anchor_for_entity_graph = True
+            logger.info("[Recall:dense] 明确实体图谱候选已足够，跳过全库 dense 召回")
+        else:
+            recall_tasks = {}
+            if "graph" not in source_raw:
+                recall_tasks["graph"] = timed_recall("graph", run_sync_in_executor(
+                    graph_candidate_recall,
+                    hard_constraints,
+                    hints,
+                    limit=recall_limit,
+                ))
+            recall_tasks["dense"] = timed_recall("dense", run_sync_in_executor(
                 semantic_search.invoke,
                 {"query": vector_desc, "query_variants": vector_descs, "limit": recall_limit},
-            )),
-        }
-        recall_results = await asyncio.gather(*recall_tasks.values(), return_exceptions=True)
-        source_raw: Dict[str, str] = {}
-        for source, result in zip(recall_tasks, recall_results):
-            if isinstance(result, Exception):
-                logger.error("[Recall:%s] 异常: %s: %s", source, type(result).__name__, result)
-                source_raw[source] = ""
-            else:
-                source_raw[source] = result or ""
-                try:
-                    count = len(json.loads(source_raw[source])) if source_raw[source] else 0
-                except (json.JSONDecodeError, TypeError):
-                    count = 0
-                logger.info("[Recall:%s] 返回 %d 条", source, count)
+            ))
+            recall_results = await asyncio.gather(*recall_tasks.values(), return_exceptions=True)
+            for source, result in zip(recall_tasks, recall_results):
+                if isinstance(result, Exception):
+                    logger.error("[Recall:%s] 异常: %s: %s", source, type(result).__name__, result)
+                    source_raw[source] = ""
+                else:
+                    source_raw[source] = result or ""
+                    logger.info("[Recall:%s] 返回 %d 条", source, _count_recall_rows(source_raw[source]))
 
         async def _extract_and_fetch_web_songs(web_text: str) -> List[dict]:
             if not web_text or "未能找到" in web_text or not self.llm_client:
@@ -951,7 +1015,11 @@ class MusicHybridRetrieval:
     # ================================================================
 
     @staticmethod
-    def _fetch_post_recall_metadata(candidates: List[dict]) -> Dict[str, dict]:
+    def _fetch_post_recall_metadata(
+        candidates: List[dict],
+        *,
+        user_id: str = GRAPH_AFFINITY_USER_ID,
+    ) -> Dict[str, dict]:
         """Fetch score-adjustment metadata for already-recalled candidates."""
         titles = [
             item.get("song", {}).get("title", "")
@@ -968,20 +1036,32 @@ class MusicHybridRetrieval:
             query = """
             UNWIND $titles AS t
             MATCH (s:Song {title: t})
-            WITH s, properties(s) AS props
+            OPTIONAL MATCH (u:User {id: $user_id})-[e:EXPOSED]->(s)
+            WITH s, e, properties(s) AS props
             RETURN s.title AS title,
                    coalesce(s.updated_at, 0) AS updated_at,
-                   coalesce(s.ts_alpha, 1) AS ts_alpha,
-                   coalesce(s.ts_beta, 1) AS ts_beta,
-                   coalesce(props['ts_last_exposed_at'], 0) AS ts_last_exposed_at
+                   coalesce(e.ts_alpha, 1) AS ts_alpha,
+                   coalesce(e.ts_beta, 1) AS ts_beta,
+                   coalesce(e.last_exposed_at, 0) AS ts_last_exposed_at,
+                   props['acoustic_vocalness'] AS acoustic_vocalness,
+                   props['acoustic_drumness'] AS acoustic_drumness,
+                   props['acoustic_energy'] AS acoustic_energy,
+                   props['acoustic_probe_version'] AS acoustic_probe_version
             """
-            rows = neo4j.execute_query(query, {"titles": titles}) or []
+            rows = neo4j.execute_query(
+                query,
+                {"titles": titles, "user_id": user_id},
+            ) or []
             return {
                 str(row.get("title") or ""): {
                     "updated_at": row.get("updated_at", 0),
                     "ts_alpha": row.get("ts_alpha", 1),
                     "ts_beta": row.get("ts_beta", 1),
                     "ts_last_exposed_at": row.get("ts_last_exposed_at", 0),
+                    "acoustic_vocalness": row.get("acoustic_vocalness"),
+                    "acoustic_drumness": row.get("acoustic_drumness"),
+                    "acoustic_energy": row.get("acoustic_energy"),
+                    "acoustic_probe_version": row.get("acoustic_probe_version"),
                 }
                 for row in rows
                 if row.get("title")
@@ -1234,7 +1314,7 @@ class MusicHybridRetrieval:
         final_list = self._fuse_recall_sources(source_items, recall_weights)
 
         # ---- Step 3: 唯一硬过滤（请求 hard_constraints + DISLIKES）----
-        disliked_titles = self._get_disliked_titles()
+        disliked_titles = self._get_disliked_titles(user_id)
         before_filter = len(final_list)
         final_list = apply_hard_filters(
             final_list,
@@ -1342,7 +1422,10 @@ class MusicHybridRetrieval:
         if _settings.graph_affinity_enabled and final_list:
             total_before = len(final_list)
             final_list, cand_tag_map = self._compute_graph_affinity(final_list, user_id=user_id)
-            post_metadata_by_title = self._fetch_post_recall_metadata(final_list)
+            post_metadata_by_title = self._fetch_post_recall_metadata(
+                final_list,
+                user_id=user_id,
+            )
             final_list = apply_post_recall_adjustments(
                 final_list,
                 metadata_by_title=post_metadata_by_title,
@@ -1352,6 +1435,7 @@ class MusicHybridRetrieval:
                 score_field="_rrf_score",
                 output_score_field="_post_coarse_score",
                 config=_post_recall_config_for_user(user_id),
+                enable_acoustic_probe=_settings.acoustic_probe_ranking_enabled,
             )
 
             # ── Phase A: 内容 RRF 分 + 召回后小幅加减分（粗排）──
@@ -1366,19 +1450,21 @@ class MusicHybridRetrieval:
             # ── Phase B: Thompson Sampling 探索槽 ──
             # 从尾部捞回冷门/新歌，同时压制近期过曝歌曲。
             import random
+            fallback_rng = random.Random(0) if _settings.eval_disable_side_effects else random
             n_explore = max(int(coarse_cut * _settings.exploration_ratio), 1)
 
             explore_picks = []
             if tail_candidates:
                 try:
                     import numpy as np
+                    ts_rng = np.random.default_rng(0 if _settings.eval_disable_side_effects else None)
 
                     # TS 采样：为尾部每首歌采样一个分数
                     ts_scores = []
                     for c in tail_candidates:
                         alpha = max(float(c.get("_post_ts_alpha", 1.0)), 0.1)
                         beta = max(1.0 + float(c.get("_post_effective_exposure", 0.0)), 0.1)
-                        ts_sample = float(np.random.beta(alpha, beta))
+                        ts_sample = float(ts_rng.beta(alpha, beta))
                         ts_score = (
                             ts_sample
                             + 0.12 * float(c.get("_post_freshness_score", 0.0))
@@ -1396,7 +1482,7 @@ class MusicHybridRetrieval:
                     explore_picks = [item for item, _ in tail_with_scores[:n_explore]]
                 except Exception as e:
                     logger.warning(f"[TS] Thompson Sampling 失败，降级随机探索: {e}")
-                    random.shuffle(tail_candidates)
+                    fallback_rng.shuffle(tail_candidates)
                     explore_picks = tail_candidates[:n_explore]
 
             for ep in explore_picks:
@@ -1423,8 +1509,10 @@ class MusicHybridRetrieval:
         #       embedding 缓存会命中，节省 ~100ms 重复推理。
         hyde_text = getattr(self, '_current_hyde_text', '') or ''
         rerank_query = hyde_text if hyde_text else (getattr(self, '_current_query', '') or '')
-        if rerank_query and final_list:
+        if rerank_query and final_list and not getattr(self, "_skip_tri_anchor_for_entity_graph", False):
             final_list = self._tri_anchor_rerank(final_list, rerank_query, user_id=user_id)
+        elif final_list and getattr(self, "_skip_tri_anchor_for_entity_graph", False):
+            logger.info("[ContentAnchor] 明确实体图谱候选已足够，跳过 tri-anchor 文本精排")
 
         if cand_tag_map:
             for item in final_list:
@@ -1485,7 +1573,10 @@ class MusicHybridRetrieval:
 
         if final_list:
             if not post_metadata_by_title:
-                post_metadata_by_title = self._fetch_post_recall_metadata(final_list)
+                post_metadata_by_title = self._fetch_post_recall_metadata(
+                    final_list,
+                    user_id=user_id,
+                )
             final_list = apply_post_recall_adjustments(
                 final_list,
                 metadata_by_title=post_metadata_by_title,
@@ -1503,6 +1594,7 @@ class MusicHybridRetrieval:
                 output_score_field="_post_final_score",
                 apply_to_similarity=True,
                 config=_post_recall_config_for_user(user_id),
+                enable_acoustic_probe=_settings.acoustic_probe_ranking_enabled,
             )
             final_list.sort(key=lambda x: x.get("similarity_score", 0), reverse=True)
             logger.info(
@@ -1666,42 +1758,54 @@ class MusicHybridRetrieval:
         if not raw_markdown:
             raw_markdown = "抱歉，没有找到合适的音乐推荐。"
 
-        # ---- Step 8: 异步更新曝光疲劳参数 ----
-        # 每推荐一次，ts_beta += 0.3，并记录最后曝光时间。后续排序会按时间半衰恢复。
-        recommended_titles = [
-            item.get("song", {}).get("title", "")
-            for item in final_list
-            if item.get("song", {}).get("title") and item.get("song", {}).get("title") != "🌐 全网资讯补充"
-        ]
-        if recommended_titles:
+        # ---- Step 8: 异步更新按用户隔离的曝光疲劳参数 ----
+        # 离线评测必须只读；真实请求只更新 (User)-[:EXPOSED]->(Song)。
+        recommended_songs = []
+        for item in final_list:
+            song = item.get("song", {})
+            title = str(song.get("title") or "").strip()
+            if title and title != "🌐 全网资讯补充":
+                recommended_songs.append(
+                    {
+                        "title": title,
+                        "artist": str(song.get("artist") or "").strip(),
+                    }
+                )
+        if recommended_songs and not _settings.eval_disable_side_effects:
             try:
                 import asyncio
-                async def _update_ts_exposure(titles):
+                async def _update_ts_exposure(songs):
                     try:
                         from retrieval.neo4j_client import get_neo4j_client
                         neo4j = get_neo4j_client()
                         if neo4j and neo4j.driver:
-                            ts_update_query = """
-                            UNWIND $titles AS t
-                            MATCH (s:Song {title: t})
-                            SET s.ts_beta = coalesce(s.ts_beta, 1) + 0.3,
-                                s.ts_last_exposed_at = timestamp()
-                            """
-                            neo4j.execute_query(ts_update_query, {"titles": titles})
-                            logger.info(f"[Exposure] 曝光疲劳更新: {len(titles)} 首歌 ts_beta += 0.3")
+                            neo4j.execute_query(
+                                USER_EXPOSURE_UPDATE_QUERY,
+                                {"songs": songs, "user_id": user_id},
+                            )
+                            logger.info(
+                                "[Exposure] 用户 %s 曝光疲劳更新: %d 首歌",
+                                user_id,
+                                len(songs),
+                            )
                     except Exception as e:
                         logger.warning(f"[Exposure] 曝光疲劳更新失败（不影响推荐）: {e}")
 
                 # fire-and-forget: 异步更新，不阻塞返回
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(_update_ts_exposure(recommended_titles))
+                    loop.create_task(_update_ts_exposure(recommended_songs))
                 except RuntimeError:
                     # 如果没有运行中的事件循环，同步执行
                     import threading
-                    threading.Thread(target=lambda: asyncio.run(_update_ts_exposure(recommended_titles)), daemon=True).start()
+                    threading.Thread(
+                        target=lambda: asyncio.run(_update_ts_exposure(recommended_songs)),
+                        daemon=True,
+                    ).start()
             except Exception:
                 pass  # TS 更新失败不影响主流程
+        elif recommended_songs:
+            logger.debug("[EvalMode] 跳过按用户曝光疲劳写入")
 
         return ToolOutput(
             success=len(final_list) > 0,
@@ -1763,6 +1867,7 @@ class MusicHybridRetrieval:
                 f"[HyDE] 生成声学描述 ({word_count} words): {result[:100]}..."
             )
             try:
+                from config.settings import settings as _settings
                 from services.teacher_log import log_teacher_example
 
                 log_teacher_example(
@@ -1772,6 +1877,8 @@ class MusicHybridRetrieval:
                     metadata={
                         "intent_type": intent_type or "unknown",
                         "model": getattr(llm, "model_name", ""),
+                        "planner_quality_mode": getattr(_settings, "planner_quality_mode", "teacher"),
+                        "prompt_version": "hyde_acoustic_2026_07_10",
                     },
                 )
             except Exception:

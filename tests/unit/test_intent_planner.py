@@ -1,7 +1,7 @@
 import pytest
 
 from agent.intent.parsing import clean_json_response, parse_music_query_plan
-from agent.intent.planner import PlannerResultCache, apply_routing_guardrails
+from agent.intent.planner import PlannerResultCache, apply_routing_guardrails, normalize_planner_grounding
 
 
 def test_clean_json_response_removes_thinking_and_fence():
@@ -62,3 +62,23 @@ def test_planner_cache_key_includes_profile_context():
     first = PlannerResultCache.make_key(chat_history="上一轮：日语", **common)
     second = PlannerResultCache.make_key(chat_history="上一轮：中文", **common)
     assert first != second
+
+
+def test_cantopop_grounding_refines_generic_chinese_language():
+    plan = parse_music_query_plan(
+        """
+        {
+          "intent_type":"hybrid_search",
+          "retrieval_plan":{
+            "hard_constraints":{"language":"Chinese","region":"Hong Kong"},
+            "graph_region_filter":"Hong Kong",
+            "graph_language_filter":"Chinese"
+          }
+        }
+        """
+    )
+
+    normalized = normalize_planner_grounding(plan, "90 年代港乐那种怀旧感")
+
+    assert normalized.retrieval_plan.hard_constraints.language == "Cantonese"
+    assert normalized.retrieval_plan.graph_language_filter == "Cantonese"

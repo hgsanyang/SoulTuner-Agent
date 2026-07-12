@@ -195,6 +195,7 @@ async def build_context(
     retrieval_context: str = "",
     user_input: str = "",
     total_budget: int = 0,
+    user_id: str = "local_admin",
 ) -> Dict[str, str]:
     """
     GSSC 四阶段上下文构建（V2 异步版）
@@ -303,7 +304,6 @@ async def build_context(
             and src.estimated_tokens > budget * LLM_COMPRESS_RATIO
         ):
             # ★ 先查预压缩缓存（上一轮结束后异步预计算的结果）
-            user_id = "local_admin"  # 当前单用户，后续多用户时可从参数传入
             cached = get_cached_compression(user_id, src.estimated_tokens)
             if cached is not None:
                 result[src.name] = cached
@@ -394,4 +394,3 @@ def _track_token_savings(
     lines.append(f"  Budget: {budget}")
 
     logger.info("\n".join(lines))
-

@@ -64,6 +64,7 @@ class MusicRecommendationAgent:
                         formatted_history.append(AIMessage(content=content))
             
             initial_state: MusicAgentState = {
+                "user_id": user_id,
                 "input": query,
                 "chat_history": formatted_history,
                 "user_preferences": user_preferences or {},
@@ -199,6 +200,7 @@ class MusicRecommendationAgent:
             self.graph._explanation_queues[_request_id] = explanation_queue
             
             initial_state: MusicAgentState = {
+                "user_id": user_id,
                 "input": query,
                 "chat_history": formatted_history,
                 "user_preferences": user_preferences or {},

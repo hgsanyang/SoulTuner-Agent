@@ -28,6 +28,12 @@ _TEXT_EMB_LOCK = threading.Lock()
 _TEXT_EMB_CACHE: dict[str, list[float]] = {}
 _TEXT_EMB_CACHE_MAX = 32
 
+if os.getenv("MUQ_MULAN_LOCAL_FILES_ONLY", "1").strip().lower() not in {"0", "false", "no", "off"}:
+    # Set this at import time as well as load time; some HF/Transformers modules
+    # cache offline flags when imported by downstream MuQ internals.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 
 def _local_files_only() -> bool:
     return os.getenv("MUQ_MULAN_LOCAL_FILES_ONLY", "1").strip().lower() not in {"0", "false", "no", "off"}
@@ -63,6 +69,32 @@ def _download(repo_id: str, filename: str) -> str:
         raise
 
 
+def _local_snapshot(repo_id: str) -> str | None:
+    if not _local_files_only():
+        return None
+    try:
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(repo_id, local_files_only=True)
+    except Exception as exc:
+        logger.warning("[MuQ-MuLan] local snapshot missing for %s: %s", repo_id, exc)
+        return None
+
+
+def _rewrite_config_to_local_snapshots(config: dict[str, Any]) -> dict[str, Any]:
+    """Point nested MuQ/XLM-R model names at cached snapshots in offline mode."""
+    if not _local_files_only():
+        return config
+    for section in ("audio_model", "text_model"):
+        name = str((config.get(section) or {}).get("name") or "")
+        if not name or "/" not in name:
+            continue
+        local_path = _local_snapshot(name)
+        if local_path:
+            config.setdefault(section, {})["name"] = local_path
+    return config
+
+
 def get_muq_model():
     """Return a lazily-loaded MuQ-MuLan model singleton."""
     global _MUQ_MODEL
@@ -79,14 +111,15 @@ def get_muq_model():
             # MuQ-MuLan internally loads an OpenMuQ audio backbone.  Keep that
             # internal HuggingFace lookup offline as well, otherwise a cached
             # outer model can still block startup on HEAD retries.
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
         from muq import MuQMuLan
 
         config_path = _download(MUQ_REPO_ID, "config.json")
         with open(config_path, encoding="utf-8") as fh:
             config: dict[str, Any] = json.load(fh)
+        config = _rewrite_config_to_local_snapshots(config)
 
         model = MuQMuLan(config=config)
         state_path = _download(MUQ_REPO_ID, "pytorch_model.bin")

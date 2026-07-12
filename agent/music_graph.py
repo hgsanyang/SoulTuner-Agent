@@ -61,6 +61,7 @@ from llms.prompts import (
 )
 from schemas.query_plan import MusicQueryPlan, RetrievalPlan
 from schemas.dialog_state import (
+    ClarificationRequest,
     apply_dialog_state_to_plan,
     apply_plan_delta_operations,
     apply_plan_delta_with_report,
@@ -80,10 +81,20 @@ from services.llm_feedback_logger import build_planning_feedback, log_planning_f
 logger = get_logger(__name__)
 
 
+def _state_user_id(state: MusicAgentState) -> str:
+    """Return the request user consistently across old and new state payloads."""
+    metadata = state.get("metadata") or {}
+    return str(
+        state.get("user_id")
+        or metadata.get("user_id")
+        or settings.default_user_id
+    ).strip() or settings.default_user_id
+
+
 def _schedule_recommended_knowledge_backfill(recommendations: Any, *, context: str) -> None:
     """Queue missing knowledge-card enrichment for songs that were actually shown."""
 
-    if not recommendations:
+    if settings.eval_disable_side_effects or not recommendations:
         return
     try:
         from services.recommendation_knowledge_backfill import schedule_recommendation_knowledge_backfill
@@ -392,7 +403,7 @@ class MusicRecommendationGraph:
         
         user_input = state.get("input", "")
         chat_history = state.get("chat_history", [])
-        user_id = str((state.get("metadata") or {}).get("user_id") or "local_admin")
+        user_id = _state_user_id(state)
         
         try:
             previous_dialog_state = state.get("dialog_state") or infer_dialog_state_from_history(chat_history)
@@ -593,7 +604,57 @@ class MusicRecommendationGraph:
                 chat_history=history_text,
                 previous_plan=_previous_plan_text,
                 graphzep_facts=state.get("graphzep_facts", ""),
+                user_id=user_id,
             )
+            if plan.intent_type == "clarification":
+                params = plan.parameters or {}
+                options = params.get("options") or params.get("clarification_options") or []
+                if isinstance(options, str):
+                    options = [options]
+                clarification = ClarificationRequest(
+                    required=True,
+                    reason=str(params.get("reason") or plan.reasoning or "llm_clarification"),
+                    question=str(
+                        params.get("question")
+                        or plan.context
+                        or "我还不能可靠判断你想保留哪种音乐方向。你想按哪个方向继续？"
+                    ),
+                    options=[str(option) for option in options if str(option).strip()][:6],
+                    unresolved_paths=[
+                        str(path)
+                        for path in (params.get("unresolved_paths") or [])
+                        if str(path).strip()
+                    ],
+                )
+                if not clarification.options:
+                    clarification.options = ["告诉我一首参考歌", "描述想保留的氛围", "只按这句话重新推荐"]
+                pending_state = load_dialog_state(previous_dialog_state).model_copy(deep=True)
+                pending_state.pending_clarification = clarification
+                clarification_delta = {
+                    "followup": pending_state.turn_count > 0,
+                    "topic_shift": False,
+                    "confidence": 0.0,
+                    "reason": clarification.reason,
+                    "inherited": [],
+                    "added": {},
+                    "replaced": {},
+                    "removed": [],
+                    "planner_mode": "full_planner",
+                }
+                return {
+                    "intent_type": "clarification",
+                    "intent_parameters": {"query": user_input},
+                    "intent_context": clarification.reason,
+                    "clarification": clarification.model_dump(),
+                    "clarification_options": list(clarification.options),
+                    "dialog_state": pending_state.model_dump(),
+                    "dialog_delta": clarification_delta,
+                    "intent_confidence": 0.0,
+                    "refinement_options": [],
+                    "final_response": clarification.question,
+                    "step_count": state.get("step_count", 0) + 1,
+                    "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                }
             plan_conflict = clarification_from_plan_conflict(plan)
             if plan_conflict.required:
                 logger.info("[DST] LLM plan 触发澄清反问: %s", plan_conflict.reason)
@@ -1522,7 +1583,13 @@ class MusicRecommendationGraph:
                 "step_count": state.get("step_count", 0) + 1,
             }
 
-    def _build_preference_query(self, seed_songs: list, graphzep_facts: str = "") -> str:
+    def _build_preference_query(
+        self,
+        seed_songs: list,
+        graphzep_facts: str = "",
+        *,
+        user_id: str | None = None,
+    ) -> str:
         """
         从种子歌曲标签 + 用户 Neo4j 画像 + MemoryGateway 记忆中提炼偏好文本。
         零 LLM 调用，纯结构化数据拼装。
@@ -1548,7 +1615,7 @@ class MusicRecommendationGraph:
         try:
             from retrieval.user_memory import UserMemoryManager
             mem = UserMemoryManager()
-            profile = mem.get_user_preferences("local_admin")
+            profile = mem.get_user_preferences(user_id or settings.default_user_id)
             if profile:
                 for g in profile.get("favorite_genres", []):
                     if g:
@@ -1567,7 +1634,7 @@ class MusicRecommendationGraph:
             if _client and _client.driver:
                 _profile_row = _client.execute_query(
                     "MATCH (u:User {id: $uid}) RETURN u.preferred_genres AS pg, u.preferred_moods AS pm",
-                    {"uid": "local_admin"}
+                    {"uid": user_id or settings.default_user_id}
                 )
                 if _profile_row and _profile_row[0]:
                     for field in ["pg", "pm"]:
@@ -1613,14 +1680,16 @@ class MusicRecommendationGraph:
         
         intent_type = state.get("intent_type")
         parameters = state.get("intent_parameters", {})
+        user_id = _state_user_id(state)
         
         try:
             # ── 特殊意图：recommend_by_favorites（两层智能推荐）──
             if intent_type == "recommend_by_favorites":
                 logger.info("检测到 recommend_by_favorites 意图，启动两层智能推荐")
                 memory = UserMemoryManager()
-                memory.ensure_user_exists("local_admin")
-                all_liked = memory.get_liked_songs(user_id="local_admin", limit=20)
+                if not settings.eval_disable_side_effects:
+                    memory.ensure_user_exists(user_id)
+                all_liked = memory.get_liked_songs(user_id=user_id, limit=20)
 
                 if not all_liked:
                     logger.info("用户暂无点赞/收藏记录，退回常规推荐")
@@ -1641,6 +1710,7 @@ class MusicRecommendationGraph:
                     preference_query = self._build_preference_query(
                         seed_songs=playable_seeds or all_liked[:seed_limit],
                         graphzep_facts=state.get("graphzep_facts", ""),
+                        user_id=user_id,
                     )
                     logger.info(f"[Favorites] 偏好查询文本: {preference_query}")
 
@@ -1651,6 +1721,7 @@ class MusicRecommendationGraph:
                         "use_vector": True,
                         "use_web_search": False,
                         "_intent_type": "recommend_by_favorites",
+                        "_user_id": user_id,
                         "_graphzep_facts": state.get("graphzep_facts", ""),
                     }
                     discovery_result = await retriever.retrieve(
@@ -1773,6 +1844,7 @@ class MusicRecommendationGraph:
                 graphzep_facts=state.get("graphzep_facts", "暂无用户长期记忆"),
                 chat_history=history_text,
                 total_budget=0,
+                user_id=_state_user_id(state),
             )
             
             response_content = await chain.ainvoke({
@@ -2003,7 +2075,11 @@ class MusicRecommendationGraph:
                         "prompt_payload": prompt_payload,
                     },
                     output={"final_response": final_response},
-                    metadata={"provider": _explain_provider, "model": _explain_model_name},
+                    metadata={
+                        "provider": _explain_provider,
+                        "model": _explain_model_name,
+                        "prompt_version": f"explain_{explanation_mode}_2026_07_10",
+                    },
                 )
             except Exception:
                 pass
@@ -2054,16 +2130,17 @@ class MusicRecommendationGraph:
             from schemas.music_state import UserPreferences
             
             # 目前系统是一个单用户/本地演示型系统，默认给定一个 userID
-            default_user_id = "local_admin"
+            user_id = _state_user_id(state)
             
             logger.info("向 Neo4j 查询本地用户图谱记忆...")
             memory_manager = UserMemoryManager()
             
-            # 确保用户节点存在（第一次运行防报错）
-            memory_manager.ensure_user_exists(default_user_id, "本地管理员")
+            # 真实请求可初始化用户；评测必须保持数据库只读。
+            if not settings.eval_disable_side_effects:
+                memory_manager.ensure_user_exists(user_id, "本地用户")
             
             # 读取历史偏好
-            graph_prefs = memory_manager.get_user_preferences(default_user_id, limit=settings.user_preference_limit)
+            graph_prefs = memory_manager.get_user_preferences(user_id, limit=settings.user_preference_limit)
             
             favorite_artists = graph_prefs.get("favorite_artists", [])
             favorite_genres = graph_prefs.get("favorite_genres", [])
@@ -2074,12 +2151,12 @@ class MusicRecommendationGraph:
             # 为了适配下方的推荐流，将纯字符串简单封装一下
             top_tracks_mock = [{"title": t, "artist": "未知", "genre": "未知"} for t in favorite_songs_titles]
             
-            # 若没查到（比如刚启动的空库），给点默认值以便链路正常运行
-            if not favorite_artists:
+            # 默认偏好只服务首次本地体验，不得污染独立评测用户。
+            if not favorite_artists and not settings.eval_disable_side_effects:
                 favorite_artists = ["周杰伦", "林俊杰"]
-            if not favorite_genres:
+            if not favorite_genres and not settings.eval_disable_side_effects:
                 favorite_genres = ["Pop", "R&B"]
-            if not top_tracks_mock:
+            if not top_tracks_mock and not settings.eval_disable_side_effects:
                 top_tracks_mock = [
                     {"title": "七里香", "artist": "周杰伦", "genre": "Pop"},
                     {"title": "夜曲", "artist": "周杰伦", "genre": "R&B"}
@@ -2127,7 +2204,6 @@ class MusicRecommendationGraph:
         try:
             # 去除了对 MCP Adapter 的依赖
             user_preferences = state.get("user_preferences", {})
-            intent_type = state.get("intent_type", "")
             parameters = state.get("intent_parameters", {})
             
             recommendations = []
@@ -2233,32 +2309,25 @@ class MusicRecommendationGraph:
                     ]
                 }
             
-            memory_manager = UserMemoryManager()
-            default_user_id = "local_admin"
-            
             # 提取歌曲
             songs = []
             for rec in recommendations:
                 song_data = rec.get("song", rec)
                 if isinstance(song_data, dict):
-                    # 从字典创建 Song 对象
-                    song = Song(
-                        title=song_data.get("title", "未知"),
-                        artist=song_data.get("artist", "未知"),
-                        album=song_data.get("album"),
-                        genre=song_data.get("genre"),
-                        year=song_data.get("year"),
-                        duration=song_data.get("duration"),
-                        popularity=song_data.get("popularity"),
-                        preview_url=song_data.get("preview_url"),
-                        spotify_id=song_data.get("spotify_id"),
-                        external_url=song_data.get("external_url")
-                    )
-                    songs.append(song)
+                    title = str(song_data.get("title") or "").strip()
+                    if title and title != "未知" and "集合" not in title:
+                        songs.append(
+                            {
+                                "title": title,
+                                "artist": str(song_data.get("artist") or "未知").strip(),
+                                "album": song_data.get("album"),
+                                "genre": song_data.get("genre"),
+                                "year": song_data.get("year"),
+                                "duration": song_data.get("duration"),
+                                "preview_url": song_data.get("preview_url") or song_data.get("audio_url"),
+                            }
+                        )
                     
-                    # 记录图谱喜欢/收藏行为
-                    if song.title != "未知" and "集合" not in song.title:
-                        memory_manager.record_liked_song(default_user_id, song.title, song.artist)
             
             if not songs:
                 logger.warning("无法提取歌曲信息")
@@ -2339,7 +2408,7 @@ class MusicRecommendationGraph:
 
         async def _do_recall() -> Dict[str, Any]:
             user_input = state.get("input", "")
-            user_id = state.get("user_id", "local_admin")
+            user_id = _state_user_id(state)
             from services.memory_gateway import get_memory_gateway
 
             context = await get_memory_gateway().retrieve_context(
@@ -2403,6 +2472,7 @@ class MusicRecommendationGraph:
             return {}
         
         user_query = state.get("input", "")
+        user_id = _state_user_id(state)
         raw_recommendations = state.get("recommendations", [])
         recommendations = getattr(raw_recommendations, "data", raw_recommendations)
         
@@ -2414,8 +2484,6 @@ class MusicRecommendationGraph:
             from llms.prompts import MUSIC_PREFERENCE_EXTRACTOR_PROMPT
             import json as _json
             from datetime import datetime as _dt
-            
-            memory_manager = UserMemoryManager()
             
             # ── 收集场景上下文 ──
             retrieval_plan = state.get("retrieval_plan", {})
@@ -2484,7 +2552,7 @@ class MusicRecommendationGraph:
                         if has_content:
                             from services.memory_gateway import get_memory_gateway
                             get_memory_gateway().remember_preference(
-                                user_id="local_admin",
+                                user_id=user_id,
                                 preferences=global_pref,
                             )
                             logger.info(f"[SemanticMemory] 偏好提取成功: {global_pref}")
@@ -2510,7 +2578,7 @@ class MusicRecommendationGraph:
                 # 获取本次请求携带的 chat_history（已包含当前轮 user query，但不含本轮 bot 回复）
                 _raw_history = state.get("chat_history", [])
                 _history_str = _ctx_mgr.format_chat_history(_raw_history)
-                asyncio.create_task(pre_compress_and_cache("local_admin", _history_str))
+                asyncio.create_task(pre_compress_and_cache(user_id, _history_str))
                 logger.info("[GSSC-Cache] 历史预压缩任务已投递到后台")
             except Exception as _cache_e:
                 logger.warning(f"[GSSC-Cache] 投递预压缩任务失败（不影响主流程）: {_cache_e}")
@@ -2536,7 +2604,7 @@ class MusicRecommendationGraph:
         
         user_input = state.get("input", "")
         bot_response = state.get("final_response", "")
-        user_id = state.get("user_id", "local_admin")
+        user_id = _state_user_id(state)
         
         if not user_input or not bot_response:
             return {}
@@ -2576,10 +2644,10 @@ class MusicRecommendationGraph:
         # ★ Profile Synthesizer: 对话计数 + 自动触发画像刷新
         try:
             from services.profile_synthesizer import get_profile_synthesizer, trigger_portrait_refresh
-            synth = get_profile_synthesizer()
+            synth = get_profile_synthesizer(user_id)
             if synth.increment_conversation():
                 logger.info("[ProfileSynth] 达到刷新阈值，后台异步刷新用户画像...")
-                asyncio.create_task(trigger_portrait_refresh())
+                asyncio.create_task(trigger_portrait_refresh(user_id))
         except Exception as synth_err:
             logger.warning(f"[ProfileSynth] 画像刷新触发失败（不影响主流程）: {synth_err}")
         
