@@ -47,6 +47,17 @@ CREATE INDEX IF NOT EXISTS idx_memory_target
 ON memory_records(user_id, target_record_id);
 """
 
+PREFERENCE_CONFLICT_FIELDS = {
+    "add_genres": "avoid_genres",
+    "avoid_genres": "add_genres",
+    "add_moods": "avoid_moods",
+    "avoid_moods": "add_moods",
+    "add_scenarios": "avoid_scenarios",
+    "avoid_scenarios": "add_scenarios",
+    "add_artists": "avoid_artists",
+    "avoid_artists": "add_artists",
+}
+
 
 def default_memory_db_path() -> Path:
     configured = os.getenv("MEMORY_EVENT_DB", "").strip()
@@ -180,11 +191,61 @@ class MemoryEventStore:
             and (row.expires_at is None or row.expires_at > now)
         ]
         explicit_keys = {row.memory_key for row in active if row.layer == MemoryLayer.EXPLICIT and row.memory_key}
+        explicit_conflict_keys: set[str] = set()
+        for row in active:
+            if row.layer != MemoryLayer.EXPLICIT:
+                continue
+            field = str(row.payload.get("field") or "")
+            value = str(row.payload.get("value") or "").strip()
+            conflict_field = PREFERENCE_CONFLICT_FIELDS.get(field)
+            if conflict_field and value:
+                explicit_conflict_keys.add(f"preference:{conflict_field}:{value.casefold()}")
         active = [
             row for row in active
-            if not (row.layer == MemoryLayer.INFERRED and row.memory_key in explicit_keys)
+            if not (
+                row.layer == MemoryLayer.INFERRED
+                and row.memory_key in (explicit_keys | explicit_conflict_keys)
+            )
         ]
-        return active[:limit]
+        # Repeated consolidation reinforces a memory by appending a newer record.
+        # Keep the ledger immutable while exposing only the newest effective value.
+        newest_by_key: set[tuple[MemoryLayer, str]] = set()
+        effective: list[MemoryRecord] = []
+        for row in active:
+            if row.memory_key:
+                identity = (row.layer, row.memory_key)
+                if identity in newest_by_key:
+                    continue
+                newest_by_key.add(identity)
+            effective.append(row)
+            if len(effective) >= limit:
+                break
+        return effective
+
+    def recent_evidence(self, *, user_id: str, limit: int = 40) -> list[MemoryRecord]:
+        """Return bounded user-originated L0 evidence for consolidation."""
+        allowed_sources = {"user_action", "user_statement", "slate_feedback"}
+        records = self.list_records(
+            user_id=user_id,
+            layers=[MemoryLayer.RAW_EVENT],
+            limit=max(1, min(int(limit), 200)),
+        )
+        return [record for record in records if record.source in allowed_sources]
+
+    def pending_evidence_count(self, *, user_id: str, limit: int = 200) -> int:
+        """Count evidence newer than the latest consolidation audit marker."""
+        rows = self.list_records(user_id=user_id, limit=max(10, min(int(limit), 1000)))
+        latest_audit = next(
+            (row.created_at for row in rows if row.kind == "consolidation_audit"),
+            -1,
+        )
+        return sum(
+            1
+            for row in rows
+            if row.layer == MemoryLayer.RAW_EVENT
+            and row.source in {"user_action", "user_statement", "slate_feedback"}
+            and row.created_at > latest_audit
+        )
 
     def fingerprint(self, *, user_id: str) -> str:
         payload = [record.model_dump() for record in self.list_records(user_id=user_id, limit=1000)]

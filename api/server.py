@@ -1055,6 +1055,12 @@ class MemoryPreferenceUpdateRequest(BaseModel):
     preferences: Dict[str, Any]
 
 
+class MemoryConsolidationRequest(BaseModel):
+    """Run a bounded, auditable L0-to-L2 consolidation for one user."""
+    user_id: str = "local_admin"
+    force: bool = True
+
+
 # ---- 新增:行为事件转自然语言 ----
 EVENT_TEMPLATES = {
     "like":      "用户对《{title}》{artist} 点了赞,表示喜欢这首歌",
@@ -1329,6 +1335,26 @@ async def clear_learned_memory_profile(
         raise
     except Exception as e:
         logger.error(f"[MemoryAPI] 清空学习记忆失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/memory/consolidate")
+async def consolidate_memory(
+    request: MemoryConsolidationRequest,
+    _: None = Depends(require_admin_api_key),
+):
+    """Explicitly run the strong-model consolidator; never exposed as a public side effect."""
+    reject_shared_safe_action("consolidate memory")
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        report = await get_memory_gateway().consolidate_user(
+            user_id=request.user_id,
+            force=request.force,
+        )
+        return {"success": not report.get("reason"), "report": report}
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 记忆归纳失败: {e}")
         return {"success": False, "error": str(e)}
 
 

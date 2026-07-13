@@ -2478,46 +2478,33 @@ class MusicRecommendationGraph:
             }
 
     async def extract_preferences_node(self, state: MusicAgentState) -> Dict[str, Any]:
-        """
-        独立节点：从本轮对话中提取用户音乐偏好，异步写入 Neo4j。
-        
-        原本嵌入在 generate_explanation 中（~90 行硬编码），
-        现解耦为独立 LangGraph 节点，提升架构可维护性。
-        
-        执行逻辑（fire-and-forget，不阻塞工作流）：
-        1. 收集场景上下文（时间段、场景标签、推荐歌曲）
-        2. 调用 LLM 通过 MUSIC_PREFERENCE_EXTRACTOR_PROMPT 提取偏好
-        3. 将结果写入 Neo4j 用户画像（UserMemoryManager）
-        """
-        logger.info("--- [步骤] 提取用户偏好（独立节点） ---")
+        """Record user-only evidence and debounce LLM memory consolidation."""
+        logger.info("--- [MemoryV2] 记录用户证据并检查记忆归纳 ---")
 
         if settings.eval_disable_side_effects:
-            logger.info("[EvalMode] 跳过后台偏好提取与 GSSC 预压缩")
+            logger.info("[EvalMode] 跳过记忆证据写入与 GSSC 预压缩")
             return {}
-        
+
         user_query = state.get("input", "")
         user_id = _state_user_id(state)
         raw_recommendations = state.get("recommendations", [])
         recommendations = getattr(raw_recommendations, "data", raw_recommendations)
-        
-        if not user_query or not recommendations:
-            logger.info("[SemanticMemory] 无用户输入或推荐结果，跳过偏好提取")
+
+        if not user_query:
+            logger.info("[MemoryV2] 无用户输入，跳过证据写入")
             return {}
-        
+
         try:
-            from llms.prompts import MUSIC_PREFERENCE_EXTRACTOR_PROMPT
-            import json as _json
             from datetime import datetime as _dt
-            
-            # ── 收集场景上下文 ──
+            from services.memory_gateway import get_memory_gateway
+
             retrieval_plan = state.get("retrieval_plan", {})
             scene_ctx = (
                 getattr(retrieval_plan, "graph_scenario_filter", None)
                 or (retrieval_plan.get("graph_scenario_filter") if isinstance(retrieval_plan, dict) else None)
                 or "未知"
             )
-            
-            # 推断当前时间段
+
             hour = _dt.now().hour
             if hour < 6:
                 time_label = "凌晨"
@@ -2533,84 +2520,38 @@ class MusicRecommendationGraph:
                 time_label = "傍晚"
             else:
                 time_label = "深夜"
-            
-            # 本轮推荐歌曲摘要
-            rec_songs_text = "无" if not recommendations else ", ".join([
-                f"《{r.get('song', r).get('title', '?')}》"
-                for r in recommendations[:5]
-            ])
-            
-            pref_chain = (
-                ChatPromptTemplate.from_template(MUSIC_PREFERENCE_EXTRACTOR_PROMPT)
-                | get_llm()
-                | StrOutputParser()
+
+            rec_titles: list[str] = []
+            for item in recommendations[:5] if isinstance(recommendations, list) else []:
+                song = item.get("song", item) if isinstance(item, dict) else {}
+                title = str(song.get("title") or "").strip()
+                if title:
+                    rec_titles.append(title)
+            result = get_memory_gateway().remember_conversation_evidence(
+                user_id=user_id,
+                user_text=user_query,
+                scene=scene_ctx,
+                time_label=time_label,
+                recommended_songs=rec_titles,
             )
-            
-            # ── 异步 fire-and-forget，不阻塞工作流返回 ──
-            async def _bg_extract_preferences():
-                try:
-                    pref_raw = await pref_chain.ainvoke({
-                        "user_message": user_query,
-                        "scene_context": scene_ctx,
-                        "current_time": time_label,
-                        "recommended_songs": rec_songs_text,
-                        "user_feedback": "暂无",
-                    })
-                    
-                    if pref_raw and pref_raw.strip():
-                        pref_text = pref_raw.strip()
-                        if "```json" in pref_text:
-                            pref_text = pref_text.split("```json")[-1].split("```")[0].strip()
-                        elif "```" in pref_text:
-                            pref_text = pref_text.split("```")[1].strip()
-                        
-                        pref_data = _json.loads(pref_text)
-                        
-                        # 处理新格式（含 global_preference）
-                        global_pref = pref_data.get("global_preference", pref_data)
-                        has_content = any(
-                            (isinstance(v, list) and len(v) > 0) or
-                            (isinstance(v, str) and v.strip())
-                            for v in global_pref.values()
-                        )
-                        if has_content:
-                            from services.memory_gateway import get_memory_gateway
-                            get_memory_gateway().remember_preference(
-                                user_id=user_id,
-                                preferences=global_pref,
-                            )
-                            logger.info(f"[SemanticMemory] 偏好提取成功: {global_pref}")
-                        
-                        # 场景偏好也写入
-                        scene_pref = pref_data.get("scene_preference", {})
-                        if scene_pref.get("summary"):
-                            logger.info(f"[SemanticMemory] 场景偏好: {scene_pref.get('summary')}")
-                    else:
-                        logger.info("[SemanticMemory] 本轮对话无明确偏好表达，跳过写入")
-                except Exception as e:
-                    logger.warning(f"[SemanticMemory] 后台偏好提取失败（不影响主流程）: {e}")
-            
-            asyncio.create_task(_bg_extract_preferences())
-            logger.info("[SemanticMemory] 偏好提取任务已投递到后台")
-            
-            # ★ 同步投递：预压缩对话历史，为下一轮请求消除 17s 阻塞
-            # 与偏好提取并行执行，互不干扰，在推荐响应返回之后进行
+            logger.info(
+                "[MemoryV2] 用户证据已记录，consolidation_scheduled=%s",
+                result.consolidation_scheduled,
+            )
+
             try:
                 from retrieval.gssc_context_builder import pre_compress_and_cache
                 from retrieval.history import MusicContextManager as _HisMgr
                 _ctx_mgr = _HisMgr()
-                # 获取本次请求携带的 chat_history（已包含当前轮 user query，但不含本轮 bot 回复）
                 _raw_history = state.get("chat_history", [])
                 _history_str = _ctx_mgr.format_chat_history(_raw_history)
                 asyncio.create_task(pre_compress_and_cache(user_id, _history_str))
                 logger.info("[GSSC-Cache] 历史预压缩任务已投递到后台")
             except Exception as _cache_e:
                 logger.warning(f"[GSSC-Cache] 投递预压缩任务失败（不影响主流程）: {_cache_e}")
-
-            
         except Exception as pref_e:
-            logger.warning(f"[SemanticMemory] 偏好提取节点异常（不影响主流程）: {pref_e}")
-        
+            logger.warning(f"[MemoryV2] 用户证据写入异常（不影响主流程）: {pref_e}")
+
         return {}
 
     async def persist_to_graphzep(self, state: MusicAgentState) -> Dict[str, Any]:
@@ -2657,7 +2598,12 @@ class MusicRecommendationGraph:
                 get_memory_gateway().remember_text(
                     description=description,
                     user_id=user_id,
-                    extra={"source": "agent_dialog", "scene": scene_ctx, "time": time_label},
+                    extra={
+                        "source": "agent_dialog",
+                        "scene": scene_ctx,
+                        "time": time_label,
+                        "user_text": enriched_user_msg,
+                    },
                 )
             )
             logger.info(f"[MemoryGateway] 对话已投递到长期记忆旁路 (scene={scene_ctx or '无'})")

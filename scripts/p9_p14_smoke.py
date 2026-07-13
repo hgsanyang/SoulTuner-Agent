@@ -138,7 +138,8 @@ def _check_catalog_gap_and_adjustments() -> list[dict[str, Any]]:
 def _check_ingest_feedback_memory_and_tags() -> list[dict[str, Any]]:
     from services.feedback_logger import SLATE_FEEDBACK_FILE, load_jsonl, log_exposure, log_slate_feedback
     from services import ingest_queue
-    from services.memory_gateway import derive_preferences_from_slate_feedback
+    from services.memory_event_store import MemoryEventStore
+    from services.memory_models import MemoryLayer
     from services.ranking_policy import summarize_policy_readiness
     from services.tag_policy import clean_tag_payload
 
@@ -178,8 +179,21 @@ def _check_ingest_feedback_memory_and_tags() -> list[dict[str, Any]]:
             rows.append(_ok("slate_feedback_log", feedback_id) if slate else _fail("slate_feedback_log", "empty"))
             rows.append(_ok("ranking_readiness_safe", readiness["stage"]) if readiness["stage"] == "collect_feedback" else _warn("ranking_readiness_safe", readiness["stage"]))
 
-            prefs = derive_preferences_from_slate_feedback(rating="too_noisy", reasons=["太吵"], note="少点土嗨 EDM")
-            rows.append(_ok("memory_slate_mapping", json.dumps(prefs, ensure_ascii=False)) if "avoid_moods" in prefs else _fail("memory_slate_mapping", str(prefs)))
+            store = MemoryEventStore(Path(tmp) / "memory.sqlite3")
+            store.append(
+                user_id="local_admin",
+                layer=MemoryLayer.RAW_EVENT,
+                kind="slate_feedback",
+                source="slate_feedback",
+                evidence_id=feedback_id,
+                payload={"rating": "too_noisy", "reasons": ["too noisy"]},
+            )
+            layers = {item.layer for item in store.effective_records(user_id="local_admin")}
+            rows.append(
+                _ok("memory_feedback_stays_evidence", "L0 only")
+                if layers == {MemoryLayer.RAW_EVENT}
+                else _fail("memory_feedback_stays_evidence", str(layers))
+            )
 
             job_id = ingest_queue.enqueue_songs([
                 {

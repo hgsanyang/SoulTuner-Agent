@@ -76,3 +76,44 @@ def test_eval_read_only_does_not_create_memory_database(tmp_path, monkeypatch):
 
     assert result is None
     assert not path.exists()
+
+
+def test_reinforced_inference_exposes_only_newest_effective_record(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    common = {
+        "user_id": "u1",
+        "layer": MemoryLayer.INFERRED,
+        "kind": "preference",
+        "source": "memory_consolidator",
+        "payload": {"field": "add_moods", "value": "Warm"},
+        "memory_key": "preference:add_moods:warm",
+    }
+    store.append(evidence_id="e1", confidence=0.75, now_ms=1000, **common)
+    newest = store.append(evidence_id="e2", confidence=0.9, now_ms=2000, **common)
+
+    effective = store.effective_records(user_id="u1", now_ms=3000)
+
+    assert len(effective) == 1
+    assert effective[0].record_id == newest.record_id
+    assert effective[0].confidence == 0.9
+
+
+def test_explicit_opposite_preference_suppresses_inferred_conflict(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    store.append(
+        user_id="u1", layer=MemoryLayer.INFERRED, kind="preference",
+        source="memory_consolidator", evidence_id="e1",
+        payload={"field": "add_moods", "value": "Sad"},
+        memory_key="preference:add_moods:sad", now_ms=1000,
+    )
+    store.append(
+        user_id="u1", layer=MemoryLayer.EXPLICIT, kind="preference",
+        source="user_explicit", evidence_id="manual",
+        payload={"field": "avoid_moods", "value": "Sad"},
+        memory_key="preference:avoid_moods:sad", now_ms=2000,
+    )
+
+    effective = store.effective_records(user_id="u1", now_ms=3000)
+
+    assert len(effective) == 1
+    assert effective[0].layer == MemoryLayer.EXPLICIT

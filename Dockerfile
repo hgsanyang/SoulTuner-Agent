@@ -24,9 +24,10 @@ WORKDIR /app
 # Keep CPU images free of CUDA runtime wheels. The GPU compose overlay replaces
 # this index explicitly, so both profiles use the same pinned PyTorch release.
 ARG TORCH_VERSION=2.5.1
+ARG TORCHVISION_VERSION=0.20.1
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir --index-url ${TORCH_INDEX_URL} \
-    torch==${TORCH_VERSION} torchaudio==${TORCH_VERSION}
+    torch==${TORCH_VERSION} torchaudio==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION}
 
 # 安装业务依赖（利用 Docker 缓存层）
 COPY requirements.txt .
