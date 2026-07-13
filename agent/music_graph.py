@@ -24,7 +24,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger
 from config.settings import settings
-from agent.catalog_gap import analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
+from agent.catalog_gap import CatalogGapDecision, analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
 from agent.explanation import emit_fast_explanation
 from agent.intent.delta_planner import IntentDeltaPlanner
 from agent.intent.planner import IntentPlanner
@@ -60,19 +60,17 @@ from llms.prompts import (
     MUSIC_TUNER_RESPONSE_PROMPT,
 )
 from schemas.query_plan import MusicQueryPlan, RetrievalPlan
+from schemas.tool_plan import ToolPlan, tool_plan_alignment_issues
 from schemas.dialog_state import (
     ClarificationRequest,
     apply_dialog_state_to_plan,
     apply_plan_delta_operations,
     apply_plan_delta_with_report,
     clarification_from_delta,
-    clarification_from_plan_conflict,
     coerce_followup_general_chat_to_retrieval,
     compile_dialog_state_to_plan,
-    infer_dialog_state_from_history,
     is_followup_turn,
     load_dialog_state,
-    should_clarify_before_planning,
     update_dialog_result_anchors,
 )
 from schemas.refinement import build_refinement_suggestions
@@ -406,37 +404,9 @@ class MusicRecommendationGraph:
         user_id = _state_user_id(state)
         
         try:
-            previous_dialog_state = state.get("dialog_state") or infer_dialog_state_from_history(chat_history)
-            clarification = should_clarify_before_planning(user_input, previous_dialog_state)
-            if clarification.required:
-                logger.info("[DST] 触发澄清反问: %s", clarification.reason)
-                clarified_state = load_dialog_state(previous_dialog_state).model_copy(deep=True)
-                clarified_state.pending_clarification = clarification
-                clarification_delta = {
-                    "followup": False,
-                    "topic_shift": False,
-                    "confidence": 0.0,
-                    "reason": clarification.reason,
-                    "inherited": [],
-                    "added": {},
-                    "replaced": {},
-                    "removed": [],
-                }
-                return {
-                    "intent_type": "clarification",
-                    "intent_parameters": {"query": user_input},
-                    "intent_context": clarification.reason,
-                    "clarification": clarification.model_dump(),
-                    "clarification_options": list(clarification.options),
-                    "dialog_state": clarified_state.model_dump(),
-                    "dialog_delta": clarification_delta,
-                    "intent_confidence": 0.0,
-                    "refinement_options": [],
-                    "final_response": clarification.question,
-                    "step_count": state.get("step_count", 0) + 1,
-                    "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
-                }
-
+            # Full chat history is interpreted by the LLM Planner. Do not infer
+            # semantic state from regexes when an explicit session state is absent.
+            previous_dialog_state = state.get("dialog_state") or {}
             _profile_text = self._load_user_profile_for_prompt(user_id)
             if is_followup_turn(user_input, previous_dialog_state):
                 try:
@@ -481,23 +451,6 @@ class MusicRecommendationGraph:
                             user_input,
                         )
                         plan = compile_dialog_state_to_plan(dialog_state, user_input)
-                        plan_conflict = clarification_from_plan_conflict(plan)
-                        if plan_conflict.required:
-                            dialog_state.pending_clarification = plan_conflict
-                            return {
-                                "intent_type": "clarification",
-                                "intent_parameters": {"query": user_input},
-                                "intent_context": plan_conflict.reason,
-                                "clarification": plan_conflict.model_dump(),
-                                "clarification_options": list(plan_conflict.options),
-                                "dialog_state": dialog_state.model_dump(),
-                                "dialog_delta": dialog_state.last_delta.model_dump(),
-                                "intent_confidence": plan_delta.confidence,
-                                "refinement_options": [],
-                                "final_response": plan_conflict.question,
-                                "step_count": state.get("step_count", 0) + 1,
-                                "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
-                            }
                         dialog_state.last_complete_plan = plan.model_dump()
                         refinement = build_refinement_suggestions(
                             user_input=user_input,
@@ -506,6 +459,9 @@ class MusicRecommendationGraph:
                             user_profile=_profile_text,
                         )
                         retrieval_plan_dict = plan.retrieval_plan.model_dump()
+                        tool_plan_dict = plan.tool_plan.model_dump(mode="json") if plan.tool_plan else {}
+                        retrieval_plan_dict["_tool_plan"] = tool_plan_dict
+                        retrieval_plan_dict["_tool_plan_alignment_issues"] = tool_plan_alignment_issues(plan)
                         retrieval_plan_dict["_intent_type"] = plan.intent_type
                         retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
                         retrieval_plan_dict["_user_profile"] = _profile_text
@@ -520,6 +476,7 @@ class MusicRecommendationGraph:
                             "intent_parameters": plan.parameters,
                             "intent_context": plan.context,
                             "retrieval_plan": retrieval_plan_dict,
+                            "tool_plan": tool_plan_dict,
                             "dialog_state": dialog_state.model_dump(),
                             "dialog_delta": dialog_delta.model_dump(),
                             "intent_confidence": refinement.confidence,
@@ -655,35 +612,6 @@ class MusicRecommendationGraph:
                     "step_count": state.get("step_count", 0) + 1,
                     "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
                 }
-            plan_conflict = clarification_from_plan_conflict(plan)
-            if plan_conflict.required:
-                logger.info("[DST] LLM plan 触发澄清反问: %s", plan_conflict.reason)
-                pending_state = load_dialog_state(previous_dialog_state).model_copy(deep=True)
-                pending_state.pending_clarification = plan_conflict
-                clarification_delta = {
-                    "followup": False,
-                    "topic_shift": False,
-                    "confidence": 0.0,
-                    "reason": plan_conflict.reason,
-                    "inherited": [],
-                    "added": {},
-                    "replaced": {},
-                    "removed": [],
-                }
-                return {
-                    "intent_type": "clarification",
-                    "intent_parameters": {"query": user_input},
-                    "intent_context": plan_conflict.reason,
-                    "clarification": plan_conflict.model_dump(),
-                    "clarification_options": list(plan_conflict.options),
-                    "dialog_state": pending_state.model_dump(),
-                    "dialog_delta": clarification_delta,
-                    "intent_confidence": 0.0,
-                    "refinement_options": [],
-                    "final_response": plan_conflict.question,
-                    "step_count": state.get("step_count", 0) + 1,
-                    "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
-                }
             dialog_state, dialog_delta = apply_plan_delta_with_report(previous_dialog_state, plan, user_input)
             plan = apply_dialog_state_to_plan(plan, dialog_state)
             plan = coerce_followup_general_chat_to_retrieval(plan, dialog_state, user_input)
@@ -710,6 +638,9 @@ class MusicRecommendationGraph:
             # _graphzep_facts: 供 HyDE 参考用户偏好生成声学描述
             # ============================================================
             retrieval_plan_dict = plan.retrieval_plan.model_dump()
+            tool_plan_dict = plan.tool_plan.model_dump(mode="json") if plan.tool_plan else {}
+            retrieval_plan_dict["_tool_plan"] = tool_plan_dict
+            retrieval_plan_dict["_tool_plan_alignment_issues"] = tool_plan_alignment_issues(plan)
             retrieval_plan_dict["_intent_type"] = plan.intent_type
             retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
             retrieval_plan_dict["_user_profile"] = _profile_text  # 画像文本供 HyDE 参考
@@ -736,6 +667,7 @@ class MusicRecommendationGraph:
                 "intent_parameters": plan.parameters,
                 "intent_context": plan.context,
                 "retrieval_plan": retrieval_plan_dict,
+                "tool_plan": tool_plan_dict,
                 "dialog_state": dialog_state.model_dump(),
                 "dialog_delta": dialog_delta.model_dump(),
                 "intent_confidence": refinement.confidence,
@@ -748,7 +680,7 @@ class MusicRecommendationGraph:
             # 【可观测降级】意图分析失败时，不再静默退化为 general_chat。
             # 原因：(1) 用户多数是来"求歌"的，退闲聊=答非所问；
             #       (2) 若失败本就源于 LLM 不可用，general_chat 仍需调 LLM 生成闲聊 → 二次失败。
-            # 改为保守的纯向量检索：用原始输入直接作声学查询(M2D-CLAP 可编码)，
+            # 改为保守的纯向量检索：用原始输入直接作声学查询（MuQ 主锚可编码），
             # 该路径不依赖 LLM，至少能返回语义相近的音乐；并打 _intent_degraded 标记供监控/离线评测统计真实失败率。
             import traceback as _tb
             logger.error(f"意图分析失败，降级为保守 vector_search: {e}\n{_tb.format_exc()}")
@@ -766,11 +698,26 @@ class MusicRecommendationGraph:
                 "_user_profile": "",
                 "_intent_degraded": True,
             }
+            _fallback_tool_plan = ToolPlan.model_validate({
+                "origin": "legacy_compiler",
+                "request_mode": "recommendation",
+                "tool_calls": [{
+                    "id": "audio_recall",
+                    "name": "search_audio",
+                    "arguments": {"acoustic_queries": [user_input], "limit": 30},
+                    "reason": "planner failure fallback",
+                }],
+                "confidence": 0.0,
+                "decision_summary": "planner unavailable; bounded audio fallback",
+                "max_replans": 0,
+            }).model_dump(mode="json")
+            _fallback_plan["_tool_plan"] = _fallback_tool_plan
             return {
                 "intent_type": "vector_search",
                 "intent_parameters": {"query": user_input, "entities": []},
                 "intent_context": user_input,
                 "retrieval_plan": _fallback_plan,
+                "tool_plan": _fallback_tool_plan,
                 "step_count": state.get("step_count", 0) + 1,
                 "error_log": state.get("error_log", []) + [
                     {"node": "analyze_intent", "error": str(e), "degraded_to": "vector_search"}
@@ -913,17 +860,36 @@ class MusicRecommendationGraph:
                 if isinstance(song, dict):
                     song.setdefault("source", "local")
 
-            fallback_decision = decide_online_fallback(search_results, retrieval_plan, query)
-            gap_decision = analyze_catalog_gap(
-                search_results,
-                retrieval_plan,
-                query,
-                web_enabled=_web_search_enabled(),
-                fallback_decision=fallback_decision,
-                normal_mix_count=getattr(settings, "web_mix_in_count", 4),
-                fallback_count=getattr(settings, "web_fallback_count", 10),
-                min_local_results=getattr(settings, "catalog_gap_min_local_results", 8),
+            tool_plan = state.get("tool_plan") or {}
+            planned_tools = {
+                str(call.get("name") or "")
+                for call in (tool_plan.get("tool_calls") or [])
+                if isinstance(call, dict)
+            }
+            run_gap_tool = bool(
+                not settings.tool_plan_execution_enabled
+                or not tool_plan
+                or "inspect_catalog_gap" in planned_tools
+                or not search_results
             )
+            if run_gap_tool:
+                fallback_decision = decide_online_fallback(search_results, retrieval_plan, query)
+                gap_decision = analyze_catalog_gap(
+                    search_results,
+                    retrieval_plan,
+                    query,
+                    web_enabled=_web_search_enabled(),
+                    fallback_decision=fallback_decision,
+                    normal_mix_count=getattr(settings, "web_mix_in_count", 4),
+                    fallback_count=getattr(settings, "web_fallback_count", 10),
+                    min_local_results=getattr(settings, "catalog_gap_min_local_results", 8),
+                )
+            else:
+                gap_decision = CatalogGapDecision(
+                    action="none",
+                    inventory_count=len(search_results),
+                    details={"tool_plan_skipped_gap": True},
+                )
             if gap_decision.action == "fallback":
                 logger.warning(
                     "[search_songs] Catalog gap 触发联网兜底: reasons=%s, inventory=%d",
@@ -953,6 +919,32 @@ class MusicRecommendationGraph:
                 else raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else []
             )
             result_count = 0 if gap_decision.action == "blocked" else len(search_results)
+            tool_observations = list(
+                (getattr(raw_hybrid_result, "metadata", None) or {}).get("tool_observations")
+                or []
+            )
+            gap_calls = [
+                call for call in (tool_plan.get("tool_calls") or [])
+                if isinstance(call, dict) and call.get("name") == "inspect_catalog_gap"
+            ]
+            if (
+                settings.tool_plan_execution_enabled
+                and tool_plan
+                and not gap_calls
+                and not search_results
+            ):
+                gap_calls = [{"id": "catalog_gap_recovery", "name": "inspect_catalog_gap"}]
+            for call in gap_calls:
+                tool_observations.append({
+                    "call_id": str(call.get("id") or "catalog_gap"),
+                    "tool_name": "inspect_catalog_gap",
+                    "success": True,
+                    "status": "success",
+                    "data": gap_decision.model_dump(),
+                    "error": "",
+                    "duration_ms": 0.0,
+                    "metadata": {"needs_replan": gap_decision.needs_online},
+                })
 
             return {
                 "search_results": [] if gap_decision.action == "blocked" else search_results,
@@ -973,6 +965,7 @@ class MusicRecommendationGraph:
                     "web_search_blocked": gap_decision.action == "blocked",
                     "catalog_gap": gap_decision.model_dump(),
                 },
+                "tool_observations": tool_observations,
                 "dialog_state": dialog_state.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": timings,
@@ -1060,6 +1053,33 @@ class MusicRecommendationGraph:
         target_count = max(1, min(target_count, 20))
         discovery_required = bool(state.get("_web_discovery_required"))
         catalog_gap = dict(state.get("_catalog_gap") or {})
+        tool_plan = state.get("tool_plan") or {}
+
+        def _web_tool_observations(status: str, count: int = 0, error: str = "") -> list[dict[str, Any]]:
+            observations = list(state.get("tool_observations") or [])
+            external_calls = [
+                call for call in (tool_plan.get("tool_calls") or [])
+                if isinstance(call, dict) and call.get("name") == "search_external_music"
+            ]
+            if (
+                settings.tool_plan_execution_enabled
+                and tool_plan
+                and not external_calls
+                and state.get("_need_web_fallback")
+            ):
+                external_calls = [{"id": "external_recovery_1", "name": "search_external_music"}]
+            for call in external_calls:
+                observations.append({
+                    "call_id": str(call.get("id") or "external_discovery"),
+                    "tool_name": "search_external_music",
+                    "success": status in {"success", "empty"},
+                    "status": status,
+                    "data": {"candidate_count": count, "source": "external"},
+                    "error": error[:500],
+                    "duration_ms": round((_time.time() - _t0) * 1000, 3),
+                    "metadata": {},
+                })
+            return observations
 
         def _local_preserve_payload(reason: str) -> Dict[str, Any] | None:
             local_items = unwrap_recommendation_items(state.get("recommendations", []))
@@ -1092,6 +1112,7 @@ class MusicRecommendationGraph:
                 "recommendations": ToolOutput(success=True, data=local_items, raw_markdown=""),
                 "_need_web_fallback": False,
                 "retrieval_meta": local_meta,
+                "tool_observations": _web_tool_observations("empty", 0, reason),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
             }
@@ -1359,6 +1380,7 @@ class MusicRecommendationGraph:
                     return {"search_results": [], "recommendations": [],
                             "_need_web_fallback": False,
                             "retrieval_meta": _web_meta(0, "web_search_empty"),
+                            "tool_observations": _web_tool_observations("empty"),
                             "step_count": state.get("step_count", 0) + 1,
                             "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0)}
 
@@ -1501,6 +1523,7 @@ class MusicRecommendationGraph:
                 ),
                 "_need_web_fallback": False,
                 "retrieval_meta": final_meta,
+                "tool_observations": _web_tool_observations("success", len(results)),
                 "dialog_state": dialog_state.model_dump(),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
@@ -1515,6 +1538,7 @@ class MusicRecommendationGraph:
                 "search_results": [], "recommendations": [],
                 "_need_web_fallback": False,
                 "retrieval_meta": _web_meta(0, "web_search_error"),
+                "tool_observations": _web_tool_observations("error", 0, str(e)),
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "web_fallback_ms", _time.time() - _t0),
             }

@@ -15,6 +15,7 @@ from config.settings import settings
 from llms.prompts import LOCAL_PLANNER_PROMPT, UNIFIED_PLANNER_HUMAN, UNIFIED_PLANNER_SYSTEM
 from retrieval.gssc_context_builder import build_context
 from schemas.query_plan import MusicQueryPlan
+from schemas.tool_plan import tool_plan_alignment_issues
 
 from .adapters import (
     PlannerPayload,
@@ -26,28 +27,7 @@ from .adapters import (
 
 logger = get_logger(__name__)
 LOCAL_PROVIDERS = {"sglang", "vllm", "ollama"}
-UNIFIED_PLANNER_PROMPT_VERSION = "unified_planner_2026_07_10"
-MUSIC_REQUEST_CUES = (
-    "歌",
-    "音乐",
-    "听",
-    "推荐",
-    "来几首",
-    "来点",
-    "playlist",
-    "song",
-    "music",
-)
-HK_REGION_ALIASES = {"hk", "hong kong", "香港", "hongkong"}
-CANTONESE_CONTEXT_CUES = (
-    "港乐",
-    "港樂",
-    "粤语",
-    "粵語",
-    "cantopop",
-    "cantonese",
-)
-MANDARIN_CONTEXT_CUES = ("国语", "國語", "普通话", "mandarin")
+UNIFIED_PLANNER_PROMPT_VERSION = "unified_planner_toolplan_v1_2026_07_13"
 
 
 class PlannerResultCache:
@@ -111,69 +91,6 @@ class PlannerResultCache:
         self._items.move_to_end(key)
         while len(self._items) > self.max_entries:
             self._items.popitem(last=False)
-
-
-def apply_routing_guardrails(plan: MusicQueryPlan, user_input: str) -> MusicQueryPlan:
-    """Prevent explicit music requests from being rounded into general chat."""
-    normalized_input = user_input.lower()
-    if plan.intent_type == "general_chat" and any(cue in normalized_input for cue in MUSIC_REQUEST_CUES):
-        plan.intent_type = "vector_search"
-        plan.parameters = {"query": user_input, "entities": []}
-        plan.context = plan.context or "模糊音乐推荐"
-        plan.reasoning = "明确求歌，向量兜底"
-        plan.retrieval_plan.use_graph = False
-        plan.retrieval_plan.use_vector = True
-        plan.retrieval_plan.use_web_search = False
-        plan.retrieval_plan.vector_acoustic_query = (
-            plan.retrieval_plan.vector_acoustic_query or user_input
-        )
-        if not plan.retrieval_plan.vector_acoustic_queries:
-            plan.retrieval_plan.vector_acoustic_queries = [plan.retrieval_plan.vector_acoustic_query]
-        plan.retrieval_plan.soft_intent.vibe = (
-            plan.retrieval_plan.soft_intent.vibe or user_input
-        )
-        logger.info("[IntentPlanner] guardrail corrected general_chat to vector_search")
-    return plan
-
-
-def normalize_planner_grounding(plan: MusicQueryPlan, user_input: str) -> MusicQueryPlan:
-    """Normalize source-grounded music constraints without replacing LLM intent.
-
-    The LLM remains responsible for intent understanding.  This helper only
-    fixes a narrow catalog-grounding gap observed in eval: "港乐/Cantopop"
-    often comes back as region=Hong Kong without the Cantonese language
-    preference, which makes downstream language checks and ranking too weak.
-    """
-    rp = plan.retrieval_plan
-    hard = rp.hard_constraints
-    text = " ".join(
-        [
-            user_input,
-            str(rp.graph_region_filter or ""),
-            str(hard.region or ""),
-            " ".join(rp.hints.genres or []),
-            str(rp.soft_intent.vibe or ""),
-            str(rp.soft_intent.goal or ""),
-        ]
-    ).casefold()
-    region = str(hard.region or rp.graph_region_filter or "").strip().casefold()
-    has_hk_region = region in HK_REGION_ALIASES or any(alias in text for alias in HK_REGION_ALIASES)
-    wants_cantopop = any(cue.casefold() in text for cue in CANTONESE_CONTEXT_CUES)
-    wants_mandarin = any(cue.casefold() in text for cue in MANDARIN_CONTEXT_CUES)
-
-    generic_chinese = str(hard.language or "").strip().casefold() in {"", "chinese", "中文", "华语"}
-    if has_hk_region and wants_cantopop and not wants_mandarin and generic_chinese:
-        hard.language = "Cantonese"
-        rp.graph_language_filter = "Cantonese"
-        if not hard.region:
-            hard.region = "Hong Kong"
-        if not rp.graph_region_filter:
-            rp.graph_region_filter = "Hong Kong"
-        logger.info("[IntentPlanner] normalized HK/Cantopop grounding to Cantonese")
-
-    # Re-validate so layered and legacy fields stay synchronized.
-    plan.retrieval_plan = type(rp).model_validate(rp.model_dump())
-    return plan
 
 
 class IntentPlanner:
@@ -282,8 +199,13 @@ class IntentPlanner:
                 UNIFIED_PLANNER_HUMAN,
                 payload,
             )
-        plan = apply_routing_guardrails(plan, user_input)
-        plan = normalize_planner_grounding(plan, user_input)
+        # LLM-first: semantic intent and entity grounding stay with the planner.
+        alignment_issues = tool_plan_alignment_issues(plan)
+        if alignment_issues:
+            logger.warning(
+                "[IntentPlanner] ToolPlan/RetrievalPlan alignment issues: %s",
+                ", ".join(alignment_issues),
+            )
         try:
             from services.teacher_log import log_teacher_example
 

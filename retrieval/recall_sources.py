@@ -149,9 +149,12 @@ def graph_candidate_recall(
     if artist_terms:
         _run_candidate_query(
             f"""
-            MATCH (s:Song)-[:PERFORMED_BY]->(a:Artist)
+            MATCH (s:Song)
+            OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
             WHERE {playable}
-              AND any(term IN $terms WHERE toLower(toString(coalesce(a.name, ''))) CONTAINS term)
+              AND any(term IN $terms WHERE
+                    toLower(toString(coalesce(a.name, ''))) CONTAINS term
+                    OR toLower(toString(coalesce(s.artist, ''))) CONTAINS term)
             RETURN DISTINCT elementId(s) AS eid
             LIMIT $candidate_limit
             """,
@@ -226,7 +229,7 @@ def graph_candidate_recall(
     OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
     OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
     OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
-    RETURN elementId(s) AS eid, s.title AS title,
+    RETURN elementId(s) AS eid, s.title AS title, s.artist AS artist,
            collect(DISTINCT a.name) AS artists, s.album AS album,
            s.audio_url AS audio_url, s.cover_url AS cover_url, s.lrc_url AS lrc_url,
            coalesce(s.language, 'Unknown') AS language,
@@ -266,6 +269,8 @@ def graph_candidate_recall(
     for row in rows:
         title = str(row.get("title") or "")
         artist_names = _clean_list(row.get("artists"))
+        if row.get("artist"):
+            artist_names = _clean_list([*artist_names, row.get("artist")])
         title_exact = any(normalize_text(title) == normalize_text(item) for item in songs)
         artist_exact = any(
             normalize_text(name) == normalize_text(item)

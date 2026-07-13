@@ -82,6 +82,8 @@ class MusicRecommendationAgent:
                 "metadata": {"user_id": user_id},
                 "timings": {},
                 "retrieval_meta": {},
+                "tool_plan": {},
+                "tool_observations": [],
                 "dialog_state": dialog_state or {},
             }
             
@@ -101,6 +103,50 @@ class MusicRecommendationAgent:
             timings["agent_total_ms"] = round((time.perf_counter() - request_started) * 1000, 3)
             raw_recommendations = result.get("recommendations", [])
             recommendations_for_log = getattr(raw_recommendations, "data", raw_recommendations)
+            try:
+                from agent.intent.planner import UNIFIED_PLANNER_PROMPT_VERSION
+                from schemas.tool_plan import TOOL_PLAN_VERSION
+                from services.teacher_log import log_teacher_example
+
+                tool_plan = result.get("tool_plan") or {}
+                if tool_plan:
+                    ranked_ids = [
+                        str(
+                            (item.get("song") or item).get("music_id")
+                            or (item.get("song") or item).get("id")
+                            or ""
+                        )
+                        for item in (recommendations_for_log or [])
+                        if isinstance(item, dict)
+                    ]
+                    log_teacher_example(
+                        "agent_trajectory",
+                        inputs={
+                            "query": query,
+                            "chat_history": chat_history or [],
+                            "user_preferences": user_preferences or {},
+                        },
+                        output={
+                            "tool_plan": tool_plan,
+                            "tool_observations": result.get("tool_observations") or [],
+                            "ranked_ids": [item for item in ranked_ids if item],
+                            "validator_issues": (
+                                (result.get("retrieval_plan") or {}).get("_tool_plan_alignment_issues")
+                                or []
+                            ),
+                        },
+                        metadata={
+                            "provider": settings.intent_llm_provider or settings.llm_default_provider,
+                            "model": settings.intent_llm_model or settings.llm_default_model,
+                            "planner_quality_mode": settings.planner_quality_mode,
+                            "prompt_version": UNIFIED_PLANNER_PROMPT_VERSION,
+                            "tool_schema_version": TOOL_PLAN_VERSION,
+                            "catalog_snapshot": os.getenv("CATALOG_SNAPSHOT_VERSION", "neo4j-live"),
+                            "timings": timings,
+                        },
+                    )
+            except Exception as trajectory_error:
+                logger.debug("[Trajectory] 轨迹写入失败，已跳过: %s", trajectory_error)
             if (
                 isinstance(recommendations_for_log, list)
                 and recommendations_for_log
@@ -133,6 +179,8 @@ class MusicRecommendationAgent:
                 "errors": result.get("error_log", []),
                 "timings": timings,
                 "retrieval_meta": result.get("retrieval_meta", {}),
+                "tool_plan": result.get("tool_plan", {}),
+                "tool_observations": result.get("tool_observations", []),
                 "dialog_state": result.get("dialog_state", {}),
                 "dialog_delta": result.get("dialog_delta", {}),
                 "clarification_options": result.get("clarification_options", []),
@@ -218,6 +266,8 @@ class MusicRecommendationAgent:
                 "metadata": {"request_id": _request_id, "user_id": user_id},
                 "timings": {},
                 "retrieval_meta": {},
+                "tool_plan": {},
+                "tool_observations": [],
                 "dialog_state": dialog_state or {},
             }
             

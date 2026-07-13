@@ -1,0 +1,63 @@
+[
+  {
+    "id": "tool_artist_exact",
+    "query": "给我来点陈奕迅的粤语歌",
+    "required_tools": ["search_graph"],
+    "forbidden_tools": ["search_external_music"]
+  },
+  {
+    "id": "tool_song_exact",
+    "query": "我想听赵雷的鼓楼",
+    "required_tools": ["search_graph"],
+    "forbidden_tools": ["search_external_music"]
+  },
+  {
+    "id": "tool_acoustic_only",
+    "query": "想听像雨落在旧窗台上那样安静、稀疏、低动态的音乐",
+    "required_tools": ["search_audio"],
+    "forbidden_tools": ["search_external_music"]
+  },
+  {
+    "id": "tool_hybrid_language_vibe",
+    "query": "安静温柔的日语歌，少一点鼓和拥挤感",
+    "required_tools": ["search_graph", "search_audio"],
+    "forbidden_tools": ["search_external_music"]
+  },
+  {
+    "id": "tool_instrumental",
+    "query": "给我一些没有人声、低能量的纯音乐",
+    "required_tools": ["search_audio"],
+    "forbidden_tools": ["search_external_music"]
+  },
+  {
+    "id": "tool_catalog_era",
+    "query": "想听八十年代的香港粤语老歌",
+    "required_tools": ["search_graph", "inspect_catalog_gap"],
+    "forbidden_tools": []
+  },
+  {
+    "id": "tool_latest_external",
+    "query": "查一下本周刚发行的新歌并推荐几首",
+    "required_tools": ["search_external_music"],
+    "forbidden_tools": []
+  },
+  {
+    "id": "tool_artist_background",
+    "query": "介绍一下万能青年旅店的风格和乐队背景",
+    "required_tools": ["search_external_music"],
+    "forbidden_tools": []
+  },
+  {
+    "id": "tool_clarification",
+    "query": "帮我放那个",
+    "required_tools": [],
+    "forbidden_tools": ["search_graph", "search_audio", "search_external_music"],
+    "expect_clarification": true
+  },
+  {
+    "id": "tool_general_chat",
+    "query": "你好，今天过得怎么样？",
+    "required_tools": [],
+    "forbidden_tools": ["search_graph", "search_audio", "search_external_music"]
+  }
+]

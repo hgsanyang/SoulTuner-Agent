@@ -52,6 +52,24 @@ SET e.ts_beta = coalesce(e.ts_beta, 1.0) + 0.3,
 """
 
 
+def local_recall_tools_from_plan(
+    plan: Dict[str, Any] | None,
+    *,
+    execution_enabled: bool,
+) -> tuple[bool, bool, bool]:
+    """Return graph/audio switches and whether ToolPlan is actively controlling them."""
+
+    tool_plan = dict((plan or {}).get("_tool_plan") or {})
+    if not execution_enabled or not tool_plan:
+        return True, True, False
+    names = {
+        str(call.get("name") or "")
+        for call in (tool_plan.get("tool_calls") or [])
+        if isinstance(call, dict)
+    }
+    return "search_graph" in names, "search_audio" in names, True
+
+
 def _post_recall_config_for_user(user_id: str = GRAPH_AFFINITY_USER_ID) -> PostRecallAdjustmentConfig:
     """Apply only bounded, validation-gated feedback multipliers."""
     multipliers: Dict[str, float] = {}
@@ -395,6 +413,16 @@ class MusicHybridRetrieval:
 
         # 1. 直接消费分层计划。legacy 字段只在 layered 字段缺失时补位。
         plan = precomputed_plan or {}
+        tool_plan = dict(plan.get("_tool_plan") or {})
+        planned_tools = {
+            str(call.get("name") or "")
+            for call in (tool_plan.get("tool_calls") or [])
+            if isinstance(call, dict)
+        }
+        run_graph_tool, run_audio_tool, tool_plan_active = local_recall_tools_from_plan(
+            plan,
+            execution_enabled=_s.tool_plan_execution_enabled,
+        )
         hard_constraints = dict(plan.get("hard_constraints") or {})
         soft_intent = dict(plan.get("soft_intent") or {})
         hints = dict(plan.get("hints") or {})
@@ -555,7 +583,32 @@ class MusicHybridRetrieval:
         source_raw: Dict[str, str] = {}
         entity_constrained = bool(graph_artist_entities or (graph_song_entities and not uses_song_as_acoustic_seed))
         enough_entity_graph = False
-        if entity_constrained:
+        if tool_plan_active:
+            if run_graph_tool and not run_audio_tool:
+                self._skip_tri_anchor_for_entity_graph = True
+            recall_tasks = {}
+            if run_graph_tool:
+                recall_tasks["graph"] = timed_recall("graph", run_sync_in_executor(
+                    graph_candidate_recall,
+                    hard_constraints,
+                    hints,
+                    limit=recall_limit,
+                ))
+            if run_audio_tool:
+                recall_tasks["dense"] = timed_recall("dense", run_sync_in_executor(
+                    semantic_search.invoke,
+                    {"query": vector_desc, "query_variants": vector_descs, "limit": recall_limit},
+                ))
+            recall_results = await asyncio.gather(*recall_tasks.values(), return_exceptions=True)
+            for source, result_value in zip(recall_tasks, recall_results):
+                if isinstance(result_value, Exception):
+                    logger.error("[ToolPlan:%s] 异常: %s: %s", source, type(result_value).__name__, result_value)
+                    source_raw[source] = ""
+                else:
+                    source_raw[source] = result_value or ""
+                    logger.info("[ToolPlan:%s] 返回 %d 条", source, _count_recall_rows(source_raw[source]))
+            logger.info("[ToolPlan] active local tools=%s", sorted(planned_tools))
+        elif entity_constrained:
             graph_result = await timed_recall("graph", run_sync_in_executor(
                 graph_candidate_recall,
                 hard_constraints,
@@ -571,12 +624,12 @@ class MusicHybridRetrieval:
             logger.info("[Recall:graph] 返回 %d 条", graph_count)
             enough_entity_graph = graph_count >= 3
 
-        if entity_constrained and enough_entity_graph:
+        if not tool_plan_active and entity_constrained and enough_entity_graph:
             source_raw["dense"] = ""
             timings["recall_dense_ms"] = 0.0
             self._skip_tri_anchor_for_entity_graph = True
             logger.info("[Recall:dense] 明确实体图谱候选已足够，跳过全库 dense 召回")
-        else:
+        elif not tool_plan_active:
             recall_tasks = {}
             if "graph" not in source_raw:
                 recall_tasks["graph"] = timed_recall("graph", run_sync_in_executor(
@@ -666,7 +719,7 @@ class MusicHybridRetrieval:
         # 3. 联网只作为显式需求或实体本地零召回后的补充，不参与本地引擎开关。
         web_raw = ""
         web_started = time.perf_counter()
-        if os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
+        if not tool_plan_active and os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
             graph_empty = source_raw.get("graph") in ("", "[]")
             if need_web_search:
                 logger.info("⚡ 意图明确要求联网: '%s'", search_keyword)
@@ -697,6 +750,29 @@ class MusicHybridRetrieval:
             user_id=user_id,
         )
         result.metadata.setdefault("timings", timings)
+        if tool_plan:
+            tool_observations = []
+            source_mapping = {"search_graph": "graph", "search_audio": "dense"}
+            for call in tool_plan.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                tool_name = str(call.get("name") or "")
+                source = source_mapping.get(tool_name)
+                if not source:
+                    continue
+                count = _count_recall_rows(source_raw.get(source, ""))
+                tool_observations.append({
+                    "call_id": str(call.get("id") or tool_name),
+                    "tool_name": tool_name,
+                    "success": source in source_raw,
+                    "status": "success" if count else "empty",
+                    "data": {"candidate_count": count, "source": source},
+                    "error": "",
+                    "duration_ms": float(timings.get(f"recall_{source}_ms") or 0.0),
+                    "metadata": {"shadow": not tool_plan_active},
+                })
+            result.metadata["tool_observations"] = tool_observations
+            result.metadata["tool_plan_active"] = tool_plan_active
         result.metadata["timings"]["retrieval_total_ms"] = round(
             (time.perf_counter() - retrieval_started) * 1000,
             3,

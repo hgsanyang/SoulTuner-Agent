@@ -163,6 +163,21 @@ class GlobalSettings(BaseSettings):
         validation_alias="EVAL_DISABLE_SIDE_EFFECTS",
         description="离线评测时关闭后台偏好提取、GraphZep 写入、画像刷新等副作用",
     )
+    tool_plan_shadow_enabled: bool = Field(
+        default=True,
+        validation_alias="TOOL_PLAN_SHADOW_ENABLED",
+        description="记录并评测 ToolPlan v1，但仍由现有检索链路执行",
+    )
+    tool_plan_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="TOOL_PLAN_EXECUTION_ENABLED",
+        description="让受限工具编排器接管执行；通过工具计划闸门前保持关闭",
+    )
+    tool_plan_timeout_seconds: float = Field(
+        default=20.0,
+        validation_alias="TOOL_PLAN_TIMEOUT_SECONDS",
+        description="单个白名单工具的超时上限",
+    )
     acoustic_probe_ranking_enabled: bool = Field(
         default=False,
         validation_alias="ACOUSTIC_PROBE_RANKING_ENABLED",

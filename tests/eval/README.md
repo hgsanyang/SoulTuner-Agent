@@ -225,8 +225,9 @@ outcomes are the acceptance signals.
 ## DST And Clarification Checks
 
 A7 adds explicit session-local dialogue state and whitelisted PlanDelta
-operations. Established follow-ups update state deterministically; full-plan
-generation is retained only for first turns, topic resets, and fallback.
+operations. The LLM decides whether a turn is a follow-up and emits the delta;
+deterministic code only validates and applies that delta. It does not infer
+semantics from fixed phrases. Full-plan generation remains the fallback.
 Outcome cases may provide an
 initial `dialog_state` next to `chat_history`; the harness passes it to the
 agent and records the returned `dialog_state` plus `dialog_delta`.
@@ -257,6 +258,21 @@ Use it conservatively:
   `tests/eval/judge_gold/objective_soft_judge_gold.json`; it covers pass/fail/skip
   examples and should be extended whenever a new soft-intent pattern is promoted
   from `manual_review`.
+
+## ToolPlan v1
+
+ToolPlan evaluation calls the Planner but does not execute recommendation tools
+or write feedback, memory, or teacher data:
+
+```powershell
+python -m tests.eval.evaluate_tool_plan
+python -m tests.eval.evaluate_tool_plan --case-id tool_hybrid_language_vibe
+```
+
+It checks allowlisted tool selection, forbidden calls, clarification behavior,
+and agreement between ToolPlan and RetrievalPlan. Production defaults to shadow
+mode; active tool-controlled recall must be enabled explicitly after regression
+gates pass.
 
 ## Discipline
 

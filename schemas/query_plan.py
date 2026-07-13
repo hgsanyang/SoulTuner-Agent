@@ -9,6 +9,8 @@
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field, model_validator
 
+from schemas.tool_plan import ToolPlan, compile_legacy_tool_plan
+
 
 class HardConstraints(BaseModel):
     """必须精确满足的硬约束，适合进入 Cypher 过滤。"""
@@ -202,3 +204,13 @@ class MusicQueryPlan(BaseModel):
     )
 
     reasoning: str = Field(default="", description="LLM 的简短决策推理")
+    tool_plan: Optional[ToolPlan] = Field(
+        default=None,
+        description="ToolPlan v1；由 LLM 直接选择白名单工具，缺失时由旧 RetrievalPlan 兼容编译",
+    )
+
+    @model_validator(mode="after")
+    def ensure_tool_plan(self) -> "MusicQueryPlan":
+        if self.tool_plan is None:
+            self.tool_plan = compile_legacy_tool_plan(self)
+        return self

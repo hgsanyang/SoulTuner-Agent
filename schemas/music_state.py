@@ -59,6 +59,8 @@ class MusicAgentState(TypedDict, total=False):
     timings: Dict[str, float]  # 分阶段耗时（毫秒），用于评测与可观测性
     retrieval_meta: Dict[str, Any]  # 库存命中、结果来源与降级原因
     retrieval_plan: Optional[Dict[str, Any]]  # 统一检索计划（来自 MusicQueryPlan）
+    tool_plan: Optional[Dict[str, Any]]  # ToolPlan v1；影子期仅用于观测和评测
+    tool_observations: List[Dict[str, Any]]  # 受限工具编排器的结构化 observation
     dialog_state: Dict[str, Any]  # A7: 显式本会话音乐意图状态
     dialog_delta: Dict[str, Any]  # A7: 本轮状态更新报告（继承/替换/新增）
     clarification: Dict[str, Any]  # A7: 澄清反问数据
