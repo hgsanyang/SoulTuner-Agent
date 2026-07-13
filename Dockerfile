@@ -21,6 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Keep CPU images free of CUDA runtime wheels. The GPU compose overlay replaces
+# this index explicitly, so both profiles use the same pinned PyTorch release.
+ARG TORCH_VERSION=2.5.1
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir --index-url ${TORCH_INDEX_URL} \
+    torch==${TORCH_VERSION} torchaudio==${TORCH_VERSION}
+
 # 安装业务依赖（利用 Docker 缓存层）
 COPY requirements.txt .
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
