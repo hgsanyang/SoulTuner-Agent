@@ -10,11 +10,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from retrieval.user_memory import UserMemoryManager
 from services.feedback_logger import log_slate_feedback, log_user_event
+from services.memory_event_store import MemoryEventStore
+from services.memory_models import MemoryLayer
 from services.runtime_mode import side_effects_disabled
 
 logger = logging.getLogger(__name__)
@@ -414,9 +417,25 @@ class MemoryGateway:
         episodic: EpisodicMemoryAdapter | None = None,
         episodic_adapters: list[EpisodicMemoryAdapter] | None = None,
         enable_graphzep_sidecar: bool = True,
+        event_store: MemoryEventStore | None = None,
+        enable_event_ledger: bool | None = None,
+        memory_mode: str | None = None,
     ):
-        self.primary = primary or Neo4jPreferenceAdapter()
-        if episodic_adapters is not None:
+        primary_was_injected = primary is not None
+        configured_mode = str(memory_mode or os.getenv("MEMORY_MODE", "structured")).strip().lower()
+        if episodic_adapters is not None and memory_mode is None:
+            configured_mode = "sidecar"
+        if configured_mode not in {"off", "structured", "semantic", "sidecar"}:
+            configured_mode = "structured"
+        self.mode = configured_mode
+        self.primary = primary or (NoopMemoryAdapter() if self.mode == "off" else Neo4jPreferenceAdapter())
+        ledger_enabled = (not primary_was_injected) if enable_event_ledger is None else enable_event_ledger
+        if self.mode == "off":
+            ledger_enabled = False
+        self.event_store = event_store or (MemoryEventStore() if ledger_enabled else None)
+        if self.mode != "sidecar":
+            self.episodic_adapters = []
+        elif episodic_adapters is not None:
             self.episodic_adapters = episodic_adapters
         elif episodic is not None:
             self.episodic_adapters = [episodic]
@@ -452,6 +471,16 @@ class MemoryGateway:
             user_id=user_id,
             exposure_id=exposure_id,
             extra=extra_payload,
+        )
+        self._append_memory_record(
+            user_id=user_id,
+            layer=MemoryLayer.RAW_EVENT,
+            kind=event_type,
+            source="user_action",
+            evidence_id=feedback_event_id,
+            payload={"title": title, "artist": artist, "exposure_id": exposure_id, **extra_payload},
+            memory_key=f"song:{title.casefold()}:{artist.casefold()}:{event_type}",
+            why_used="Raw behavior evidence; not injected directly into ranking",
         )
         self._invalidate_hot_profile(user_id)
 
@@ -493,6 +522,15 @@ class MemoryGateway:
         )
         if preference_update:
             self.primary.remember_preference(user_id, preference_update)
+            self._append_preferences(
+                user_id=user_id,
+                preferences=preference_update,
+                layer=MemoryLayer.INFERRED,
+                source="slate_feedback_inference",
+                evidence_id=feedback_id,
+                confidence=0.72,
+                ttl_days=30,
+            )
             self._invalidate_hot_profile(user_id)
 
         description = f"用户评价本次推荐歌单: {rating}"
@@ -515,6 +553,14 @@ class MemoryGateway:
         if side_effects_disabled():
             return MemoryWriteResult(success=True, description="eval_read_only")
         self.primary.remember_preference(user_id, preferences)
+        self._append_preferences(
+            user_id=user_id,
+            preferences=preferences,
+            layer=MemoryLayer.EXPLICIT,
+            source="user_explicit",
+            evidence_id="manual_preference",
+            confidence=1.0,
+        )
         self._invalidate_hot_profile(user_id)
         return MemoryWriteResult(success=True, preference_update=preferences)
 
@@ -528,6 +574,17 @@ class MemoryGateway:
         if side_effects_disabled():
             return MemoryWriteResult(success=True, description="eval_read_only")
         scheduled = self._schedule_sidecar_write(description, user_id=user_id, extra=extra or {})
+        self._append_memory_record(
+            user_id=user_id,
+            layer=MemoryLayer.EPISODIC,
+            kind="episode_summary",
+            source=str((extra or {}).get("source") or "conversation"),
+            evidence_id=str((extra or {}).get("evidence_id") or ""),
+            payload={"description": description[:2000], **(extra or {})},
+            confidence=float((extra or {}).get("confidence") or 0.65),
+            ttl_days=90,
+            why_used="Low-frequency episodic context; explicit preferences take precedence",
+        )
         return MemoryWriteResult(
             success=True,
             description=description,
@@ -552,6 +609,18 @@ class MemoryGateway:
                 else:
                     backend_results[adapter.name] = str(result or "").strip()
         lines: list[str] = []
+        if self.mode in {"semantic", "sidecar"} and self.event_store is not None:
+            ledger_lines: list[str] = []
+            for record in self.event_store.effective_records(user_id=user_id, limit=max_facts * 4):
+                if record.layer not in {MemoryLayer.INFERRED, MemoryLayer.EPISODIC}:
+                    continue
+                text = record.payload.get("description") or record.payload.get("value")
+                if text:
+                    ledger_lines.append(str(text))
+                if len(ledger_lines) >= max_facts:
+                    break
+            if ledger_lines:
+                backend_results["memory_v2"] = "\n".join(ledger_lines)
         for name, text in backend_results.items():
             if text and "暂无用户长期记忆" not in text:
                 lines.append(f"[{name}] {text}")
@@ -570,6 +639,15 @@ class MemoryGateway:
 
     def delete_memory(self, *, user_id: str, title: str = "", artist: str = "", memory_type: str = "") -> bool:
         ok = self.primary.delete_memory(user_id, title=title, artist=artist, memory_type=memory_type)
+        if self.event_store is not None:
+            for record in self.event_store.effective_records(user_id=user_id, limit=500):
+                payload = record.payload
+                if (
+                    str(payload.get("title") or "").casefold() == title.casefold()
+                    and str(payload.get("artist") or "").casefold() == artist.casefold()
+                    and (not memory_type or record.kind == memory_type)
+                ):
+                    self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
         self._invalidate_hot_profile(user_id)
         return ok
 
@@ -578,6 +656,7 @@ class MemoryGateway:
         episodic_backends = [adapter.name for adapter in self.episodic_adapters]
         return {
             "user_id": user_id,
+            "mode": self.mode,
             "hot_path": {
                 "likes_and_saves": "Neo4j user-song relations",
                 "explicit_preferences": "Neo4j User properties",
@@ -587,6 +666,7 @@ class MemoryGateway:
             "profile": profile,
             "editable_sections": editable_memory_sections(profile),
             "diagnostics": summarize_memory_profile(profile, episodic_backends),
+            "records": self.list_memory_records(user_id=user_id),
         }
 
     def forget_preference_item(self, *, user_id: str, field: str, value: str) -> bool:
@@ -595,14 +675,91 @@ class MemoryGateway:
             return False
         ok = bool(manager.remove_semantic_preference(user_id, field, value))
         if ok:
+            self._tombstone_preference(user_id=user_id, field=field, value=value)
             self._invalidate_hot_profile(user_id)
         return ok
 
     def clear_learned_preferences(self, *, user_id: str) -> bool:
         ok = bool(self.primary.clear_learned_preferences(user_id))
         if ok:
+            if self.event_store is not None:
+                for record in self.event_store.effective_records(user_id=user_id, limit=1000):
+                    if record.layer == MemoryLayer.INFERRED:
+                        self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
             self._invalidate_hot_profile(user_id)
         return ok
+
+    def list_memory_records(self, *, user_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        if self.event_store is None:
+            return []
+        return [record.model_dump() for record in self.event_store.effective_records(user_id=user_id, limit=limit)]
+
+    def delete_memory_record(self, *, user_id: str, record_id: str) -> bool:
+        if self.event_store is None:
+            return False
+        record = self.event_store.get(user_id=user_id, record_id=record_id)
+        if record is None:
+            return False
+        if record.layer == MemoryLayer.EXPLICIT:
+            field = str(record.payload.get("field") or "")
+            value = str(record.payload.get("value") or "")
+            manager = getattr(self.primary, "manager", None)
+            if field and value and manager is not None and hasattr(manager, "remove_semantic_preference"):
+                manager.remove_semantic_preference(user_id, field, value)
+        tombstone = self.event_store.tombstone(user_id=user_id, target_record_id=record_id)
+        if tombstone is not None:
+            self._invalidate_hot_profile(user_id)
+        return tombstone is not None
+
+    def _append_preferences(
+        self,
+        *,
+        user_id: str,
+        preferences: dict[str, Any],
+        layer: MemoryLayer,
+        source: str,
+        evidence_id: str,
+        confidence: float,
+        ttl_days: int | None = None,
+    ) -> None:
+        for preference_field, raw_value in (preferences or {}).items():
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            for value in values:
+                text = str(value or "").strip()
+                if not text:
+                    continue
+                self._append_memory_record(
+                    user_id=user_id,
+                    layer=layer,
+                    kind="preference",
+                    source=source,
+                    evidence_id=evidence_id,
+                    payload={"field": preference_field, "value": text},
+                    confidence=confidence,
+                    ttl_days=ttl_days,
+                    memory_key=f"preference:{preference_field}:{text.casefold()}",
+                    why_used=(
+                        "Explicit user preference overrides inferred memory"
+                        if layer == MemoryLayer.EXPLICIT
+                        else "Recent inferred preference; expires unless reinforced"
+                    ),
+                )
+
+    def _append_memory_record(self, *, ttl_days: int | None = None, **kwargs: Any):
+        if self.event_store is None:
+            return None
+        expires_at = None
+        if ttl_days is not None:
+            expires_at = int(time.time() * 1000) + ttl_days * 24 * 60 * 60 * 1000
+        return self.event_store.append(expires_at=expires_at, **kwargs)
+
+    def _tombstone_preference(self, *, user_id: str, field: str, value: str) -> None:
+        if self.event_store is None:
+            return
+        key = f"preference:{field}:{value.casefold()}"
+        for record in self.event_store.effective_records(user_id=user_id, limit=500):
+            if record.memory_key == key:
+                self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
 
     def _schedule_sidecar_write(self, description: str, *, user_id: str, extra: dict[str, Any] | None = None) -> bool:
         scheduled = False

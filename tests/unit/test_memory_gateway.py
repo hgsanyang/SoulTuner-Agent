@@ -8,6 +8,7 @@ from services.memory_gateway import (
     reset_memory_gateway_for_tests,
     summarize_memory_profile,
 )
+from services.memory_event_store import MemoryEventStore
 
 
 class FakePrimary:
@@ -106,6 +107,27 @@ def test_memory_gateway_records_event_and_local_jsonl(tmp_path, monkeypatch):
     assert rows[0]["exposure_id"] == "exp-1"
 
 
+def test_memory_gateway_writes_versioned_layers(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUSIC_FEEDBACK_DIR", str(tmp_path / "feedback"))
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    gateway = MemoryGateway(
+        primary=FakePrimary(),
+        enable_graphzep_sidecar=False,
+        event_store=store,
+        enable_event_ledger=True,
+    )
+
+    asyncio.run(gateway.remember_event(event_type="like", title="A", artist="Singer", user_id="u1"))
+    gateway.remember_preference(user_id="u1", preferences={"add_moods": ["Warm"]})
+    asyncio.run(gateway.remember_slate_feedback(
+        exposure_id="exp-1", rating="too_sad", reasons=["太丧了"], user_id="u1",
+    ))
+
+    layers = {record["layer"] for record in gateway.list_memory_records(user_id="u1")}
+    assert {"L0", "L1", "L2"}.issubset(layers)
+    assert gateway.list_memory_records(user_id="u2") == []
+
+
 def test_memory_gateway_slate_feedback_updates_hot_preferences(tmp_path, monkeypatch):
     monkeypatch.setenv("MUSIC_FEEDBACK_DIR", str(tmp_path))
     primary = FakePrimary()
@@ -150,6 +172,20 @@ def test_memory_gateway_supports_multiple_episodic_sidecars(tmp_path, monkeypatc
     assert "雨天 lo-fi" in context["episodic"]
     assert "太吵" in context["episodic"]
     assert set(context["episodic_backends"]) == {"a", "b"}
+
+
+def test_structured_mode_does_not_call_optional_sidecars():
+    episodic = FakeEpisodic("graphzep", "should not be used")
+    gateway = MemoryGateway(
+        primary=FakePrimary(),
+        episodic_adapters=[episodic],
+        memory_mode="structured",
+    )
+
+    context = asyncio.run(gateway.retrieve_context(query="rain", user_id="u1"))
+
+    assert context["episodic"] == ""
+    assert context["episodic_backends"] == {}
 
 
 def test_memory_gateway_can_forget_one_hot_preference():

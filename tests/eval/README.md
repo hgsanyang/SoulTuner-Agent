@@ -92,6 +92,17 @@ It currently covers six slate-feedback mappings, including noisy/sad/quiet,
 over-familiar, niche discovery, and seed-closeness feedback. It does not call
 Neo4j, GraphZep, Mem0, or LLMs.
 
+Memory v2 storage invariants have a separate development harness:
+
+```powershell
+python -m tests.eval.evaluate_memory_v2
+```
+
+It checks append-only tombstones, deletion residue, explicit-over-inferred
+precedence, and cross-user isolation against a temporary SQLite ledger. It is
+not the sealed multi-session quality benchmark; blind memory cases must remain
+outside the repository and be supplied by an independent reviewer.
+
 Catalog Gap + knowledge-store routing has a separate targeted ruler:
 
 ```powershell

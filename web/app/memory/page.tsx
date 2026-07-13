@@ -26,6 +26,19 @@ type MemoryProfile = {
     needs_more_feedback?: boolean;
   };
   editable_sections?: MemorySection[];
+  records?: MemoryRecord[];
+};
+
+type MemoryRecord = {
+  record_id: string;
+  layer: 'L0' | 'L1' | 'L2' | 'L3';
+  kind: string;
+  source: string;
+  confidence: number;
+  created_at: number;
+  expires_at?: number | null;
+  payload?: Record<string, unknown>;
+  why_used?: string;
 };
 
 const FIELD_OPTIONS = [
@@ -132,6 +145,13 @@ export default function MemoryPage() {
     await loadMemory();
   };
 
+  const deleteRecord = async (recordId: string) => {
+    const resp = await fetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
+    setMessage('已删除该条记忆；审计历史保留为删除标记');
+    await loadMemory();
+  };
+
   const diagnostics = memory?.diagnostics || {};
 
   return (
@@ -212,6 +232,35 @@ export default function MemoryPage() {
             );
           })}
         </div>
+      )}
+
+      {!loading && (memory?.records?.length || 0) > 0 && (
+        <section style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
+          <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>记忆来源与有效期</div>
+          <div style={{ fontSize: '0.76rem', color: theme.colors.text.muted, marginBottom: '0.8rem' }}>
+            L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。
+          </div>
+          <div style={{ display: 'grid', gap: '0.55rem' }}>
+            {(memory?.records || []).slice(0, 40).map(record => {
+              const payload = record.payload || {};
+              const summary = String(payload.value || payload.description || payload.title || record.kind);
+              const expires = record.expires_at ? new Date(record.expires_at).toLocaleDateString() : '长期有效';
+              return (
+                <div key={record.record_id} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr) auto', gap: '0.65rem', alignItems: 'center', padding: '0.65rem 0.75rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm }}>
+                  <span style={{ color: '#93c5fd', fontWeight: 800, fontSize: '0.75rem' }}>{record.layer}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</div>
+                    <div style={{ color: theme.colors.text.muted, fontSize: '0.7rem' }}>
+                      {record.source} · 置信度 {Math.round(record.confidence * 100)}% · {expires}
+                      {record.why_used ? ` · ${record.why_used}` : ''}
+                    </div>
+                  </div>
+                  <button onClick={() => deleteRecord(record.record_id).catch(err => setMessage(err.message))} style={chipActionStyle('#fca5a5')}>删除</button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
     </div>
   );

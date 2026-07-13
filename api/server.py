@@ -1332,6 +1332,24 @@ async def clear_learned_memory_profile(
         return {"success": False, "error": str(e)}
 
 
+@app.delete("/api/memory/record/{record_id}")
+async def delete_memory_record(record_id: str, user_id: str = "local_admin"):
+    """Tombstone one auditable memory record without rewriting its history."""
+    reject_shared_safe_action("delete memory record")
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        ok = get_memory_gateway().delete_memory_record(user_id=user_id, record_id=record_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Memory record not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 删除记忆记录失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/ranking-policy/replay")
 async def ranking_policy_replay(
     request: RankingPolicyReplayRequest,
