@@ -20,7 +20,7 @@ from services.memory_consolidator import MemoryConsolidator
 from services.memory_event_store import MemoryEventStore
 from services.memory_models import MemoryLayer
 from services.memory_retriever import MemoryRelevanceRetriever
-from services.memory_retriever import DEFAULT_LAYER_THRESHOLDS, normalize_scene
+from services.memory_retriever import DEFAULT_LAYER_THRESHOLDS
 from services.memory_semantic_scorer import (
     BgeMemorySemanticScorer,
     MemorySemanticScorerUnavailable,
@@ -683,7 +683,9 @@ class MemoryGateway:
         details = dict(extra or {})
         # Episodic events carry their temporal window and scene explicitly so
         # retrieval can reason about applicability instead of guessing from text.
-        scene = normalize_scene(details.pop("scene", "")) or str(details.pop("scope", "") or "")
+        # The scene is a free-form label (usually LLM/planner-authored); it joins
+        # the record's semantic text at retrieval time.
+        scene = str(details.pop("scene", "") or details.pop("scope", "") or "").strip()[:40]
         ttl_days = int(details.pop("ttl_days", 0) or 0)
         if not 1 <= ttl_days <= 365:
             ttl_days = 90

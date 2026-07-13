@@ -54,8 +54,14 @@ def get_chat_model(
     temperature: float = 0.7,
     timeout: Optional[int] = None,
     max_tokens: Optional[int] = None,
+    enable_web_search: bool = False,
 ):
-    """Return a LangChain ChatModel for graph workflow nodes."""
+    """Return a LangChain ChatModel for graph workflow nodes.
+
+    ``enable_web_search`` turns on the provider-native web search
+    (DashScope ``enable_search``); only meaningful for providers that
+    support it and ignored elsewhere.
+    """
     provider_key = provider.lower()
     config = get_provider_config(provider_key)
     api_key = provider_api_key(provider_key)
@@ -70,6 +76,8 @@ def get_chat_model(
         token_budget = max_tokens if max_tokens is not None else 4000
         chat_kwargs = {}
         extra_body = _chat_openai_extra_body(provider_key, target_model)
+        if enable_web_search and provider_key == "dashscope":
+            extra_body = {**extra_body, "enable_search": True}
         if extra_body:
             chat_kwargs["extra_body"] = extra_body
         return ChatOpenAI(

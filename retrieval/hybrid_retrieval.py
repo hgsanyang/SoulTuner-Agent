@@ -479,6 +479,27 @@ class MusicHybridRetrieval:
         need_web_search = bool(plan.get("use_web_search"))
         search_keyword = str(plan.get("web_search_keywords") or query)
 
+        # ── 双路线：联网补充与本地召回并行 ──
+        # 第二路线由 planner 模型的原生联网搜索（DashScope enable_search）发现
+        # 有证据支撑的补充歌曲，超时/失败 fail-soft 为空，不影响本地链路。
+        web_supplement_task: "asyncio.Task | None" = None
+        if not tool_plan_active:
+            from retrieval.web_supplement import get_web_supplement, supplement_enabled
+
+            if supplement_enabled():
+                web_supplement_task = asyncio.create_task(
+                    get_web_supplement().discover(
+                        query=query,
+                        plan_summary={
+                            "intent_type": intent_type,
+                            "soft_intent": soft_intent,
+                            "hints": hints,
+                            "hard_constraints": hard_constraints,
+                        },
+                        avoid=list(soft_intent.get("avoid") or []),
+                    )
+                )
+
         vector_descs: List[str] = []
         for item in plan.get("vector_acoustic_queries") or []:
             text = str(item or "").strip()
@@ -716,19 +737,24 @@ class MusicHybridRetrieval:
                 logger.error("提取全网歌曲失败: %s", exc)
                 return []
 
-        # 3. 联网只作为显式需求或实体本地零召回后的补充，不参与本地引擎开关。
+        # 3. 联网歌曲来自并行的补充路线（LLM 原生联网 + 证据），
+        #    旧的 federated+extract 路径仅在补充路线关闭时兜底。
         web_raw = ""
         web_started = time.perf_counter()
-        if not tool_plan_active and os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
-            graph_empty = source_raw.get("graph") in ("", "[]")
-            if need_web_search:
-                logger.info("⚡ 意图明确要求联网: '%s'", search_keyword)
-                web_raw = await _federated_search_async(search_keyword)
-            elif graph_entities and graph_empty:
-                logger.warning("本地实体召回为空，触发联网补充: '%s'", query)
-                web_raw = await _federated_search_async(query)
-
-        web_playable = await _extract_and_fetch_web_songs(web_raw)
+        if web_supplement_task is not None:
+            web_playable = await web_supplement_task
+            if web_playable:
+                logger.info("[WebSupplement] 联网补充 %d 首（证据驱动）", len(web_playable))
+        else:
+            if not tool_plan_active and os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
+                graph_empty = source_raw.get("graph") in ("", "[]")
+                if need_web_search:
+                    logger.info("⚡ 意图明确要求联网: '%s'", search_keyword)
+                    web_raw = await _federated_search_async(search_keyword)
+                elif graph_entities and graph_empty:
+                    logger.warning("本地实体召回为空，触发联网补充: '%s'", query)
+                    web_raw = await _federated_search_async(query)
+            web_playable = await _extract_and_fetch_web_songs(web_raw)
         timings["retrieval_web_ms"] = round((time.perf_counter() - web_started) * 1000, 3)
         self._current_query = query
         self._current_hyde_text = vector_desc
@@ -1409,50 +1435,41 @@ class MusicHybridRetrieval:
 
         # 联网歌曲也遵守同一硬过滤，再进入后续统一排序。
         if web_playable:
-            web_items = []
-            for rank, item in enumerate(web_playable):
-                song = item.get("song") or {}
-                web_items.append(
-                    {
-                        "key": self._normalize_key(
-                            song.get("title", ""),
-                            song.get("artist", ""),
-                        ),
-                        "rank": rank,
-                        "raw_score": item.get("similarity_score", 0.0),
-                        "engine": "web",
-                        "song": song,
-                    }
-                )
+            from retrieval.web_supplement import is_duplicate_song
+
             filtered_web = apply_hard_filters(
                 [
                     {
-                        "song": item["song"],
-                        "reason": "🌐 全网最新发掘",
-                        "similarity_score": item["raw_score"],
+                        "song": item.get("song") or {},
+                        "reason": item.get("reason") or "🌐 全网最新发掘",
+                        "similarity_score": item.get("similarity_score", 0.0),
                     }
-                    for item in web_items
+                    for item in web_playable
                 ],
                 hard_constraints,
                 disliked_titles,
             )
-            existing_keys = {
-                self._normalize_key(
+            # 模糊去重：归一化歌名/歌手 + 相似度，防止同一首歌因
+            # 括号后缀、feat、大小写、全半角差异重复出现。
+            existing_pairs = [
+                (
                     item.get("song", {}).get("title", ""),
                     item.get("song", {}).get("artist", ""),
                 )
                 for item in final_list
-            }
+            ]
             for item in filtered_web:
                 song = item.get("song", {})
                 item["recall_sources"] = ["web"]
                 item["recall_source_labels"] = ["联网"]
                 song["recall_sources"] = ["web"]
                 song["recall_source_labels"] = ["联网"]
-                key = self._normalize_key(song.get("title", ""), song.get("artist", ""))
-                if key not in existing_keys:
-                    final_list.append(item)
-                    existing_keys.add(key)
+                title, artist = song.get("title", ""), song.get("artist", "")
+                if is_duplicate_song(title, artist, existing_pairs):
+                    logger.info("[WebSupplement] 去重跳过: %s - %s", title, artist)
+                    continue
+                final_list.append(item)
+                existing_pairs.append((title, artist))
 
         timings["fusion_filter_ms"] = round(
             (time.perf_counter() - fusion_started) * 1000,

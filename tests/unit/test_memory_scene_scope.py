@@ -1,10 +1,8 @@
-"""场景作用域与 L3 时序检索的确定性行为测试。
+"""自由场景标签与 L3 时序检索的行为测试。
 
-核心不变量：
-1. 场景绑定的记忆只在同场景生效；场景未知时 fail-closed 不注入；
-2. global/contextual/temporary 记忆不受场景影响；
-3. L3 episodic 记忆时间衰减快于稳定偏好，旧事件不能压过新事件；
-4. 检索策略（阈值/版本/backend）可审计。
+原则：场景适用性完全由语义相关性裁决——场景标签是 LLM 自由命名的文本，
+并入记忆语义文本参与打分；当前场景（若有）作为 query 增强。
+确定性代码不做任何固定场景词表匹配。
 """
 
 from services.memory_models import MemoryLayer, MemoryRecord
@@ -12,7 +10,6 @@ from services.memory_retriever import (
     DEFAULT_LAYER_THRESHOLDS,
     MemoryRelevanceRetriever,
     RELEVANCE_POLICY_VERSION,
-    normalize_scene,
 )
 
 DAY_MS = 86_400_000
@@ -25,6 +22,7 @@ def _record(
     layer: MemoryLayer = MemoryLayer.INFERRED,
     scope: str = "global",
     value: str = "Calm",
+    cues: list[str] | None = None,
     created_at: int = NOW - DAY_MS,
     confidence: float = 0.9,
 ) -> MemoryRecord:
@@ -42,14 +40,29 @@ def _record(
             "field": "add_moods",
             "value": value,
             "scope": scope,
-            "retrieval_cues": ["安静放松的音乐"],
+            "retrieval_cues": cues if cues is not None else [],
         },
     )
 
 
-class UniformScorer:
-    """Semantic scorer stub: every document is equally relevant."""
+class OverlapScorer:
+    """Deterministic semantic stand-in: relevance = token overlap.
 
+    High when any query token appears in the document, low otherwise —
+    enough to exercise the semantic scene gating without a real model.
+    """
+
+    name = "overlap-test"
+
+    def score(self, query, documents):
+        tokens = [token for token in str(query).split() if token]
+        return [
+            0.9 if any(token in document for token in tokens) else 0.01
+            for document in documents
+        ]
+
+
+class UniformScorer:
     name = "uniform-test"
 
     def __init__(self, relevance: float = 0.9):
@@ -59,50 +72,48 @@ class UniformScorer:
         return [self.relevance] * len(documents)
 
 
-def _retriever(**kwargs) -> MemoryRelevanceRetriever:
+def _retriever(scorer=None, **kwargs) -> MemoryRelevanceRetriever:
     return MemoryRelevanceRetriever(
-        semantic_scorer=UniformScorer(),
+        semantic_scorer=scorer or UniformScorer(),
         layer_thresholds=DEFAULT_LAYER_THRESHOLDS,
         **kwargs,
     )
 
 
-def test_scene_scoped_memory_only_applies_in_its_scene():
+def test_free_scene_label_joins_semantic_text_and_gates_by_relevance():
     records = [
-        _record("m-driving", scope="driving", value="Energetic"),
-        _record("m-global", scope="global", value="Calm"),
+        _record("m-driving", scope="夜里一个人开车", value="Energetic"),
+        _record("m-global", scope="global", value="Calm", cues=["听点歌"]),
     ]
-    retriever = _retriever()
+    retriever = _retriever(scorer=OverlapScorer(), max_per_layer=2)
 
-    in_sleep = retriever.retrieve(query="睡前听点歌", records=records, scene="sleep", now_ms=NOW)
-    assert [item.record.record_id for item in in_sleep] == ["m-global"]
+    # 睡前 query 与"开车"场景标签语义不相关 → 场景记忆被阈值挡住
+    sleep = retriever.retrieve(query="睡前 听点歌", records=records, now_ms=NOW)
+    assert [item.record.record_id for item in sleep] == ["m-global"]
 
-    in_driving = retriever.retrieve(query="开车听点歌", records=records, scene="driving", now_ms=NOW)
-    assert {item.record.record_id for item in in_driving} == {"m-driving", "m-global"}
-
-
-def test_unknown_scene_fails_closed_for_scene_scoped_memory():
-    records = [
-        _record("m-rainy", scope="rainy", value="Melancholy"),
-        _record("m-contextual", scope="contextual", value="Warm"),
-    ]
-    selected = _retriever().retrieve(query="来点歌", records=records, scene="", now_ms=NOW)
-    assert [item.record.record_id for item in selected] == ["m-contextual"]
-
-
-def test_matching_scene_gets_bounded_boost_and_traceable_reason():
-    records = [
-        _record("m-focus", scope="focus", value="Instrumental", confidence=0.8),
-        _record("m-global", scope="global", value="Calm", confidence=0.8),
-    ]
-    selected = _retriever(max_per_layer=2).retrieve(
-        query="工作时听的歌", records=records, scene="focus", now_ms=NOW
+    # 当前场景作为 query 增强后，场景记忆通过语义门槛
+    driving = retriever.retrieve(
+        query="听点歌", records=records, scene="夜里一个人开车", now_ms=NOW
     )
-    by_id = {item.record.record_id: item for item in selected}
-    assert by_id["m-focus"].score > by_id["m-global"].score
-    assert "scene=focus" in by_id["m-focus"].why_used
-    # bounded: boost never exceeds 0.05
-    assert by_id["m-focus"].score - by_id["m-global"].score <= 0.05 + 1e-9
+    assert {item.record.record_id for item in driving} == {"m-driving", "m-global"}
+
+
+def test_scene_label_is_traceable_in_why_used():
+    records = [_record("m1", scope="雨天在家工作", cues=["工作时听"])]
+    selected = _retriever(scorer=OverlapScorer()).retrieve(
+        query="工作时听", records=records, now_ms=NOW
+    )
+    assert selected
+    assert "scene_label=雨天在家工作" in selected[0].why_used
+
+
+def test_lifecycle_scopes_do_not_pollute_semantic_text():
+    # contextual/global/temporary 是生命周期语义，不该作为语义文本参与匹配
+    records = [_record("m1", scope="contextual", value="Warm", cues=[])]
+    selected = _retriever(scorer=OverlapScorer()).retrieve(
+        query="contextual", records=records, now_ms=NOW
+    )
+    assert selected == []
 
 
 def test_episodic_memory_decays_faster_than_stable_preference():
@@ -136,12 +147,3 @@ def test_describe_exposes_auditable_policy():
     assert policy["layer_thresholds"]["L1"] == DEFAULT_LAYER_THRESHOLDS[MemoryLayer.EXPLICIT]
     assert policy["layer_thresholds"]["L2"] == DEFAULT_LAYER_THRESHOLDS[MemoryLayer.INFERRED]
     assert policy["max_per_layer"] == 1
-
-
-def test_normalize_scene_maps_structured_labels_only():
-    assert normalize_scene("Driving") == "driving"
-    assert normalize_scene("Study") == "focus"
-    assert normalize_scene("Late Night") == "late_night"
-    assert normalize_scene("Rainy Day") == "rainy"
-    assert normalize_scene("完全未知的场景") == ""
-    assert normalize_scene(None) == ""

@@ -39,24 +39,27 @@ def _record(
     )
 
 
-def test_views_group_by_scope_with_stable_order():
+def test_views_group_by_free_scene_labels_global_first_lifecycle_last():
     views = build_profile_views(
         [
-            _record("m1", scope="driving", value="Energetic"),
+            _record("m1", scope="夜里一个人开车", value="Energetic"),
+            _record("m1b", scope="夜里一个人开车", value="Bass Heavy"),
             _record("m2", scope="global", value="Calm", layer=MemoryLayer.EXPLICIT),
-            _record("m3", scope="sleep", value="Quiet"),
+            _record("m3", scope="雨天在家", value="Quiet"),
+            _record("m4", scope="contextual", value="Warm"),
         ],
         now_ms=NOW,
     )
     scopes = [view["scope"] for view in views["views"]]
-    assert scopes == ["global", "driving", "sleep"]  # order follows SCOPE_VIEW_ORDER
-    driving = next(view for view in views["views"] if view["scope"] == "driving")
-    assert driving["items"][0]["value"] == "Energetic"
-    assert driving["title"]
+    # global 最前，场景标签按条数降序，生命周期兜底最后
+    assert scopes == ["global", "夜里一个人开车", "雨天在家", "contextual"]
+    driving = next(view for view in views["views"] if view["scope"] == "夜里一个人开车")
+    assert driving["title"] == "夜里一个人开车"  # 场景视图标题就是 LLM 起的标签
+    assert len(driving["items"]) == 2
 
 
 def test_view_items_carry_evidence_validity_and_editability():
-    views = build_profile_views([_record("m1", scope="rainy", value="Melancholy")], now_ms=NOW)
+    views = build_profile_views([_record("m1", scope="雨天独处", value="Melancholy")], now_ms=NOW)
     item = views["views"][0]["items"][0]
     assert item["record_id"] == "m1"
     assert item["layer"] == "L2"
@@ -66,10 +69,10 @@ def test_view_items_carry_evidence_validity_and_editability():
     assert item["editable"] is True
 
 
-def test_unknown_scope_folds_into_global_and_non_preferences_excluded():
+def test_empty_scope_folds_into_global_and_non_preferences_excluded():
     views = build_profile_views(
         [
-            _record("m1", scope="weird-scope"),
+            _record("m1", scope=""),
             _record("m2", kind="tombstone"),
             _record("m3", layer=MemoryLayer.RAW_EVENT),
         ],
@@ -92,8 +95,8 @@ def test_recent_tendency_only_includes_fresh_inferred():
     assert recent_ids == ["m-fresh"]
 
 
-def test_normalize_scope_accepts_scene_and_lifecycle_only():
-    assert normalize_scope("driving") == "driving"
-    assert normalize_scope("TEMPORARY") == "temporary"
-    assert normalize_scope("unknown") == "global"
+def test_normalize_scope_passes_free_labels_through():
+    assert normalize_scope("夜里一个人开车") == "夜里一个人开车"
+    assert normalize_scope("temporary") == "temporary"
+    assert normalize_scope("") == "global"
     assert normalize_scope(None) == "global"

@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -26,12 +26,12 @@ ALLOWED_MEMORY_FIELDS = frozenset(
 class InferredPreferenceCandidate(BaseModel):
     field: str = Field(description="One allowed structured preference field")
     value: str = Field(min_length=1, max_length=160)
-    # Lifecycle scopes plus scene scopes: a scene-bound preference only applies
-    # inside its scene at retrieval time (see services.memory_retriever).
-    scope: Literal[
-        "global", "contextual", "temporary",
-        "driving", "commute", "focus", "sleep", "late_night", "rainy", "romantic", "workout",
-    ] = "contextual"
+    # "global"/"contextual"/"temporary" describe durability; anything else is a
+    # free-form scene label the model names from the evidence itself (e.g.
+    # "夜里一个人开车"). Scene applicability is judged semantically at retrieval
+    # time, so the label vocabulary is open and can evolve across
+    # consolidation passes (rename via a newer record on the same memory_key).
+    scope: str = Field(default="contextual", max_length=40)
     confidence: float = Field(ge=0.0, le=1.0)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
     counter_evidence_ids: list[str] = Field(default_factory=list, max_length=20)
@@ -43,6 +43,11 @@ class InferredPreferenceCandidate(BaseModel):
     @classmethod
     def strip_text(cls, value: str) -> str:
         return str(value or "").strip()
+
+    @field_validator("scope")
+    @classmethod
+    def clean_scope(cls, value: str) -> str:
+        return str(value or "").strip() or "contextual"
 
     @field_validator("retrieval_cues")
     @classmethod
@@ -80,7 +85,7 @@ class MemoryConsolidationReport:
     abstained: bool = False
     summary: str = ""
     model: str = ""
-    prompt_version: str = "memory-consolidator-v2-scene-scope"
+    prompt_version: str = "memory-consolidator-v3-free-scene"
     prompt_hash: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
@@ -118,10 +123,13 @@ Rules:
 - When two or more records consistently support the same music preference and no
   supplied record contradicts it, emit a candidate instead of merely summarizing it.
 - Keep explicit likes/dislikes, inferred tendencies, and temporary contexts distinct.
-- Choose the narrowest honest scope. Use a scene scope (driving/commute/focus/
-  sleep/late_night/rainy/romantic/workout) when the evidence is bound to that
-  scene; "global" only for consistently scene-independent evidence;
-  "contextual"/"temporary" for everything softer.
+- Choose the narrowest honest scope. When the evidence is bound to a life
+  scene, NAME that scene yourself in the user's language as a short free-form
+  label (<=12 chars, e.g. "夜里一个人开车", "雨天在家工作") and use it as scope.
+  Reuse an existing_scene_labels entry when it fits the same scene — rename or
+  split only when the evidence shows the old label was too coarse. Use
+  "global" only for consistently scene-independent evidence and
+  "contextual"/"temporary" for softer, short-lived tendencies.
 - Use only these fields: {allowed_fields}.
 - add_* means preference; avoid_* means aversion. Do not output contradictory pairs.
 - Include every supporting record_id in evidence_ids and any contradiction in counter_evidence_ids.
@@ -175,7 +183,10 @@ class MemoryConsolidator:
             report.summary = "Insufficient independent evidence"
             return report
 
-        proposal, model_name, usage = await self._generate(user_id, evidence)
+        existing_scene_labels = self._existing_scene_labels(user_id)
+        proposal, model_name, usage = await self._generate(
+            user_id, evidence, existing_scene_labels=existing_scene_labels
+        )
         report.model = model_name
         report.prompt_hash = self.prompt_hash()
         report.input_tokens = usage["input_tokens"]
@@ -188,10 +199,29 @@ class MemoryConsolidator:
         report.rejected = rejected
         return report
 
+    def _existing_scene_labels(self, user_id: str) -> list[str]:
+        """The user's evolving scene vocabulary, offered to the model for reuse."""
+        labels: list[str] = []
+        seen: set[str] = set()
+        try:
+            for record in self.event_store.effective_records(user_id=user_id, limit=500):
+                if record.layer != MemoryLayer.INFERRED:
+                    continue
+                scope = str(record.payload.get("scope") or "").strip()
+                key = scope.casefold()
+                if scope and key not in {"global", "contextual", "temporary"} and key not in seen:
+                    seen.add(key)
+                    labels.append(scope)
+        except Exception:
+            return []
+        return labels[:20]
+
     async def _generate(
         self,
         user_id: str,
         evidence: list[MemoryRecord],
+        *,
+        existing_scene_labels: list[str] | None = None,
     ) -> tuple[MemoryConsolidationProposal, str, dict[str, int]]:
         payload = [self._evidence_payload(record) for record in evidence]
         if self.generator is not None:
@@ -223,12 +253,16 @@ class MemoryConsolidator:
         system = CONSOLIDATION_SYSTEM_PROMPT.format(
             allowed_fields=", ".join(sorted(ALLOWED_MEMORY_FIELDS))
         )
+        human_payload = {
+            "existing_scene_labels": list(existing_scene_labels or []),
+            "evidence": payload,
+        }
         messages = [
             ("system", system),
             (
                 "human",
                 "user_id is already trusted by the application. Consolidate only this JSON evidence:\n"
-                + json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                + json.dumps(human_payload, ensure_ascii=False, separators=(",", ":")),
             ),
         ]
         result = await structured.ainvoke(messages)

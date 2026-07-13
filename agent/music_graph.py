@@ -2432,13 +2432,12 @@ class MusicRecommendationGraph:
             user_input = state.get("input", "")
             user_id = _state_user_id(state)
             from services.memory_gateway import get_memory_gateway
-            from services.memory_retriever import normalize_scene
 
-            # 场景来自上一轮结构化 dialog_state（planner 尚未运行）；
-            # 未知场景时 scene 为空，场景绑定的记忆将 fail-closed 不注入。
+            # 场景来自上一轮结构化 dialog_state（planner 尚未运行），
+            # 原样作为自由文本传入，检索侧用语义相关性判断场景适用性。
             _prev_dialog = state.get("dialog_state") or {}
             _prev_hints = _prev_dialog.get("hints") if isinstance(_prev_dialog, dict) else {}
-            scene = normalize_scene((_prev_hints or {}).get("scenario"))
+            scene = str((_prev_hints or {}).get("scenario") or "").strip()
 
             context = await get_memory_gateway().retrieve_context(
                 query=user_input,

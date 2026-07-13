@@ -22,36 +22,16 @@ DEFAULT_LAYER_THRESHOLDS = {
     MemoryLayer.EPISODIC: 0.08,
 }
 
-# Scene-bound preference scopes. A memory scoped to one scene must never
-# influence a different scene; when the current scene is unknown, scene-scoped
-# memories stay out (fail-closed personalization). Lifecycle scopes
-# (global/contextual/temporary) are scene-agnostic and always eligible.
-SCENE_SCOPES = frozenset(
-    {"driving", "commute", "focus", "sleep", "late_night", "rainy", "romantic", "workout"}
-)
+# Lifecycle scopes describe how durable a memory is, not where it applies.
+# Any other scope value is a free-form scene label authored by the
+# consolidation LLM (e.g. "夜里一个人开车"); scene applicability is judged
+# semantically — the label joins the record text scored by the relevance
+# backend — never by matching against a fixed scene vocabulary.
 LIFECYCLE_SCOPES = frozenset({"global", "contextual", "temporary"})
-
-# Structured planner scenario labels -> scene scope. This is enum
-# normalization of typed planner output, not free-text keyword routing.
-_SCENARIO_TO_SCENE = {
-    "driving": "driving", "drive": "driving", "car": "driving",
-    "commute": "commute", "commuting": "commute",
-    "study": "focus", "work": "focus", "focus": "focus", "coding": "focus", "reading": "focus",
-    "sleep": "sleep", "bedtime": "sleep",
-    "late night": "late_night", "late_night": "late_night", "night": "late_night",
-    "rainy": "rainy", "rain": "rainy", "rainy day": "rainy",
-    "romantic": "romantic", "date": "romantic", "social": "romantic",
-    "workout": "workout", "gym": "workout", "running": "workout", "exercise": "workout",
-}
 
 # Episodic memories decay faster than stable preferences: an event from last
 # week should matter, one from two months ago usually should not.
 EPISODIC_RECENCY_HALF_LIFE_DAYS = 14.0
-
-
-def normalize_scene(scenario: str | None) -> str:
-    """Map a structured scenario label to a scene scope; unknown -> ""."""
-    return _SCENARIO_TO_SCENE.get(str(scenario or "").strip().casefold(), "")
 
 
 @dataclass(frozen=True)
@@ -145,23 +125,21 @@ class MemoryRelevanceRetriever:
         scene: str = "",
     ) -> list[RetrievedMemory]:
         now = int(now_ms if now_ms is not None else time.time() * 1000)
-        current_scene = str(scene or "").strip().casefold()
+        current_scene = str(scene or "").strip()
+        # The current scene (structured planner scenario, free text) augments
+        # the query so scene-fit memories rank higher purely through semantics.
+        effective_query = f"{query} {current_scene}".strip() if current_scene else str(query or "")
         eligible: list[tuple[MemoryRecord, float]] = []
         for record in records:
-            record_scope = str(record.payload.get("scope") or "global").strip().casefold()
-            if record_scope in SCENE_SCOPES and record_scope != current_scene:
-                # Scene-bound memory outside its scene (or with unknown scene)
-                # must not influence the response.
-                continue
             if record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
                 eligible.append((record, 1.0))
             elif include_episodic and record.layer == MemoryLayer.EPISODIC:
                 eligible.append((record, 0.7))
         texts = [_record_text(record) for record, _ in eligible]
-        query_vector = _features(query)
+        query_vector = _features(effective_query)
         semantic_scores: list[float] | None = None
-        if self.semantic_scorer is not None and str(query or "").strip() and texts:
-            semantic_scores = self.semantic_scorer.score(str(query), texts)
+        if self.semantic_scorer is not None and effective_query.strip() and texts:
+            semantic_scores = self.semantic_scorer.score(effective_query, texts)
             if len(semantic_scores) != len(texts):
                 raise ValueError("semantic memory scorer returned an invalid score count")
         ranked: list[RetrievedMemory] = []
@@ -173,7 +151,7 @@ class MemoryRelevanceRetriever:
                 else _cosine(query_vector, _features(text)) if query_vector else 0.0
             )
             threshold = self.layer_thresholds.get(record.layer, self.min_relevance)
-            if str(query or "").strip() and relevance < threshold:
+            if effective_query.strip() and relevance < threshold:
                 continue
             age_days = max(0.0, (now - record.created_at) / 86_400_000)
             # Episodic events lose applicability much faster than stable
@@ -185,22 +163,19 @@ class MemoryRelevanceRetriever:
                 else 45.0
             )
             recency = math.exp(-age_days / half_life)
-            record_scope = str(record.payload.get("scope") or "global").strip().casefold()
-            scene_matched = bool(current_scene) and record_scope == current_scene
             score = (
                 0.68 * relevance
                 + 0.17 * max(0.0, min(1.0, record.confidence))
                 + 0.10 * recency
                 + 0.05 * layer_prior
             )
-            if scene_matched:
-                score += 0.05  # bounded boost: scene-fit memory ranks first, never overrides relevance gates
             reason = (
                 f"query relevance={relevance:.2f}; confidence={record.confidence:.2f}; "
                 f"age_days={age_days:.1f}"
             )
-            if scene_matched:
-                reason += f"; scene={record_scope}"
+            record_scope = str(record.payload.get("scope") or "").strip()
+            if record_scope and record_scope.casefold() not in LIFECYCLE_SCOPES:
+                reason += f"; scene_label={record_scope}"
             if record.layer == MemoryLayer.EPISODIC:
                 reason += f"; episodic_half_life_days={half_life:.0f}"
             ranked.append(RetrievedMemory(record, score, relevance, reason))
@@ -226,6 +201,11 @@ def _record_text(record: MemoryRecord) -> str:
         str(payload.get("decision_summary") or ""),
         str(payload.get("description") or ""),
     ]
+    # Free-form scene labels join the semantic text so scene applicability is
+    # judged by the relevance backend, not by a fixed scene vocabulary.
+    scope = str(payload.get("scope") or "").strip()
+    if scope and scope.casefold() not in LIFECYCLE_SCOPES:
+        values.append(scope)
     cues = payload.get("retrieval_cues") or []
     if isinstance(cues, list):
         values.extend(str(value or "") for value in cues)
