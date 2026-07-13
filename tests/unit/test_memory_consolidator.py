@@ -58,6 +58,8 @@ def test_consolidator_rejects_unknown_evidence_and_explicit_conflict(tmp_path):
     reasons = {item.reason for item in report.rejected}
     assert "explicit_memory_takes_precedence" in reasons
     assert "unknown_or_cross_user_evidence" in reasons
+    assert len(report.prompt_hash) == 64
+    assert report.total_tokens == 0
 
 
 def test_consolidator_abstains_with_insufficient_evidence(tmp_path):

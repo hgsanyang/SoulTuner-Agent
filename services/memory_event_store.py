@@ -14,7 +14,7 @@ import time
 import uuid
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from services.memory_models import MemoryLayer, MemoryRecord, MemoryStatus
 from services.runtime_mode import side_effects_disabled
@@ -65,8 +65,16 @@ def default_memory_db_path() -> Path:
 
 
 class MemoryEventStore:
-    def __init__(self, path: str | Path | None = None):
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        *,
+        clock_ms: Callable[[], int] | None = None,
+        id_factory: Callable[[], str] | None = None,
+    ):
         self.path = Path(path) if path is not None else default_memory_db_path()
+        self._clock_ms = clock_ms or (lambda: int(time.time() * 1000))
+        self._id_factory = id_factory or (lambda: str(uuid.uuid4()))
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,9 +105,23 @@ class MemoryEventStore:
         user_id = str(user_id or "").strip()
         if not user_id:
             raise ValueError("user_id is required")
-        now = int(now_ms if now_ms is not None else time.time() * 1000)
+        now = int(now_ms if now_ms is not None else self._clock_ms())
+        record_id = str(self._id_factory())
+        payload_data = dict(payload or {})
+        if layer != MemoryLayer.RAW_EVENT and memory_key and status == MemoryStatus.ACTIVE:
+            prior = next(
+                (
+                    item for item in self.effective_records(user_id=user_id, now_ms=now, limit=1000)
+                    if item.layer == layer and item.memory_key == memory_key
+                ),
+                None,
+            )
+            payload_data.setdefault(
+                "canonical_memory_id",
+                str(prior.payload.get("canonical_memory_id") or prior.record_id) if prior else record_id,
+            )
         record = MemoryRecord(
-            record_id=str(uuid.uuid4()),
+            record_id=record_id,
             user_id=user_id,
             layer=layer,
             kind=str(kind or "memory"),
@@ -111,7 +133,7 @@ class MemoryEventStore:
             expires_at=expires_at,
             status=status,
             memory_key=str(memory_key or ""),
-            payload=dict(payload or {}),
+            payload=payload_data,
             why_used=str(why_used or ""),
             target_record_id=target_record_id,
         )
@@ -177,17 +199,22 @@ class MemoryEventStore:
             clause += " AND layer IN (" + ",".join("?" for _ in values) + ")"
             params.extend(values)
         clause += " ORDER BY seq DESC LIMIT ?"
-        params.append(max(1, min(int(limit), 1000)))
+        params.append(max(1, min(int(limit), 10000)))
         return self._rows(clause, tuple(params))
 
     def effective_records(self, *, user_id: str, now_ms: int | None = None, limit: int = 200) -> list[MemoryRecord]:
-        now = int(now_ms if now_ms is not None else time.time() * 1000)
+        now = int(now_ms if now_ms is not None else self._clock_ms())
         rows = self.list_records(user_id=user_id, limit=max(limit * 4, 400))
-        deleted = {row.target_record_id for row in rows if row.status == MemoryStatus.DELETED and row.target_record_id}
+        invalidated = {
+            row.target_record_id
+            for row in rows
+            if row.status in {MemoryStatus.DELETED, MemoryStatus.SUPERSEDED}
+            and row.target_record_id
+        }
         active = [
             row for row in rows
             if row.status == MemoryStatus.ACTIVE
-            and row.record_id not in deleted
+            and row.record_id not in invalidated
             and (row.expires_at is None or row.expires_at > now)
         ]
         explicit_keys = {row.memory_key for row in active if row.layer == MemoryLayer.EXPLICIT and row.memory_key}
@@ -228,9 +255,23 @@ class MemoryEventStore:
         records = self.list_records(
             user_id=user_id,
             layers=[MemoryLayer.RAW_EVENT],
-            limit=max(1, min(int(limit), 200)),
+            limit=max(20, min(int(limit) * 4, 1000)),
         )
-        return [record for record in records if record.source in allowed_sources]
+        invalidated = {
+            record.target_record_id
+            for record in records
+            if record.status in {MemoryStatus.DELETED, MemoryStatus.SUPERSEDED}
+            and record.target_record_id
+        }
+        now = self._clock_ms()
+        return [
+            record
+            for record in records
+            if record.source in allowed_sources
+            and record.status == MemoryStatus.ACTIVE
+            and record.record_id not in invalidated
+            and (record.expires_at is None or record.expires_at > now)
+        ][: max(1, min(int(limit), 200))]
 
     def pending_evidence_count(self, *, user_id: str, limit: int = 200) -> int:
         """Count evidence newer than the latest consolidation audit marker."""
@@ -239,12 +280,22 @@ class MemoryEventStore:
             (row.created_at for row in rows if row.kind == "consolidation_audit"),
             -1,
         )
+        invalidated = {
+            row.target_record_id
+            for row in rows
+            if row.status in {MemoryStatus.DELETED, MemoryStatus.SUPERSEDED}
+            and row.target_record_id
+        }
+        now = self._clock_ms()
         return sum(
             1
             for row in rows
             if row.layer == MemoryLayer.RAW_EVENT
             and row.source in {"user_action", "user_statement", "slate_feedback"}
             and row.created_at > latest_audit
+            and row.status == MemoryStatus.ACTIVE
+            and row.record_id not in invalidated
+            and (row.expires_at is None or row.expires_at > now)
         )
 
     def fingerprint(self, *, user_id: str) -> str:

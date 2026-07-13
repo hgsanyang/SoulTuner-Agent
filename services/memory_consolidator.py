@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
 import json
 import logging
 import os
@@ -74,6 +75,11 @@ class MemoryConsolidationReport:
     abstained: bool = False
     summary: str = ""
     model: str = ""
+    prompt_version: str = "memory-consolidator-v1"
+    prompt_hash: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
     def model_dump(self) -> dict[str, Any]:
         return {
@@ -84,6 +90,11 @@ class MemoryConsolidationReport:
             "abstained": self.abstained,
             "summary": self.summary,
             "model": self.model,
+            "prompt_version": self.prompt_version,
+            "prompt_hash": self.prompt_hash,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
         }
 
 
@@ -155,8 +166,12 @@ class MemoryConsolidator:
             report.summary = "Insufficient independent evidence"
             return report
 
-        proposal, model_name = await self._generate(user_id, evidence)
+        proposal, model_name, usage = await self._generate(user_id, evidence)
         report.model = model_name
+        report.prompt_hash = self.prompt_hash()
+        report.input_tokens = usage["input_tokens"]
+        report.output_tokens = usage["output_tokens"]
+        report.total_tokens = usage["total_tokens"]
         report.abstained = proposal.abstained or not proposal.candidates
         report.summary = proposal.summary
         accepted, rejected = self._validate(user_id=user_id, evidence=evidence, proposal=proposal)
@@ -168,14 +183,14 @@ class MemoryConsolidator:
         self,
         user_id: str,
         evidence: list[MemoryRecord],
-    ) -> tuple[MemoryConsolidationProposal, str]:
+    ) -> tuple[MemoryConsolidationProposal, str, dict[str, int]]:
         payload = [self._evidence_payload(record) for record in evidence]
         if self.generator is not None:
             result = self.generator(user_id, payload)
             if inspect.isawaitable(result):
                 result = await result
             proposal = result if isinstance(result, MemoryConsolidationProposal) else MemoryConsolidationProposal.model_validate(result)
-            return proposal, "injected-test-generator"
+            return proposal, "injected-test-generator", self._empty_usage()
 
         from config.settings import settings
         from llms.chat_models import get_chat_model
@@ -219,7 +234,7 @@ class MemoryConsolidator:
             proposal = MemoryConsolidationProposal.model_validate(
                 self._normalize_llm_payload(payload)
             )
-        return proposal, f"{provider}:{model_name}"
+        return proposal, f"{provider}:{model_name}", self._extract_usage(result)
 
     def _validate(
         self,
@@ -291,6 +306,46 @@ class MemoryConsolidator:
     @staticmethod
     def memory_key(field: str, value: str) -> str:
         return f"preference:{field}:{value.casefold()}"
+
+    @staticmethod
+    def prompt_hash() -> str:
+        rendered = CONSOLIDATION_SYSTEM_PROMPT.format(
+            allowed_fields=", ".join(sorted(ALLOWED_MEMORY_FIELDS))
+        )
+        return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _empty_usage() -> dict[str, int]:
+        return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    @classmethod
+    def _extract_usage(cls, result: Any) -> dict[str, int]:
+        raw = result.get("raw") if isinstance(result, dict) else result
+        usage = getattr(raw, "usage_metadata", None) or {}
+        response_metadata = getattr(raw, "response_metadata", None) or {}
+        token_usage = response_metadata.get("token_usage") or response_metadata.get("usage") or {}
+        input_tokens = int(
+            usage.get("input_tokens")
+            or token_usage.get("input_tokens")
+            or token_usage.get("prompt_tokens")
+            or 0
+        )
+        output_tokens = int(
+            usage.get("output_tokens")
+            or token_usage.get("output_tokens")
+            or token_usage.get("completion_tokens")
+            or 0
+        )
+        total_tokens = int(
+            usage.get("total_tokens")
+            or token_usage.get("total_tokens")
+            or input_tokens + output_tokens
+        )
+        return {
+            "input_tokens": max(0, input_tokens),
+            "output_tokens": max(0, output_tokens),
+            "total_tokens": max(0, total_tokens),
+        }
 
     @staticmethod
     def _inverse_key(field: str, value: str) -> str:

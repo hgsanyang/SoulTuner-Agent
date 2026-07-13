@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Awaitable, Protocol
 
 from retrieval.user_memory import UserMemoryManager
 from services.feedback_logger import log_slate_feedback, log_user_event
@@ -20,6 +20,11 @@ from services.memory_consolidator import MemoryConsolidator
 from services.memory_event_store import MemoryEventStore
 from services.memory_models import MemoryLayer
 from services.memory_retriever import MemoryRelevanceRetriever
+from services.memory_retriever import DEFAULT_LAYER_THRESHOLDS
+from services.memory_semantic_scorer import (
+    BgeMemorySemanticScorer,
+    MemorySemanticScorerUnavailable,
+)
 from services.runtime_mode import side_effects_disabled
 
 logger = logging.getLogger(__name__)
@@ -274,6 +279,26 @@ class Mem0Adapter:
             logger.debug("[MemoryGateway] Mem0 retrieve skipped: %s", exc)
             return ""
 
+    async def healthcheck(self) -> bool:
+        return self._get_client() is not None
+
+    async def await_idle(self, *, timeout_seconds: float = 60.0) -> bool:
+        del timeout_seconds
+        return self._get_client() is not None
+
+    async def clear_user(self, *, user_id: str) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            result = client.delete_all(user_id=user_id)
+            if asyncio.iscoroutine(result):
+                await result
+            return True
+        except Exception as exc:
+            logger.debug("[MemoryGateway] Mem0 user cleanup failed: %s", exc)
+            return False
+
 
 def _configured_episodic_adapters(enable_graphzep_sidecar: bool = True) -> list[EpisodicMemoryAdapter]:
     raw = os.getenv("MEMORY_EPISODIC_BACKENDS", "").strip()
@@ -387,6 +412,7 @@ class MemoryGateway:
         consolidator: MemoryConsolidator | None = None,
         relevance_retriever: MemoryRelevanceRetriever | None = None,
         enable_consolidation: bool | None = None,
+        strict_sidecar: bool = False,
     ):
         primary_was_injected = primary is not None
         configured_mode = str(memory_mode or os.getenv("MEMORY_MODE", "structured")).strip().lower()
@@ -395,7 +421,11 @@ class MemoryGateway:
         if configured_mode not in {"off", "structured", "semantic", "sidecar"}:
             configured_mode = "structured"
         self.mode = configured_mode
-        self.primary = primary or (NoopMemoryAdapter() if self.mode == "off" else Neo4jPreferenceAdapter())
+        self.primary = (
+            NoopMemoryAdapter()
+            if self.mode == "off"
+            else (primary or Neo4jPreferenceAdapter())
+        )
         ledger_enabled = (not primary_was_injected) if enable_event_ledger is None else enable_event_ledger
         if self.mode == "off":
             ledger_enabled = False
@@ -411,10 +441,11 @@ class MemoryGateway:
             if self.event_store is not None and self.mode != "off"
             else None
         )
-        self.relevance_retriever = relevance_retriever or MemoryRelevanceRetriever(
-            min_relevance=float(os.getenv("MEMORY_RETRIEVAL_MIN_RELEVANCE", "0.08"))
-        )
+        self.relevance_retriever = relevance_retriever or _configured_relevance_retriever()
         self._consolidation_last_started: dict[str, float] = {}
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._background_failures: list[str] = []
+        self._background_completed = 0
         if self.mode != "sidecar":
             self.episodic_adapters = []
         elif episodic_adapters is not None:
@@ -423,6 +454,8 @@ class MemoryGateway:
             self.episodic_adapters = [episodic]
         else:
             self.episodic_adapters = _configured_episodic_adapters(enable_graphzep_sidecar)
+        if self.mode == "sidecar" and strict_sidecar and not self.episodic_adapters:
+            raise RuntimeError("sidecar mode requires at least one configured adapter")
 
     async def remember_event(
         self,
@@ -665,9 +698,11 @@ class MemoryGateway:
         )
 
     async def retrieve_context(self, *, query: str, user_id: str = "local_admin", max_facts: int = 8) -> dict[str, Any]:
+        started = time.perf_counter()
         profile = self.get_user_profile(user_id)
         backend_results: dict[str, str] = {}
         retrieved_records: list[dict[str, Any]] = []
+        relevance_error = ""
         if self.episodic_adapters:
             results = await asyncio.gather(
                 *[
@@ -685,12 +720,19 @@ class MemoryGateway:
         lines: list[str] = []
         if self.mode != "off" and self.event_store is not None:
             records = self.event_store.effective_records(user_id=user_id, limit=200)
-            selected = self.relevance_retriever.retrieve(
-                query=query,
-                records=records,
-                max_facts=max_facts,
-                include_episodic=self.mode in {"semantic", "sidecar"},
-            )
+            try:
+                selected = self.relevance_retriever.retrieve(
+                    query=query,
+                    records=records,
+                    max_facts=max_facts,
+                    include_episodic=self.mode in {"semantic", "sidecar"},
+                )
+            except MemorySemanticScorerUnavailable:
+                # Relevance failure is fail-closed: injecting no memory is safer
+                # than silently switching to the rejected lexical matcher.
+                selected = []
+                relevance_error = "semantic_scorer_unavailable"
+                logger.warning("[MemoryGateway] semantic relevance scorer unavailable")
             ledger_lines: list[str] = []
             for item in selected:
                 record = item.record
@@ -713,12 +755,73 @@ class MemoryGateway:
         for name, text in backend_results.items():
             if text and "暂无用户长期记忆" not in text:
                 lines.append(f"[{name}] {text}")
+        episodic_text = "\n".join(lines)
         return {
             "profile": profile,
-            "episodic": "\n".join(lines),
+            "episodic": episodic_text,
             "episodic_backends": backend_results,
             "retrieved_records": retrieved_records,
+            "memory_trace": {
+                "mode": self.mode,
+                "user_id": user_id,
+                "retrieved_count": len(retrieved_records),
+                "backend_names": sorted(backend_results),
+                "relevance_backend": self.relevance_retriever.backend_name,
+                "relevance_error": relevance_error,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 3),
+                "estimated_context_tokens": max(0, len(episodic_text) // 4),
+            },
         }
+
+    async def await_idle(self, *, timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Wait for tracked consolidation and sidecar writes to settle."""
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+        while self._background_tasks:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {
+                    "idle": False,
+                    "completed": self._background_completed,
+                    "failures": list(self._background_failures),
+                    "pending": len(self._background_tasks),
+                }
+            tasks = list(self._background_tasks)
+            done, _ = await asyncio.wait(tasks, timeout=remaining)
+            if not done:
+                return {
+                    "idle": False,
+                    "completed": self._background_completed,
+                    "failures": list(self._background_failures),
+                    "pending": len(self._background_tasks),
+                }
+        sidecars: dict[str, bool] = {}
+        for adapter in self.episodic_adapters:
+            waiter = getattr(adapter, "await_idle", None)
+            if not callable(waiter):
+                continue
+            remaining = max(0.1, deadline - time.monotonic())
+            try:
+                sidecars[adapter.name] = bool(
+                    await asyncio.wait_for(
+                        waiter(timeout_seconds=remaining),
+                        timeout=remaining,
+                    )
+                )
+            except Exception as exc:
+                sidecars[adapter.name] = False
+                self._background_failures.append(str(exc))
+        report = {
+            "idle": True,
+            "completed": self._background_completed,
+            "failures": list(self._background_failures),
+            "pending": 0,
+            "sidecars": sidecars,
+        }
+        if sidecars and not all(sidecars.values()):
+            report["idle"] = False
+        self._background_completed = 0
+        self._background_failures.clear()
+        return report
 
     def get_user_profile(self, user_id: str = "local_admin", limit: int = 30) -> dict[str, Any]:
         try:
@@ -896,7 +999,7 @@ class MemoryGateway:
         if not self._consolidation_ready(user_id):
             return False
         try:
-            asyncio.get_running_loop().create_task(self.consolidate_user(user_id=user_id, force=True))
+            self._track_background(self.consolidate_user(user_id=user_id, force=True))
             self._consolidation_last_started[user_id] = time.monotonic()
             return True
         except RuntimeError:
@@ -913,9 +1016,25 @@ class MemoryGateway:
     def _schedule_sidecar_write(self, description: str, *, user_id: str, extra: dict[str, Any] | None = None) -> bool:
         scheduled = False
         for adapter in self.episodic_adapters:
-            asyncio.create_task(adapter.remember_text(description, user_id=user_id, extra=extra or {}))
+            self._track_background(
+                adapter.remember_text(description, user_id=user_id, extra=extra or {})
+            )
             scheduled = True
         return scheduled
+
+    def _track_background(self, awaitable: Awaitable[Any]) -> asyncio.Task[Any]:
+        task = asyncio.get_running_loop().create_task(awaitable)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_done)
+        return task
+
+    def _on_background_done(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.discard(task)
+        self._background_completed += 1
+        try:
+            task.result()
+        except Exception as exc:
+            self._background_failures.append(str(exc))
 
     @staticmethod
     def _invalidate_hot_profile(user_id: str) -> None:
@@ -934,6 +1053,20 @@ class MemoryGateway:
 
 
 _gateway: MemoryGateway | None = None
+
+
+def _configured_relevance_retriever() -> MemoryRelevanceRetriever:
+    backend = str(os.getenv("MEMORY_RELEVANCE_BACKEND", "bge")).strip().lower()
+    if backend == "char-ngram":
+        return MemoryRelevanceRetriever(
+            min_relevance=float(os.getenv("MEMORY_RETRIEVAL_MIN_RELEVANCE", "0.08"))
+        )
+    return MemoryRelevanceRetriever(
+        min_relevance=0.08,
+        semantic_scorer=BgeMemorySemanticScorer(),
+        layer_thresholds=DEFAULT_LAYER_THRESHOLDS,
+        max_per_layer=1,
+    )
 
 
 def get_memory_gateway() -> MemoryGateway:

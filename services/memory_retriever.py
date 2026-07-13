@@ -7,9 +7,18 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Protocol
 
 from services.memory_models import MemoryLayer, MemoryRecord
+
+
+# Locked on the open multilingual calibration fixture. The sealed blind-v2
+# benchmark is only used as a final regression gate, never to tune these values.
+DEFAULT_LAYER_THRESHOLDS = {
+    MemoryLayer.EXPLICIT: 0.063129,
+    MemoryLayer.INFERRED: 0.074551,
+    MemoryLayer.EPISODIC: 0.08,
+}
 
 
 @dataclass(frozen=True)
@@ -20,9 +29,14 @@ class RetrievedMemory:
     why_used: str
 
     def model_dump(self) -> dict:
+        canonical_id = str(self.record.payload.get("canonical_memory_id") or self.record.record_id)
         return {
+            "memory_id": canonical_id,
             "record_id": self.record.record_id,
+            "user_id": self.record.user_id,
             "layer": self.record.layer.value,
+            "status": self.record.status.value,
+            "memory_key": self.record.memory_key,
             "field": self.record.payload.get("field"),
             "value": self.record.payload.get("value"),
             "score": round(self.score, 4),
@@ -30,7 +44,19 @@ class RetrievedMemory:
             "why_used": self.why_used,
             "expires_at": self.record.expires_at,
             "source": self.record.source,
+            "evidence_ids": _evidence_ids(self.record),
+            "scope": self.record.payload.get("scope", "global"),
+            "confidence": round(self.record.confidence, 4),
+            "created_at_ms": self.record.created_at,
+            "expires_at_ms": self.record.expires_at,
         }
+
+
+class SemanticMemoryScorer(Protocol):
+    name: str
+
+    def score(self, query: str, documents: list[str]) -> list[float]:
+        ...
 
 
 class MemoryRelevanceRetriever:
@@ -41,8 +67,27 @@ class MemoryRelevanceRetriever:
     break ties. This is memory selection, not a third song-recall engine.
     """
 
-    def __init__(self, *, min_relevance: float = 0.08):
+    def __init__(
+        self,
+        *,
+        min_relevance: float = 0.08,
+        semantic_scorer: SemanticMemoryScorer | None = None,
+        layer_thresholds: dict[MemoryLayer | str, float] | None = None,
+        max_per_layer: int | None = None,
+    ):
         self.min_relevance = max(0.0, min(1.0, float(min_relevance)))
+        self.semantic_scorer = semantic_scorer
+        self.layer_thresholds = {
+            MemoryLayer(str(layer.value if isinstance(layer, MemoryLayer) else layer)): max(
+                0.0, min(1.0, float(threshold))
+            )
+            for layer, threshold in (layer_thresholds or {}).items()
+        }
+        self.max_per_layer = None if max_per_layer is None else max(1, int(max_per_layer))
+
+    @property
+    def backend_name(self) -> str:
+        return self.semantic_scorer.name if self.semantic_scorer is not None else "char-ngram"
 
     def retrieve(
         self,
@@ -54,18 +99,29 @@ class MemoryRelevanceRetriever:
         now_ms: int | None = None,
     ) -> list[RetrievedMemory]:
         now = int(now_ms if now_ms is not None else time.time() * 1000)
-        query_vector = _features(query)
-        ranked: list[RetrievedMemory] = []
+        eligible: list[tuple[MemoryRecord, float]] = []
         for record in records:
-            if record.layer == MemoryLayer.INFERRED:
-                layer_prior = 1.0
+            if record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
+                eligible.append((record, 1.0))
             elif include_episodic and record.layer == MemoryLayer.EPISODIC:
-                layer_prior = 0.7
-            else:
-                continue
+                eligible.append((record, 0.7))
+        texts = [_record_text(record) for record, _ in eligible]
+        query_vector = _features(query)
+        semantic_scores: list[float] | None = None
+        if self.semantic_scorer is not None and str(query or "").strip() and texts:
+            semantic_scores = self.semantic_scorer.score(str(query), texts)
+            if len(semantic_scores) != len(texts):
+                raise ValueError("semantic memory scorer returned an invalid score count")
+        ranked: list[RetrievedMemory] = []
+        for index, (record, layer_prior) in enumerate(eligible):
             text = _record_text(record)
-            relevance = _cosine(query_vector, _features(text)) if query_vector else 0.0
-            if query_vector and relevance < self.min_relevance:
+            relevance = (
+                semantic_scores[index]
+                if semantic_scores is not None
+                else _cosine(query_vector, _features(text)) if query_vector else 0.0
+            )
+            threshold = self.layer_thresholds.get(record.layer, self.min_relevance)
+            if str(query or "").strip() and relevance < threshold:
                 continue
             age_days = max(0.0, (now - record.created_at) / 86_400_000)
             recency = math.exp(-age_days / 45.0)
@@ -81,6 +137,15 @@ class MemoryRelevanceRetriever:
             )
             ranked.append(RetrievedMemory(record, score, relevance, reason))
         ranked.sort(key=lambda item: (item.score, item.record.created_at), reverse=True)
+        if self.max_per_layer is not None:
+            per_layer: Counter[MemoryLayer] = Counter()
+            bounded: list[RetrievedMemory] = []
+            for item in ranked:
+                if per_layer[item.record.layer] >= self.max_per_layer:
+                    continue
+                per_layer[item.record.layer] += 1
+                bounded.append(item)
+            ranked = bounded
         return ranked[: max(1, min(int(max_facts), 20))]
 
 
@@ -97,6 +162,16 @@ def _record_text(record: MemoryRecord) -> str:
     if isinstance(cues, list):
         values.extend(str(value or "") for value in cues)
     return " ".join(value for value in values if value).strip()
+
+
+def _evidence_ids(record: MemoryRecord) -> list[str]:
+    values = record.payload.get("evidence_ids") or []
+    if not isinstance(values, list):
+        values = []
+    result = [str(value) for value in values if str(value).strip()]
+    if record.evidence_id and record.evidence_id not in result:
+        result.append(record.evidence_id)
+    return result
 
 
 def _features(text: str) -> Counter[str]:

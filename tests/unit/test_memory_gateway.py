@@ -9,6 +9,9 @@ from services.memory_gateway import (
 )
 from services.memory_event_store import MemoryEventStore
 from services.memory_consolidator import MemoryConsolidator
+from services.memory_models import MemoryLayer
+from services.memory_retriever import MemoryRelevanceRetriever
+from services.memory_semantic_scorer import MemorySemanticScorerUnavailable
 
 
 class FakePrimary:
@@ -221,6 +224,101 @@ def test_structured_mode_does_not_call_optional_sidecars():
 
     assert context["episodic"] == ""
     assert context["episodic_backends"] == {}
+
+
+def test_off_mode_ignores_injected_primary_and_disables_profile():
+    primary = FakePrimary()
+    gateway = MemoryGateway(primary=primary, memory_mode="off")
+
+    result = asyncio.run(
+        gateway.remember_event(event_type="like", title="A", artist="Singer", user_id="u1")
+    )
+    context = asyncio.run(gateway.retrieve_context(query="rain", user_id="u1"))
+
+    assert result.success is True
+    assert primary.events == []
+    assert context["profile"] == {}
+    assert context["memory_trace"]["mode"] == "off"
+
+
+def test_strict_sidecar_mode_fails_closed_without_adapter():
+    try:
+        MemoryGateway(
+            primary=FakePrimary(),
+            episodic_adapters=[],
+            memory_mode="sidecar",
+            strict_sidecar=True,
+        )
+    except RuntimeError as exc:
+        assert "requires at least one" in str(exc)
+    else:
+        raise AssertionError("strict sidecar mode must not silently degrade")
+
+
+def test_memory_trace_includes_owner_and_await_idle(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    store.append(
+        user_id="u1", layer=MemoryLayer.INFERRED, kind="preference",
+        source="memory_consolidator", evidence_id="e1", confidence=0.9,
+        payload={
+            "field": "add_scenarios",
+            "value": "Rainy evenings",
+            "retrieval_cues": ["雨夜听歌"],
+        },
+        memory_key="preference:add_scenarios:rainy evenings",
+    )
+    episodic = FakeEpisodic("fake", "")
+    gateway = MemoryGateway(
+        primary=FakePrimary(),
+        event_store=store,
+        memory_mode="sidecar",
+        episodic_adapters=[episodic],
+        strict_sidecar=True,
+        relevance_retriever=MemoryRelevanceRetriever(),
+    )
+
+    async def run():
+        await gateway.remember_text(description="user likes rain", user_id="u1")
+        idle = await gateway.await_idle(timeout_seconds=1)
+        context = await gateway.retrieve_context(query="雨夜想听歌", user_id="u1")
+        return idle, context
+
+    idle, context = asyncio.run(run())
+
+    assert idle["idle"] is True
+    assert idle["failures"] == []
+    assert episodic.writes
+    assert context["retrieved_records"][0]["user_id"] == "u1"
+    assert context["retrieved_records"][0]["memory_key"].startswith("preference:")
+
+
+def test_memory_gateway_fails_closed_when_semantic_scorer_is_unavailable(tmp_path):
+    class _UnavailableScorer:
+        name = "unavailable"
+
+        def score(self, query, documents):
+            del query, documents
+            raise MemorySemanticScorerUnavailable("missing local model")
+
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    store.append(
+        user_id="u1", layer=MemoryLayer.EXPLICIT, kind="preference",
+        source="user_explicit", evidence_id="e1", confidence=1.0,
+        payload={"field": "add_moods", "value": "Calm"},
+        memory_key="preference:add_moods:calm",
+    )
+    gateway = MemoryGateway(
+        primary=FakePrimary(),
+        event_store=store,
+        relevance_retriever=MemoryRelevanceRetriever(
+            semantic_scorer=_UnavailableScorer(),
+        ),
+    )
+
+    context = asyncio.run(gateway.retrieve_context(query="quiet music", user_id="u1"))
+
+    assert context["retrieved_records"] == []
+    assert context["memory_trace"]["relevance_error"] == "semantic_scorer_unavailable"
 
 
 def test_memory_gateway_can_forget_one_hot_preference():

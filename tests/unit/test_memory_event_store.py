@@ -1,5 +1,5 @@
 from services.memory_event_store import MemoryEventStore
-from services.memory_models import MemoryLayer
+from services.memory_models import MemoryLayer, MemoryStatus
 
 
 def test_memory_ledger_is_append_only_and_tombstones_deletion(tmp_path):
@@ -117,3 +117,78 @@ def test_explicit_opposite_preference_suppresses_inferred_conflict(tmp_path):
 
     assert len(effective) == 1
     assert effective[0].layer == MemoryLayer.EXPLICIT
+
+
+def test_injected_clock_and_id_factory_make_records_reproducible(tmp_path):
+    store = MemoryEventStore(
+        tmp_path / "memory.sqlite3",
+        clock_ms=lambda: 12345,
+        id_factory=lambda: "fixed-record-id",
+    )
+
+    record = store.append(
+        user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="like",
+        source="user_action", evidence_id="e1", payload={"title": "A"},
+    )
+
+    assert record.record_id == "fixed-record-id"
+    assert record.created_at == 12345
+
+
+def test_tombstoned_l0_is_not_reused_as_consolidation_evidence(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    record = store.append(
+        user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="conversation_statement",
+        source="user_statement", evidence_id="e1", payload={"user_text": "I like jazz"},
+    )
+    store.tombstone(user_id="u1", target_record_id=record.record_id)
+
+    assert store.recent_evidence(user_id="u1") == []
+    assert store.pending_evidence_count(user_id="u1") == 0
+
+
+def test_supersession_hides_the_target_record(tmp_path):
+    ids = iter(["old", "replacement-marker"])
+    store = MemoryEventStore(tmp_path / "memory.sqlite3", id_factory=lambda: next(ids))
+    store.append(
+        user_id="u1",
+        layer=MemoryLayer.EXPLICIT,
+        kind="preference",
+        source="user_action",
+        evidence_id="e1",
+        payload={"field": "add_moods", "value": "Calm"},
+        memory_key="preference:add_moods:calm",
+        now_ms=1,
+    )
+    store.append(
+        user_id="u1",
+        layer=MemoryLayer.EXPLICIT,
+        kind="supersession",
+        source="user_action",
+        evidence_id="e2",
+        payload={"superseded_record_id": "old"},
+        status=MemoryStatus.SUPERSEDED,
+        target_record_id="old",
+        now_ms=2,
+    )
+
+    assert store.effective_records(user_id="u1", now_ms=3) == []
+
+
+def test_reinforcement_preserves_canonical_memory_identity(tmp_path):
+    ids = iter(["canonical", "revision"])
+    store = MemoryEventStore(tmp_path / "memory.sqlite3", id_factory=lambda: next(ids))
+    common = {
+        "user_id": "u1",
+        "layer": MemoryLayer.EXPLICIT,
+        "kind": "preference",
+        "source": "user_action",
+        "payload": {"field": "add_moods", "value": "Calm"},
+        "memory_key": "preference:add_moods:calm",
+    }
+    first = store.append(evidence_id="e1", now_ms=1, **common)
+    second = store.append(evidence_id="e2", now_ms=2, **common)
+
+    assert first.payload["canonical_memory_id"] == "canonical"
+    assert second.record_id == "revision"
+    assert second.payload["canonical_memory_id"] == "canonical"
