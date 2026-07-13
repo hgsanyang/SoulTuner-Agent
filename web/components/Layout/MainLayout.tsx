@@ -31,7 +31,6 @@ export default function MainLayout({
   const isMobile = useMediaQuery('(max-width: 960px)');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const sidebarWidth = isMobile ? 0 : theme.layout.sidebarWidth;
-  const containerPadding = isMobile ? '0' : '1.5rem 2rem';
   const pathname = usePathname();
 
   // Removed: window.scrollTo no longer needed as page uses height:100vh + overflow:hidden
@@ -68,7 +67,9 @@ export default function MainLayout({
           display: 'flex',
           flexDirection: 'column',
           height: '100vh',
-          padding: containerPadding,
+          paddingTop: isMobile ? 0 : '1.5rem',
+          paddingLeft: isMobile ? 0 : '2rem',
+          paddingRight: isMobile ? 0 : '2rem',
           paddingBottom: '90px',
           gap: '1.25rem',
           overflow: 'hidden',

@@ -506,7 +506,10 @@ async def stream_recommendations(
                 
             elif event_type == "complete":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                
+
+            elif event_type == "refinement":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
             elif event_type == "error":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         

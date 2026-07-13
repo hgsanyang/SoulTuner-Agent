@@ -18,10 +18,13 @@ export function useMediaQuery(query: string) {
     const updateMatch = () => setMatches(mediaQuery.matches);
 
     updateMatch();
+    // change 事件在部分模拟视口环境不触发，补 resize 兜底保证同步
     mediaQuery.addEventListener('change', updateMatch);
+    window.addEventListener('resize', updateMatch);
 
     return () => {
       mediaQuery.removeEventListener('change', updateMatch);
+      window.removeEventListener('resize', updateMatch);
     };
   }, [query]);
 

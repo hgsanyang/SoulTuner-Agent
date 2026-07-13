@@ -456,7 +456,6 @@ class MusicRecommendationGraph:
                             user_input=user_input,
                             plan=plan,
                             dialog_state=dialog_state,
-                            user_profile=_profile_text,
                         )
                         retrieval_plan_dict = plan.retrieval_plan.model_dump()
                         tool_plan_dict = plan.tool_plan.model_dump(mode="json") if plan.tool_plan else {}
@@ -620,7 +619,6 @@ class MusicRecommendationGraph:
                 user_input=user_input,
                 plan=plan,
                 dialog_state=dialog_state,
-                user_profile=_profile_text,
             )
             # 直接通过属性访问，完全类型安全，字段缺失会有 Pydantic 默认值兜底
             logger.info(

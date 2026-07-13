@@ -229,12 +229,11 @@ def check_services():
     wants_graphzep = "graphzep" in {x.strip().lower() for x in memory_backends.split(",") if x.strip()}
     gz3100 = _http("http://127.0.0.1:3100/healthcheck")
     if wants_graphzep:
-        line(gz3100 == 200, "GraphZep 记忆旁路 :3100（已配置启用）",
+        line(gz3100 == 200, "GraphZep 记忆旁路 :3100（legacy 配置残留）",
              f"HTTP {gz3100 or '无响应'}",
-             "`docker compose --profile memory up -d graphzep` 或取消 MEMORY_EPISODIC_BACKENDS=graphzep")
+             "GraphZep 已停用为默认依赖：建议从 MEMORY_EPISODIC_BACKENDS 移除 graphzep")
     else:
-        line(True, "GraphZep 记忆旁路 :3100（未启用）",
-             f"HTTP {gz3100 or '无响应'}；核心推荐使用 Neo4j 热路径")
+        line(True, "记忆：本地结构化账本 + Neo4j 热路径（GraphZep 已停用为默认依赖）")
     # Frontend
     fe = _tcp("127.0.0.1", 3003)
     line(fe, "前端 :3003", fix="`cd web && npm run dev`（可选，只跑后端/评测时不需要）")

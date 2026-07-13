@@ -422,6 +422,31 @@ class MusicRecommendationAgent:
                 "refinement_options": result.get("refinement_options", []),
             }
             logger.info(f"流式音乐推荐完成 [req={_request_id[:8]}]")
+
+            # ── 微调方向 chips：歌曲与 complete 已送达后异步生成，fail-soft ──
+            # 依据 LLM-first 原则：chips 由模型基于完整上下文 + 本轮 slate 产出，
+            # 生成失败或超时只影响 chips，不影响歌曲与回复。
+            if not clarification_already_sent and isinstance(recommendations_for_log, list) and recommendations_for_log:
+                try:
+                    from services.refinement_generator import get_refinement_generator
+
+                    chips = await get_refinement_generator().generate(
+                        user_id=user_id,
+                        user_input=query,
+                        chat_history=chat_history or [],
+                        plan=result.get("retrieval_plan") or {},
+                        dialog_state=result.get("dialog_state") or {},
+                        memory_snapshot=result.get("graphzep_facts") or "",
+                        recommendations=recommendations_for_log,
+                        catalog_gap=(result.get("retrieval_meta") or {}).get("catalog_gap") or {},
+                    )
+                    yield {
+                        "type": "refinement",
+                        "exposure_id": _request_id,
+                        "options": [option.model_dump() for option in chips],
+                    }
+                except Exception as chip_error:
+                    logger.warning(f"[Refinement] chips 生成失败，已跳过: {chip_error} [req={_request_id[:8]}]")
             
         except asyncio.CancelledError:
             logger.info(f"🛑 流式推荐被取消 [req={_request_id[:8]}]")

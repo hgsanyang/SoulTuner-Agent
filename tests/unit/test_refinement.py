@@ -1,5 +1,15 @@
+"""Refinement 的确定性部分测试。
+
+LLM-first 之后本模块只测两件事：
+1. build_refinement_suggestions 只从结构化 plan 字段给出操作置信度，
+   不再基于关键词/画像产出任何 chips；
+2. schemas.refinement 中不残留关键词语义模板。
+"""
+
 from schemas.query_plan import IntentHints, MusicQueryPlan, RetrievalPlan, SoftIntent
 from schemas.refinement import build_refinement_suggestions
+
+import schemas.refinement as refinement_module
 
 
 def _plan(*, intent_type: str = "vector_search", vibe: str = "", genres: list[str] | None = None) -> MusicQueryPlan:
@@ -14,48 +24,19 @@ def _plan(*, intent_type: str = "vector_search", vibe: str = "", genres: list[st
     )
 
 
-def test_lofi_rainy_query_gets_non_blocking_refinement_chips():
+def test_soft_intent_lowers_confidence_and_yields_no_template_chips():
     suggestion = build_refinement_suggestions(
         user_input="warm lo-fi beats for a rainy sunday afternoon",
         plan=_plan(vibe="warm lo-fi rainy afternoon beats", genres=["lo-fi"]),
-        user_profile="偏好流派: 民谣, 独立, 流行；情绪偏向: 热血, 治愈, 怀旧",
     )
-
-    labels = [option.label for option in suggestion.options]
 
     assert suggestion.confidence < 0.75
-    assert labels[:2] == ["更安静", "更有雨天感"]
-    for label in ("保留雨天感", "更偏 lo-fi beat", "少人声"):
-        assert label in labels
-    assert len(labels) == 8
+    assert suggestion.reason == "soft_intent_open_ended"
+    # chips 由 LLM 在 slate 之后生成，这里必须为空
+    assert suggestion.options == []
 
 
-def test_focus_context_predicts_sparse_vocal_chip():
-    suggestion = build_refinement_suggestions(
-        user_input="写代码时听的安静音乐",
-        plan=_plan(vibe="quiet focus music"),
-    )
-
-    labels = [option.label for option in suggestion.options]
-
-    assert "少人声" in labels
-    assert suggestion.options
-
-
-def test_low_dynamic_context_gets_actionable_refinement_chips():
-    suggestion = build_refinement_suggestions(
-        user_input="下雨天，偏柔软安静一点，不刺耳，少鼓",
-        plan=_plan(vibe="rainy soft quiet low dynamic"),
-    )
-
-    labels = [option.label for option in suggestion.options]
-
-    assert "更有雨天感" in labels
-    assert "低动态" in labels
-    assert "更不刺耳" in labels
-
-
-def test_concrete_artist_request_still_offers_non_blocking_refinement_chips():
+def test_concrete_constraints_keep_high_confidence():
     plan = MusicQueryPlan.model_validate(
         {
             "intent_type": "graph_search",
@@ -69,12 +50,27 @@ def test_concrete_artist_request_still_offers_non_blocking_refinement_chips():
     suggestion = build_refinement_suggestions(user_input="周杰伦的歌", plan=plan)
 
     assert suggestion.confidence >= 0.85
-    assert [option.label for option in suggestion.options] == [
-        "更安静",
-        "更有节奏",
-        "更小众",
-        "少人声",
-        "低动态",
-        "偏抒情",
-        "更明亮",
-    ]
+    assert suggestion.reason == "concrete_constraints"
+    assert suggestion.options == []
+
+
+def test_confidence_ignores_free_text_keywords():
+    # 同一 plan、不同 user_input 文本，置信度必须一致（不做关键词匹配）
+    plan = _plan(vibe="quiet focus music")
+    a = build_refinement_suggestions(user_input="写代码时听的安静音乐", plan=plan)
+    b = build_refinement_suggestions(user_input="随便来点", plan=plan)
+
+    assert a.confidence == b.confidence
+    assert a.reason == b.reason
+
+
+def test_non_recommend_intents_return_default():
+    suggestion = build_refinement_suggestions(user_input="你好", plan=None)
+    assert suggestion.confidence == 1.0
+    assert suggestion.options == []
+
+
+def test_no_keyword_semantic_templates_remain():
+    forbidden = ("SOFT_AMBIGUITY_CUES", "_profile_options", "_fallback_options")
+    for name in forbidden:
+        assert not hasattr(refinement_module, name), f"keyword template {name} must stay removed"

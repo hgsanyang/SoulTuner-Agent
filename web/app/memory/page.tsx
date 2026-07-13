@@ -161,7 +161,7 @@ export default function MemoryPage() {
           <p style={{ margin: 0, color: theme.colors.text.muted, fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.08em' }}>MEMORY</p>
           <h1 style={{ margin: '0.15rem 0', fontSize: '2rem', letterSpacing: '-0.03em' }}>我的记忆 / 我的偏好</h1>
           <p style={{ margin: 0, color: theme.colors.text.secondary, fontSize: '0.9rem' }}>
-            管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。Neo4j 是行为热路径，GraphZep/Mem0 只作为可选旁路。
+            管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。
           </p>
         </div>
         <button onClick={loadMemory} style={smallButtonStyle()}>刷新</button>

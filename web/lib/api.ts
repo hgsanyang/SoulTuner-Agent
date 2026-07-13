@@ -34,7 +34,7 @@ export interface RefinementOption {
 
 export interface SSEEvent {
     type: 'start' | 'thinking' | 'response' | 'recommendations_start' | 'song'
-        | 'recommendations_complete' | 'clarification_required' | 'complete' | 'error'
+        | 'recommendations_complete' | 'clarification_required' | 'complete' | 'refinement' | 'error'
         | 'journey_start' | 'journey_info' | 'journey_complete'
         | 'segment_start' | 'segment_complete' | 'transition_point';
     message?: string;
@@ -63,6 +63,8 @@ export interface SSEEvent {
     clarification_options?: string[];
     clarification_reason?: string;
     refinement_options?: RefinementOption[];
+    // 'refinement' 事件：complete 之后异步到达的微调方向 chips
+    options?: RefinementOption[];
 }
 
 export interface StreamParams {

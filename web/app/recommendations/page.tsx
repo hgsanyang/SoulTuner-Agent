@@ -9,11 +9,12 @@ import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
 import SongCard from '@/components/Content/SongCard';
+import RefinementChips from '@/components/Content/RefinementChips';
+import SlateFeedback from '@/components/Content/SlateFeedback';
+import DiagnosticsDrawer from '@/components/Content/DiagnosticsDrawer';
 import {
-  fetchCatalogDiagnostics,
   sendSlateFeedback,
   streamRecommendations,
-  type CatalogDiagnostics,
   type RefinementOption,
   type SSEEvent,
   type SlateFeedbackRating,
@@ -21,6 +22,7 @@ import {
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 export interface ChatMessage {
   id: string;
@@ -41,32 +43,6 @@ export interface ChatMessage {
 const STORAGE_KEY = 'music_chat_history';
 const DIALOG_STATE_KEY = 'music_dialog_state';
 
-const SLATE_FEEDBACK_OPTIONS: { rating: SlateFeedbackRating; label: string }[] = [
-  { rating: 'great', label: '整体很准' },
-  { rating: 'partial', label: '几首不错' },
-  { rating: 'too_noisy', label: '太吵了' },
-  { rating: 'too_sad', label: '太丧了' },
-  { rating: 'too_generic', label: '太普通' },
-  { rating: 'more_niche', label: '想更小众' },
-  { rating: 'closer_to_seed', label: '贴近刚才那首' },
-  { rating: 'off', label: '不喜欢这批' },
-];
-
-const SLATE_REASON_OPTIONS = [
-  '太像我的旧歌单',
-  '想发现更多新歌',
-  '太吵了',
-  '太丧了',
-  '太普通',
-  '想更小众',
-  '更贴近刚才那首',
-  '太安静了',
-  '场景不贴合',
-  '联网多一点',
-  '少推荐已收藏',
-  '语言/年代不准',
-];
-
 export default function RecommendationsPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [dialogState, setDialogState] = useState<Record<string, any>>({});
@@ -84,11 +60,10 @@ export default function RecommendationsPage() {
   const songListRef = useRef<HTMLDivElement>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [slateFeedbackStatus, setSlateFeedbackStatus] = useState<Record<string, string>>({});
-  const [slateFeedbackReasons, setSlateFeedbackReasons] = useState<Record<string, string[]>>({});
-  const [slateFeedbackNote, setSlateFeedbackNote] = useState('');
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<CatalogDiagnostics | null>(null);
+
+  // 窄屏（移动端）时左右两栏改为上下堆叠，避免推荐列表被压缩遮挡
+  const isNarrow = useMediaQuery('(max-width: 900px)');
 
   // 联网搜索开关状态（持久化到 localStorage）
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
@@ -294,6 +269,12 @@ export default function RecommendationsPage() {
                 setLoading(false);
               }
               break;
+            case 'refinement':
+              // complete 之后异步到达的微调方向 chips（LLM 基于本轮 slate 生成）
+              if (event.options && event.options.length > 0) {
+                currentMsg.refinementOptions = event.options;
+              }
+              break;
             case 'error':
               currentMsg.error = event.error || '发生未知错误';
               currentMsg.thinkingMessage = undefined;
@@ -353,53 +334,38 @@ export default function RecommendationsPage() {
     }));
   }, []);
 
-  const toggleSlateReason = useCallback((exposureId: string, reason: string) => {
-    if (!exposureId) return;
-    setSlateFeedbackReasons(prev => {
-      const current = prev[exposureId] || [];
-      const next = current.includes(reason)
-        ? current.filter(item => item !== reason)
-        : [...current, reason];
-      return { ...prev, [exposureId]: next };
-    });
-  }, []);
-
-  const handleSlateFeedback = useCallback(async (rating: SlateFeedbackRating) => {
-    if (!latestExposureId) {
+  /** 提交整组反馈：严格绑定发起反馈的那一批 exposure，成功/失败状态如实反映 API */
+  const submitSlateFeedback = useCallback(async (
+    exposureId: string,
+    rating: SlateFeedbackRating,
+    reasons: string[],
+    note: string,
+    songCount: number,
+  ): Promise<boolean> => {
+    if (!exposureId) {
       showToast('还没有可评价的推荐批次');
-      return;
+      return false;
     }
     try {
-      await sendSlateFeedback({
-        exposureId: latestExposureId,
+      const result = await sendSlateFeedback({
+        exposureId,
         rating,
-        reasons: slateFeedbackReasons[latestExposureId] || [],
-        note: slateFeedbackNote,
+        reasons,
+        note,
         extra: {
-          song_count: allSongs.length,
+          song_count: songCount,
           web_search_enabled: webSearchEnabled,
         },
       });
-      setSlateFeedbackStatus(prev => ({ ...prev, [latestExposureId]: rating }));
-      setSlateFeedbackNote('');
+      if (!result?.success) throw new Error(result?.error || '服务端未确认');
+      setSlateFeedbackStatus(prev => ({ ...prev, [exposureId]: rating }));
       showToast('✅ 已记录这组推荐的反馈');
+      return true;
     } catch (err: any) {
       showToast(`⚠️ 反馈记录失败：${err?.message || '未知错误'}`);
+      return false;
     }
-  }, [allSongs.length, latestExposureId, showToast, slateFeedbackNote, slateFeedbackReasons, webSearchEnabled]);
-
-  const loadDiagnostics = useCallback(async () => {
-    setDiagnosticsOpen(true);
-    setDiagnosticsLoading(true);
-    try {
-      const report = await fetchCatalogDiagnostics(50);
-      setDiagnostics(report);
-    } catch (err: any) {
-      setDiagnostics({ success: false, error: err?.message || '曲库诊断失败' });
-    } finally {
-      setDiagnosticsLoading(false);
-    }
-  }, []);
+  }, [showToast, webSearchEnabled]);
 
   useEffect(() => {
     return () => {
@@ -482,6 +448,26 @@ export default function RecommendationsPage() {
 
       {/* 右侧按钮组 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {/* 曲库诊断（开发工具入口） */}
+        <button
+          onClick={() => setDiagnosticsOpen(true)}
+          title="曲库诊断（开发工具）"
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.4rem',
+            padding: '0.35rem 0.8rem', borderRadius: '2rem',
+            backgroundColor: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.10)',
+            color: 'rgba(255,255,255,0.5)', fontSize: '0.82rem',
+            cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = '#fff'; }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)'; }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+          </svg>
+          诊断
+        </button>
         {/* 返回推荐卡片按钮（仅在对话视图时显示） */}
         {hasMessages && !showWelcome && (
           <button
@@ -568,11 +554,12 @@ export default function RecommendationsPage() {
         return (
           <div style={{
             display: 'flex',
-            gap: '1.25rem',
+            flexDirection: isNarrow ? 'column' : 'row',
+            gap: isNarrow ? '0.85rem' : '1.25rem',
             width: '100%',
             minHeight: 0,
             flex: 1,
-            overflow: 'hidden',
+            overflow: isNarrow ? 'auto' : 'hidden',
           }}>
             {/* ── 左栏：对话记录（玻璃容器 + 可滚动） ── */}
             <div style={{
@@ -585,7 +572,7 @@ export default function RecommendationsPage() {
               borderRadius: '1rem',
               border: `1px solid ${theme.colors.border.default}`,
               overflow: 'hidden',
-              minHeight: 0,
+              minHeight: isNarrow ? '40vh' : 0,
               position: 'relative',
             }}>
               {/* 对话标题栏 */}
@@ -695,50 +682,25 @@ export default function RecommendationsPage() {
                           )}
 
                           {msg.refinementOptions && msg.refinementOptions.length > 0 && (
-                            <div style={{
-                              display: 'flex',
-                              flexWrap: 'wrap',
-                              gap: '0.5rem',
-                              paddingLeft: '0.1rem',
-                            }}>
-                              {msg.refinementOptions.map((option) => (
-                                <button
-                                  key={`${option.label}-${option.prompt}`}
-                                  onClick={() => handleChipSubmit(option.prompt || option.label)}
-                                  disabled={loading}
-                                  title={option.reason || option.prompt}
-                                  style={{
-                                    padding: '0.44rem 0.78rem',
-                                    borderRadius: '999px',
-                                    border: '1px solid rgba(91, 214, 170, 0.34)',
-                                    backgroundColor: 'rgba(42, 170, 130, 0.16)',
-                                    color: 'rgba(238, 255, 248, 0.9)',
-                                    fontSize: '0.81rem',
-                                    fontWeight: 520,
-                                    cursor: loading ? 'not-allowed' : 'pointer',
-                                    transition: 'all 0.18s ease',
-                                    whiteSpace: 'nowrap',
-                                    boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-                                  }}
-                                  onMouseEnter={e => {
-                                    if (!loading) {
-                                      e.currentTarget.style.backgroundColor = 'rgba(54, 190, 146, 0.24)';
-                                      e.currentTarget.style.borderColor = 'rgba(112, 235, 190, 0.48)';
-                                      e.currentTarget.style.color = '#fff';
-                                    }
-                                  }}
-                                  onMouseLeave={e => {
-                                    e.currentTarget.style.backgroundColor = 'rgba(42, 170, 130, 0.16)';
-                                    e.currentTarget.style.borderColor = 'rgba(91, 214, 170, 0.34)';
-                                    e.currentTarget.style.color = 'rgba(238, 255, 248, 0.9)';
-                                  }}
-                                >
-                                  {option.label}
-                                </button>
-                              ))}
-                            </div>
+                            <RefinementChips
+                              options={msg.refinementOptions}
+                              disabled={loading}
+                              onSelect={handleChipSubmit}
+                            />
                           )}
                         </div>
+                      )}
+
+                      {/* 整组反馈：只挂在最新一条带歌曲的 assistant 回复下，严格绑定该批 exposure */}
+                      {msg.id === latestAssistantWithSongs?.id && latestExposureId && !msg.thinkingMessage && (
+                        <SlateFeedback
+                          exposureId={latestExposureId}
+                          songCount={msg.songs?.length || 0}
+                          submittedRating={slateFeedbackStatus[latestExposureId]}
+                          onSubmit={(rating, reasons, note) =>
+                            submitSlateFeedback(latestExposureId, rating, reasons, note, msg.songs?.length || 0)
+                          }
+                        />
                       )}
                     </div>
                   )}
@@ -772,10 +734,10 @@ export default function RecommendationsPage() {
               )}
             </div>
 
-            {/* ── 右栏：歌曲列表（可滚动） ── */}
+            {/* ── 右栏：只保留标题+数量、全部播放、可滚动歌曲列表 ── */}
             {allSongs.length > 0 && (
               <div style={{
-                width: '560px',
+                width: isNarrow ? '100%' : 'min(560px, 44%)',
                 flexShrink: 0,
                 display: 'flex',
                 flexDirection: 'column',
@@ -785,6 +747,7 @@ export default function RecommendationsPage() {
                 border: `1px solid ${theme.colors.border.default}`,
                 overflow: 'hidden',
                 minHeight: 0,
+                maxHeight: isNarrow ? '52vh' : undefined,
               }}>
                 {/* 歌曲面板标题栏 */}
                 <div style={{
@@ -842,137 +805,14 @@ export default function RecommendationsPage() {
                     />
                   ))}
                 </div>
-                <div style={{
-                  flexShrink: 0,
-                  borderTop: `1px solid ${theme.colors.border.default}`,
-                  padding: '0.85rem 1rem',
-                  backgroundColor: 'rgba(18,18,18,0.72)',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.65rem' }}>
-                    <div>
-                      <div style={{ color: theme.colors.text.primary, fontWeight: 650, fontSize: '0.9rem' }}>这组推荐怎么样？</div>
-                      <div style={{ color: theme.colors.text.muted, fontSize: '0.72rem', marginTop: '0.15rem' }}>
-                        用于离线重放和排序权重学习，不会写入 GraphZep。
-                      </div>
-                    </div>
-                    <button
-                      onClick={loadDiagnostics}
-                      style={{
-                        padding: '0.38rem 0.7rem',
-                        borderRadius: '999px',
-                        border: '1px solid rgba(91,214,170,0.28)',
-                        backgroundColor: diagnosticsOpen ? 'rgba(42,170,130,0.18)' : 'rgba(255,255,255,0.06)',
-                        color: 'rgba(238,255,248,0.88)',
-                        fontSize: '0.76rem',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      曲库诊断
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginBottom: '0.55rem' }}>
-                    {SLATE_FEEDBACK_OPTIONS.map(option => {
-                      const active = latestExposureId && slateFeedbackStatus[latestExposureId] === option.rating;
-                      return (
-                        <button
-                          key={option.rating}
-                          onClick={() => handleSlateFeedback(option.rating)}
-                          disabled={!latestExposureId}
-                          style={{
-                            padding: '0.38rem 0.64rem',
-                            borderRadius: '999px',
-                            border: active ? '1px solid rgba(29,185,84,0.55)' : '1px solid rgba(255,255,255,0.12)',
-                            backgroundColor: active ? 'rgba(29,185,84,0.20)' : 'rgba(255,255,255,0.06)',
-                            color: active ? '#fff' : 'rgba(255,255,255,0.76)',
-                            fontSize: '0.76rem',
-                            cursor: latestExposureId ? 'pointer' : 'not-allowed',
-                          }}
-                        >
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.6rem' }}>
-                    {SLATE_REASON_OPTIONS.map(reason => {
-                      const selected = Boolean(latestExposureId && (slateFeedbackReasons[latestExposureId] || []).includes(reason));
-                      return (
-                        <button
-                          key={reason}
-                          onClick={() => toggleSlateReason(latestExposureId, reason)}
-                          disabled={!latestExposureId}
-                          title="作为这组推荐的补充原因"
-                          style={{
-                            padding: '0.32rem 0.58rem',
-                            borderRadius: '999px',
-                            border: selected ? '1px solid rgba(120,210,255,0.44)' : '1px solid rgba(255,255,255,0.10)',
-                            backgroundColor: selected ? 'rgba(65,145,210,0.18)' : 'rgba(255,255,255,0.045)',
-                            color: selected ? 'rgba(238,250,255,0.95)' : 'rgba(255,255,255,0.58)',
-                            fontSize: '0.72rem',
-                            cursor: latestExposureId ? 'pointer' : 'not-allowed',
-                          }}
-                        >
-                          {reason}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <input
-                    value={slateFeedbackNote}
-                    onChange={event => setSlateFeedbackNote(event.target.value)}
-                    placeholder="可选：哪里不对？例如太像我的收藏、年代不准、想更冷门..."
-                    maxLength={240}
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      padding: '0.55rem 0.7rem',
-                      borderRadius: '0.55rem',
-                      border: '1px solid rgba(255,255,255,0.10)',
-                      backgroundColor: 'rgba(0,0,0,0.22)',
-                      color: theme.colors.text.primary,
-                      outline: 'none',
-                      fontSize: '0.76rem',
-                    }}
-                  />
-                  {diagnosticsOpen && (
-                    <div style={{
-                      marginTop: '0.75rem',
-                      padding: '0.75rem',
-                      borderRadius: '0.7rem',
-                      border: '1px solid rgba(255,255,255,0.10)',
-                      backgroundColor: 'rgba(0,0,0,0.20)',
-                      color: 'rgba(255,255,255,0.72)',
-                      fontSize: '0.76rem',
-                      lineHeight: 1.55,
-                    }}>
-                      {diagnosticsLoading ? (
-                        <div>正在读取曲库分布...</div>
-                      ) : diagnostics?.success ? (
-                        <div>
-                          <div style={{ color: '#fff', fontWeight: 650, marginBottom: '0.4rem' }}>
-                            曲库 {diagnostics.catalog?.total_songs || 0} 首 · 可播放 {diagnostics.catalog?.playable_songs || 0} 首 · 最近曝光 {diagnostics.recent_recommendations?.exposures || 0} 批
-                          </div>
-                          <div>语言：{(diagnostics.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || '暂无'}</div>
-                          <div>流派：{(diagnostics.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无'}</div>
-                          <div>最近来源：{(diagnostics.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无曝光'}</div>
-                          {(diagnostics.warnings || []).length > 0 && (
-                            <div style={{ marginTop: '0.45rem', color: 'rgba(255,220,160,0.92)' }}>
-                              {(diagnostics.warnings || []).slice(0, 3).map(w => w.message).join('；')}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div style={{ color: '#ff8f8f' }}>{diagnostics?.error || '曲库诊断失败'}</div>
-                      )}
-                    </div>
-                  )}
-                </div>
               </div>
             )}
           </div>
         );
       })()}
+
+      {/* 曲库诊断抽屉（开发工具，与用户反馈分离） */}
+      <DiagnosticsDrawer open={diagnosticsOpen} onClose={() => setDiagnosticsOpen(false)} />
       {/* 用于自动滚动到底的锚点 */}
     </MainLayout>
   );
