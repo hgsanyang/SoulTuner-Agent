@@ -26,7 +26,12 @@ ALLOWED_MEMORY_FIELDS = frozenset(
 class InferredPreferenceCandidate(BaseModel):
     field: str = Field(description="One allowed structured preference field")
     value: str = Field(min_length=1, max_length=160)
-    scope: Literal["global", "contextual", "temporary"] = "contextual"
+    # Lifecycle scopes plus scene scopes: a scene-bound preference only applies
+    # inside its scene at retrieval time (see services.memory_retriever).
+    scope: Literal[
+        "global", "contextual", "temporary",
+        "driving", "commute", "focus", "sleep", "late_night", "rainy", "romantic", "workout",
+    ] = "contextual"
     confidence: float = Field(ge=0.0, le=1.0)
     evidence_ids: list[str] = Field(default_factory=list, max_length=20)
     counter_evidence_ids: list[str] = Field(default_factory=list, max_length=20)
@@ -75,7 +80,7 @@ class MemoryConsolidationReport:
     abstained: bool = False
     summary: str = ""
     model: str = ""
-    prompt_version: str = "memory-consolidator-v1"
+    prompt_version: str = "memory-consolidator-v2-scene-scope"
     prompt_hash: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
@@ -113,6 +118,10 @@ Rules:
 - When two or more records consistently support the same music preference and no
   supplied record contradicts it, emit a candidate instead of merely summarizing it.
 - Keep explicit likes/dislikes, inferred tendencies, and temporary contexts distinct.
+- Choose the narrowest honest scope. Use a scene scope (driving/commute/focus/
+  sleep/late_night/rainy/romantic/workout) when the evidence is bound to that
+  scene; "global" only for consistently scene-independent evidence;
+  "contextual"/"temporary" for everything softer.
 - Use only these fields: {allowed_fields}.
 - add_* means preference; avoid_* means aversion. Do not output contradictory pairs.
 - Include every supporting record_id in evidence_ids and any contradiction in counter_evidence_ids.

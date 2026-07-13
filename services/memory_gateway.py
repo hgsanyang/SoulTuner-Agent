@@ -20,7 +20,7 @@ from services.memory_consolidator import MemoryConsolidator
 from services.memory_event_store import MemoryEventStore
 from services.memory_models import MemoryLayer
 from services.memory_retriever import MemoryRelevanceRetriever
-from services.memory_retriever import DEFAULT_LAYER_THRESHOLDS
+from services.memory_retriever import DEFAULT_LAYER_THRESHOLDS, normalize_scene
 from services.memory_semantic_scorer import (
     BgeMemorySemanticScorer,
     MemorySemanticScorerUnavailable,
@@ -680,15 +680,27 @@ class MemoryGateway:
         if side_effects_disabled():
             return MemoryWriteResult(success=True, description="eval_read_only")
         scheduled = self._schedule_sidecar_write(description, user_id=user_id, extra=extra or {})
+        details = dict(extra or {})
+        # Episodic events carry their temporal window and scene explicitly so
+        # retrieval can reason about applicability instead of guessing from text.
+        scene = normalize_scene(details.pop("scene", "")) or str(details.pop("scope", "") or "")
+        ttl_days = int(details.pop("ttl_days", 0) or 0)
+        if not 1 <= ttl_days <= 365:
+            ttl_days = 90
         self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.EPISODIC,
             kind="episode_summary",
-            source=str((extra or {}).get("source") or "conversation"),
-            evidence_id=str((extra or {}).get("evidence_id") or ""),
-            payload={"description": description[:2000], **(extra or {})},
-            confidence=float((extra or {}).get("confidence") or 0.65),
-            ttl_days=90,
+            source=str(details.get("source") or "conversation"),
+            evidence_id=str(details.get("evidence_id") or ""),
+            payload={
+                "description": description[:2000],
+                "scope": scene or "contextual",
+                "time_label": str(details.pop("time_label", "") or "")[:60],
+                **details,
+            },
+            confidence=float(details.get("confidence") or 0.65),
+            ttl_days=ttl_days,
             why_used="Low-frequency episodic context; explicit preferences take precedence",
         )
         return MemoryWriteResult(
@@ -697,7 +709,14 @@ class MemoryGateway:
             graphzep_scheduled=scheduled,
         )
 
-    async def retrieve_context(self, *, query: str, user_id: str = "local_admin", max_facts: int = 8) -> dict[str, Any]:
+    async def retrieve_context(
+        self,
+        *,
+        query: str,
+        user_id: str = "local_admin",
+        max_facts: int = 8,
+        scene: str = "",
+    ) -> dict[str, Any]:
         started = time.perf_counter()
         profile = self.get_user_profile(user_id)
         backend_results: dict[str, str] = {}
@@ -726,6 +745,7 @@ class MemoryGateway:
                     records=records,
                     max_facts=max_facts,
                     include_episodic=self.mode in {"semantic", "sidecar"},
+                    scene=scene,
                 )
             except MemorySemanticScorerUnavailable:
                 # Relevance failure is fail-closed: injecting no memory is safer
@@ -764,9 +784,11 @@ class MemoryGateway:
             "memory_trace": {
                 "mode": self.mode,
                 "user_id": user_id,
+                "scene": str(scene or ""),
                 "retrieved_count": len(retrieved_records),
                 "backend_names": sorted(backend_results),
                 "relevance_backend": self.relevance_retriever.backend_name,
+                "relevance_policy": self.relevance_retriever.describe(),
                 "relevance_error": relevance_error,
                 "latency_ms": round((time.perf_counter() - started) * 1000, 3),
                 "estimated_context_tokens": max(0, len(episodic_text) // 4),
@@ -861,7 +883,18 @@ class MemoryGateway:
             "editable_sections": editable_memory_sections(profile),
             "diagnostics": summarize_memory_profile(profile, episodic_backends),
             "records": self.list_memory_records(user_id=user_id),
+            "profile_views": self.profile_views(user_id=user_id),
         }
+
+    def profile_views(self, *, user_id: str = "local_admin") -> dict[str, Any]:
+        """Scope-grouped editable views over effective L1/L2 preferences."""
+        if self.event_store is None:
+            return {"views": [], "recent_tendency": {"items": []}}
+        from services.profile_views import build_profile_views
+
+        return build_profile_views(
+            self.event_store.effective_records(user_id=user_id, limit=500)
+        )
 
     def forget_preference_item(self, *, user_id: str, field: str, value: str) -> bool:
         manager = getattr(self.primary, "manager", None)
@@ -917,6 +950,10 @@ class MemoryGateway:
                 )
         tombstone = self.event_store.tombstone(user_id=user_id, target_record_id=record_id)
         if tombstone is not None:
+            if record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
+                self._invalidate_episodes_mentioning(
+                    user_id=user_id, value=str(record.payload.get("value") or "")
+                )
             self._invalidate_hot_profile(user_id)
         return tombstone is not None
 
@@ -1012,6 +1049,32 @@ class MemoryGateway:
         for record in self.event_store.effective_records(user_id=user_id, limit=500):
             if record.memory_key == key:
                 self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
+        self._invalidate_episodes_mentioning(user_id=user_id, value=value)
+
+    def _invalidate_episodes_mentioning(self, *, user_id: str, value: str) -> None:
+        """Correction propagation: a user-corrected preference also retires
+        episodic records that recorded that exact value, so a stale episode
+        cannot re-surface a direction the user has explicitly withdrawn.
+        Deterministic exact-containment on the corrected value only — this is
+        deletion mechanics triggered by the user, not semantic routing."""
+        if self.event_store is None:
+            return
+        needle = str(value or "").strip().casefold()
+        if not needle:
+            return
+        for record in self.event_store.effective_records(user_id=user_id, limit=500):
+            if record.layer != MemoryLayer.EPISODIC:
+                continue
+            haystack = " ".join(
+                str(record.payload.get(key) or "")
+                for key in ("description", "value", "user_text")
+            ).casefold()
+            if needle in haystack:
+                self.event_store.tombstone(
+                    user_id=user_id,
+                    target_record_id=record.record_id,
+                    source="correction_propagation",
+                )
 
     def _schedule_sidecar_write(self, description: str, *, user_id: str, extra: dict[str, Any] | None = None) -> bool:
         scheduled = False
@@ -1061,10 +1124,24 @@ def _configured_relevance_retriever() -> MemoryRelevanceRetriever:
         return MemoryRelevanceRetriever(
             min_relevance=float(os.getenv("MEMORY_RETRIEVAL_MIN_RELEVANCE", "0.08"))
         )
+    # Defaults are locked on the open calibration fixture (RELEVANCE_POLICY_VERSION);
+    # env overrides exist for controlled experiments and are always visible in the
+    # memory trace, so a changed threshold can never hide from an audit.
+    thresholds = {
+        MemoryLayer.EXPLICIT: float(
+            os.getenv("MEMORY_RELEVANCE_THRESHOLD_L1", str(DEFAULT_LAYER_THRESHOLDS[MemoryLayer.EXPLICIT]))
+        ),
+        MemoryLayer.INFERRED: float(
+            os.getenv("MEMORY_RELEVANCE_THRESHOLD_L2", str(DEFAULT_LAYER_THRESHOLDS[MemoryLayer.INFERRED]))
+        ),
+        MemoryLayer.EPISODIC: float(
+            os.getenv("MEMORY_RELEVANCE_THRESHOLD_L3", str(DEFAULT_LAYER_THRESHOLDS[MemoryLayer.EPISODIC]))
+        ),
+    }
     return MemoryRelevanceRetriever(
         min_relevance=0.08,
         semantic_scorer=BgeMemorySemanticScorer(),
-        layer_thresholds=DEFAULT_LAYER_THRESHOLDS,
+        layer_thresholds=thresholds,
         max_per_layer=1,
     )
 

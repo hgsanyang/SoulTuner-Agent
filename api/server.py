@@ -1275,6 +1275,18 @@ async def memory_profile(user_id: str = "local_admin"):
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/memory/profile-views")
+async def memory_profile_views(user_id: str = "local_admin"):
+    """Scope-grouped editable views over effective L1/L2 preferences."""
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        return {"success": True, **get_memory_gateway().profile_views(user_id=user_id)}
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 读取场景化画像失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/memory/preference")
 async def add_memory_preference(request: MemoryPreferenceUpdateRequest):
     """Add structured preferences to the Neo4j hot path."""

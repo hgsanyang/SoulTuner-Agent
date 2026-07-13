@@ -14,11 +14,44 @@ from services.memory_models import MemoryLayer, MemoryRecord
 
 # Locked on the open multilingual calibration fixture. The sealed blind-v2
 # benchmark is only used as a final regression gate, never to tune these values.
+RELEVANCE_POLICY_VERSION = "open-calibration-v1"
+
 DEFAULT_LAYER_THRESHOLDS = {
     MemoryLayer.EXPLICIT: 0.063129,
     MemoryLayer.INFERRED: 0.074551,
     MemoryLayer.EPISODIC: 0.08,
 }
+
+# Scene-bound preference scopes. A memory scoped to one scene must never
+# influence a different scene; when the current scene is unknown, scene-scoped
+# memories stay out (fail-closed personalization). Lifecycle scopes
+# (global/contextual/temporary) are scene-agnostic and always eligible.
+SCENE_SCOPES = frozenset(
+    {"driving", "commute", "focus", "sleep", "late_night", "rainy", "romantic", "workout"}
+)
+LIFECYCLE_SCOPES = frozenset({"global", "contextual", "temporary"})
+
+# Structured planner scenario labels -> scene scope. This is enum
+# normalization of typed planner output, not free-text keyword routing.
+_SCENARIO_TO_SCENE = {
+    "driving": "driving", "drive": "driving", "car": "driving",
+    "commute": "commute", "commuting": "commute",
+    "study": "focus", "work": "focus", "focus": "focus", "coding": "focus", "reading": "focus",
+    "sleep": "sleep", "bedtime": "sleep",
+    "late night": "late_night", "late_night": "late_night", "night": "late_night",
+    "rainy": "rainy", "rain": "rainy", "rainy day": "rainy",
+    "romantic": "romantic", "date": "romantic", "social": "romantic",
+    "workout": "workout", "gym": "workout", "running": "workout", "exercise": "workout",
+}
+
+# Episodic memories decay faster than stable preferences: an event from last
+# week should matter, one from two months ago usually should not.
+EPISODIC_RECENCY_HALF_LIFE_DAYS = 14.0
+
+
+def normalize_scene(scenario: str | None) -> str:
+    """Map a structured scenario label to a scene scope; unknown -> ""."""
+    return _SCENARIO_TO_SCENE.get(str(scenario or "").strip().casefold(), "")
 
 
 @dataclass(frozen=True)
@@ -89,6 +122,18 @@ class MemoryRelevanceRetriever:
     def backend_name(self) -> str:
         return self.semantic_scorer.name if self.semantic_scorer is not None else "char-ngram"
 
+    def describe(self) -> dict:
+        """Auditable retrieval policy for memory traces and reports."""
+        return {
+            "backend": self.backend_name,
+            "policy_version": RELEVANCE_POLICY_VERSION,
+            "min_relevance": self.min_relevance,
+            "layer_thresholds": {
+                layer.value: threshold for layer, threshold in self.layer_thresholds.items()
+            },
+            "max_per_layer": self.max_per_layer,
+        }
+
     def retrieve(
         self,
         *,
@@ -97,10 +142,17 @@ class MemoryRelevanceRetriever:
         max_facts: int = 8,
         include_episodic: bool = False,
         now_ms: int | None = None,
+        scene: str = "",
     ) -> list[RetrievedMemory]:
         now = int(now_ms if now_ms is not None else time.time() * 1000)
+        current_scene = str(scene or "").strip().casefold()
         eligible: list[tuple[MemoryRecord, float]] = []
         for record in records:
+            record_scope = str(record.payload.get("scope") or "global").strip().casefold()
+            if record_scope in SCENE_SCOPES and record_scope != current_scene:
+                # Scene-bound memory outside its scene (or with unknown scene)
+                # must not influence the response.
+                continue
             if record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
                 eligible.append((record, 1.0))
             elif include_episodic and record.layer == MemoryLayer.EPISODIC:
@@ -124,17 +176,33 @@ class MemoryRelevanceRetriever:
             if str(query or "").strip() and relevance < threshold:
                 continue
             age_days = max(0.0, (now - record.created_at) / 86_400_000)
-            recency = math.exp(-age_days / 45.0)
+            # Episodic events lose applicability much faster than stable
+            # preferences; this keeps current constraints dominant over
+            # stale episodes without a hard cutoff.
+            half_life = (
+                EPISODIC_RECENCY_HALF_LIFE_DAYS
+                if record.layer == MemoryLayer.EPISODIC
+                else 45.0
+            )
+            recency = math.exp(-age_days / half_life)
+            record_scope = str(record.payload.get("scope") or "global").strip().casefold()
+            scene_matched = bool(current_scene) and record_scope == current_scene
             score = (
                 0.68 * relevance
                 + 0.17 * max(0.0, min(1.0, record.confidence))
                 + 0.10 * recency
                 + 0.05 * layer_prior
             )
+            if scene_matched:
+                score += 0.05  # bounded boost: scene-fit memory ranks first, never overrides relevance gates
             reason = (
                 f"query relevance={relevance:.2f}; confidence={record.confidence:.2f}; "
                 f"age_days={age_days:.1f}"
             )
+            if scene_matched:
+                reason += f"; scene={record_scope}"
+            if record.layer == MemoryLayer.EPISODIC:
+                reason += f"; episodic_half_life_days={half_life:.0f}"
             ranked.append(RetrievedMemory(record, score, relevance, reason))
         ranked.sort(key=lambda item: (item.score, item.record.created_at), reverse=True)
         if self.max_per_layer is not None:
