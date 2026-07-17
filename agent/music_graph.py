@@ -886,6 +886,20 @@ class MusicRecommendationGraph:
                     inventory_count=len(search_results),
                     details={"tool_plan_skipped_gap": True},
                 )
+            if gap_decision.action == "mix_in":
+                # 本地库存充足时的"少量穿插"由证据驱动的联网补充路线
+                # （retrieval.web_supplement，随本地召回并行）承担；
+                # 旧的关键词直搜网易云 mix-in 只在补充路线关闭时保留。
+                from agent.catalog_gap import supersede_mix_in
+                from retrieval.web_supplement import supplement_enabled
+
+                if supplement_enabled():
+                    logger.info(
+                        "[search_songs] mix-in 已由证据驱动联网补充路线接管，跳过关键词直搜穿插"
+                    )
+                    gap_decision = supersede_mix_in(
+                        gap_decision, superseded_by="web_supplement_lane"
+                    )
             if gap_decision.action == "fallback":
                 logger.warning(
                     "[search_songs] Catalog gap 触发联网兜底: reasons=%s, inventory=%d",
