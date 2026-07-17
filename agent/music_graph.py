@@ -47,9 +47,7 @@ from agent.web_discovery import build_web_discovery_query, extract_song_candidat
 from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
 
 from schemas.music_state import MusicAgentState, ToolOutput
-from tools.graphrag_search import graphrag_search
 # 【V2 升级】替换旧版 vector_search 为 Neo4j 原生语义搜索
-from tools.semantic_search import semantic_search
 from tools.acquire_music import acquire_online_music
 from retrieval.hybrid_retrieval import MusicHybridRetrieval
 from retrieval.user_memory import UserMemoryManager
@@ -59,7 +57,7 @@ from llms.prompts import (
     MUSIC_RECOMMENDATION_EXPLAINER_PROMPT,
     MUSIC_TUNER_RESPONSE_PROMPT,
 )
-from schemas.query_plan import MusicQueryPlan, RetrievalPlan
+from schemas.query_plan import MusicQueryPlan
 from schemas.tool_plan import ToolPlan, tool_plan_alignment_issues
 from schemas.dialog_state import (
     ClarificationRequest,
@@ -223,14 +221,14 @@ def set_explain_llm(new_llm):
 
 class MusicRecommendationGraph:
     """音乐推荐工作流图
-    
+
     支持 LangGraph MemorySaver Checkpoint：
     - 编译时注入 checkpointer，每次 ainvoke 传入 thread_id
     - 同一 thread_id 的对话共享状态（chat_history 自动累积）
     - 内存级实现，重启进程后状态丢失
     - 生产环境可替换为 SqliteSaver / PostgresSaver 实现持久化
     """
-    
+
     def __init__(self, enable_checkpoint: bool = True):
         self.enable_checkpoint = enable_checkpoint and _CHECKPOINTER_AVAILABLE
         self.checkpointer = MemorySaver() if self.enable_checkpoint else None
@@ -240,11 +238,11 @@ class MusicRecommendationGraph:
         self.intent_planner = IntentPlanner(get_intent_llm)
         self.intent_delta_planner = IntentDeltaPlanner(get_intent_llm)
         self.workflow = self._build_graph()
-    
+
     def get_app(self) -> CompiledStateGraph:
         """获取编译后的应用"""
         return self.workflow
-    
+
     def _load_user_profile_for_prompt(self, user_id: str = "local_admin") -> str:
         """
         从动态画像 / Neo4j User 节点加载用户画像，格式化为简洁文本。
@@ -260,7 +258,7 @@ class MusicRecommendationGraph:
                 return portrait_text
         except Exception as e:
             logger.warning(f"[UserProfile] 动态画像加载失败，退回静态标签: {e}")
-        
+
         # ② Fallback：从 Neo4j 读取用户手动设置的静态偷好标签
         try:
             from retrieval.neo4j_client import get_neo4j_client
@@ -276,10 +274,10 @@ class MusicRecommendationGraph:
                    u.preferred_languages AS languages,
                    u.profile_free_text AS free_text
             """, {"uid": user_id})
-            
+
             if not result or not result[0]:
                 return ""
-            
+
             row = result[0]
             parts = []
             for field, label in [
@@ -296,11 +294,11 @@ class MusicRecommendationGraph:
                             parts.append(f"{label}: {', '.join(values)}")
                     except (ValueError, TypeError):
                         pass
-            
+
             free_text = row.get("free_text") or ""
             if free_text.strip():
                 parts.append(f"自述: {free_text.strip()}")
-            
+
             profile_text = "；".join(parts) if parts else ""
             if profile_text:
                 logger.info(f"[UserProfile] 静态标签加载成功: {profile_text[:80]}")
@@ -308,14 +306,14 @@ class MusicRecommendationGraph:
         except Exception as e:
             logger.warning(f"[UserProfile] 画像加载失败: {e}")
             return ""
-    
+
     async def warmup_kv_cache(self):
         """启动时预热 KV Prefix Cache（后台异步执行，不阻塞启动）
-        
+
         原理：向 API 发送一个包含完整 system prompt 的轻量请求，
         让服务商（SiliconFlow/DeepSeek）计算并缓存 system prompt 的 KV 状态。
         后续真实请求的相同 system prefix 会自动命中缓存，跳过 Prefill 阶段。
-        
+
         预期效果：首次用户请求从 8-12s 降低到 2-4s。
         """
         import time as _time
@@ -324,14 +322,14 @@ class MusicRecommendationGraph:
             _intent_llm = get_intent_llm()
             _provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
             _local_providers = {"sglang", "vllm", "ollama"}
-            
+
             if _provider in _local_providers:
                 logger.info("[Warmup] 本地模型无需预热 KV Cache，跳过")
                 return
-            
+
             from llms.prompts import UNIFIED_PLANNER_SYSTEM, UNIFIED_PLANNER_HUMAN
             from langchain_core.prompts import ChatPromptTemplate
-            
+
             # 用最简单的输入触发一次完整的 system prompt 计算
             _warmup_model_name = getattr(_intent_llm, 'model_name', '') or ''
             _is_qwen3_warmup = any(kw in _warmup_model_name.lower() for kw in ['qwen3', 'qwen-3'])
@@ -345,7 +343,7 @@ class MusicRecommendationGraph:
                 structured_llm = _bound_llm.with_structured_output(MusicQueryPlan, include_raw=True, method="json_mode")
             else:
                 structured_llm = _bound_llm.with_structured_output(MusicQueryPlan, include_raw=True)
-            
+
             # DashScope 显式缓存：warmup 时用 content 数组格式创建缓存条目
             _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or "").lower()
             if _intent_provider == "dashscope":
@@ -363,7 +361,7 @@ class MusicRecommendationGraph:
                     ("system", UNIFIED_PLANNER_SYSTEM),
                     ("human", UNIFIED_PLANNER_HUMAN),
                 ])
-            
+
             chain = _prompt | structured_llm
             _raw = await chain.ainvoke({
                 "user_input": "你好",
@@ -373,7 +371,7 @@ class MusicRecommendationGraph:
                 "current_date": str(date.today()),
             })
             _elapsed = _time.time() - _t0
-            
+
             # 检查缓存状态
             _raw_msg = _raw.get("raw")
             _cache_info = ""
@@ -385,11 +383,11 @@ class MusicRecommendationGraph:
                     or (_usage.get("input_token_details") or {}).get("cache_read", 0)
                 )
                 _cache_info = f" | cache_hit={_hit}"
-            
+
             logger.info(f"[Warmup] ✅ KV Cache 预热完成, 耗时 {_elapsed:.1f}s{_cache_info}")
         except Exception as e:
             logger.warning(f"[Warmup] ⚠️ KV Cache 预热失败（不影响正常使用）: {e}")
-    
+
     async def analyze_intent(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点1: 统一意图分析 + 检索规划
@@ -398,11 +396,11 @@ class MusicRecommendationGraph:
         """
         import time as _time
         _t0 = _time.time()
-        
+
         user_input = state.get("input", "")
         chat_history = state.get("chat_history", [])
         user_id = _state_user_id(state)
-        
+
         try:
             # Full chat history is interpreted by the LLM Planner. Do not infer
             # semantic state from regexes when an explicit session state is absent.
@@ -492,7 +490,7 @@ class MusicRecommendationGraph:
             # 格式化对话历史
             context_manager = MusicContextManager()
             history_text = context_manager.format_chat_history(chat_history)
-            
+
             # ✅ 【DST】构建上轮检索计划文本，供 Planner 做多轮标签继承
             # 区分两种继承模式：
             #   graph/hybrid → 继承离散标签（mood/genre/language...）
@@ -524,7 +522,7 @@ class MusicRecommendationGraph:
                         _val = _prev_plan.get(_tag_key)
                         if _val:
                             _tag_parts.append(f"{_tag_label}={_val}")
-                    
+
                     _parts = []
                     if _tag_parts:
                         _parts.append(f"上轮检索策略: {_prev_intent}，标签: {', '.join(_tag_parts)}")
@@ -533,18 +531,18 @@ class MusicRecommendationGraph:
                     if _acoustic:
                         _parts.append(f"上轮声学描述: \"{_acoustic[:150]}\"")
                         _parts.append("注意：用户追问时应继承上轮的检索策略和声学描述，不可降级为纯 graph_search")
-                    
+
                     if _parts:
                         _previous_plan_text = "\n".join(_parts)
                         logger.info(f"[DST] 上轮: {_prev_intent}, 标签={_tag_parts}, acoustic={'有' if _acoustic else '无'}")
-            
+
             # ✅ with_structured_output：让模型直接输出 MusicQueryPlan Pydantic 对象
             # 底层自动处理 json_schema 约束，无需任何正则或 json.loads
             _intent_llm_instance = get_intent_llm()
             _intent_model_name = getattr(_intent_llm_instance, 'model_name', '?')
             _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or '?').lower()
             logger.info(f"--- [步骤 1] 统一意图分析与检索规划 (Structured Output) | 🤖 {_intent_provider} / {_intent_model_name} ---")
-            
+
             # ── 统一构建用户偏好上下文（用户画像 + MemoryGateway 长期记忆）──
             _graphzep = state.get("graphzep_facts", "")
             _pref_parts = []
@@ -553,7 +551,7 @@ class MusicRecommendationGraph:
             if _graphzep and _graphzep != "暂无用户长期记忆":
                 _pref_parts.append(f"【长期记忆】{_graphzep}")
             _combined_preferences = "\n".join(_pref_parts) if _pref_parts else "无"
-            
+
             plan = await self.intent_planner.plan(
                 user_input=user_input,
                 user_preferences=_combined_preferences,
@@ -629,7 +627,7 @@ class MusicRecommendationGraph:
             )
             logger.info(f"决策理由: {plan.reasoning}")
             logger.info(f"[⏱ 意图分析] 耗时 {_time.time()-_t0:.1f}s")
-            
+
             # ============================================================
             # 【升级】将 intent_type 和 graphzep_facts 注入 retrieval_plan
             # intent_type: 供 HyDE 根据意图类型调整描述风格
@@ -659,7 +657,7 @@ class MusicRecommendationGraph:
                 )
             except Exception as feedback_error:
                 logger.debug("[LLMFeedback] 规划审计日志写入失败，已跳过: %s", feedback_error)
-            
+
             return {
                 "intent_type": plan.intent_type,
                 "intent_parameters": plan.parameters,
@@ -673,7 +671,7 @@ class MusicRecommendationGraph:
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
             }
-            
+
         except Exception as e:
             # 【可观测降级】意图分析失败时，不再静默退化为 general_chat。
             # 原因：(1) 用户多数是来"求歌"的，退闲聊=答非所问；
@@ -722,7 +720,7 @@ class MusicRecommendationGraph:
                 ],
                 "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
             }
-    
+
     def route_by_intent(self, state: MusicAgentState) -> str:
         """
         路由函数: 根据意图类型决定下一步（5 类检索策略 + 2 类功能性意图）
@@ -815,7 +813,7 @@ class MusicRecommendationGraph:
             },
             "step_count": state.get("step_count", 0) + 1,
         }
-    
+
     async def search_songs_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点2a: 搜索歌曲
@@ -823,28 +821,28 @@ class MusicRecommendationGraph:
         import time as _time
         _t0 = _time.time()
         logger.info("--- [步骤 2a] 搜索歌曲 ---")
-        
+
         parameters = state.get("intent_parameters", {})
         query = parameters.get("query", "")
         genre = parameters.get("genre")
-        
+
         try:
             retriever = MusicHybridRetrieval(llm_client=get_llm())
-            
+
             # 将可用的参数合并为一句话供路由分析
             search_intent = f"查询:{query} 流派:{genre}" if genre else query
             logger.info(f"调用检索引擎执行歌曲搜索: {search_intent}")
-            
+
             # 传递上游统一规划的 retrieval_plan，避免二次 LLM 调用
             retrieval_plan = state.get("retrieval_plan")
             raw_hybrid_result = await retriever.retrieve(search_intent, limit=settings.hybrid_retrieval_limit, precomputed_plan=retrieval_plan)
-            
+
             # 直接使用标准的 ToolOutput
             if raw_hybrid_result and raw_hybrid_result.success:
                 search_results = raw_hybrid_result.data
             else:
                 search_results = []
-            
+
             logger.info(f"搜索到 {len(search_results)} 首歌曲, 耗时 {_time.time()-_t0:.1f}s")
             timings = dict(state.get("timings") or {})
             if raw_hybrid_result and getattr(raw_hybrid_result, "metadata", None):
@@ -968,7 +966,7 @@ class MusicRecommendationGraph:
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": timings,
             }
-            
+
         except Exception as e:
             logger.error(f"搜索歌曲失败: {str(e)}")
             retrieval_plan = state.get("retrieval_plan") or {}
@@ -1699,11 +1697,10 @@ class MusicRecommendationGraph:
         根据不同的意图类型调用不同的推荐方法
         """
         logger.info("--- [步骤 2b] 生成音乐推荐 ---")
-        
+
         intent_type = state.get("intent_type")
-        parameters = state.get("intent_parameters", {})
         user_id = _state_user_id(state)
-        
+
         try:
             # ── 特殊意图：recommend_by_favorites（两层智能推荐）──
             if intent_type == "recommend_by_favorites":
@@ -1798,33 +1795,33 @@ class MusicRecommendationGraph:
 
             retriever = MusicHybridRetrieval(llm_client=get_llm())
             recommendations = []
-            
+
             # 直接使用用户的原始输入，保留所有的语义和情绪标签（如：带感、激情），而不是使用写死的模板
             search_query = state.get("input", "")
             if not search_query:
                 # 兜底：如果意外没有 input，才从意图回退
                 search_query = intent_type
-                
+
             logger.info(f"调用检索引擎执行生成推荐: {search_query}")
-            
+
             # 传递上游统一规划的 retrieval_plan，避免二次 LLM 调用
             retrieval_plan = state.get("retrieval_plan")
             raw_hybrid_result = await retriever.retrieve(search_query, limit=settings.hybrid_retrieval_limit, precomputed_plan=retrieval_plan)
-            
+
             # 直接使用标准的 ToolOutput
             if raw_hybrid_result and raw_hybrid_result.success:
                 recommendations = raw_hybrid_result.data
             else:
                 recommendations = []
-                
+
             logger.info(f"生成了 {len(recommendations)} 条推荐")
             _schedule_recommended_knowledge_backfill(recommendations, context="generate_recommendations")
-            
+
             return {
                 "recommendations": raw_hybrid_result if raw_hybrid_result and raw_hybrid_result.success else [], # 完整保存 ToolOutput 对象供解释节点用
                 "step_count": state.get("step_count", 0) + 1
             }
-            
+
         except Exception as e:
             logger.error(f"生成推荐失败: {str(e)}")
             return {
@@ -1834,7 +1831,7 @@ class MusicRecommendationGraph:
                     {"node": "generate_recommendations", "error": str(e)}
                 ]
             }
-    
+
     async def general_chat_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点2c: 通用聊天
@@ -1844,15 +1841,15 @@ class MusicRecommendationGraph:
         _main_model_name = getattr(_main_llm, 'model_name', '?')
         _main_provider = (settings.llm_default_provider or '?').lower()
         logger.info(f"--- [步骤 2c] 通用音乐聊天 | 🤖 {_main_provider} / {_main_model_name} ---")
-        
+
         user_message = state.get("input", "")
         chat_history = state.get("chat_history", [])
-        
+
         try:
             # 格式化对话历史
             context_manager = MusicContextManager()
             history_text = context_manager.format_chat_history(chat_history)
-            
+
             # [LCEL 1.2 优化] 使用 LCEL 链统一调度通用聊天任务
             # StrOutputParser 会自动提取大模型回复消息中的文本内容，省去手动获取 .content。
             chain = (
@@ -1868,27 +1865,27 @@ class MusicRecommendationGraph:
                 total_budget=0,
                 user_id=_state_user_id(state),
             )
-            
+
             response_content = await chain.ainvoke({
                 "chat_history": _ctx["chat_history"],
                 "user_message": user_message,
                 "graphzep_facts": _ctx["graphzep_facts"],
             })
-            
+
             logger.info("生成聊天回复")
-            
+
             # ★ 将回复推送到流式队列，否则 music_agent 的 SSE 会永远卡住
             _req_id = state.get("metadata", {}).get("request_id")
             _chat_queue = self._explanation_queues.get(_req_id) if _req_id else None
             if _chat_queue:
                 await _chat_queue.put(response_content)  # 推送完整文本
                 await _chat_queue.put(None)              # 终止信号
-            
+
             return {
                 "final_response": response_content,
                 "step_count": state.get("step_count", 0) + 1
             }
-            
+
         except Exception as e:
             logger.error(f"生成聊天回复失败: {str(e)}")
             # 也要推送终止信号，否则异常时也会卡住
@@ -1906,7 +1903,7 @@ class MusicRecommendationGraph:
                     {"node": "general_chat", "error": str(e)}
                 ]
             }
-    
+
     async def generate_explanation(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点3: 生成推荐解释
@@ -1918,7 +1915,7 @@ class MusicRecommendationGraph:
         # 兼容处理 ToolOutput 对象或列表
         raw_recommendations = state.get("recommendations", [])
         recommendations = getattr(raw_recommendations, "data", raw_recommendations)
-        
+
         user_query = state.get("input", "")
         request_id = state.get("metadata", {}).get("request_id", "")
         explanation_queue = self._explanation_queues.get(request_id) if request_id else None
@@ -1940,7 +1937,7 @@ class MusicRecommendationGraph:
             if response:
                 await explanation_queue.put(response)
             await explanation_queue.put(None)
-        
+
         # 判断是否有真实内容
         has_real_content = False
         if recommendations:
@@ -1951,7 +1948,7 @@ class MusicRecommendationGraph:
                     isinstance(r, dict) and ("_raw_markdown" in r or r.get("song", {}).get("title", "") not in ["", "🌐 全网资讯补充"])
                     for r in recommendations
                 )
-                
+
         if not recommendations or not has_real_content:
             logger.warning("没有推荐结果，跳过解释生成")
             retrieval_meta = state.get("retrieval_meta") or {}
@@ -2008,13 +2005,13 @@ class MusicRecommendationGraph:
             f"--- [步骤 3] 生成推荐文本({explanation_mode}) | 🤖 "
             f"{_explain_provider} / {_explain_model_name} ---"
         )
-        
+
         try:
             # 格式化推荐结果 (ToolOutput 已提供 raw_markdown)
             songs_text = ""
             if hasattr(raw_recommendations, "raw_markdown"):
                 songs_text = getattr(raw_recommendations, "raw_markdown", "")
-                
+
                 # ✅ 推荐结果已通过 raw_markdown 传递，无需额外处理
                 # 注意：不在这里记录“收听”历史，推荐 ≠ 收听，应由前端播放时触发
             else:
@@ -2025,26 +2022,26 @@ class MusicRecommendationGraph:
                         # 如果是由 search_songs_node 直接返回的检索引擎 markdown
                         songs_text += f"\n【检索详情报告 {i}】\n{rec['_raw_markdown']}\n"
                         continue
-                        
+
                     song = rec.get("song", rec)  # 可能是搜索结果或推荐结果
-                    
+
                     # 如果是 enhanced_recommendations 或 generate_recommendations 的检索结果
                     reason = rec.get("reason", "")
                     if reason and "混合引擎检索报告" in reason:
                         songs_text += f"\n【混合 RAG 综合分析】\n{reason}\n"
                         continue
-                        
+
                     title = song.get("title", "未知") if isinstance(song, dict) else getattr(song, "title", "未知")
                     artist = song.get("artist", "未知") if isinstance(song, dict) else getattr(song, "artist", "未知")
                     genre = song.get("genre", "未知") if isinstance(song, dict) else getattr(song, "genre", "未知")
-                    
-                    
+
+
                     # ✅ 不在推荐阶段记录“收听”历史，等用户实际播放时再记录
-                    
+
                     songs_text += f"{i}. 《{title}》 - {artist} ({genre})\n"
                     if reason:
                         songs_text += f"   推荐理由: {reason}\n"
-            
+
             if explanation_mode == "song_detail":
                 prompt_template = MUSIC_RECOMMENDATION_EXPLAINER_PROMPT
                 prompt_payload = {
@@ -2066,7 +2063,7 @@ class MusicRecommendationGraph:
                 }
 
             chain = ChatPromptTemplate.from_template(prompt_template) | get_explain_llm() | StrOutputParser()
-            
+
             explanation = ""
             async for chunk in chain.astream(prompt_payload):
                 explanation += chunk
@@ -2075,17 +2072,17 @@ class MusicRecommendationGraph:
                         await explanation_queue.put(chunk)
                     except Exception:
                         pass
-            
+
             # 通知队列流式结束
             if explanation_queue:
                 try:
                     await explanation_queue.put(None)  # 哨兵值
                 except Exception:
                     pass
-            
+
             # 构建完整的最终回复
             final_response = explanation
-            
+
             logger.info(f"成功生成推荐文本({explanation_mode}), 耗时 {_time.time()-_t0:.1f}s")
             try:
                 from services.teacher_log import log_teacher_example
@@ -2105,32 +2102,32 @@ class MusicRecommendationGraph:
                 )
             except Exception:
                 pass
-            
+
             # 偏好提取已解耦为独立节点 extract_preferences_node
-            
+
             return {
                 "explanation": explanation,
                 "final_response": final_response,
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "explanation_ms", _time.time() - _t0),
             }
-            
+
         except Exception as e:
             logger.error(f"生成解释失败: {str(e)}")
-            
+
             # 确保队列收到终止信号，防止前端消费者永久阻塞
             if explanation_queue:
                 try:
                     await explanation_queue.put(None)
                 except Exception:
                     pass
-            
+
             # 生成简单的备用回复
             songs_list = "\n".join([
                 f"{i}. 《{rec.get('song', rec).get('title', '未知')}》 - {rec.get('song', rec).get('artist', '未知')}"
                 for i, rec in enumerate(recommendations, 1)
             ])
-            
+
             return {
                 "explanation": "为你找到了以下歌曲：",
                 "final_response": f"为你找到了以下歌曲：\n\n{songs_list}",
@@ -2147,32 +2144,32 @@ class MusicRecommendationGraph:
         从 Neo4j 图谱记忆中获取用户偏好数据
         """
         logger.info("--- [步骤] 分析用户偏好 ---")
-        
+
         try:
             from schemas.music_state import UserPreferences
-            
+
             # 目前系统是一个单用户/本地演示型系统，默认给定一个 userID
             user_id = _state_user_id(state)
-            
+
             logger.info("向 Neo4j 查询本地用户图谱记忆...")
             memory_manager = UserMemoryManager()
-            
+
             # 真实请求可初始化用户；评测必须保持数据库只读。
             if not settings.eval_disable_side_effects:
                 memory_manager.ensure_user_exists(user_id, "本地用户")
-            
+
             # 读取历史偏好
             graph_prefs = memory_manager.get_user_preferences(user_id, limit=settings.user_preference_limit)
-            
+
             favorite_artists = graph_prefs.get("favorite_artists", [])
             favorite_genres = graph_prefs.get("favorite_genres", [])
-            
+
             # 此处获取的 favorite_songs 只是 title 数组
             favorite_songs_titles = graph_prefs.get("favorite_songs", [])
-            
+
             # 为了适配下方的推荐流，将纯字符串简单封装一下
             top_tracks_mock = [{"title": t, "artist": "未知", "genre": "未知"} for t in favorite_songs_titles]
-            
+
             # 默认偏好只服务首次本地体验，不得污染独立评测用户。
             if not favorite_artists and not settings.eval_disable_side_effects:
                 favorite_artists = ["周杰伦", "林俊杰"]
@@ -2183,9 +2180,9 @@ class MusicRecommendationGraph:
                     {"title": "七里香", "artist": "周杰伦", "genre": "Pop"},
                     {"title": "夜曲", "artist": "周杰伦", "genre": "R&B"}
                 ]
-            
+
             favorite_decades = ["2000s"]
-            
+
             preferences: UserPreferences = {
                 "favorite_genres": favorite_genres,
                 "favorite_artists": favorite_artists,
@@ -2195,15 +2192,15 @@ class MusicRecommendationGraph:
                 "activity_contexts": [],
                 "language_preference": "mixed"
             }
-            
+
             logger.info(f"分析完成: 偏好流派={favorite_genres}, 偏好艺术家={favorite_artists[:3]}")
-            
+
             return {
                 "user_preferences": preferences,
                 "favorite_songs": top_tracks_mock,
                 "step_count": state.get("step_count", 0) + 1
             }
-            
+
         except Exception as e:
             logger.error(f"分析用户偏好失败: {str(e)}", exc_info=True)
             # 如果失败，返回空偏好，继续执行
@@ -2215,27 +2212,28 @@ class MusicRecommendationGraph:
                     {"node": "analyze_user_preferences", "error": str(e)}
                 ]
             }
-    
+
     async def enhanced_recommendations_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点: 增强推荐 ⭐ NEW
         结合用户偏好生成推荐
         """
         logger.info("--- [步骤] 生成增强推荐 ---")
-        
+
         try:
             # 去除了对 MCP Adapter 的依赖
             user_preferences = state.get("user_preferences", {})
             parameters = state.get("intent_parameters", {})
-            
+            intent_type = str(state.get("intent_type") or "")
+
             recommendations = []
-            
+
             # 根据意图类型生成推荐
             if intent_type.startswith("create_playlist"):
                 # 创建歌单：结合用户偏好和意图参数
                 activity = parameters.get("activity", "")
                 mood = parameters.get("mood", "")
-                
+
                 # 使用用户 top tracks 作为种子
                 favorite_songs = state.get("favorite_songs", [])
                 seed_tracks = []
@@ -2243,11 +2241,11 @@ class MusicRecommendationGraph:
                     for song in favorite_songs[:5]:
                         if isinstance(song, dict) and song.get("spotify_id"):
                             seed_tracks.append(song["spotify_id"])
-                
+
                 # 使用用户偏好流派
                 favorite_genres = user_preferences.get("favorite_genres", [])
                 seed_genres = favorite_genres[:3] if favorite_genres else ["pop"]
-                
+
                 # 如果指定了活动或心情，调整流派
                 if activity:
                     activity_genre_map = {
@@ -2260,14 +2258,14 @@ class MusicRecommendationGraph:
                         if key in activity:
                             seed_genres = genres[:3]
                             break
-                
+
                 # 使用本地检索系统获取推荐 (替代原 Spotify 调用)
                 retriever = MusicHybridRetrieval(llm_client=get_llm())
                 query = f"流派:{','.join(seed_genres)} 活动:{activity} 心情:{mood}"
-                
+
                 logger.info(f"调用检索引擎进行增强推荐: {query}")
                 raw_hybrid_result = await retriever.retrieve(query, limit=settings.graph_search_limit)
-                
+
                 # 直接扩展到推荐列表
                 recommendations.extend(raw_hybrid_result)
             else:
@@ -2280,15 +2278,15 @@ class MusicRecommendationGraph:
                     recommendations = raw_hybrid_result.data if raw_hybrid_result.data else []
                 else:
                     recommendations = []
-            
+
             logger.info(f"生成了 {len(recommendations)} 条增强推荐")
             _schedule_recommended_knowledge_backfill(recommendations, context="enhanced_recommendations")
-            
+
             return {
                 "recommendations": recommendations,
                 "step_count": state.get("step_count", 0) + 1
             }
-            
+
         except Exception as e:
             logger.error(f"生成增强推荐失败: {str(e)}", exc_info=True)
             return {
@@ -2298,7 +2296,7 @@ class MusicRecommendationGraph:
                     {"node": "enhanced_recommendations", "error": str(e)}
                 ]
             }
-    
+
     def route_after_preferences(self, state: MusicAgentState) -> str:
         """
         路由函数: 分析用户偏好后的路由
@@ -2308,17 +2306,17 @@ class MusicRecommendationGraph:
             return "enhanced_recommendations"
         else:
             return "generate_recommendations"
-    
+
     async def create_playlist_node(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         节点: 创建播放列表 ⭐ NEW
         """
         logger.info("--- [步骤] 创建播放列表 ---")
-        
+
         try:
             # 彻底摒弃 Spotify 建单功能
             # 直接将现有 recommendation 格式化打包返回给前端即可
-            
+
             # 获取推荐结果
             recommendations = state.get("recommendations", [])
             if not recommendations:
@@ -2330,7 +2328,7 @@ class MusicRecommendationGraph:
                         {"node": "create_playlist", "error": "没有推荐结果"}
                     ]
                 }
-            
+
             # 提取歌曲
             songs = []
             for rec in recommendations:
@@ -2349,19 +2347,18 @@ class MusicRecommendationGraph:
                                 "preview_url": song_data.get("preview_url") or song_data.get("audio_url"),
                             }
                         )
-                    
-            
+
+
             if not songs:
                 logger.warning("无法提取歌曲信息")
                 return {
                     "playlist": None,
                     "step_count": state.get("step_count", 0) + 1
                 }
-            
+
             # 生成播放列表名称和描述
-            intent_type = state.get("intent_type", "")
             parameters = state.get("intent_parameters", {})
-            
+
             if "activity" in parameters:
                 playlist_name = f"适合{parameters['activity']}的歌单"
                 description = f"AI 为你推荐的适合{parameters['activity']}时听的音乐"
@@ -2371,7 +2368,7 @@ class MusicRecommendationGraph:
             else:
                 playlist_name = "AI 推荐歌单"
                 description = "AI 为你推荐的个性化音乐歌单"
-            
+
             # 创建播放列表 (已停用 Spotify API)
             # 由于已封锁 Spotify，直接返回本地生成的虚拟播放列表结构
             playlist_dict = {
@@ -2381,13 +2378,13 @@ class MusicRecommendationGraph:
                 "description": description,
                 "track_count": len(songs)
             }
-            
+
             logger.info(f"本地虚拟播放列表创建成功: {playlist_name}")
             return {
                 "playlist": playlist_dict,
                 "step_count": state.get("step_count", 0) + 1
             }
-                
+
         except Exception as e:
             logger.error(f"创建播放列表失败: {str(e)}", exc_info=True)
             return {
@@ -2397,7 +2394,7 @@ class MusicRecommendationGraph:
                     {"node": "create_playlist", "error": str(e)}
                 ]
             }
-    
+
     def route_after_recommendations(self, state: MusicAgentState) -> str:
         """
         路由函数: 生成推荐后的路由
@@ -2407,7 +2404,7 @@ class MusicRecommendationGraph:
             return "create_playlist"
         else:
             return "generate_explanation"
-    
+
     async def recall_graphzep_memory(self, state: MusicAgentState) -> Dict[str, Any]:
         """
         MemoryGateway 长期记忆召回。
@@ -2571,14 +2568,14 @@ class MusicRecommendationGraph:
         if settings.eval_disable_side_effects:
             logger.info("[EvalMode] 跳过长期记忆持久化与画像刷新")
             return {}
-        
+
         user_input = state.get("input", "")
         bot_response = state.get("final_response", "")
         user_id = _state_user_id(state)
-        
+
         if not user_input or not bot_response:
             return {}
-        
+
         try:
             from datetime import datetime as _dt
             from services.memory_gateway import get_memory_gateway
@@ -2592,7 +2589,7 @@ class MusicRecommendationGraph:
             )
             hour = _dt.now().hour
             time_label = "凌晨" if hour < 6 else "早晨" if hour < 9 else "上午" if hour < 12 else "中午" if hour < 14 else "下午" if hour < 18 else "傍晚" if hour < 21 else "深夜"
-            
+
             # 将场景标签注入用户消息，让长期记忆后端提取事实时能感知场景
             enriched_user_msg = user_input
             if scene_ctx:
@@ -2612,10 +2609,10 @@ class MusicRecommendationGraph:
                 )
             )
             logger.info(f"[MemoryGateway] 对话已投递到长期记忆旁路 (scene={scene_ctx or '无'})")
-            
+
         except Exception as e:
             logger.warning(f"[MemoryGateway] 持久化投递失败（不影响用户）: {e}")
-        
+
         # ★ Profile Synthesizer: 对话计数 + 自动触发画像刷新
         try:
             from services.profile_synthesizer import get_profile_synthesizer, trigger_portrait_refresh
@@ -2625,22 +2622,22 @@ class MusicRecommendationGraph:
                 asyncio.create_task(trigger_portrait_refresh(user_id))
         except Exception as synth_err:
             logger.warning(f"[ProfileSynth] 画像刷新触发失败（不影响主流程）: {synth_err}")
-        
+
         return {}
 
     def _build_graph(self) -> CompiledStateGraph:
         """构建工作流图"""
         logger.info("开始构建音乐推荐工作流图...")
-        
+
         workflow = StateGraph(MusicAgentState)
-        
+
         # ==== MemoryGateway 记忆节点（节点名保留 graphzep 兼容旧拓扑）====
         workflow.add_node("recall_graphzep_memory", self.recall_graphzep_memory)
         workflow.add_node("persist_to_graphzep", self.persist_to_graphzep)
-        
+
         # ==== 偏好提取节点（从 generate_explanation 解耦） ====
         workflow.add_node("extract_preferences", self.extract_preferences_node)
-        
+
         # 添加节点
         workflow.add_node("analyze_intent", self.analyze_intent)
         workflow.add_node("acquire_online_music", self.acquire_online_music_node)  # 数据飞轮
@@ -2654,13 +2651,13 @@ class MusicRecommendationGraph:
         workflow.add_node("clarification", self.clarification_node)
         workflow.add_node("web_disabled", self.web_disabled_node)
         workflow.add_node("generate_explanation", self.generate_explanation)
-        
+
         # 设置入口点为 MemoryGateway 记忆召回
         workflow.set_entry_point("recall_graphzep_memory")
-        
+
         # 召回完成后 → 意图分析
         workflow.add_edge("recall_graphzep_memory", "analyze_intent")
-        
+
         # 条件边：根据意图路由
         workflow.add_conditional_edges(
             "analyze_intent",
@@ -2676,7 +2673,7 @@ class MusicRecommendationGraph:
                 "web_disabled": "web_disabled",
             }
         )
-        
+
         # 用户偏好分析后的路由
         workflow.add_conditional_edges(
             "analyze_user_preferences",
@@ -2686,7 +2683,7 @@ class MusicRecommendationGraph:
                 "generate_recommendations": "generate_recommendations"
             }
         )
-        
+
         # 增强推荐后的路由
         workflow.add_conditional_edges(
             "enhanced_recommendations",
@@ -2696,7 +2693,7 @@ class MusicRecommendationGraph:
                 "generate_explanation": "generate_explanation"
             }
         )
-        
+
         # 搜索和推荐后生成解释
         workflow.add_edge("acquire_online_music", "generate_explanation")
         # search_songs 后根据是否需要降级联网进行条件路由
@@ -2710,10 +2707,10 @@ class MusicRecommendationGraph:
         )
         workflow.add_edge("web_fallback", "generate_explanation")
         workflow.add_edge("generate_recommendations", "generate_explanation")
-        
+
         # 创建播放列表后生成解释
         workflow.add_edge("create_playlist", "generate_explanation")
-        
+
         # ======================================================================
         # 出口管线（V2 解耦版）:
         #   generate_explanation → extract_preferences → persist_to_graphzep → END
@@ -2725,7 +2722,7 @@ class MusicRecommendationGraph:
         workflow.add_edge("clarification", "persist_to_graphzep")
         workflow.add_edge("web_disabled", "persist_to_graphzep")
         workflow.add_edge("persist_to_graphzep", END)
-        
+
         # 编译图（注入 checkpointer 实现状态持久化）
         if self.checkpointer:
             app = workflow.compile(checkpointer=self.checkpointer)
@@ -2733,6 +2730,6 @@ class MusicRecommendationGraph:
         else:
             app = workflow.compile()
             logger.info("音乐推荐工作流图构建完成 (⚠️ 无 Checkpoint，每次对话独立)")
-        
+
         return app
 

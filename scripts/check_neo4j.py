@@ -29,7 +29,7 @@ print("关联的节点和关系:")
 print("=" * 60)
 results2 = client.execute_query(
     """MATCH (s:Song {title: 'Running Up That Hill'})-[r]->(n)
-    RETURN type(r) AS rel_type, labels(n) AS node_labels, 
+    RETURN type(r) AS rel_type, labels(n) AS node_labels,
            CASE WHEN 'name' IN keys(n) THEN n.name ELSE n.title END AS node_name
     """,
     {}

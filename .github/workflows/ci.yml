@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, dev]
+    branches: [main, master, dev, "phase*"]
   pull_request:
     branches: [main, master]
 
@@ -27,10 +27,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff pytest pydantic pydantic-settings python-dotenv langchain-core langgraph neo4j aiohttp numpy
 
-      - name: Ruff Lint Check
+      - name: Ruff Lint Check (whole repo)
         run: |
-          ruff check tests/ schemas/ --output-format=github
+          ruff check . --output-format=github
 
       - name: Run Unit Tests
         run: |
           python -m pytest tests/unit/ -v --tb=short
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install and build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (full history for scan)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -13,7 +13,6 @@
 #   - 降级处理：模型加载/推理异常时返回原始列表不影响主流程
 # ============================================================
 
-import logging
 from typing import List, Dict, Any, Optional
 
 from config.logging_config import get_logger

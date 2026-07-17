@@ -1,5 +1,7 @@
 """Cross-check: audio files on disk vs Song nodes in Neo4j"""
-import sys, os, glob
+import sys
+import os
+import glob
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from retrieval.neo4j_client import get_neo4j_client

@@ -5,8 +5,7 @@
 """
 import asyncio
 import json
-import logging
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -184,9 +183,10 @@ async def save_user_profile(request: UserProfileRequest):
         # 用户声明的偏好权重最高，应尽快更新到动态画像中
         try:
             from services.profile_synthesizer import trigger_portrait_refresh
-            import asyncio
+            # 注意：不要在此函数内 `import asyncio` —— 局部导入会把函数内更早的
+            # asyncio 引用变成未绑定局部变量，曾导致长期记忆投递静默失败。
             asyncio.create_task(trigger_portrait_refresh(request.user_id))
-            logger.info(f"[UserProfile] 已触发画像刷新（用户主动设置偏好）")
+            logger.info("[UserProfile] 已触发画像刷新（用户主动设置偏好）")
         except Exception as e:
             logger.warning(f"[UserProfile] 画像刷新触发失败: {e}")
 

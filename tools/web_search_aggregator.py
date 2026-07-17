@@ -2,7 +2,7 @@ import asyncio
 import os
 import aiohttp
 import json
-from typing import List, Dict, Any
+from typing import List, Dict
 from langchain_core.tools import tool
 from dotenv import load_dotenv
 
@@ -127,7 +127,7 @@ async def fetch_tavily_search(query: str, session: aiohttp.ClientSession) -> Lis
     if not api_key:
         logger.warning("TAVILY_API_KEY not found in env or settings.")
         return []
-        
+
     url = "https://api.tavily.com/search"
     headers = {
         "Content-Type": "application/json",
@@ -140,7 +140,7 @@ async def fetch_tavily_search(query: str, session: aiohttp.ClientSession) -> Lis
         "include_answer": True,
         "max_results": settings.web_search_max_results
     }
-    
+
     try:
         logger.info(f"🚀 发送 Tavily Search 请求... Query: {query}")
         async with session.post(url, headers=headers, json=payload, timeout=settings.web_search_timeout) as response:
@@ -148,13 +148,13 @@ async def fetch_tavily_search(query: str, session: aiohttp.ClientSession) -> Lis
             if response.status != 200:
                 logger.error(f"❌ Tavily Search failed with status {response.status}. Resp: {resp_text[:200]}")
                 return []
-                
+
             data = json.loads(resp_text)
             results = []
-            
+
             if "answer" in data and data["answer"]:
                 results.append({"title": "Tavily AI 实时解答", "content": data["answer"], "url": "https://tavily.com", "source": "Tavily_AI_Answer"})
-                
+
             for item in data.get("results", []):
                 results.append({
                     "title": item.get("title", ""),
@@ -162,19 +162,19 @@ async def fetch_tavily_search(query: str, session: aiohttp.ClientSession) -> Lis
                     "url": item.get("url", ""),
                     "source": "Tavily_Web_Search"
                 })
-            
+
             logger.info(f"✅ Tavily Search success. Found {len(results)} items.")
             return results
-            
+
     except Exception as e:
         logger.warning(f"❌ Tavily Search exception: {e}")
-        
+
     return []
 
 async def _federated_search_async(query: str) -> str:
     """异步并发请求所有的搜索引擎"""
     logger.info(f"🌐 Initiating Federated Web Search for: {query}")
-    
+
     async with aiohttp.ClientSession() as session:
         # 并发派发任务（SearxNG 未启动时自动跳过，不阻塞）
         tasks = [
@@ -182,13 +182,13 @@ async def _federated_search_async(query: str) -> str:
             fetch_tavily_search(query, session),
             fetch_searxng_search(query, session),   # 自建 SearxNG 聚合搜索
         ]
-        
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
     # 结果拼装去重
     combined_docs = []
     seen_urls = set()
-    
+
     for res in results:
         if isinstance(res, list):
             for item in res:
@@ -198,15 +198,15 @@ async def _federated_search_async(query: str) -> str:
                     combined_docs.append(item)
                 elif not url: # 如果没有url也加进去（如纯文本总结）
                     combined_docs.append(item)
-                    
+
     if not combined_docs:
         return "网络搜索未能找到相关有效信息。"
-        
+
     # 格式化输出为纯文本给大模型食用
     formatted_str = "[网络搜索结果聚合]\n"
     for idx, doc in enumerate(combined_docs):
         formatted_str += f"{idx+1}. [{doc['source']}] {doc['title']}\n摘要: {doc['content']}\n"
-        
+
     logger.info(f"✅ Federated Search found {len(combined_docs)} snippets")
     return formatted_str
 
@@ -215,10 +215,10 @@ async def _federated_search_async(query: str) -> str:
 def multi_source_web_search(query: str) -> str:
     """
     Multi-source Federated Web Search Tool (Internet Search).
-    Use this tool when the user asks about the latest music trends, new album releases, 
+    Use this tool when the user asks about the latest music trends, new album releases,
     artist news, concerts, or any modern/real-world information that might not be in the static database.
     It concurrently searches multiple engines (e.g. Zhipu and Tavily) and returns aggregated summaries.
-    
+
     Args:
         query: The natural language search query (e.g. "林俊杰最近一场演唱会在哪", "Taylor swift 2026 new song")
     """
@@ -229,7 +229,7 @@ def multi_source_web_search(query: str) -> str:
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
     if loop.is_running():
         # 如果当前环境就在一个循环里 (如 jupyter 或 fastapi main thread)
         # 用 nest_asyncio 解决或是新开线程

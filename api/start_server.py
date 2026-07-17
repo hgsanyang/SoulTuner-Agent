@@ -26,27 +26,27 @@ def main():
     print("🎵 音乐推荐API服务器 - 启动中...")
     print("=" * 60)
     print()
-    
+
     # 检查环境变量
     if not (os.getenv("SILICONFLOW_API_KEY") or os.getenv("SiliconFlow_API_KEY") or os.getenv("DASHSCOPE_API_KEY")):
         print("❌ 警告: 未设置可用的 LLM API Key")
         print("   某些功能可能无法正常工作")
         print()
-    
+
     port = int(os.getenv("API_PORT", "8501"))
     host = os.getenv("API_HOST", "0.0.0.0")
-    
+
     print(f"📡 服务器地址: http://{host}:{port}")
     print(f"📚 API文档: http://{host}:{port}/docs")
     print("按 Ctrl+C 停止服务")
     print("-" * 60)
     print()
-    
+
     # 启动服务器
     try:
         # 确保在项目根目录运行
         os.chdir(project_root)
-        
+
         # 使用字符串导入，uvicorn会自动处理
         uvicorn.run(
             "api.server:app",

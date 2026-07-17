@@ -34,12 +34,12 @@ MUQ_EMBEDDING_DIM = 512
 def create_vector_indexes():
     """
     【V2 升级】创建 Neo4j 原生向量索引
-    
+
     创建三个索引：    1. song_m2d2_index: 基于 M2D2 跨模态向量的索引（备用文本搜音频）
     2. song_omar_index: 基于 OMAR 纯音频向量的索引（相似听感搜索用）
     3. song_muq_index: 基于 MuQ-MuLan 音乐文本向量的索引（主文本搜音频）    """
     client = get_neo4j_client()
-    
+
     # ---- 创建 M2D2 向量索引 (跨模态检索) ----
     logger.info(f"[Schema V2] 创建 M2D2 向量索引 (dim={M2D2_EMBEDDING_DIM})...")
     try:
@@ -59,7 +59,7 @@ def create_vector_indexes():
             logger.info("[Schema V2] song_m2d2_index 已存在，跳过")
         else:
             logger.error(f"[Schema V2] 创建 M2D2 索引失败: {e}")
-    
+
     # ---- 创建 OMAR 向量索引 (纯音频相似度) ----
     logger.info(f"[Schema V2] 创建 OMAR 向量索引 (dim={OMAR_EMBEDDING_DIM})...")
     try:
@@ -104,9 +104,9 @@ def create_vector_indexes():
 def verify_indexes():
     """验证向量索引状态"""
     client = get_neo4j_client()
-    
+
     result = client.execute_query("SHOW INDEXES YIELD name, type, state WHERE type = 'VECTOR'")
-    
+
     if result:
         logger.info("[Schema V2] 当前向量索引状态")
         for idx in result:
@@ -118,28 +118,28 @@ def verify_indexes():
 def clean_old_data():
     """
     【V2 升级】清理旧版 MTG/Kaggle 数据
-    
+
     用户已确认：旧数据集（MTG-Jamendo, Kaggle 等）可以全部丢弃。
     保留 User 节点和 Artist/Genre 元数据结构。
     """
     client = get_neo4j_client()
-    
+
     # 统计当前数据量
     count_result = client.execute_query("MATCH (s:Song) RETURN count(s) AS song_count")
     song_count = count_result[0].get("song_count", 0) if count_result else 0
     logger.info(f"[Schema V2] 当前 Song 节点数量: {song_count}")
-    
+
     if song_count == 0:
         logger.info("[Schema V2] 数据库为空，无需清理。")
         return
-    
+
     # 删除所有 Song 节点及其关联边
     logger.info(f"[Schema V2] 正在清理 {song_count} 首旧歌曲数据...")
     client.execute_query("""
     MATCH (s:Song)
     DETACH DELETE s
     """)
-    
+
     # 清理孤立的 Genre/Artist 节点（没有关联边的）
     client.execute_query("""
     MATCH (g:Genre) WHERE NOT (g)<-[:BELONGS_TO_GENRE]-()
@@ -149,7 +149,7 @@ def clean_old_data():
     MATCH (a:Artist) WHERE NOT (a)<-[:PERFORMED_BY]-()
     DELETE a
     """)
-    
+
     logger.info("[Schema V2] ✅ 旧数据清理完毕！数据库已重置为空白状态。")
 
 
@@ -276,10 +276,10 @@ def add_song_with_embeddings(
     preview_url: str = ""
 ):
     """
-    【V2 升级】写入带向量的 Song 节点（示例方法，供 data_flywheel 使用）    
+    【V2 升级】写入带向量的 Song 节点（示例方法，供 data_flywheel 使用）
     创建 Song 节点并附带双模型 Embedding，同时建立与 Artist/Genre 的关联边。    """
     client = get_neo4j_client()
-    
+
     params = {
         "title": title,
         "artist_name": artist,
@@ -287,14 +287,14 @@ def add_song_with_embeddings(
         "preview_url": preview_url,
         "auto_tags": auto_tags or {},
     }
-    
+
     # 动态构建 SET 子句
     set_parts = ["s.title = $title", "s.preview_url = $preview_url", "s.auto_tags = $auto_tags"]
-    
+
     if m2d2_embedding:
         params["m2d2_embedding"] = m2d2_embedding
         set_parts.append("s.m2d2_embedding = $m2d2_embedding")
-    
+
     if omar_embedding:
         params["omar_embedding"] = omar_embedding
         set_parts.append("s.omar_embedding = $omar_embedding")
@@ -302,23 +302,23 @@ def add_song_with_embeddings(
     if muq_embedding:
         params["muq_embedding"] = muq_embedding
         set_parts.append("s.muq_embedding = $muq_embedding")
-    
+
     set_clause = ", ".join(set_parts)
-    
+
     query = f"""
     MERGE (s:Song {{title: $title, artist: $artist_name}})
     SET {set_clause}, s.updated_at = timestamp()
-    
+
     MERGE (a:Artist {{name: $artist_name}})
     MERGE (s)-[:PERFORMED_BY]->(a)
-    
+
     WITH s
     FOREACH (_ IN CASE WHEN $genre_name <> '' THEN [1] ELSE [] END |
         MERGE (g:Genre {{name: $genre_name}})
         MERGE (s)-[:BELONGS_TO_GENRE]->(g)
     )
     """
-    
+
     client.execute_query(query, params)
 
 

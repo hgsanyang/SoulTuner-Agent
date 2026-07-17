@@ -17,7 +17,6 @@ SoulTuner-Agent 模型权重一键下载脚本
 import os
 import sys
 import zipfile
-import shutil
 import urllib.request
 from pathlib import Path
 
@@ -119,7 +118,7 @@ def download_m2d_clap():
         print(f"  Zip already exists: {zip_path}")
 
     # 解压
-    print(f"  Extracting...")
+    print("  Extracting...")
     try:
         with zipfile.ZipFile(str(zip_path), "r") as zf:
             zf.extractall(str(M2D_CLAP_DIR))
@@ -156,7 +155,7 @@ def download_bert():
         AutoTokenizer.from_pretrained(HF_BERT_MODEL)
         print("  Downloading model weights...")
         AutoModel.from_pretrained(HF_BERT_MODEL)
-        print(f"  [OK] BERT download complete")
+        print("  [OK] BERT download complete")
     except ImportError:
         print("  [WARN] transformers not installed, skipping BERT pre-download")
         print("  (Will auto-download on first startup)")
@@ -187,26 +186,27 @@ def download_omar_rq():
     try:
         from huggingface_hub import snapshot_download
         snapshot_download(OMAR_MODEL_ID)
-        print(f"  [OK] OMAR-RQ download complete")
+        print("  [OK] OMAR-RQ download complete")
     except ImportError:
         try:
             # fallback: use omar_rq package directly
             print("  Trying via omar_rq package...")
             from omar_rq import get_model
-            import functools, torch
+            import functools
+            import torch
             _orig = torch.load
             torch.load = functools.partial(_orig, weights_only=False)
             try:
                 get_model(model_id=OMAR_MODEL_ID, device="cpu")
             finally:
                 torch.load = _orig
-            print(f"  [OK] OMAR-RQ download complete")
+            print("  [OK] OMAR-RQ download complete")
         except Exception as e2:
             print(f"  [WARN] Download failed: {e2}")
-            print(f"  Install omar-rq first: pip install omar-rq")
+            print("  Install omar-rq first: pip install omar-rq")
     except Exception as e:
         print(f"  [WARN] Download failed: {e}")
-        print(f"  (Will auto-download on first use during data ingestion)")
+        print("  (Will auto-download on first use during data ingestion)")
 
     print()
     return True
@@ -235,11 +235,11 @@ def print_summary():
 
 if __name__ == "__main__":
     print_header()
-    
+
     ok1 = download_m2d_clap()
     ok2 = download_bert()
     ok3 = download_omar_rq()
-    
+
     if ok1 and ok2 and ok3:
         print_summary()
     else:

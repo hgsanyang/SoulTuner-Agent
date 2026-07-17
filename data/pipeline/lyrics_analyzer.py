@@ -34,7 +34,7 @@ import time
 import argparse
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 
 # 将项目根目录加入 sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -275,7 +275,7 @@ def main():
     lrc_files = list(Path(LYRICS_DIR).glob("*.lrc"))
     pending = [f for f in lrc_files if f.name not in processed_files]
 
-    print(f"\n📊 歌曲统计:")
+    print("\n📊 歌曲统计:")
     print(f"   总歌词文件: {len(lrc_files)}")
     print(f"   已处理:     {len(processed_files)}")
     print(f"   待处理:     {len(pending)}")
@@ -285,10 +285,10 @@ def main():
         return
 
     if args.dry_run:
-        print(f"\n📋 待处理歌曲列表:")
+        print("\n📋 待处理歌曲列表:")
         for i, f in enumerate(pending, 1):
             print(f"   {i}. {f.name}")
-        print(f"\n（使用 --dry-run=false 开始处理）")
+        print("\n（使用 --dry-run=false 开始处理）")
         return
 
     # 2. 分批处理
@@ -327,7 +327,7 @@ def main():
                 save_results(all_results)
                 print(f"   ✅ 成功提取 {len(batch_results)} 首标签 ({elapsed:.1f}s)\n")
             else:
-                print(f"   ❌ 本批次解析失败，跳过\n")
+                print("   ❌ 本批次解析失败，跳过\n")
                 # 保存原始响应以便调试
                 debug_path = os.path.join(OUTPUT_DIR, f"debug_batch_{batch_idx + 1}.txt")
                 with open(debug_path, 'w', encoding='utf-8') as f:

@@ -20,7 +20,6 @@ import asyncio
 import json
 import re
 import sys
-from dataclasses import asdict
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path

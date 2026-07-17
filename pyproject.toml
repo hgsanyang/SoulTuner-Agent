@@ -31,6 +31,14 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports in __init__ are ok
 "tests/*" = ["F401", "F841"]  # test files: allow unused imports/vars
+# dotenv/sys.path 引导必须先于业务 import——刻意的导入顺序
+"api/*" = ["E402"]
+"scripts/*" = ["E402"]
+"data/pipeline/*" = ["E402"]
+"tools/web_search_aggregator.py" = ["E402"]
+"tools/graphrag_search.py" = ["E402"]
+# vendor 自上游 nttcslab/m2d 的可移植模块：保持与上游逐字可比对，不做本仓风格化
+"retrieval/portable_m2d.py" = ["E7", "E722", "E402", "F401"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -79,7 +79,7 @@ def reset_profile(client, dry_run: bool = False):
            u.other_preferences
     """
     client.execute_query(clear_query, {"uid": USER_ID})
-    print(f"  🗑️  用户画像: 已清除所有偏好设置")
+    print("  🗑️  用户画像: 已清除所有偏好设置")
 
 
 def main():
@@ -121,10 +121,10 @@ def main():
     print(f"\n{'='*50}")
     if args.dry_run:
         print(f"📋 预览完成，共发现 {total} 条待清理记录")
-        print(f"   去掉 --dry-run 参数可真正执行清理")
+        print("   去掉 --dry-run 参数可真正执行清理")
     else:
         print(f"✅ 清理完成，共删除 {total} 条记录")
-        print(f"   前端 localStorage 需手动清除（浏览器 F12 → Application → Clear site data）")
+        print("   前端 localStorage 需手动清除（浏览器 F12 → Application → Clear site data）")
     print(f"{'='*50}\n")
 
 
