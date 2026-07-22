@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-333_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-520+_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -31,7 +31,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 - 🗣️ **Describe what you want to hear in natural language** — "I'm feeling really down today, I just want some quiet time alone." The system automatically identifies your emotion and scenario to recommend music that fits your current state.
 - 🧠 **Understands you better the more you use it** — Every like, save, skip, and conversation silently builds your personalized music profile, making the next recommendation more accurate over time.
-- 🌐 **Local library not enough? Real-time web search fallback** — The Catalog Gap Detector decides when local inventory or metadata is insufficient and supplements candidates online.
+- 🌐 **Local library not enough? Evidence-driven web discovery** — An optional supplement lane runs in parallel with local recall, using the planner's native web search to find songs backed by charts, community consensus, or curated playlists; a Catalog Gap fallback also kicks in when local inventory or metadata falls short.
 - 🗺️ **Immersive Music Journey** — Describe a story or scenario, and the AI will orchestrate a complete music journey with emotional arcs.
 - ♻️ **Discover → Stage → Ingest** — Found a good song? It downloads to a "Pending" staging area first. Preview, then confirm ingestion with automatic acoustic analysis.
 
@@ -129,11 +129,11 @@ If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
 |---|---|
 | 🔀 **Hybrid RAG** | Two content recall paths (graph / dense), weighted RRF fusion; personalization and long-tail exploration are post-recall score adjustments |
 | 🎵 **Multimodal Text-to-Music** | MuQ-MuLan is the Chinese-strong primary recall model, M2D-CLAP is the fallback, and OMAR-RQ adds acoustic similarity |
-| 🧠 **Long-term Memory** | MemoryGateway: Neo4j behavior hot path + optional GraphZep/Mem0 sidecars, with editable and clearable learned preferences |
+| 🧠 **Long-term Memory** | MemoryGateway: an append-only local L0/L1/L2 ledger (evidence-bound, TTL, LLM-named scene scopes) + Neo4j behavior hot path; BGE semantic relevance with fail-closed injection; every preference is viewable / editable / deletable |
 | 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
 | 🤖 **Smart Intent Recognition** | Layered intent plan: `hard_constraints / soft_intent / hints` + multi-turn inheritance |
-| 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j hot path + long-term memory sidecars |
-| 🌐 **Web Search Fallback** | Enabled by default; mixes a few online candidates when local results are healthy, and triggers online candidate discovery + playable resolution when the catalog falls short |
+| 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j hot path + local memory ledger |
+| 🌐 **Web Discovery** | Toggle (on by default, fully local when off); an evidence-driven supplement lane runs in parallel with local recall — the planner's native web search finds songs backed by charts / community consensus / playlists — deduped and playability-checked, plus a Catalog Gap fallback when local inventory falls short |
 | 🎼 **Music Journey** | LLM Story → Emotion breakdown → Step-by-step retrieval, real-time SSE streaming |
 | ♻️ **Data Flywheel** | Download → Stage → Preview → Confirm Ingest → Ingest queue → Tag extraction → Vector encoding → Neo4j |
 | 📋 **Library Mgmt** | Pending staging area + queue status/retry + My Library full-graph management (search/play/tag edit/delete) |
@@ -171,7 +171,7 @@ If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  Hybrid Retrieval Engine                                            │
 │                                                                     │
-│  GraphRAG · Dense KNN · Catalog Gap / Web Fallback                 │
+│  GraphRAG · Dense KNN · Evidence-driven Web Lane · Catalog Gap     │
 │         └──────────────────┬───────────────────┘                   │
 │                            ▼                                        │
 │              Weighted RRF Fusion (keeps per-source ranks)            │
@@ -187,7 +187,7 @@ If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
                                │
 ┌──────────────────────────────▼──────────────────────────────────────┐
 │  Storage Layer                                                      │
-│  Neo4j (Graph + Vectors + Memory Hot Path) · Optional Memory Sidecars │
+│  Neo4j (Graph + Vectors + Memory Hot Path) · Local L0/L1/L2 Ledger (SQLite) │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -201,8 +201,8 @@ If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
 | **Graph Database** | Neo4j 5.x (Native Vector Index + Graph Relations + User Behavior direct-write) |
 | **Audio Embeddings** | MuQ-MuLan (primary text-to-music, 512d) + M2D-CLAP (semantic fallback/rerank, 768d) + OMAR-RQ (acoustic auxiliary, 1024d) |
 | **LLMs** | Default `dashscope / qwen3.7-plus`; other providers are advanced overrides |
-| **Long-term Memory**| MemoryGateway (Neo4j hot path + optional GraphZep/Mem0 episodic sidecars) |
-| **Web Search** | Catalog Gap Detector + online candidate discovery + playable resolution |
+| **Long-term Memory**| MemoryGateway (append-only local L0/L1/L2 SQLite ledger + Neo4j hot path + BGE relevance); GraphZep/Mem0 remain optional, non-default, isolated legacy adapters |
+| **Web Discovery** | Evidence-driven parallel supplement lane (planner-native web search) + Catalog Gap fallback + playable resolution |
 | **Ranking Algorithm**| Content-anchor rerank (Semantic+Acoustic) + bounded post-recall adjustments + Thompson Sampling + MMR |
 | **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
 | **Containerization** | Docker Compose CPU/GPU entrypoints; CPU includes the full online stack, GPU adds the ingestion worker |
@@ -273,7 +273,7 @@ stateDiagram-v2
 
 ### Memory And Feedback
 
-MemoryGateway handles user profile, behavior feedback, and optional long-term memory sidecars. Neo4j stores structured events such as likes, saves, skips, and dislikes; GraphZep/Mem0 are optional extensions and do not block the main recommendation path.
+MemoryGateway handles user profile, behavior feedback, and long-term memory. By default it uses a local append-only L0/L1/L2 ledger (raw events → explicit preferences → evidence-bound inferred preferences, with TTL, scene scopes, and per-item edit/delete) plus a Neo4j structured-behavior hot path; relevance is scored by a local BGE model and fails closed when unavailable. GraphZep/Mem0 remain optional, non-default, isolated legacy adapters and never enter the default path.
 
 Frontend profile settings, song feedback, and slate-level feedback can gradually affect ranking, but they do not override the relevance of the current query.
 
@@ -324,7 +324,7 @@ Frontend profile settings, song feedback, and slate-level feedback can gradually
 │   └── components/Navigation/  # Nav layout views
 │   └── app/library/            # Library pages (Pending / My Library / Likes / Collections)
 │
-├── graphzep_service/           # Optional GraphZep memory sidecar
+├── graphzep_service/           # Legacy GraphZep adapter (optional, non-default)
 ├── deploy/legacy/              # Legacy single-service compose files
 ├── scripts/dev/                # Local step-by-step debug startup scripts
 ├── tests/                      # Testing & Eval
