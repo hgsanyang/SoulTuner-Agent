@@ -9,6 +9,10 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
+from services.memory_links import (
+    RETRIEVAL_EXPAND_RELATIONS,
+    episode_temporal,
+)
 from services.memory_models import MemoryLayer, MemoryRecord
 
 
@@ -123,12 +127,22 @@ class MemoryRelevanceRetriever:
         include_episodic: bool = False,
         now_ms: int | None = None,
         scene: str = "",
+        trace: dict | None = None,
     ) -> list[RetrievedMemory]:
         now = int(now_ms if now_ms is not None else time.time() * 1000)
         current_scene = str(scene or "").strip()
         # The current scene (structured planner scenario, free text) augments
         # the query so scene-fit memories rank higher purely through semantics.
         effective_query = f"{query} {current_scene}".strip() if current_scene else str(query or "")
+        records = list(records)
+        by_canonical = {_canonical_id(record): record for record in records}
+        # A newer memory that CONTRADICTS an older one suppresses the older one
+        # at read time (write side never silently deletes it).
+        contradicted_ids = _contradicted_ids(records)
+
+        # silence-decision accounting for the memory trace (see MV3-5)
+        considered = expired = contradicted = below_threshold = 0
+
         eligible: list[tuple[MemoryRecord, float]] = []
         for record in records:
             if record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
@@ -144,6 +158,25 @@ class MemoryRelevanceRetriever:
                 raise ValueError("semantic memory scorer returned an invalid score count")
         ranked: list[RetrievedMemory] = []
         for index, (record, layer_prior) in enumerate(eligible):
+            considered += 1
+            if _canonical_id(record) in contradicted_ids:
+                contradicted += 1
+                continue
+            # Episodic events carry a real occurrence time and an optional
+            # hard validity window; an expired event is never injected.
+            if record.layer == MemoryLayer.EPISODIC:
+                occurred_at, valid_until = episode_temporal(
+                    record.payload, now_ms=now, created_at=record.created_at
+                )
+                if valid_until is not None and now > valid_until:
+                    expired += 1
+                    continue
+                age_basis = occurred_at
+                half_life = EPISODIC_RECENCY_HALF_LIFE_DAYS
+            else:
+                age_basis = record.created_at
+                half_life = 45.0
+
             text = _record_text(record)
             relevance = (
                 semantic_scores[index]
@@ -152,16 +185,9 @@ class MemoryRelevanceRetriever:
             )
             threshold = self.layer_thresholds.get(record.layer, self.min_relevance)
             if effective_query.strip() and relevance < threshold:
+                below_threshold += 1
                 continue
-            age_days = max(0.0, (now - record.created_at) / 86_400_000)
-            # Episodic events lose applicability much faster than stable
-            # preferences; this keeps current constraints dominant over
-            # stale episodes without a hard cutoff.
-            half_life = (
-                EPISODIC_RECENCY_HALF_LIFE_DAYS
-                if record.layer == MemoryLayer.EPISODIC
-                else 45.0
-            )
+            age_days = max(0.0, (now - age_basis) / 86_400_000)
             recency = math.exp(-age_days / half_life)
             score = (
                 0.68 * relevance
@@ -189,7 +215,81 @@ class MemoryRelevanceRetriever:
                 per_layer[item.record.layer] += 1
                 bounded.append(item)
             ranked = bounded
-        return ranked[: max(1, min(int(max_facts), 20))]
+        limit = max(1, min(int(max_facts), 20))
+        selected = ranked[:limit]
+        expanded = self._expand_via_links(
+            selected, by_canonical=by_canonical, contradicted_ids=contradicted_ids, limit=limit
+        )
+        if trace is not None:
+            trace.update({
+                "considered": considered,
+                "suppressed_contradicted": contradicted,
+                "suppressed_expired": expired,
+                "suppressed_below_threshold": below_threshold,
+                "selected": len(selected),
+                "added_via_link": len(expanded) - len(selected),
+                "stayed_silent": considered > 0 and len(expanded) == 0,
+            })
+        return expanded
+
+    def _expand_via_links(
+        self,
+        selected: list[RetrievedMemory],
+        *,
+        by_canonical: dict[str, MemoryRecord],
+        contradicted_ids: set[str],
+        limit: int,
+        max_expand: int = 2,
+    ) -> list[RetrievedMemory]:
+        """Bounded A-MEM expansion: pull in strongly-linked memories.
+
+        Only same_scene/refines links are followed, only to already-known
+        active records, never into contradicted/tombstoned targets, and never
+        more than ``max_expand`` extra items. Expansion enriches retrieval; it
+        cannot inject a memory that failed the relevance/safety gates above by
+        more than this bounded, audited amount.
+        """
+        chosen_ids = {_canonical_id(item.record) for item in selected}
+        added: list[RetrievedMemory] = []
+        for item in selected:
+            for link in (item.record.payload.get("links") or []):
+                if len(added) >= max_expand:
+                    break
+                relation = str(link.get("relation") or "")
+                if relation not in {r.value for r in RETRIEVAL_EXPAND_RELATIONS}:
+                    continue
+                target_id = str(link.get("target_memory_id") or "")
+                if not target_id or target_id in chosen_ids or target_id in contradicted_ids:
+                    continue
+                target = by_canonical.get(target_id)
+                if target is None:
+                    continue
+                chosen_ids.add(target_id)
+                added.append(
+                    RetrievedMemory(
+                        target,
+                        item.score * 0.9,
+                        item.relevance,
+                        f"via_link({relation}) from {_canonical_id(item.record)}",
+                    )
+                )
+        return (selected + added)[: limit + max_expand]
+
+
+def _canonical_id(record: MemoryRecord) -> str:
+    return str(record.payload.get("canonical_memory_id") or record.record_id)
+
+
+def _contradicted_ids(records: list[MemoryRecord]) -> set[str]:
+    """Ids that an active memory's `contradicts` link marks for suppression."""
+    contradicted: set[str] = set()
+    for record in records:
+        for link in (record.payload.get("links") or []):
+            if str(link.get("relation")) == "contradicts":
+                target = str(link.get("target_memory_id") or "").strip()
+                if target:
+                    contradicted.add(target)
+    return contradicted
 
 
 def _record_text(record: MemoryRecord) -> str:

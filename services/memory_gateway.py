@@ -742,6 +742,7 @@ class MemoryGateway:
         backend_results: dict[str, str] = {}
         retrieved_records: list[dict[str, Any]] = []
         relevance_error = ""
+        silence_trace: dict[str, Any] = {}
         if self.episodic_adapters:
             results = await asyncio.gather(
                 *[
@@ -766,6 +767,7 @@ class MemoryGateway:
                     max_facts=max_facts,
                     include_episodic=self.mode in {"semantic", "sidecar"},
                     scene=scene,
+                    trace=silence_trace,
                 )
             except MemorySemanticScorerUnavailable:
                 # Relevance failure is fail-closed: injecting no memory is safer
@@ -809,6 +811,7 @@ class MemoryGateway:
                 "backend_names": sorted(backend_results),
                 "relevance_backend": self.relevance_retriever.backend_name,
                 "relevance_policy": self.relevance_retriever.describe(),
+                "silence_decision": silence_trace,
                 "relevance_error": relevance_error,
                 "latency_ms": round((time.perf_counter() - started) * 1000, 3),
                 "estimated_context_tokens": max(0, len(episodic_text) // 4),
