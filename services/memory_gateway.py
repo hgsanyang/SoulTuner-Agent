@@ -323,6 +323,27 @@ def _clean_list(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> list[s
     return out
 
 
+_POSITIVE_RATINGS = {"great", "love", "perfect"}
+_NEGATIVE_RATINGS = {
+    "off", "partial", "too_noisy", "too_quiet", "too_sad", "too_generic",
+    "too_familiar", "more_niche", "more_discovery", "closer_to_seed",
+}
+
+
+def _feedback_polarity(rating: str, reasons: list[Any] | None) -> str:
+    """Classify slate feedback so the consolidator treats it as signal vs counter-signal.
+
+    Purely mechanical: positive only for explicit positive ratings; negative for
+    known negative ratings or any supplied reason chip; neutral otherwise.
+    """
+    key = str(rating or "").strip().casefold()
+    if key in _POSITIVE_RATINGS:
+        return "positive"
+    if key in _NEGATIVE_RATINGS or _clean_list(reasons):
+        return "negative"
+    return "neutral"
+
+
 def _profile_list_count(profile: dict[str, Any], key: str) -> int:
     value = profile.get(key)
     return len(value) if isinstance(value, list) else 1 if str(value or "").strip() else 0
@@ -534,6 +555,8 @@ class MemoryGateway:
         )
         # Whole-slate feedback is evidence, not an immediately permanent profile
         # mutation. The LLM consolidator may turn repeated evidence into expiring L2.
+        # Polarity lets the consolidator use negative feedback as counter-evidence
+        # rather than as a positive preference signal.
         self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.RAW_EVENT,
@@ -545,6 +568,7 @@ class MemoryGateway:
                 "rating": rating,
                 "reasons": _clean_list(reasons),
                 "note": str(note or "")[:500],
+                "polarity": _feedback_polarity(rating, reasons),
                 **(extra or {}),
             },
             memory_key=f"slate:{feedback_id}",
