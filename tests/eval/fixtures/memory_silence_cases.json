@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "name": "open_synthetic_memory_silence",
+  "sealed": false,
+  "provenance": "Hand-authored synthetic examples; no user, production, or benchmark data.",
+  "now_ms": 1800000000000,
+  "definition": "Each case supplies candidate memories with a simulated BGE relevance and a gold set of memory_ids that SHOULD be injected. Adversarial cases (irrelevant / contradicted / wrong-scene / current-constraint-override / expired) have an empty gold set and must stay silent.",
+  "cases": [
+    {
+      "id": "inject_relevant_preference",
+      "query": "想听点安静放松的歌",
+      "memories": [
+        {"id": "m1", "layer": "L2", "field": "add_moods", "value": "Calm", "relevance": 0.9, "confidence": 0.9}
+      ],
+      "gold_inject_ids": ["m1"]
+    },
+    {
+      "id": "silent_irrelevant_memory",
+      "query": "想听嗨的电子舞曲",
+      "memories": [
+        {"id": "m1", "layer": "L2", "field": "add_moods", "value": "Melancholy", "relevance": 0.02, "confidence": 0.9}
+      ],
+      "gold_inject_ids": []
+    },
+    {
+      "id": "silent_contradicted_memory",
+      "query": "推荐点歌",
+      "memories": [
+        {"id": "m_old", "layer": "L2", "field": "add_genres", "value": "EDM", "relevance": 0.9, "confidence": 0.9},
+        {"id": "m_new", "layer": "L2", "field": "add_genres", "value": "Folk", "relevance": 0.9, "confidence": 0.9,
+         "links": [{"target_memory_id": "m_old", "relation": "contradicts", "reason": "user shifted away from EDM"}]}
+      ],
+      "gold_inject_ids": ["m_new"]
+    },
+    {
+      "id": "silent_wrong_scene",
+      "query": "睡前想听安静的",
+      "scene": "睡前",
+      "memories": [
+        {"id": "m1", "layer": "L2", "field": "add_moods", "value": "Energetic", "scope": "开车", "relevance": 0.02, "confidence": 0.9}
+      ],
+      "gold_inject_ids": []
+    },
+    {
+      "id": "silent_current_constraint_override",
+      "query": "这次只想听纯音乐，别推有人声的",
+      "memories": [
+        {"id": "m1", "layer": "L2", "field": "add_moods", "value": "Warm vocal ballads", "relevance": 0.03, "confidence": 0.95}
+      ],
+      "gold_inject_ids": []
+    },
+    {
+      "id": "silent_expired_episode",
+      "query": "来点歌",
+      "include_episodic": true,
+      "memories": [
+        {"id": "e1", "layer": "L3", "value": "备考焦虑", "relevance": 0.9, "confidence": 0.6,
+         "occurred_at": 1780000000000, "valid_until": 1790000000000}
+      ],
+      "gold_inject_ids": []
+    },
+    {
+      "id": "inject_live_episode",
+      "query": "最近旅行想听的",
+      "include_episodic": true,
+      "memories": [
+        {"id": "e1", "layer": "L3", "value": "上周旅行很放松", "relevance": 0.9, "confidence": 0.6,
+         "occurred_at": 1799000000000, "valid_until": 1810000000000}
+      ],
+      "gold_inject_ids": ["e1"]
+    },
+    {
+      "id": "mixed_inject_one_silent_one",
+      "query": "想听治愈的",
+      "memories": [
+        {"id": "m1", "layer": "L2", "field": "add_moods", "value": "Healing", "relevance": 0.9, "confidence": 0.9},
+        {"id": "m2", "layer": "L2", "field": "add_genres", "value": "Heavy Metal", "relevance": 0.02, "confidence": 0.9}
+      ],
+      "gold_inject_ids": ["m1"]
+    }
+  ]
+}

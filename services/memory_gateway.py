@@ -323,6 +323,27 @@ def _clean_list(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> list[s
     return out
 
 
+_POSITIVE_RATINGS = {"great", "love", "perfect"}
+_NEGATIVE_RATINGS = {
+    "off", "partial", "too_noisy", "too_quiet", "too_sad", "too_generic",
+    "too_familiar", "more_niche", "more_discovery", "closer_to_seed",
+}
+
+
+def _feedback_polarity(rating: str, reasons: list[Any] | None) -> str:
+    """Classify slate feedback so the consolidator treats it as signal vs counter-signal.
+
+    Purely mechanical: positive only for explicit positive ratings; negative for
+    known negative ratings or any supplied reason chip; neutral otherwise.
+    """
+    key = str(rating or "").strip().casefold()
+    if key in _POSITIVE_RATINGS:
+        return "positive"
+    if key in _NEGATIVE_RATINGS or _clean_list(reasons):
+        return "negative"
+    return "neutral"
+
+
 def _profile_list_count(profile: dict[str, Any], key: str) -> int:
     value = profile.get(key)
     return len(value) if isinstance(value, list) else 1 if str(value or "").strip() else 0
@@ -534,6 +555,8 @@ class MemoryGateway:
         )
         # Whole-slate feedback is evidence, not an immediately permanent profile
         # mutation. The LLM consolidator may turn repeated evidence into expiring L2.
+        # Polarity lets the consolidator use negative feedback as counter-evidence
+        # rather than as a positive preference signal.
         self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.RAW_EVENT,
@@ -545,6 +568,7 @@ class MemoryGateway:
                 "rating": rating,
                 "reasons": _clean_list(reasons),
                 "note": str(note or "")[:500],
+                "polarity": _feedback_polarity(rating, reasons),
                 **(extra or {}),
             },
             memory_key=f"slate:{feedback_id}",
@@ -689,6 +713,20 @@ class MemoryGateway:
         ttl_days = int(details.pop("ttl_days", 0) or 0)
         if not 1 <= ttl_days <= 365:
             ttl_days = 90
+        # memory v3: capture the event's real occurrence time and validity
+        # window so retrieval reasons about temporal applicability instead of
+        # decaying from the record's write time.
+        now_ms = int(time.time() * 1000)
+        occurred_at = int(details.pop("occurred_at", 0) or now_ms)
+        valid_until_raw = details.pop("valid_until", None)
+        try:
+            valid_until = int(valid_until_raw) if valid_until_raw is not None else None
+        except (TypeError, ValueError):
+            valid_until = None
+        mood = str(details.pop("mood", "") or "").strip()[:60]
+        episode_expiry_days = ttl_days
+        if valid_until is not None:
+            episode_expiry_days = max(1, min(365, round((valid_until - now_ms) / 86_400_000)))
         self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.EPISODIC,
@@ -698,11 +736,15 @@ class MemoryGateway:
             payload={
                 "description": description[:2000],
                 "scope": scene or "contextual",
+                "scene": scene,
+                "mood": mood,
+                "occurred_at": occurred_at,
+                "valid_until": valid_until,
                 "time_label": str(details.pop("time_label", "") or "")[:60],
                 **details,
             },
             confidence=float(details.get("confidence") or 0.65),
-            ttl_days=ttl_days,
+            ttl_days=episode_expiry_days,
             why_used="Low-frequency episodic context; explicit preferences take precedence",
         )
         return MemoryWriteResult(
@@ -724,6 +766,7 @@ class MemoryGateway:
         backend_results: dict[str, str] = {}
         retrieved_records: list[dict[str, Any]] = []
         relevance_error = ""
+        silence_trace: dict[str, Any] = {}
         if self.episodic_adapters:
             results = await asyncio.gather(
                 *[
@@ -748,6 +791,7 @@ class MemoryGateway:
                     max_facts=max_facts,
                     include_episodic=self.mode in {"semantic", "sidecar"},
                     scene=scene,
+                    trace=silence_trace,
                 )
             except MemorySemanticScorerUnavailable:
                 # Relevance failure is fail-closed: injecting no memory is safer
@@ -791,6 +835,7 @@ class MemoryGateway:
                 "backend_names": sorted(backend_results),
                 "relevance_backend": self.relevance_retriever.backend_name,
                 "relevance_policy": self.relevance_retriever.describe(),
+                "silence_decision": silence_trace,
                 "relevance_error": relevance_error,
                 "latency_ms": round((time.perf_counter() - started) * 1000, 3),
                 "estimated_context_tokens": max(0, len(episodic_text) // 4),
@@ -1003,7 +1048,8 @@ class MemoryGateway:
 
     def _append_inferred_candidate(self, *, user_id: str, candidate):
         evidence_ids = list(candidate.evidence_ids)
-        return self._append_memory_record(
+        links = list(getattr(candidate, "links", []) or [])
+        record = self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.INFERRED,
             kind="preference",
@@ -1017,12 +1063,49 @@ class MemoryGateway:
                 "counter_evidence_ids": list(candidate.counter_evidence_ids),
                 "retrieval_cues": list(candidate.retrieval_cues),
                 "decision_summary": candidate.decision_summary,
+                "links": links,
             },
             confidence=float(candidate.confidence),
             ttl_days=int(candidate.ttl_days),
             memory_key=MemoryConsolidator.memory_key(candidate.field, candidate.value),
             why_used="LLM-proposed preference passed deterministic evidence validation",
         )
+        if record is not None and links:
+            self._apply_memory_links(user_id=user_id, new_record=record, links=links)
+        return record
+
+    def _apply_memory_links(self, *, user_id: str, new_record, links: list[dict[str, Any]]) -> None:
+        """Deterministic side effects of A-MEM links (memory v3).
+
+        evolves_from / refines: the new memory supersedes the linked target
+        (ledger keeps history). contradicts / same_scene / co_occurs: stored
+        only — contradiction suppression and retrieval expansion happen at
+        read time so nothing is silently deleted here.
+        """
+        if self.event_store is None:
+            return
+        from services.memory_links import SUPERSEDING_RELATIONS, MemoryRelation
+
+        new_canonical = str(new_record.payload.get("canonical_memory_id") or new_record.record_id)
+        for link in links:
+            try:
+                relation = MemoryRelation(str(link.get("relation")))
+            except ValueError:
+                continue
+            if relation not in SUPERSEDING_RELATIONS:
+                continue
+            target_id = str(link.get("target_memory_id") or "")
+            record_id = self.event_store.resolve_effective_record_id(
+                user_id=user_id, canonical_memory_id=target_id
+            )
+            if not record_id or record_id == new_record.record_id:
+                continue
+            self.event_store.supersede(
+                user_id=user_id,
+                target_record_id=record_id,
+                source="memory_link",
+                superseded_by=new_canonical,
+            )
 
     def _consolidation_ready(self, user_id: str) -> bool:
         if not self.consolidation_enabled or self.event_store is None:
