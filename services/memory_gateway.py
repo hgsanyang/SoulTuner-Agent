@@ -689,6 +689,20 @@ class MemoryGateway:
         ttl_days = int(details.pop("ttl_days", 0) or 0)
         if not 1 <= ttl_days <= 365:
             ttl_days = 90
+        # memory v3: capture the event's real occurrence time and validity
+        # window so retrieval reasons about temporal applicability instead of
+        # decaying from the record's write time.
+        now_ms = int(time.time() * 1000)
+        occurred_at = int(details.pop("occurred_at", 0) or now_ms)
+        valid_until_raw = details.pop("valid_until", None)
+        try:
+            valid_until = int(valid_until_raw) if valid_until_raw is not None else None
+        except (TypeError, ValueError):
+            valid_until = None
+        mood = str(details.pop("mood", "") or "").strip()[:60]
+        episode_expiry_days = ttl_days
+        if valid_until is not None:
+            episode_expiry_days = max(1, min(365, round((valid_until - now_ms) / 86_400_000)))
         self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.EPISODIC,
@@ -698,11 +712,15 @@ class MemoryGateway:
             payload={
                 "description": description[:2000],
                 "scope": scene or "contextual",
+                "scene": scene,
+                "mood": mood,
+                "occurred_at": occurred_at,
+                "valid_until": valid_until,
                 "time_label": str(details.pop("time_label", "") or "")[:60],
                 **details,
             },
             confidence=float(details.get("confidence") or 0.65),
-            ttl_days=ttl_days,
+            ttl_days=episode_expiry_days,
             why_used="Low-frequency episodic context; explicit preferences take precedence",
         )
         return MemoryWriteResult(
@@ -1003,7 +1021,8 @@ class MemoryGateway:
 
     def _append_inferred_candidate(self, *, user_id: str, candidate):
         evidence_ids = list(candidate.evidence_ids)
-        return self._append_memory_record(
+        links = list(getattr(candidate, "links", []) or [])
+        record = self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.INFERRED,
             kind="preference",
@@ -1017,12 +1036,49 @@ class MemoryGateway:
                 "counter_evidence_ids": list(candidate.counter_evidence_ids),
                 "retrieval_cues": list(candidate.retrieval_cues),
                 "decision_summary": candidate.decision_summary,
+                "links": links,
             },
             confidence=float(candidate.confidence),
             ttl_days=int(candidate.ttl_days),
             memory_key=MemoryConsolidator.memory_key(candidate.field, candidate.value),
             why_used="LLM-proposed preference passed deterministic evidence validation",
         )
+        if record is not None and links:
+            self._apply_memory_links(user_id=user_id, new_record=record, links=links)
+        return record
+
+    def _apply_memory_links(self, *, user_id: str, new_record, links: list[dict[str, Any]]) -> None:
+        """Deterministic side effects of A-MEM links (memory v3).
+
+        evolves_from / refines: the new memory supersedes the linked target
+        (ledger keeps history). contradicts / same_scene / co_occurs: stored
+        only — contradiction suppression and retrieval expansion happen at
+        read time so nothing is silently deleted here.
+        """
+        if self.event_store is None:
+            return
+        from services.memory_links import SUPERSEDING_RELATIONS, MemoryRelation
+
+        new_canonical = str(new_record.payload.get("canonical_memory_id") or new_record.record_id)
+        for link in links:
+            try:
+                relation = MemoryRelation(str(link.get("relation")))
+            except ValueError:
+                continue
+            if relation not in SUPERSEDING_RELATIONS:
+                continue
+            target_id = str(link.get("target_memory_id") or "")
+            record_id = self.event_store.resolve_effective_record_id(
+                user_id=user_id, canonical_memory_id=target_id
+            )
+            if not record_id or record_id == new_record.record_id:
+                continue
+            self.event_store.supersede(
+                user_id=user_id,
+                target_record_id=record_id,
+                source="memory_link",
+                superseded_by=new_canonical,
+            )
 
     def _consolidation_ready(self, user_id: str) -> bool:
         if not self.consolidation_enabled or self.event_store is None:

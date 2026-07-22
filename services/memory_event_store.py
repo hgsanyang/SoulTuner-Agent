@@ -181,6 +181,47 @@ class MemoryEventStore:
             why_used="User requested deletion",
         )
 
+    def supersede(
+        self,
+        *,
+        user_id: str,
+        target_record_id: str,
+        source: str = "memory_link",
+        evidence_id: str = "",
+        superseded_by: str = "",
+    ) -> MemoryRecord | None:
+        """Mark a record superseded (a newer memory replaced it).
+
+        Like tombstone but status=SUPERSEDED: the target drops out of the
+        effective view while its history stays in the append-only ledger.
+        """
+        target = self.get(user_id=user_id, record_id=target_record_id)
+        if target is None:
+            return None
+        return self.append(
+            user_id=user_id,
+            layer=target.layer,
+            kind="supersede",
+            source=source,
+            evidence_id=evidence_id,
+            payload={"superseded_record_id": target_record_id, "superseded_by": superseded_by},
+            memory_key=target.memory_key,
+            status=MemoryStatus.SUPERSEDED,
+            target_record_id=target_record_id,
+            why_used="Superseded by a newer, linked memory",
+        )
+
+    def resolve_effective_record_id(self, *, user_id: str, canonical_memory_id: str) -> str | None:
+        """Map a canonical memory id to its current effective record id, or None."""
+        target = str(canonical_memory_id or "").strip()
+        if not target:
+            return None
+        for record in self.effective_records(user_id=user_id, limit=1000):
+            canonical = str(record.payload.get("canonical_memory_id") or record.record_id)
+            if canonical == target or record.record_id == target:
+                return record.record_id
+        return None
+
     def get(self, *, user_id: str, record_id: str) -> MemoryRecord | None:
         rows = self._rows("WHERE user_id = ? AND record_id = ?", (user_id, record_id))
         return rows[0] if rows else None

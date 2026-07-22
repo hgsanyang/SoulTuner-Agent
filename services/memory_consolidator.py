@@ -38,6 +38,9 @@ class InferredPreferenceCandidate(BaseModel):
     ttl_days: int | None = Field(default=None, ge=1, le=365)
     retrieval_cues: list[str] = Field(default_factory=list, max_length=8)
     decision_summary: str = Field(default="", max_length=240)
+    # A-MEM style links to the user's EXISTING memories (memory v3). Raw
+    # dicts here; validated against real active memory ids in the gateway.
+    links: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
 
     @field_validator("field", "value", "decision_summary")
     @classmethod
@@ -85,7 +88,7 @@ class MemoryConsolidationReport:
     abstained: bool = False
     summary: str = ""
     model: str = ""
-    prompt_version: str = "memory-consolidator-v3-free-scene"
+    prompt_version: str = "memory-consolidator-v3-links"
     prompt_hash: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
@@ -134,6 +137,12 @@ Rules:
 - add_* means preference; avoid_* means aversion. Do not output contradictory pairs.
 - Include every supporting record_id in evidence_ids and any contradiction in counter_evidence_ids.
 - retrieval_cues should be short natural-language paraphrases in the user's likely language(s).
+- When existing_memories are provided, you MAY link a new candidate to related
+  ones via "links": [{{"target_memory_id": <id from existing_memories>,
+  "relation": "refines|contradicts|same_scene|evolves_from|co_occurs",
+  "reason": "..."}}]. Use "evolves_from"/"refines" when the new preference
+  updates an older one, "contradicts" when it conflicts, "same_scene"/"co_occurs"
+  for related context. Only link to ids that appear in existing_memories.
 - decision_summary is a short audit explanation, not hidden chain-of-thought.
 - Do not emit song facts, recommendations, or personally identifying information.
 - Set abstained=true exactly when no candidate is emitted.
@@ -184,8 +193,12 @@ class MemoryConsolidator:
             return report
 
         existing_scene_labels = self._existing_scene_labels(user_id)
+        existing_memories, known_memory_ids = self._existing_memory_summary(user_id)
         proposal, model_name, usage = await self._generate(
-            user_id, evidence, existing_scene_labels=existing_scene_labels
+            user_id,
+            evidence,
+            existing_scene_labels=existing_scene_labels,
+            existing_memories=existing_memories,
         )
         report.model = model_name
         report.prompt_hash = self.prompt_hash()
@@ -195,9 +208,51 @@ class MemoryConsolidator:
         report.abstained = proposal.abstained or not proposal.candidates
         report.summary = proposal.summary
         accepted, rejected = self._validate(user_id=user_id, evidence=evidence, proposal=proposal)
+        self._attach_validated_links(accepted, known_memory_ids=known_memory_ids)
         report.accepted = accepted
         report.rejected = rejected
         return report
+
+    def _existing_memory_summary(self, user_id: str) -> tuple[list[dict[str, Any]], set[str]]:
+        """Compact summary of the user's active memories, for LLM linking.
+
+        Returns (summary_for_llm, known_active_canonical_ids). Only active,
+        effective L1/L2 records are exposed, so a link can never target a
+        tombstoned/superseded memory.
+        """
+        summary: list[dict[str, Any]] = []
+        known_ids: set[str] = set()
+        try:
+            for record in self.event_store.effective_records(user_id=user_id, limit=500):
+                if record.layer not in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
+                    continue
+                canonical = str(record.payload.get("canonical_memory_id") or record.record_id)
+                known_ids.add(canonical)
+                summary.append(
+                    {
+                        "memory_id": canonical,
+                        "layer": record.layer.value,
+                        "field": str(record.payload.get("field") or ""),
+                        "value": str(record.payload.get("value") or ""),
+                        "scope": str(record.payload.get("scope") or "global"),
+                    }
+                )
+        except Exception:
+            return [], set()
+        return summary[:60], known_ids
+
+    def _attach_validated_links(
+        self,
+        accepted: list[InferredPreferenceCandidate],
+        *,
+        known_memory_ids: set[str],
+    ) -> None:
+        """Replace each candidate's raw links with deterministically validated ones."""
+        from services.memory_links import validate_links
+
+        for candidate in accepted:
+            validated = validate_links(candidate.links, known_memory_ids=known_memory_ids)
+            candidate.links = [link.model_dump(mode="json") for link in validated]
 
     def _existing_scene_labels(self, user_id: str) -> list[str]:
         """The user's evolving scene vocabulary, offered to the model for reuse."""
@@ -222,6 +277,7 @@ class MemoryConsolidator:
         evidence: list[MemoryRecord],
         *,
         existing_scene_labels: list[str] | None = None,
+        existing_memories: list[dict[str, Any]] | None = None,
     ) -> tuple[MemoryConsolidationProposal, str, dict[str, int]]:
         payload = [self._evidence_payload(record) for record in evidence]
         if self.generator is not None:
@@ -255,6 +311,7 @@ class MemoryConsolidator:
         )
         human_payload = {
             "existing_scene_labels": list(existing_scene_labels or []),
+            "existing_memories": list(existing_memories or []),
             "evidence": payload,
         }
         messages = [
