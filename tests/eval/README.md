@@ -11,9 +11,9 @@ It is not an intent-label accuracy test.
 - `holdout`: 34 frozen cases, including English mirrors, multi-turn context,
   negative constraints, and soft-intent cases. Do not tune
   directly against this set.
-- `context_dev`: 52 Chinese context-matching cases, written against this
+- `context_dev`: 67 Chinese context-matching cases, written against this
   catalog and bucketed by context goal plus specificity.
-- `context_holdout`: 16 frozen context-matching cases. Use only as a milestone
+- `context_holdout`: 22 frozen context-matching cases. Use only as a milestone
   regression check.
 - `context_all`: context_dev + context_holdout, for explicit milestone checks.
 - `dev_easy` / `dev_hard` and `holdout_easy` / `holdout_hard`: derived views
@@ -44,6 +44,32 @@ Outcome eval sets `EVAL_DISABLE_SIDE_EFFECTS=True` internally so it measures the
 recommendation path without writing preference extraction, MemoryGateway sidecar
 persistence, or profile-refresh side effects.
 
+Use the live read-only gate and targeted case selection for milestone checks:
+
+```powershell
+python -m tests.eval.evaluate_outcomes --split smoke --case-id out_03_genre_lang --case-id out_05_boundary_quiet_jp --fast --verify-readonly
+```
+
+`--verify-readonly` fingerprints all Neo4j nodes, relationships, non-vector
+properties, and local feedback/teacher logs before and after the run. Any
+persistent change makes the command exit non-zero.
+
+Remote planners can vary even at temperature zero. To test the deterministic
+retrieval/ranking path separately, replay a frozen ToolPlan from an existing
+outcome report:
+
+```powershell
+python -m tests.eval.evaluate_retrieval_replay --report tests/eval/results/<report>.json --case-id out_03_genre_lang --repeats 2
+```
+
+True blind cases must live outside the repository and be supplied by an
+independent reviewer. The sealed mode suppresses queries, samples, and detailed
+failures from stdout and the saved report:
+
+```powershell
+python -m tests.eval.evaluate_outcomes --cases C:\private\blind-v2.json --sealed --fast --verify-readonly
+```
+
 Add `--timing` to include per-case stage timings and aggregate p50/p95 latency:
 
 ```powershell
@@ -65,6 +91,17 @@ python -m tests.eval.evaluate_memory
 It currently covers six slate-feedback mappings, including noisy/sad/quiet,
 over-familiar, niche discovery, and seed-closeness feedback. It does not call
 Neo4j, GraphZep, Mem0, or LLMs.
+
+Memory v2 storage invariants have a separate development harness:
+
+```powershell
+python -m tests.eval.evaluate_memory_v2
+```
+
+It checks append-only tombstones, deletion residue, explicit-over-inferred
+precedence, and cross-user isolation against a temporary SQLite ledger. It is
+not the sealed multi-session quality benchmark; blind memory cases must remain
+outside the repository and be supplied by an independent reviewer.
 
 Catalog Gap + knowledge-store routing has a separate targeted ruler:
 
@@ -199,8 +236,9 @@ outcomes are the acceptance signals.
 ## DST And Clarification Checks
 
 A7 adds explicit session-local dialogue state and whitelisted PlanDelta
-operations. Established follow-ups update state deterministically; full-plan
-generation is retained only for first turns, topic resets, and fallback.
+operations. The LLM decides whether a turn is a follow-up and emits the delta;
+deterministic code only validates and applies that delta. It does not infer
+semantics from fixed phrases. Full-plan generation remains the fallback.
 Outcome cases may provide an
 initial `dialog_state` next to `chat_history`; the harness passes it to the
 agent and records the returned `dialog_state` plus `dialog_delta`.
@@ -231,6 +269,21 @@ Use it conservatively:
   `tests/eval/judge_gold/objective_soft_judge_gold.json`; it covers pass/fail/skip
   examples and should be extended whenever a new soft-intent pattern is promoted
   from `manual_review`.
+
+## ToolPlan v1
+
+ToolPlan evaluation calls the Planner but does not execute recommendation tools
+or write feedback, memory, or teacher data:
+
+```powershell
+python -m tests.eval.evaluate_tool_plan
+python -m tests.eval.evaluate_tool_plan --case-id tool_hybrid_language_vibe
+```
+
+It checks allowlisted tool selection, forbidden calls, clarification behavior,
+and agreement between ToolPlan and RetrievalPlan. Production defaults to shadow
+mode; active tool-controlled recall must be enabled explicitly after regression
+gates pass.
 
 ## Discipline
 

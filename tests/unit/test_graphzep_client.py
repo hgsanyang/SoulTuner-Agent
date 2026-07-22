@@ -2,7 +2,13 @@ import asyncio
 
 import httpx
 
-from services.graphzep_client import GraphZepClient
+from services.graphzep_client import GraphZepClient, group_id_for_user
+
+
+def test_graphzep_group_ids_are_stable_and_user_isolated():
+    assert group_id_for_user("alice") == group_id_for_user("alice")
+    assert group_id_for_user("alice") != group_id_for_user("bob")
+    assert "alice" not in group_id_for_user("alice")
 
 
 class _FailingHttpClient:

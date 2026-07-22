@@ -1,4 +1,4 @@
-from typing import List, Sequence
+from typing import Sequence
 import tiktoken
 from langchain_core.messages import BaseMessage, trim_messages
 from config.settings import settings
@@ -52,16 +52,16 @@ class MusicContextManager:
             logger.warning(f"历史记录截断出错: {e}，使用简单截断")
             retain_count = settings.memory_retain_rounds * 2
             trimmed_messages = list(chat_history)[-retain_count:] if retain_count > 0 else []
-            
+
         if not trimmed_messages:
             return "无"
-            
+
         formatted_lines = []
         for msg in trimmed_messages:
             role = "user" if msg.type == "human" else ("assistant" if msg.type == "ai" else msg.type)
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
             formatted_lines.append(f"{role}: {content}")
-            
+
         return "\n".join(formatted_lines)
 
 

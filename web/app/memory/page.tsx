@@ -14,6 +14,30 @@ type MemorySection = {
   deletable?: boolean;
 };
 
+type ProfileViewItem = {
+  record_id: string;
+  layer: 'L1' | 'L2';
+  field: string;
+  value: string;
+  confidence: number;
+  source: string;
+  expires_at?: number | null;
+  evidence_count: number;
+  decision_summary?: string;
+  why_used?: string;
+};
+
+type ProfileView = {
+  scope: string;
+  title: string;
+  items: ProfileViewItem[];
+};
+
+type ProfileViews = {
+  views?: ProfileView[];
+  recent_tendency?: { title?: string; items?: ProfileViewItem[] };
+};
+
 type MemoryProfile = {
   user_id?: string;
   episodic_backends?: string[];
@@ -26,6 +50,20 @@ type MemoryProfile = {
     needs_more_feedback?: boolean;
   };
   editable_sections?: MemorySection[];
+  records?: MemoryRecord[];
+  profile_views?: ProfileViews;
+};
+
+type MemoryRecord = {
+  record_id: string;
+  layer: 'L0' | 'L1' | 'L2' | 'L3';
+  kind: string;
+  source: string;
+  confidence: number;
+  created_at: number;
+  expires_at?: number | null;
+  payload?: Record<string, unknown>;
+  why_used?: string;
 };
 
 const FIELD_OPTIONS = [
@@ -132,6 +170,13 @@ export default function MemoryPage() {
     await loadMemory();
   };
 
+  const deleteRecord = async (recordId: string) => {
+    const resp = await fetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
+    setMessage('已删除该条记忆；审计历史保留为删除标记');
+    await loadMemory();
+  };
+
   const diagnostics = memory?.diagnostics || {};
 
   return (
@@ -141,7 +186,7 @@ export default function MemoryPage() {
           <p style={{ margin: 0, color: theme.colors.text.muted, fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.08em' }}>MEMORY</p>
           <h1 style={{ margin: '0.15rem 0', fontSize: '2rem', letterSpacing: '-0.03em' }}>我的记忆 / 我的偏好</h1>
           <p style={{ margin: 0, color: theme.colors.text.secondary, fontSize: '0.9rem' }}>
-            管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。Neo4j 是行为热路径，GraphZep/Mem0 只作为可选旁路。
+            管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。
           </p>
         </div>
         <button onClick={loadMemory} style={smallButtonStyle()}>刷新</button>
@@ -212,6 +257,88 @@ export default function MemoryPage() {
             );
           })}
         </div>
+      )}
+
+      {!loading && ((memory?.profile_views?.views?.length || 0) > 0 || (memory?.profile_views?.recent_tendency?.items?.length || 0) > 0) && (
+        <section style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
+          <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>场景画像视图</div>
+          <div style={{ fontSize: '0.76rem', color: theme.colors.text.muted, marginBottom: '0.8rem' }}>
+            偏好按适用场景分组：场景绑定的偏好只在对应场景生效，不会带进其他场景。每条都可删除。
+          </div>
+          <div style={{ display: 'grid', gap: '0.8rem' }}>
+            {(memory?.profile_views?.views || []).map(view => (
+              <div key={view.scope}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.45rem', color: '#c4b5fd' }}>
+                  {view.title} <span style={{ color: theme.colors.text.muted, fontWeight: 400, fontSize: '0.72rem' }}>({view.scope})</span>
+                </div>
+                <div style={{ display: 'grid', gap: '0.45rem' }}>
+                  {view.items.map(item => (
+                    <div key={item.record_id} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr) auto', gap: '0.6rem', alignItems: 'center', padding: '0.55rem 0.7rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm }}>
+                      <span style={{ color: item.layer === 'L1' ? '#86efac' : '#93c5fd', fontWeight: 800, fontSize: '0.73rem' }}>{item.layer}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: '0.82rem' }}>
+                          {item.value} <span style={{ color: theme.colors.text.muted, fontSize: '0.72rem' }}>({FIELD_LABELS[item.field] || item.field})</span>
+                        </div>
+                        <div style={{ color: theme.colors.text.muted, fontSize: '0.7rem' }}>
+                          置信度 {Math.round(item.confidence * 100)}% · 证据 {item.evidence_count} 条 · {item.expires_at ? `${new Date(item.expires_at).toLocaleDateString()} 前有效` : '长期有效'}
+                          {item.decision_summary ? ` · ${item.decision_summary}` : ''}
+                        </div>
+                      </div>
+                      <button onClick={() => deleteRecord(item.record_id).catch(err => setMessage(err.message))} style={chipActionStyle('#fca5a5')}>删除</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {(memory?.profile_views?.recent_tendency?.items?.length || 0) > 0 && (
+              <div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.45rem', color: '#fcd34d' }}>
+                  {memory?.profile_views?.recent_tendency?.title || '最近推断倾向'}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
+                  {(memory?.profile_views?.recent_tendency?.items || []).map(item => (
+                    <span key={item.record_id} style={{ padding: '0.28rem 0.6rem', borderRadius: '999px', border: '1px solid rgba(252,211,77,0.3)', background: 'rgba(252,211,77,0.08)', color: 'rgba(253,230,175,0.9)', fontSize: '0.74rem' }}>
+                      {item.value} · {Math.round(item.confidence * 100)}%
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {!loading && (memory?.records?.length || 0) > 0 && (
+        <section style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
+          <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>记忆来源与有效期</div>
+          <div style={{ fontSize: '0.76rem', color: theme.colors.text.muted, marginBottom: '0.8rem' }}>
+            L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。
+          </div>
+          <div style={{ display: 'grid', gap: '0.55rem' }}>
+            {(memory?.records || []).slice(0, 40).map(record => {
+              const payload = record.payload || {};
+              const summary = String(payload.value || payload.description || payload.title || record.kind);
+              const expires = record.expires_at ? new Date(record.expires_at).toLocaleDateString() : '长期有效';
+              const scope = String(payload.scope || '');
+              const evidenceIds = Array.isArray(payload.evidence_ids) ? payload.evidence_ids : [];
+              return (
+                <div key={record.record_id} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr) auto', gap: '0.65rem', alignItems: 'center', padding: '0.65rem 0.75rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm }}>
+                  <span style={{ color: '#93c5fd', fontWeight: 800, fontSize: '0.75rem' }}>{record.layer}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</div>
+                    <div style={{ color: theme.colors.text.muted, fontSize: '0.7rem' }}>
+                      {record.source} · 置信度 {Math.round(record.confidence * 100)}% · {expires}
+                      {scope && scope !== 'global' ? ` · 场景:${scope}` : ''}
+                      {evidenceIds.length ? ` · 证据 ${evidenceIds.length} 条` : ''}
+                      {record.why_used ? ` · ${record.why_used}` : ''}
+                    </div>
+                  </div>
+                  <button onClick={() => deleteRecord(record.record_id).catch(err => setMessage(err.message))} style={chipActionStyle('#fca5a5')}>删除</button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
     </div>
   );

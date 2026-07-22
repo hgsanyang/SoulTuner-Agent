@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import ValidationError
 
 from config.logging_config import get_logger
 from schemas.query_plan import MusicQueryPlan
@@ -166,7 +167,36 @@ async def plan_with_dashscope(
         usage.get("completion_tokens", 0),
         (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0),
     )
-    return parse_music_query_plan(response["choices"][0]["message"]["content"])
+    content = response["choices"][0]["message"]["content"]
+    try:
+        return parse_music_query_plan(content)
+    except ValidationError as exc:
+        # One bounded repair is safer than accepting undeclared tool arguments.
+        # The second call receives the invalid JSON and validation summary, but
+        # never gains additional tools or permission to execute anything.
+        logger.warning("[IntentPlanner] invalid ToolPlan JSON; requesting one schema repair")
+        repair_body = {
+            **request_body,
+            "messages": [
+                *request_body["messages"],
+                {"role": "assistant", "content": content},
+                {
+                    "role": "user",
+                    "content": (
+                        "上一个 JSON 未通过 schema 校验。请只修正 JSON 结构和字段名，"
+                        "不要改变用户意图，不要添加白名单外工具。校验摘要："
+                        + str(exc)[:1600]
+                    ),
+                },
+            ],
+        }
+        repaired = await _post_json(
+            f"{base_url.rstrip('/')}/chat/completions",
+            repair_body,
+            timeout=timeout,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        )
+        return parse_music_query_plan(repaired["choices"][0]["message"]["content"])
 
 
 async def _post_json(

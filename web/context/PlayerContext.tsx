@@ -53,6 +53,10 @@ const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 const isSameSong = (a?: Song | null, b?: Song | null) =>
     Boolean(a && b && a.title === b.title && a.artist === b.artist);
 
+const MIN_SKIP_LISTEN_MS = 1_000;
+const MAX_SKIP_LISTEN_MS = 30_000;
+const MAX_SKIP_PROGRESS_RATIO = 0.5;
+
 export function PlayerProvider({ children }: { children: ReactNode }) {
     const [currentSong, setCurrentSong] = useState<Song | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -174,7 +178,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         if (currentSong && audio && !audio.ended) {
             const metrics = playbackMetrics(audio);
-            if (metrics.playDurationMs >= 1000 && metrics.progressRatio < 0.8) {
+            if (
+                metrics.playDurationMs >= MIN_SKIP_LISTEN_MS
+                && metrics.playDurationMs < MAX_SKIP_LISTEN_MS
+                && metrics.progressRatio < MAX_SKIP_PROGRESS_RATIO
+            ) {
                 reportPlayback('skip', currentSong, audio);
             }
         }

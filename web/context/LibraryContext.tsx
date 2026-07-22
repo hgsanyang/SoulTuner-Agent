@@ -246,9 +246,20 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     };
 
     const removeFromCollection = (collectionId: number, songId: string) => {
-        setCollections(prev => prev.map(c =>
-            c.id === collectionId ? { ...c, songs: c.songs.filter(s => s.id !== songId) } : c
-        ));
+        setCollections(prev => prev.map(c => {
+            if (c.id !== collectionId) return c;
+            const removed = c.songs.find(song => song.id === songId);
+            if (removed) {
+                sendUserEvent('unsave', removed.title, removed.artist, {
+                    exposureId: removed.exposure_id,
+                    position: removed.exposure_rank,
+                    source: removed.source,
+                    platform: removed.platform,
+                    songId: removed.song_id,
+                });
+            }
+            return { ...c, songs: c.songs.filter(song => song.id !== songId) };
+        }));
     };
 
     const isInCollection = (collectionId: number, title: string, artist: string) => {

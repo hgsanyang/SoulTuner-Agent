@@ -91,6 +91,14 @@ class TestRetrievalPlan:
         assert plan.soft_intent.trajectory == "低落到释然"
         assert "太吵" in plan.soft_intent.avoid
 
+    def test_instrumental_legacy_language_becomes_acoustic_constraint(self):
+        """Instrumental is an acoustic intent, not a sparse language hard filter."""
+        plan = RetrievalPlan(use_graph=True, graph_language_filter="Instrumental")
+
+        assert plan.hard_constraints.instrumental is True
+        assert plan.hard_constraints.language is None
+        assert plan.graph_language_filter is None
+
 
 class TestMusicQueryPlan:
     """测试统一查询计划 Schema"""
@@ -99,7 +107,7 @@ class TestMusicQueryPlan:
         """所有有效意图类型"""
         valid_intents = [
             "graph_search", "hybrid_search", "vector_search",
-            "general_chat", "web_search",
+            "clarification", "general_chat", "web_search",
             "acquire_music", "recommend_by_favorites",
         ]
         for intent in valid_intents:

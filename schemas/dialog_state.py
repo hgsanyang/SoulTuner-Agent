@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from schemas.query_plan import HardConstraints, IntentHints, MusicQueryPlan, SoftIntent
+from schemas.tool_plan import compile_legacy_tool_plan
 
 
 UNRESOLVED_REFERENCE_CUES = (
@@ -89,6 +90,10 @@ class DeltaOperation(BaseModel):
         if self.op == "clear_topic":
             self.path = ""
             return self
+        self.path = str(self.path or "").strip().replace("/", ".").replace("\\", ".")
+        if self.path.startswith("$."):
+            self.path = self.path[2:]
+        self.path = self.path.strip(".")
         if self.path not in ALLOWED_DELTA_PATHS:
             raise ValueError(f"Unsupported dialogue delta path: {self.path}")
         return self
@@ -148,6 +153,68 @@ def _has_any(text: str, cues: tuple[str, ...]) -> bool:
     return any(_norm(cue) in folded for cue in cues)
 
 
+def _has_negative_voice_request(text: str) -> bool:
+    folded = _norm(text)
+    return _has_any(
+        folded,
+        (
+            "不要人声",
+            "无人声",
+            "没人声",
+            "去人声",
+            "不要突出人声",
+            "无歌词",
+            "没有歌词",
+            "纯音乐",
+            "器乐",
+            "no vocals",
+            "without vocals",
+            "no voice",
+            "without voice",
+            "no lyrics",
+            "vocal-free",
+            "non-vocal",
+        ),
+    )
+
+
+def _has_positive_voice_request(text: str) -> bool:
+    """Detect only explicit requests for vocals, not negative constraints."""
+    folded = _norm(text)
+    negative_voice = (
+        "不要人声",
+        "无人声",
+        "没人声",
+        "去人声",
+        "不要突出人声",
+        "no vocals",
+        "without vocals",
+        "no voice",
+        "without voice",
+        "no lyrics",
+        "vocal-free",
+        "non-vocal",
+    )
+    if any(cue in folded for cue in negative_voice):
+        folded = folded
+        for cue in negative_voice:
+            folded = folded.replace(cue, "")
+    return _has_any(
+        folded,
+        (
+            "中文说唱",
+            "说唱",
+            "rap",
+            "突出人声",
+            "有人声",
+            "带人声",
+            "vocal-forward",
+            "voice-forward",
+            "with vocals",
+        ),
+    )
+
+
 def _merge_unique(previous: list[str], current: list[str]) -> list[str]:
     merged: list[str] = []
     for item in [*previous, *current]:
@@ -157,54 +224,14 @@ def _merge_unique(previous: list[str], current: list[str]) -> list[str]:
     return merged
 
 
-_NON_ARTIST_ENTITY_CUES = (
-    "想听",
-    "推荐",
-    "来点",
-    "给我",
-    "一些",
-    "几首",
-    "适合",
-    "感觉",
-    "氛围",
-    "那种",
-    "这种",
-    "同样",
-    "类似",
-    "保留",
-    "今天",
-    "晚上",
-    "夜里",
-    "凌晨",
-    "下雨",
-    "雨天",
-    "通勤",
-    "路上",
-    "散步",
-    "开车",
-    "写代码",
-    "听一点",
-    "一点",
-)
-
-
 def _is_plausible_artist_entity(value: Any) -> bool:
-    """Reject broad context phrases before they become hard artist filters."""
+    """Apply shape validation only; semantic entity judgment belongs to the LLM."""
     text = str(value or "").strip(" ，,。.!！?？")
     if not text:
         return False
-    folded = _norm(text)
-    if len(text) > 24:
+    if len(text) > 120:
         return False
-    if re.search(r"\s{2,}", text):
-        return False
-    if re.search(r"[，,。.!！?？；;：:]", text):
-        return False
-    if any(cue in folded for cue in _NON_ARTIST_ENTITY_CUES):
-        return False
-    if re.search(r"(的)?(歌|歌曲|音乐)$", folded):
-        return False
-    if re.search(r"^(我|你|他|她|他们|她们|大家|某个|一个|一种)", folded):
+    if any(ord(char) < 32 for char in text):
         return False
     return True
 
@@ -490,6 +517,9 @@ def compile_dialog_state_to_plan(
     updated.retrieval_plan = type(updated.retrieval_plan).model_validate(
         updated.retrieval_plan.model_dump()
     )
+    # Recompile from the final LLM-authored state. The copied plan may carry a
+    # migration ToolPlan created before the delta was applied.
+    updated.tool_plan = compile_legacy_tool_plan(updated)
     return updated
 
 
@@ -562,15 +592,27 @@ def _build_delta_report(
     )
 
 
-def _looks_like_topic_shift(user_input: str, plan: MusicQueryPlan) -> bool:
+def _entity_overlap(current: list[str], previous: list[str]) -> bool:
+    current_norm = [_norm(value) for value in current if _norm(value)]
+    previous_norm = [_norm(value) for value in previous if _norm(value)]
+    return any(
+        cur == prev or cur in prev or prev in cur
+        for cur in current_norm
+        for prev in previous_norm
+    )
+
+
+def _looks_like_topic_shift(user_input: str, plan: MusicQueryPlan, state: DialogMusicState | None = None) -> bool:
     """Return True when a turn should replace rather than inherit state."""
     hard = plan.retrieval_plan.hard_constraints
-    text = _norm(user_input)
+    _ = user_input
     explicit_new_entity = bool(hard.artist_entities or hard.song_entities)
-    if _has_any(text, UNRESOLVED_REFERENCE_CUES):
-        explicit_new_entity = False
-    reset_words = ("换个话题", "重新开始", "新歌单", "不要管上面", "from scratch", "new topic")
-    return explicit_new_entity or _has_any(text, reset_words)
+    if explicit_new_entity and state is not None and state.turn_count > 0:
+        if _entity_overlap(hard.artist_entities, state.hard_constraints.artist_entities + state.last_result_artists):
+            explicit_new_entity = False
+        if _entity_overlap(hard.song_entities, state.hard_constraints.song_entities + state.last_result_titles):
+            explicit_new_entity = False
+    return explicit_new_entity
 
 
 def should_clarify_before_planning(
@@ -589,7 +631,7 @@ def should_clarify_before_planning(
     )
     instrumental_voice_conflict = (
         re.search(r"完全无歌词|无歌词|纯音乐|器乐|无人声|instrumental|without vocals|no vocals|no lyrics", text)
-        and re.search(r"中文说唱|说唱|rap|突出人声|人声|vocal|vocals", text)
+        and _has_positive_voice_request(text)
     )
     if severe_conflict:
         return ClarificationRequest(
@@ -657,7 +699,7 @@ def clarification_from_plan_conflict(plan: MusicQueryPlan) -> ClarificationReque
 
     rp = plan.retrieval_plan
     hard = rp.hard_constraints
-    evidence = _norm(
+    positive_evidence = _norm(
         " ".join(
             str(part or "")
             for part in (
@@ -670,27 +712,26 @@ def clarification_from_plan_conflict(plan: MusicQueryPlan) -> ClarificationReque
                 rp.soft_intent.goal,
                 rp.soft_intent.trajectory,
                 rp.soft_intent.vibe,
+                rp.vector_acoustic_query,
+                " ".join(rp.vector_acoustic_queries or []),
+            )
+        )
+    )
+    voice_forward = _has_positive_voice_request(positive_evidence)
+    negative_voice = _has_negative_voice_request(
+        " ".join(
+            str(part or "")
+            for part in (
+                rp.soft_intent.goal,
+                rp.soft_intent.trajectory,
+                rp.soft_intent.vibe,
                 " ".join(rp.soft_intent.avoid or []),
                 rp.vector_acoustic_query,
                 " ".join(rp.vector_acoustic_queries or []),
             )
         )
     )
-    voice_forward = _has_any(
-        evidence,
-        (
-            "说唱",
-            "rap",
-            "hip-hop",
-            "hip hop",
-            "人声",
-            "vocal",
-            "vocals",
-            "voice-forward",
-            "voice forward",
-        ),
-    )
-    if hard.instrumental and voice_forward:
+    if hard.instrumental and voice_forward and not negative_voice:
         return ClarificationRequest(
             required=True,
             reason="severe_conflict",
@@ -720,18 +761,29 @@ def infer_dialog_state_from_history(chat_history: list[Any] | None) -> DialogMus
         return DialogMusicState()
 
     user_turns = 0
+    artist_anchors: list[str] = []
     for message in chat_history:
         role = getattr(message, "type", None) or getattr(message, "role", None)
         content = getattr(message, "content", None)
         if isinstance(message, dict):
             role = message.get("role", role)
             content = message.get("content", content)
-        if role not in ("user", "human"):
-            continue
-        if _norm(content):
-            user_turns += 1
+        text = str(content or "")
+        if role in ("user", "human"):
+            if _norm(text):
+                user_turns += 1
+            for match in re.finditer(r"(?:来点|听|放|推荐|想听)([^，。,.!?！？\n]{1,24})的(?:歌|歌曲|作品)", text):
+                artist_anchors.extend(_clean_artist_entities([match.group(1)]))
+        elif role in ("assistant", "ai"):
+            for match in re.finditer(r"推荐了(?:一些|几首)?([^，。,.!?！？\n]{1,24})的(?:歌|歌曲|作品)", text):
+                artist_anchors.extend(_clean_artist_entities([match.group(1)]))
 
-    return DialogMusicState(turn_count=user_turns)
+    artist_anchors = _merge_unique([], artist_anchors)
+    return DialogMusicState(
+        hard_constraints=HardConstraints(artist_entities=artist_anchors),
+        last_result_artists=artist_anchors,
+        turn_count=user_turns,
+    )
 
 
 def apply_plan_delta_with_report(
@@ -742,7 +794,7 @@ def apply_plan_delta_with_report(
     """Apply the current plan as a deterministic delta over prior state."""
     prev = load_dialog_state(previous)
     rp = plan.retrieval_plan
-    topic_shift = _looks_like_topic_shift(user_input, plan)
+    topic_shift = _looks_like_topic_shift(user_input, plan, prev)
     followup = prev.turn_count > 0 and not topic_shift
 
     # Full planner output is already expected to be a complete LLM-produced

@@ -62,7 +62,7 @@ async def startup_event():
         asyncio.create_task(asyncio.to_thread(cleanup_expired_temporary_audio))
     except Exception as exc:
         logger.debug("联网临时音频清理任务未启动: %s", exc)
-    
+
     # 1. CPU profile预加载M2D；GPU profile先让MuQ按需进入显存，避免两个大模型的加载峰值叠加。
     loop = asyncio.get_running_loop()
     preload_m2d = os.getenv("MUSIC_M2D_MODEL_WARMUP", "true").lower() not in {"0", "false", "off"}
@@ -87,14 +87,41 @@ async def startup_event():
             logger.error(f"  ❌ M2D-CLAP 模型预加载失败: {e}")
     else:
         logger.info("  ⏭️ M2D-CLAP 启动预热已关闭，将在语义精排首次使用时按需加载")
-    
+
+    # MuQ text encoder is the default text-to-music anchor.  Loading it on the
+    # first recommendation can add a large one-time delay, so warm it in the
+    # background when MuQ is enabled.  This keeps service startup responsive
+    # while making the first real dense query much less spiky.
+    try:
+        from config.settings import settings as _settings
+
+        dense_backend = str(getattr(_settings, "dense_text_audio_backend", "muq") or "muq").lower()
+        muq_warmup = os.getenv("MUSIC_MUQ_TEXT_WARMUP", "background").lower()
+        if dense_backend in {"muq", "both"} and muq_warmup not in {"0", "false", "off"}:
+            from retrieval.muq_embedder import encode_text_to_muq
+
+            async def _warmup_muq_text_encoder_background():
+                try:
+                    await loop.run_in_executor(None, lambda: encode_text_to_muq("warmup quiet soft music"))
+                    logger.info(f"  ✅ MuQ-MuLan 文本编码器后台预热完成 ({_t.time()-_t0:.1f}s)")
+                except Exception as warmup_error:
+                    logger.warning(f"  ⚠️ MuQ-MuLan 文本编码器后台预热失败，首次向量召回可能变慢: {warmup_error}")
+
+            if muq_warmup in {"blocking", "sync"}:
+                await _warmup_muq_text_encoder_background()
+            else:
+                asyncio.create_task(_warmup_muq_text_encoder_background())
+                logger.info("  🔄 MuQ-MuLan 文本编码器后台预热已启动")
+    except Exception as e:
+        logger.warning(f"  ⚠️ MuQ-MuLan 预热配置失败（不影响启动）: {e}")
+
     # 2. 预初始化 Agent 实例（编译 LangGraph 工作流 + MemorySaver）
     try:
         _agent_inst = get_agent()
         logger.info(f"  ✅ Agent 实例预初始化完成 ({_t.time()-_t0:.1f}s)")
     except Exception as e:
         logger.error(f"  ❌ Agent 预初始化失败: {e}")
-    
+
     # 3. 预热 Neo4j 连接池（首次查询建立 TCP 连接 + Bolt 握手）
     try:
         from retrieval.neo4j_client import get_neo4j_client
@@ -102,17 +129,17 @@ async def startup_event():
         if neo4j and neo4j.driver:
             await loop.run_in_executor(None, lambda: neo4j.execute_query("RETURN 1 AS warmup", {}))
             logger.info(f"  ✅ Neo4j 连接预热完成 ({_t.time()-_t0:.1f}s)")
-            
+
             # ★ Thompson Sampling 时间衰减：每次重启服务，ts_beta 衰减 20%
             # 这样长时间没被推荐的歌自然"恢复"，避免被永久封杀
             # 同时确保所有 Song 节点都有 ts_alpha/ts_beta 属性
             ts_decay_query = """
             MATCH (s:Song)
             SET s.ts_alpha = coalesce(s.ts_alpha, 1),
-                s.ts_beta  = CASE 
-                    WHEN s.ts_beta IS NOT NULL AND s.ts_beta > 1 
-                    THEN s.ts_beta * 0.8 
-                    ELSE 1 
+                s.ts_beta  = CASE
+                    WHEN s.ts_beta IS NOT NULL AND s.ts_beta > 1
+                    THEN s.ts_beta * 0.8
+                    ELSE 1
                 END
             RETURN count(s) AS total,
                    avg(s.ts_beta) AS avg_beta
@@ -128,7 +155,7 @@ async def startup_event():
                 )
     except Exception as e:
         logger.warning(f"  ⚠️ Neo4j 预热失败（不影响启动）: {e}")
-    
+
     # 4. 加载用户画像缓存（从 Neo4j 读取上次保存的画像）
     try:
         from services.profile_synthesizer import get_profile_synthesizer
@@ -137,25 +164,25 @@ async def startup_event():
         if portrait:
             logger.info(f"  ✅ 用户画像已加载 | confidence={portrait.confidence} ({_t.time()-_t0:.1f}s)")
         else:
-            logger.info(f"  ℹ️ 未找到历史画像，将在对话后自动生成")
+            logger.info("  ℹ️ 未找到历史画像，将在对话后自动生成")
     except Exception as e:
         logger.warning(f"  ⚠️ 用户画像加载失败（不影响启动）: {e}")
-    
+
     # 5. 异步预热 KV Prefix Cache（后台执行，不阻塞服务就绪）
     try:
         _agent_inst = get_agent()
         asyncio.create_task(_agent_inst.graph.warmup_kv_cache())
-        logger.info(f"  🔥 KV Cache 预热已启动（后台运行）")
+        logger.info("  🔥 KV Cache 预热已启动（后台运行）")
     except Exception as e:
         logger.warning(f"  ⚠️ KV Cache 预热启动失败: {e}")
-    
+
     logger.info(f"🏁 预加载完成，总耗时 {_t.time()-_t0:.1f}s")
 
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000", 
+        "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3003",   # Frontend (Next.js)
         "http://127.0.0.1:3003",
@@ -380,7 +407,7 @@ async def stream_recommendations(
 ) -> AsyncGenerator[str, None]:
     """
     流式生成推荐结果 (真流式：推荐解释逐 chunk 推送)
-    
+
     Args:
         is_disconnected: 可选的异步回调，检测客户端是否已断开连接。
                          由 FastAPI 端点通过 request.is_disconnected 注入。
@@ -389,29 +416,29 @@ async def stream_recommendations(
     """
     try:
         agent = get_agent()
-        
+
         # 根据 settings 配置初始化 LLM（provider/model 统一由设置面板管理）
         try:
             from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
             from agent.music_graph import set_llm, set_intent_llm, set_explain_llm
             from config.settings import settings as _req_settings
-            
+
             _provider = _req_settings.llm_default_provider or "dashscope"
             _model = _req_settings.llm_default_model
-            
+
             new_llm = get_chat_model(provider=_provider, model_name=_model)
             set_llm(new_llm)
-            
+
             # 同步切换意图分析 LLM（如果没有独立配置，跟随主模型）
             if not _req_settings.intent_llm_model:
                 new_intent = get_intent_chat_model()
                 set_intent_llm(new_intent)
-            
+
             # 同步切换解释生成 LLM（如果没有独立配置，跟随主模型）
             if not _req_settings.explain_llm_model:
                 new_explain = get_explain_chat_model()
                 set_explain_llm(new_explain)
-            
+
             logger.info(f"LLM 初始化: {_provider} / {_model}")
         except Exception as e:
             logger.warning(f"切换 LLM 失败,使用默认配置: {e}")
@@ -419,15 +446,15 @@ async def stream_recommendations(
         # 通过环境变量传递联网搜索开关
         os.environ["MUSIC_WEB_SEARCH_ENABLED"] = "1" if web_search_enabled else "0"
         logger.info(f"联网搜索: {'ON' if web_search_enabled else 'OFF'}")
-        
+
         logger.info("\n" + "🚀" * 30)
         logger.info(f"🆕 [NEW RECOMMENDATION] User Query: {query}")
         logger.info("-" * 40)
-        
+
         # 发送开始事件
         yield f"data: {json.dumps({'type': 'start', 'message': '开始分析你的需求...'}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0.1)
-        
+
         # 使用流式推荐方法：推荐解释会逐 chunk 实时推送
         async for event in agent.stream_recommendations(
             query=query,
@@ -452,37 +479,38 @@ async def stream_recommendations(
                     return
 
             event_type = event.get("type")
-            
+
             if event_type == "thinking":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                
+
             elif event_type == "response":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                 # 流式 chunk 不需要 sleep，尽快推送
-                
+
             elif event_type == "recommendations_start":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                
+
             elif event_type == "song":
                 song = event.get("song", {})
-                # 跳过无法播放的条目
-                is_playable = isinstance(song, dict) and (song.get("audio_url") or song.get("preview_url"))
                 if isinstance(song, dict) and song.get("title"):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.1)
-                    
+
             elif event_type == "recommendations_complete":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
             elif event_type == "clarification_required":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                
+
             elif event_type == "complete":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                
+
+            elif event_type == "refinement":
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
             elif event_type == "error":
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        
+
     except asyncio.CancelledError:
         logger.info("🛑 [SSE] 流式推荐被取消")
     except Exception as e:
@@ -501,18 +529,18 @@ async def stream_playlist(
     """
     try:
         agent = get_agent()
-        
+
         yield f"data: {json.dumps({'type': 'start', 'message': '开始生成你的专属歌单...'}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0.1)
-        
+
         yield f"data: {json.dumps({'type': 'thinking', 'message': '正在通过推荐引擎分析...'}, ensure_ascii=False)}\n\n"
-        
+
         # 使用推荐引擎生成歌单(替代已废弃的 Spotify 服务)
         result = await agent.get_recommendations(
             query=query,
             user_preferences=user_preferences or {}
         )
-        
+
         if result.get("success") and result.get("recommendations"):
             raw_songs = result["recommendations"]
             songs = getattr(raw_songs, "data", raw_songs)
@@ -524,9 +552,9 @@ async def stream_playlist(
                 yield f"data: {json.dumps({'type': 'song', 'song': song_data, 'index': i, 'total': len(songs)}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0.05)
             yield f"data: {json.dumps({'type': 'songs_complete'}, ensure_ascii=False)}\n\n"
-        
+
         yield f"data: {json.dumps({'type': 'complete', 'success': True}, ensure_ascii=False)}\n\n"
-        
+
     except Exception as e:
         logger.error(f"流式歌单生成失败: {str(e)}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
@@ -585,7 +613,7 @@ async def health():
 async def get_stream_recommendations(request: RecommendationRequest, raw_request: Request):
     """
     流式获取音乐推荐
-    
+
     SSE流式接口,会逐步发送分析进度和结果。
     注入 raw_request.is_disconnected 以支持客户端断开时取消后台任务。
     """
@@ -743,16 +771,16 @@ async def search_music(request: SearchRequest):
     - 无结果时使用本地 JSON 数据库模糊匹配
     """
     try:
-        search_tool = get_music_search_tool()
-        songs = await search_tool.search_songs(
-            query=request.query,
-            genre=request.genre,
-            limit=request.limit,
-        )
+        from tools.music_fetch_tool import execute_search_online_music
+
+        keyword = f"{request.query} {request.genre}".strip() if request.genre else request.query
+        fetched = await execute_search_online_music(keyword)
+        songs = list(fetched.data or []) if getattr(fetched, "success", False) else []
+        songs = songs[: max(1, int(request.limit or 20))]
         return {
             "success": True,
             "count": len(songs),
-            "songs": [s.to_dict() for s in songs],
+            "songs": songs,
         }
     except Exception as e:
         logger.error(f"搜索歌曲失败: {str(e)}", exc_info=True)
@@ -921,7 +949,7 @@ async def update_settings_endpoint(request: SettingsUpdateRequest):
     try:
         from config.settings import save_user_settings
         save_user_settings(settings, updated_fields)
-        logger.info(f"[Settings] 已持久化到 user_settings.json")
+        logger.info("[Settings] 已持久化到 user_settings.json")
     except Exception as e:
         logger.warning(f"[Settings] 持久化失败: {e}")
 
@@ -1026,6 +1054,12 @@ class MemoryPreferenceUpdateRequest(BaseModel):
     """Editable memory update from the user profile panel."""
     user_id: str = "local_admin"
     preferences: Dict[str, Any]
+
+
+class MemoryConsolidationRequest(BaseModel):
+    """Run a bounded, auditable L0-to-L2 consolidation for one user."""
+    user_id: str = "local_admin"
+    force: bool = True
 
 
 # ---- 新增:行为事件转自然语言 ----
@@ -1239,6 +1273,18 @@ async def memory_profile(user_id: str = "local_admin"):
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/memory/profile-views")
+async def memory_profile_views(user_id: str = "local_admin"):
+    """Scope-grouped editable views over effective L1/L2 preferences."""
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        return {"success": True, **get_memory_gateway().profile_views(user_id=user_id)}
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 读取场景化画像失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/memory/preference")
 async def add_memory_preference(request: MemoryPreferenceUpdateRequest):
     """Add structured preferences to the Neo4j hot path."""
@@ -1302,6 +1348,44 @@ async def clear_learned_memory_profile(
         raise
     except Exception as e:
         logger.error(f"[MemoryAPI] 清空学习记忆失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/memory/consolidate")
+async def consolidate_memory(
+    request: MemoryConsolidationRequest,
+    _: None = Depends(require_admin_api_key),
+):
+    """Explicitly run the strong-model consolidator; never exposed as a public side effect."""
+    reject_shared_safe_action("consolidate memory")
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        report = await get_memory_gateway().consolidate_user(
+            user_id=request.user_id,
+            force=request.force,
+        )
+        return {"success": not report.get("reason"), "report": report}
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 记忆归纳失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/memory/record/{record_id}")
+async def delete_memory_record(record_id: str, user_id: str = "local_admin"):
+    """Tombstone one auditable memory record without rewriting its history."""
+    reject_shared_safe_action("delete memory record")
+    try:
+        from services.memory_gateway import get_memory_gateway
+
+        ok = get_memory_gateway().delete_memory_record(user_id=user_id, record_id=record_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Memory record not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[MemoryAPI] 删除记忆记录失败: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -1554,7 +1638,7 @@ async def delete_song_completely(
         deleted_count = del_result[0].get("deleted_count", 0) if del_result else 0
 
         if deleted_count == 0:
-            raise HTTPException(status_code=404, detail=f"歌曲删除失败: 图谱中未找到匹配节点")
+            raise HTTPException(status_code=404, detail="歌曲删除失败: 图谱中未找到匹配节点")
 
         logger.info(f"  ✅ Neo4j: 已删除 {deleted_count} 个 Song 节点及其关联边")
 
@@ -2231,7 +2315,7 @@ async def update_library_song_tags(
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     port = int(os.getenv("API_PORT", "8501"))
     uvicorn.run(
         "api.server:app",

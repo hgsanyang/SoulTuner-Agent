@@ -40,6 +40,24 @@ class CatalogGapDecision:
         }
 
 
+def supersede_mix_in(decision: CatalogGapDecision, *, superseded_by: str) -> CatalogGapDecision:
+    """Downgrade a mix_in decision when another lane already provides web songs.
+
+    Only mix_in (inventory is sufficient, web songs are optional garnish) is
+    superseded; a true fallback (local inventory cannot satisfy the request)
+    keeps its online discovery untouched.
+    """
+    if decision.action != "mix_in":
+        return decision
+    from dataclasses import replace
+
+    return replace(
+        decision,
+        action="none",
+        details={**(decision.details or {}), "mix_in_superseded_by": superseded_by},
+    )
+
+
 _ERA_PATTERNS = (
     r"(?:19[2-9]0|20[0-2]0)年代",
     r"\b(?:[1-9]0)s\b",

@@ -11,6 +11,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from services.runtime_mode import side_effects_disabled
+
 
 POSITIVE_EVENTS = {"like", "save", "full_play", "repeat"}
 NEGATIVE_EVENTS = {"skip", "dislike"}
@@ -42,6 +44,8 @@ def _jsonl_path(name: str) -> Path:
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    if side_effects_disabled():
+        return
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
 

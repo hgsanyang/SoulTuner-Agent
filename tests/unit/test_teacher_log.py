@@ -3,8 +3,8 @@ import json
 from services.teacher_log import log_teacher_example
 
 
-def test_teacher_log_disabled_by_default(tmp_path, monkeypatch):
-    monkeypatch.delenv("TEACHER_LOG", raising=False)
+def test_teacher_log_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEACHER_LOG", "0")
     monkeypatch.setenv("TEACHER_LOG_DIR", str(tmp_path))
 
     assert log_teacher_example("planner", inputs={"query": "secret"}, output={"x": 1}) is None
@@ -12,17 +12,40 @@ def test_teacher_log_disabled_by_default(tmp_path, monkeypatch):
 
 
 def test_teacher_log_hashes_text_by_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("TEACHER_LOG", "1")
+    monkeypatch.delenv("TEACHER_LOG", raising=False)
     monkeypatch.delenv("TEACHER_LOG_STORE_TEXT", raising=False)
     monkeypatch.setenv("TEACHER_LOG_DIR", str(tmp_path))
 
-    path = log_teacher_example("planner", inputs={"query": "想听雨天歌"}, output={"plan": "soft"})
+    path = log_teacher_example(
+        "planner",
+        inputs={"query": "想听雨天歌"},
+        output={"plan": "soft"},
+        metadata={"model": "qwen3.7-plus", "planner_quality_mode": "teacher"},
+    )
 
     assert path is not None
     row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     assert row["text_mode"] == "hashed"
     assert row["inputs"]["query"]["chars"] == 5
+    assert row["metadata"]["model"] == "qwen3.7-plus"
+    assert row["metadata"]["planner_quality_mode"] == "teacher"
     assert "想听雨天歌" not in path.read_text(encoding="utf-8")
+
+
+def test_teacher_log_skips_fast_mode_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("TEACHER_LOG", raising=False)
+    monkeypatch.delenv("TEACHER_LOG_ALLOW_FAST", raising=False)
+    monkeypatch.setenv("TEACHER_LOG_DIR", str(tmp_path))
+
+    path = log_teacher_example(
+        "planner",
+        inputs={"query": "fast"},
+        output={"plan": "fast"},
+        metadata={"model": "qwen-turbo", "planner_quality_mode": "fast"},
+    )
+
+    assert path is None
+    assert not list(tmp_path.glob("*.jsonl"))
 
 
 def test_teacher_log_can_store_full_text_when_explicitly_enabled(tmp_path, monkeypatch):

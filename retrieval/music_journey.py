@@ -5,7 +5,6 @@
 
 import asyncio
 import json
-import logging
 from typing import AsyncGenerator, Dict, Any, List, Optional, Set
 
 from config.logging_config import get_logger
@@ -232,7 +231,8 @@ async def retrieve_for_segment(
                 if not isinstance(song, dict):
                     continue
                 title = song.get("title", "")
-                # 去重：跳过已在旅程中出现的歌曲                dedup_key = f"{title}-{song.get('artist', '')}".lower()
+                # 去重：跳过已在旅程中出现的歌曲
+                dedup_key = f"{title}-{song.get('artist', '')}".lower()
                 if dedup_key in seen_songs:
                     continue
                 seen_songs.add(dedup_key)

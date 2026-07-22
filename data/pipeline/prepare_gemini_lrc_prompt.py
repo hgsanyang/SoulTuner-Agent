@@ -119,19 +119,19 @@ def load_metadata(lrc_filename):
     """
     basename = lrc_filename.replace('.lrc', '')
     meta_path = os.path.join(METADATA_DIR, f"{basename}_meta.json")
-    
+
     if not os.path.exists(meta_path):
         return None
-        
+
     try:
         with open(meta_path, 'r', encoding='utf-8') as f:
             meta = json.load(f)
-        
+
         # 提取关键字段
         artists = "，".join([a[0] for a in meta.get("artist", [["Unknown"]])])
         duration_ms = meta.get("duration", 0)
         duration_str = f"{duration_ms // 60000}分{(duration_ms % 60000) // 1000}秒" if duration_ms else "未知"
-        
+
         return {
             "title": meta.get("musicName", "Unknown"),
             "artist": artists,
@@ -143,7 +143,7 @@ def load_metadata(lrc_filename):
 
 def generate_prompts(force_all: bool = False):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
+
     # 【防重复机制】读取已有的 gemini_result.json，收集已经处理过的歌词文件名
     processed_files = set()
     result_json_path = os.path.join(OUTPUT_DIR, "gemini_result.json")
@@ -162,30 +162,30 @@ def generate_prompts(force_all: bool = False):
         print("⚡ --force-all 模式：忽略历史记录，为所有歌曲重新生成提示词！")
 
     lrc_files = list(Path(LYRICS_DIR).glob("*.lrc"))
-    
+
     # 过滤掉已经处理过的歌词
     pending_lrc_files = [f for f in lrc_files if f.name not in processed_files]
-    
+
     if not pending_lrc_files:
         print(f"🎉 太棒了，所有的 {len(lrc_files)} 首歌词都已经有提取结果了，无需再次生成！")
         return
-        
+
     print(f"找到 {len(pending_lrc_files)} 首需要提取的歌曲 (总共 {len(lrc_files)} 首)，准备打包...")
-    
+
     # 分批次打包
     total_batches = math.ceil(len(pending_lrc_files) / BATCH_SIZE)
-    
+
     for i in range(total_batches):
         batch_files = pending_lrc_files[i * BATCH_SIZE : (i + 1) * BATCH_SIZE]
-        
+
         lyrics_blocks = ""
         for file in batch_files:
             try:
                 with open(file, 'r', encoding='utf-8') as f:
                     content = f.read()
-                
+
                 content = clean_lrc(content)
-                
+
                 # 尝试加载元数据，为 Gemini 提供更多上下文
                 meta_info = load_metadata(file.name)
                 meta_header = ""
@@ -196,7 +196,7 @@ def generate_prompts(force_all: bool = False):
                         f"  专辑: {meta_info['album']}\n"
                         f"  时长: {meta_info['duration']}\n"
                     )
-                
+
                 lyrics_blocks += (
                     f"【歌曲文件】: {file.name}\n"
                     f"【基本信息】:\n{meta_header}"
@@ -205,15 +205,15 @@ def generate_prompts(force_all: bool = False):
                 )
             except Exception as e:
                 print(f"读取 {file.name} 失败: {e}")
-                
+
         final_prompt = PROMPT_TEMPLATE.format(count=len(batch_files), lyrics_blocks=lyrics_blocks)
-        
+
         output_file = os.path.join(OUTPUT_DIR, f"gemini_prompt_batch_{i+1}.txt")
         with open(output_file, 'w', encoding='utf-8') as fout:
             fout.write(final_prompt)
-            
+
         print(f"✅ 批次 {i+1}/{total_batches} 已生成: {output_file} (包含 {len(batch_files)} 首)")
-        
+
     print("\n🎉 全部打包完成！")
     print("👉 下一步：请打开 Gemini 网页版 (https://gemini.google.com/)")
     print(f"👉 将 {OUTPUT_DIR} 里的 txt 内容复制发给它，并将它回复的 JSON 保存下来！")

@@ -33,10 +33,9 @@ services:
       retries: 5
       start_period: 30s
 
-  # ---- GraphZep 记忆旁路（可选）----
-  # 默认 CPU/GPU 启动不依赖它。需要自然语言 episodic 记忆时：
-  #   $env:MEMORY_EPISODIC_BACKENDS="graphzep"
-  #   docker compose --profile memory up -d graphzep
+  # ---- GraphZep 记忆旁路（legacy，已停用为默认依赖）----
+  # 产品决策：默认记忆为本地结构化账本（L0/L1/L2），不构建/启动/评测 GraphZep。
+  # 此服务仅作 legacy 兼容保留（profile=memory，默认永不启动）。
   graphzep:
     profiles: ["memory"]
     build: ./graphzep_service

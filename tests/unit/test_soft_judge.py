@@ -39,6 +39,13 @@ def test_tag_hit_does_not_treat_pop_as_kpop():
     assert tag_hit(["k-pop", "r&b", "romantic"], ["k-pop"])
 
 
+def test_tag_hit_allows_curated_soft_judge_synonyms():
+    assert tag_hit(["peaceful", "acoustic"], ["relaxing"])
+    assert tag_hit(["cozy"], ["warm"])
+    assert tag_hit(["lo-fi"], ["mellow"])
+    assert not tag_hit(["energetic", "workout"], ["relaxing"])
+
+
 def test_judge_objective_soft_intent_reports_confidence_and_metrics():
     decision = judge_objective_soft_intent(
         [

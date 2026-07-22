@@ -3,8 +3,6 @@
 - GET  /api/user-portrait      获取当前动态画像
 - POST /api/user-portrait/refresh  手动触发画像刷新
 """
-import logging
-from typing import Optional
 
 from fastapi import APIRouter
 from config.logging_config import get_logger

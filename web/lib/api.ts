@@ -34,7 +34,7 @@ export interface RefinementOption {
 
 export interface SSEEvent {
     type: 'start' | 'thinking' | 'response' | 'recommendations_start' | 'song'
-        | 'recommendations_complete' | 'clarification_required' | 'complete' | 'error'
+        | 'recommendations_complete' | 'clarification_required' | 'complete' | 'refinement' | 'error'
         | 'journey_start' | 'journey_info' | 'journey_complete'
         | 'segment_start' | 'segment_complete' | 'transition_point';
     message?: string;
@@ -63,6 +63,8 @@ export interface SSEEvent {
     clarification_options?: string[];
     clarification_reason?: string;
     refinement_options?: RefinementOption[];
+    // 'refinement' 事件：complete 之后异步到达的微调方向 chips
+    options?: RefinementOption[];
 }
 
 export interface StreamParams {
@@ -159,7 +161,7 @@ export function streamRecommendations(
 
 // ---- 用户行为事件上报 ----
 export async function sendUserEvent(
-    eventType: 'like' | 'unlike' | 'save' | 'skip' | 'dislike' | 'full_play' | 'repeat' | 'play_start',
+    eventType: 'like' | 'unlike' | 'save' | 'unsave' | 'skip' | 'dislike' | 'full_play' | 'repeat' | 'play_start',
     songTitle: string,
     artist: string,
     options: {
@@ -177,7 +179,7 @@ export async function sendUserEvent(
     } = {},
 ): Promise<void> {
     try {
-        await fetch('http://localhost:8501/api/user-event', {
+        const response = await fetch('http://localhost:8501/api/user-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -199,6 +201,10 @@ export async function sendUserEvent(
                 },
             }),
         });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.success === false) {
+            throw new Error(payload.detail || payload.error || `HTTP ${response.status}`);
+        }
     } catch (err) {
         console.warn('[UserEvent] 上报失败:', err);
     }

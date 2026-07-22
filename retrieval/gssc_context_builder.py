@@ -17,7 +17,6 @@ Stage 4 升级（V2）：
 """
 
 import logging
-import asyncio
 from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -125,12 +124,12 @@ class ContextSource:
         self.priority = priority
         self.min_tokens = min_tokens  # 最少保留的 token 数（0=可完全截断）
         self.estimated_tokens = estimate_tokens(content)
-    
+
     def truncate_to(self, max_tokens: int) -> str:
         """按行截断内容到指定 Token 数（传统兜底方式）"""
         if self.estimated_tokens <= max_tokens:
             return self.content
-        
+
         lines = self.content.split("\n")
         result = []
         used = 0
@@ -142,17 +141,17 @@ class ContextSource:
                 break
             result.append(line)
             used += line_tokens
-        
+
         return "\n".join(result)
 
 
 async def _llm_compress_chat_history(chat_history: str) -> str:
     """
     使用 LLM 将冗长的对话历史压缩为摘要。
-    
+
     借鉴 Claude Code compact.ts 的思路：用一个轻量 LLM 调用，
     将旧对话轮次生成结构化摘要，替代硬截断。
-    
+
     使用意图分析专用的小模型（如 Qwen3-4B），成本低、速度快。
     """
     try:
@@ -160,7 +159,7 @@ async def _llm_compress_chat_history(chat_history: str) -> str:
         from langchain_core.prompts import ChatPromptTemplate
         from langchain_core.output_parsers import StrOutputParser
         from llms.prompts import CONTEXT_COMPRESSOR_PROMPT
-        
+
         llm = get_compress_chat_model()
         chain = (
             ChatPromptTemplate.from_template(CONTEXT_COMPRESSOR_PROMPT)
@@ -169,13 +168,13 @@ async def _llm_compress_chat_history(chat_history: str) -> str:
         )
         summary = await chain.ainvoke({"chat_history": chat_history})
         summary = summary.strip()
-        
+
         # 清理可能的 <think>...</think> 残留（本地模型常见）
         if "<think>" in summary:
             think_end = summary.find("</think>")
             if think_end > 0:
                 summary = summary[think_end + 8:].strip()
-        
+
         original_tokens = estimate_tokens(chat_history)
         compressed_tokens = estimate_tokens(summary)
         logger.info(
@@ -183,7 +182,7 @@ async def _llm_compress_chat_history(chat_history: str) -> str:
             f"(压缩率: {compressed_tokens / max(original_tokens, 1):.1%})"
         )
         return summary
-        
+
     except Exception as e:
         logger.warning(f"[GSSC] LLM 压缩失败，退回按行截断: {e}")
         return None  # 返回 None 表示失败，调用方会退回 truncate_to
@@ -195,6 +194,7 @@ async def build_context(
     retrieval_context: str = "",
     user_input: str = "",
     total_budget: int = 0,
+    user_id: str = "local_admin",
 ) -> Dict[str, str]:
     """
     GSSC 四阶段上下文构建（V2 异步版）
@@ -221,10 +221,10 @@ async def build_context(
             total_budget = settings.context_total_budget
         except Exception:
             total_budget = 8000
-    
+
     # ---- Stage 1: Gather（收集所有上下文源） ----
     sources = []
-    
+
     if graphzep_facts and graphzep_facts != "暂无用户长期记忆":
         sources.append(ContextSource(
             name="graphzep_facts",
@@ -232,7 +232,7 @@ async def build_context(
             priority=PRIORITY_GRAPHZEP_FACTS,
             min_tokens=100,  # 至少保留 100 token 的记忆
         ))
-    
+
     if chat_history:
         sources.append(ContextSource(
             name="chat_history",
@@ -240,7 +240,7 @@ async def build_context(
             priority=PRIORITY_CHAT_HISTORY,
             min_tokens=200,  # 至少保留最近 2-3 轮对话
         ))
-    
+
     if retrieval_context:
         sources.append(ContextSource(
             name="retrieval_context",
@@ -248,18 +248,18 @@ async def build_context(
             priority=PRIORITY_RETRIEVAL,
             min_tokens=0,  # 可以完全省略
         ))
-    
+
     if not sources:
         return {
             "graphzep_facts": graphzep_facts,
             "chat_history": chat_history,
             "retrieval_context": retrieval_context,
         }
-    
+
     # ---- Stage 2: Select（按优先级排序） ----
     sources.sort(key=lambda s: s.priority)
     total_estimated = sum(s.estimated_tokens for s in sources)
-    
+
     if total_estimated <= total_budget:
         # 总量在预算内，无需截断
         logger.info(f"[GSSC] 上下文总量 {total_estimated} tokens ≤ 预算 {total_budget}，无需截断")
@@ -268,14 +268,14 @@ async def build_context(
             "chat_history": chat_history,
             "retrieval_context": retrieval_context,
         }
-    
+
     logger.info(f"[GSSC] 上下文总量 {total_estimated} tokens > 预算 {total_budget}，启动截断")
-    
+
     # ---- Stage 3: Structure（分配预算） ----
     # 先保证每个源的 min_tokens，剩余按优先级分配
     min_total = sum(s.min_tokens for s in sources)
     remaining_budget = total_budget - min_total
-    
+
     allocations: Dict[str, int] = {}
     for src in sources:
         # 基础配额 = min_tokens
@@ -284,35 +284,34 @@ async def build_context(
         extra_allocated = min(extra_needed, remaining_budget)
         allocations[src.name] = src.min_tokens + extra_allocated
         remaining_budget -= extra_allocated
-    
+
     # ---- Stage 4: Compress（智能压缩 — V2 升级） ----
     result = {
         "graphzep_facts": graphzep_facts,
         "chat_history": chat_history,
         "retrieval_context": retrieval_context,
     }
-    
+
     for src in sources:
         budget = allocations.get(src.name, src.estimated_tokens)
         if src.estimated_tokens <= budget:
             continue  # 不需要压缩
-        
+
         # V2 升级：chat_history 远超预算时尝试 LLM 摘要压缩
         if (
             src.name == "chat_history"
             and src.estimated_tokens > budget * LLM_COMPRESS_RATIO
         ):
             # ★ 先查预压缩缓存（上一轮结束后异步预计算的结果）
-            user_id = "local_admin"  # 当前单用户，后续多用户时可从参数传入
             cached = get_cached_compression(user_id, src.estimated_tokens)
             if cached is not None:
                 result[src.name] = cached
                 logger.info(
-                    f"[GSSC] chat_history: 使用预压缩缓存，跳过 LLM 调用 "
-                    f"(节省 ~15-20s)"
+                    "[GSSC] chat_history: 使用预压缩缓存，跳过 LLM 调用 "
+                    "(节省 ~15-20s)"
                 )
                 continue
-            
+
             # ★★ 缓存未命中：不再同步调用 LLM 压缩（会阻塞意图识别 15-80s）
             # 直接 fall through 到按行截断兜底
             # 预压缩将在本轮结束后由 pre_compress_and_cache 异步执行，
@@ -322,7 +321,7 @@ async def build_context(
                 f"({budget} tokens)，预压缩缓存未命中，使用按行截断兜底"
             )
             # fall through 到下面的 truncate_to
-        
+
         # 按行截断兜底（V1 原有逻辑）
         truncated = src.truncate_to(budget)
         result[src.name] = truncated
@@ -394,4 +393,3 @@ def _track_token_savings(
     lines.append(f"  Budget: {budget}")
 
     logger.info("\n".join(lines))
-

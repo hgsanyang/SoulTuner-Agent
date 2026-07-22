@@ -200,7 +200,13 @@ def _language_matches(song: Mapping[str, Any], language: str) -> bool:
     expected = normalize_text(language)
     actual = normalize_text(song.get("language"))
     if expected == "instrumental":
-        return actual == "instrumental" or bool(song.get("is_instrumental"))
+        return (
+            actual == "instrumental"
+            or "instrumental" in actual
+            or "纯音乐" in str(song.get("language") or "")
+            or "器乐" in str(song.get("language") or "")
+            or bool(song.get("is_instrumental"))
+        )
     return bool(actual and actual == expected)
 
 
@@ -219,16 +225,17 @@ def apply_hard_filters(
 ) -> List[dict]:
     """Apply the only exclusion stage: request hard constraints plus safety.
 
-    DISLIKES, explicit entities, and instrumental requests stay strict. Sparse
-    language/region metadata is only relaxed when strict language/region filtering
-    would empty the result set.
+    DISLIKES and explicit entities stay strict.  Voice/instrumental/energy
+    requests are acoustic intents and should be handled by dense retrieval and
+    ranking instead of sparse-label exclusion.
     """
     hard = dict(hard_constraints or {})
     artist_entities = list(hard.get("artist_entities") or [])
     song_entities = list(hard.get("song_entities") or [])
     language = hard.get("language")
     region = hard.get("region")
-    instrumental = bool(hard.get("instrumental"))
+    if normalize_text(language) in {"instrumental", "纯音乐", "器乐"}:
+        language = None
     disliked = {normalize_text(title) for title in disliked_titles if normalize_text(title)}
 
     safety_filtered = []
@@ -246,8 +253,6 @@ def apply_hard_filters(
         if artist_entities and not _matches_any(artist, artist_entities):
             continue
         if song_entities and not _matches_any(title, song_entities):
-            continue
-        if instrumental and not _language_matches(song, "Instrumental"):
             continue
         entity_filtered.append(item)
 
@@ -292,7 +297,7 @@ def apply_hard_filters(
     if not min_required or len(preferred) >= min_required:
         return preferred
 
-    # Preserve entity/instrumental/safety constraints, but fill a sparse language
+    # Preserve entity/safety constraints, but fill a sparse language
     # or region result from the remaining RRF candidates rather than returning an
     # unusably short or empty list.
     needed = min_required - len(preferred)

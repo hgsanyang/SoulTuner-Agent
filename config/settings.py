@@ -99,6 +99,16 @@ class GlobalSettings(BaseSettings):
         validation_alias="INTENT_LLM_MODEL",
         description="意图分析专用模型名（空则复用主模型）",
     )
+    intent_llm_fast_model: str = Field(
+        default="qwen-turbo",
+        validation_alias="INTENT_LLM_FAST_MODEL",
+        description="意图分析 fast-mode 模型名；仅在 PLANNER_QUALITY_MODE=fast 时使用",
+    )
+    planner_quality_mode: str = Field(
+        default="teacher",
+        validation_alias="PLANNER_QUALITY_MODE",
+        description="Planner 显式质量模式：teacher 使用强模型采集高质量数据；fast 用于 demo/快速评测",
+    )
 
     # --- HyDE 声学描述生成专用 LLM（本地模式专用；API 模式已内联，此字段留空）---
     hyde_llm_provider: str = Field(
@@ -152,6 +162,26 @@ class GlobalSettings(BaseSettings):
         default=False,
         validation_alias="EVAL_DISABLE_SIDE_EFFECTS",
         description="离线评测时关闭后台偏好提取、GraphZep 写入、画像刷新等副作用",
+    )
+    tool_plan_shadow_enabled: bool = Field(
+        default=True,
+        validation_alias="TOOL_PLAN_SHADOW_ENABLED",
+        description="记录并评测 ToolPlan v1，但仍由现有检索链路执行",
+    )
+    tool_plan_execution_enabled: bool = Field(
+        default=False,
+        validation_alias="TOOL_PLAN_EXECUTION_ENABLED",
+        description="让受限工具编排器接管执行；通过工具计划闸门前保持关闭",
+    )
+    tool_plan_timeout_seconds: float = Field(
+        default=20.0,
+        validation_alias="TOOL_PLAN_TIMEOUT_SECONDS",
+        description="单个白名单工具的超时上限",
+    )
+    acoustic_probe_ranking_enabled: bool = Field(
+        default=False,
+        validation_alias="ACOUSTIC_PROBE_RANKING_ENABLED",
+        description="实验性 MuQ 零样本声学 probe 排序；通过真实标注校准前默认关闭",
     )
     knowledge_background_enrichment_enabled: bool = Field(
         default=True,
@@ -534,7 +564,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
     # 可持久化的字段白名单（排除 API key 等敏感信息）
     _PERSISTABLE = {
         "llm_default_provider", "llm_default_model",
-        "intent_llm_provider", "intent_llm_model",
+        "intent_llm_provider", "intent_llm_model", "intent_llm_fast_model", "planner_quality_mode",
         "intent_temperature",
         "dst_clarification_confidence_threshold",
         "hyde_llm_provider", "hyde_llm_model",

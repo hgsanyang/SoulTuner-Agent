@@ -1,7 +1,9 @@
-import sys
-import types
+try:
+    from langgraph.graph.message import add_messages as _add_messages  # noqa: F401
+except ModuleNotFoundError:
+    import sys
+    import types
 
-if "langgraph.graph.message" not in sys.modules:
     langgraph = types.ModuleType("langgraph")
     graph = types.ModuleType("langgraph.graph")
     message = types.ModuleType("langgraph.graph.message")

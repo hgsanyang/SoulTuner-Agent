@@ -114,7 +114,7 @@ def test_weighted_rrf_merges_richer_metadata():
     assert song["preview_url"].endswith("a.flac")
 
 
-def test_hard_filter_applies_entities_language_region_instrumental_and_dislikes():
+def test_hard_filter_applies_entities_language_region_and_dislikes():
     candidates = weighted_rrf(
         {
             "dense": [
@@ -149,7 +149,6 @@ def test_hard_filter_applies_entities_language_region_instrumental_and_dislikes(
         {
             "artist_entities": ["Alice"],
             "song_entities": ["Focus Piano"],
-            "language": "Instrumental",
             "region": "Japan",
             "instrumental": True,
         },
@@ -159,6 +158,23 @@ def test_hard_filter_applies_entities_language_region_instrumental_and_dislikes(
         ("Focus Piano", "Alice")
     ]
     assert apply_hard_filters(filtered, {}, disliked_titles={"Focus Piano"}) == []
+
+
+def test_hard_filter_does_not_exclude_sparse_instrumental_labels():
+    candidates = weighted_rrf(
+        {
+            "dense": [
+                _item("纯净钢琴", "Alice", rank=0, language="纯音乐"),
+                _item("器乐小品", "Bob", rank=1, language="器乐"),
+                _item("Vocal Song", "Carol", rank=2, language="Chinese"),
+            ]
+        },
+        recall_weights_for_intent("vector_search"),
+    )
+
+    filtered = apply_hard_filters(candidates, {"instrumental": True}, limit=8)
+
+    assert [item["song"]["title"] for item in filtered] == ["纯净钢琴", "器乐小品", "Vocal Song"]
 
 
 def test_soft_hints_are_not_hard_filters():

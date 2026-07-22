@@ -12,7 +12,6 @@ import os
 import numpy as np
 from pathlib import Path
 from functools import partial
-import re
 
 import torch
 import timm

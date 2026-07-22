@@ -1,5 +1,10 @@
 services:
   backend:
+    build:
+      context: .
+      args:
+        TORCH_VERSION: "2.5.1"
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
     environment:
       DENSE_TEXT_AUDIO_BACKEND: muq
       MUQ_MULAN_FP16: "true"
@@ -12,3 +17,9 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+  ingest-worker:
+    build:
+      context: .
+      args:
+        TORCH_VERSION: "2.5.1"
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124

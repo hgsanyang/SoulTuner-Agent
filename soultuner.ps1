@@ -206,7 +206,7 @@ switch ($Action) {
         if ($UseGraphZep) {
             Write-Host "GraphZep: http://localhost:3100 (optional sidecar)"
         } else {
-            Write-Host "Memory:   Neo4j hot path only (set MEMORY_EPISODIC_BACKENDS=graphzep to enable GraphZep)"
+            Write-Host "Memory:   local structured ledger + Neo4j hot path"
         }
         if ($UseQdrant) {
             Write-Host "Qdrant:   http://localhost:6333 (knowledge vector sidecar)"

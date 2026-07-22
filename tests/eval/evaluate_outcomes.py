@@ -54,6 +54,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import logging
 import subprocess
@@ -622,8 +623,15 @@ async def run(
     timing: bool = False,
     fast: bool = False,
     case_timeout: float = 0.0,
+    verify_readonly: bool = False,
+    eval_user_id: str = "__eval_readonly__",
+    case_ids: list[str] | None = None,
+    sealed: bool = False,
 ) -> Dict[str, Any]:
-    if not verbose:
+    if sealed:
+        verbose = False
+        logging.getLogger().setLevel(logging.CRITICAL)
+    elif not verbose:
         logging.getLogger().setLevel(logging.WARNING)
     # 延迟导入：让 --help 在无重依赖时也能用
     from config.settings import settings
@@ -632,11 +640,23 @@ async def run(
     settings.intent_temperature = planner_temperature
     settings.explanation_fast_mode = fast
     settings.eval_disable_side_effects = True
+    readonly_before = None
+    if verify_readonly:
+        from tests.eval.runtime_fingerprint import capture_runtime_fingerprint
+
+        readonly_before = capture_runtime_fingerprint()
     from agent.music_agent import MusicRecommendationAgent
     if not verbose:
         logging.getLogger().setLevel(logging.WARNING)
 
     cases, case_meta = _load_cases(cases_file=cases_file, split=split)
+    if case_ids:
+        selected = {str(case_id).strip() for case_id in case_ids if str(case_id).strip()}
+        cases = [case for case in cases if str(case.get("id") or "") in selected]
+        missing = selected - {str(case.get("id") or "") for case in cases}
+        if missing:
+            raise ValueError(f"Unknown case ids: {', '.join(sorted(missing))}")
+        case_meta = {**case_meta, "selected_case_ids": sorted(selected)}
     model_meta = _effective_model_config(settings, provider, planner_temperature)
     git_meta = _git_meta()
     print(f"\n{'='*64}\n结果导向离线评测（Outcome Eval）\n{'='*64}")
@@ -662,6 +682,7 @@ async def run(
                 query,
                 chat_history=case.get("chat_history"),
                 dialog_state=case.get("dialog_state"),
+                user_id=str(case.get("user_id") or eval_user_id),
             )
             if case_timeout and case_timeout > 0:
                 result = await asyncio.wait_for(request, timeout=case_timeout)
@@ -814,14 +835,14 @@ async def run(
         print(f"  {name:28s} {c['pass']:>6d} {c['fail']:>6d} {c['indeterminate']:>6d}")
 
     failed = [r for r in reports if r["case_status"] == "fail"]
-    if failed:
+    if failed and not sealed:
         print(f"\n❌ 失败用例 ({len(failed)}):")
         for r in failed:
             bad = [f"{o['name']}({o['detail']})" for o in r["outcomes"] if o["status"] == "fail"]
             print(f"  [{r['id']}] «{r['query']}» → {bad}")
 
     manual = [(r["id"], r["query"], r["manual_review"]) for r in reports if r["manual_review"]]
-    if manual:
+    if manual and not sealed:
         print(f"\n👤 需人工核对（自动尺子覆盖不到的软意图）: {len(manual)} 例")
         for cid, q, items in manual:
             print(f"  [{cid}] «{q}»: {'; '.join(items)}")
@@ -837,6 +858,7 @@ async def run(
         "git": git_meta,
         "model_config": model_meta,
         "eval_disable_side_effects": bool(settings.eval_disable_side_effects),
+        "eval_user_id": eval_user_id,
         "case_timeout_seconds": round(case_timeout, 3) if case_timeout and case_timeout > 0 else None,
         "passed": n_pass, "failed": n_fail, "indeterminate": n_indet,
         "decided_pass_rate": round(n_pass / decided, 4) if decided else None,
@@ -846,10 +868,38 @@ async def run(
         "by_specificity": dict(by_specificity),
         "by_difficulty": dict(by_difficulty),
         "by_dimension": by_dimension,
-        "cases": reports,
+        "sealed": sealed,
+        "cases": (
+            [
+                {
+                    "case_hash": hashlib.sha256(str(item.get("id") or "").encode("utf-8")).hexdigest(),
+                    "case_status": item.get("case_status"),
+                    "intent_status": item.get("intent_status"),
+                    "ranking_status": item.get("ranking_status"),
+                }
+                for item in reports
+            ]
+            if sealed
+            else reports
+        ),
     }
     if timing_summary:
         report["timing"] = timing_summary
+    if verify_readonly:
+        from tests.eval.runtime_fingerprint import capture_runtime_fingerprint, fingerprint_changes
+
+        readonly_after = capture_runtime_fingerprint()
+        changes = fingerprint_changes(readonly_before or {}, readonly_after)
+        report["readonly_verification"] = {
+            "passed": not changes,
+            "before": readonly_before,
+            "after": readonly_after,
+            "changes": changes,
+        }
+        if changes:
+            print(f"\n❌ 只读闸门失败: {json.dumps(changes, ensure_ascii=False, default=str)}")
+        else:
+            print("\n✅ 只读闸门通过: Neo4j 与本地反馈/teacher 文件均未变化")
     out_file.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n📄 详细结果: {out_file}")
     return report
@@ -879,11 +929,23 @@ def main():
                    help="跳过解释 LLM，保留歌曲结果并生成确定性简短说明")
     p.add_argument("--case-timeout", type=float, default=0.0,
                    help="单条用例超时秒数；>0 时单 case 超时会标记为 TIMEOUT 并继续整轮")
+    p.add_argument("--verify-readonly", action="store_true",
+                   help="评测前后比较 Neo4j 与反馈/teacher 文件指纹；发生写入时退出非 0")
+    p.add_argument("--eval-user-id", default="__eval_readonly__",
+                   help="评测专用只读用户；case 中显式 user_id 可覆盖")
+    p.add_argument("--case-id", action="append", default=[],
+                   help="只运行指定 case id；可重复传入，适合 targeted regression")
+    p.add_argument("--sealed", action="store_true",
+                   help="密封终审：仅输出聚合结果和 case id hash，不打印 query/逐条失败")
     p.add_argument("--min-decided-pass-rate", type=float, default=None,
                    help="质量闸门：可判定用例通过率低于该值时退出非 0，例如 0.95")
     p.add_argument("--require-no-failures", action="store_true",
                    help="质量闸门：任一 case 失败即退出非 0（indeterminate 不算失败）")
     args = p.parse_args()
+    if args.sealed and not args.cases:
+        p.error("--sealed requires an external --cases file")
+    if args.sealed and args.case_id:
+        p.error("--sealed cannot be combined with --case-id")
     report = asyncio.run(run(
         args.provider,
         args.cases,
@@ -894,6 +956,10 @@ def main():
         timing=args.timing,
         fast=args.fast,
         case_timeout=args.case_timeout,
+        verify_readonly=args.verify_readonly,
+        eval_user_id=args.eval_user_id,
+        case_ids=args.case_id,
+        sealed=args.sealed,
     ))
     failed = int(report.get("failed") or 0)
     pass_rate = report.get("decided_pass_rate")
@@ -909,6 +975,9 @@ def main():
                 f"< {float(args.min_decided_pass_rate):.1%}"
             )
             gate_failed = True
+    readonly = report.get("readonly_verification") or {}
+    if args.verify_readonly and not readonly.get("passed"):
+        gate_failed = True
     if gate_failed:
         raise SystemExit(2)
 

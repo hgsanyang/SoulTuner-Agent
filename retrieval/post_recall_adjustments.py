@@ -24,6 +24,8 @@ class PostRecallAdjustmentConfig:
     exposure_penalty_weight: float = 0.06
     semantic_preference_weight: float = 0.035
     semantic_conflict_weight: float = 0.055
+    acoustic_preference_weight: float = 0.04
+    acoustic_conflict_weight: float = 0.06
     delta_limit: float = 0.08
     freshness_half_life_days: float = 21.0
     exposure_half_life_days: float = 7.0
@@ -139,7 +141,7 @@ def _normalise_tag(value: Any) -> str:
 
 def _song_tokens(song: Mapping[str, Any]) -> set[str]:
     tokens: set[str] = set()
-    for field in ("genre", "genres", "moods", "themes", "scenarios", "language", "region"):
+    for field in ("genre", "genres", "moods", "themes", "scenarios", "language", "region", "energy_level"):
         raw = song.get(field)
         values = raw if isinstance(raw, list) else [raw]
         for item in values:
@@ -153,6 +155,24 @@ def _song_tokens(song: Mapping[str, Any]) -> set[str]:
             compact = _normalise_tag(text)
             if compact:
                 tokens.add(compact)
+    if song.get("is_instrumental") or song.get("instrumental"):
+        tokens.add("instrumental")
+        tokens.add("withoutvocals")
+    if song.get("has_vocal") is False:
+        tokens.add("instrumental")
+        tokens.add("withoutvocals")
+        tokens.add("novocals")
+    elif song.get("has_vocal") is True:
+        tokens.add("vocal")
+        tokens.add("vocals")
+    if song.get("has_drums") is False:
+        tokens.add("nodrums")
+        tokens.add("withoutdrums")
+    elif song.get("has_drums") is True:
+        tokens.add("drums")
+    if _normalise_tag(song.get("energy_level")) in {"low", "lowenergy", "quiet", "calm"}:
+        tokens.add("lowenergy")
+        tokens.add("quiet")
     return tokens
 
 
@@ -201,6 +221,173 @@ def semantic_fit_scores(
     }
 
 
+_NO_VOCAL_TERMS = (
+    "不要人声",
+    "无人声",
+    "无歌词",
+    "without vocals",
+    "no vocals",
+    "instrumental",
+    "纯音乐",
+    "器乐",
+)
+
+_VOCAL_TERMS = ("vocals", "vocal", "singing", "人声", "演唱", "歌声")
+_DRUM_TERMS = ("drums", "drum", "percussion", "鼓", "鼓点", "打击乐")
+_NO_DRUM_TERMS = ("no drums", "without drums", "少鼓", "弱鼓", "不要鼓", "无鼓")
+_LOW_ENERGY_TERMS = (
+    "low energy",
+    "very low energy",
+    "低能量",
+    "低动态",
+    "安静",
+    "quiet",
+    "sleep",
+    "睡前",
+    "soft",
+    "gentle",
+    "calm",
+    "放松",
+    "舒缓",
+)
+_HIGH_ENERGY_TERMS = (
+    "high energy",
+    "energetic",
+    "loud",
+    "party",
+    "edm",
+    "driving",
+    "aggressive",
+    "突然变响",
+    "太吵",
+    "炸",
+    "蹦迪",
+)
+
+
+def _plan_text_sections(
+    soft_intent: Mapping[str, Any] | None = None,
+    hints: Mapping[str, Any] | None = None,
+) -> tuple[str, str]:
+    soft = soft_intent or {}
+    hint = hints or {}
+    positive_parts: list[str] = []
+    for value in (
+        soft.get("goal"),
+        soft.get("trajectory"),
+        soft.get("vibe"),
+        hint.get("genres"),
+        hint.get("mood"),
+        hint.get("scenario"),
+    ):
+        positive_parts.extend(_iter_terms(value))
+    avoid_parts = _iter_terms(soft.get("avoid"))
+    return (
+        " ".join(positive_parts).casefold(),
+        " ".join(avoid_parts).casefold(),
+    )
+
+
+def _has_term(text: str, terms: tuple[str, ...]) -> bool:
+    folded = str(text or "").casefold()
+    return any(str(term).casefold() in folded for term in terms)
+
+
+def acoustic_probe_fit_scores(
+    song: Mapping[str, Any],
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    soft_intent: Mapping[str, Any] | None = None,
+    hints: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return soft acoustic evidence from MuQ-derived probe fields.
+
+    This consumes LLM-produced plan fields, not raw user-query trigger words.
+    Scores are soft nudges for post-recall ranking and should never be used as
+    hard filters.
+    """
+    meta = metadata or {}
+    positive_text, avoid_text = _plan_text_sections(soft_intent, hints)
+    if not positive_text and not avoid_text:
+        return {"active": False, "positive": 0.0, "conflict": 0.0, "positive_hits": [], "conflict_hits": []}
+
+    vocalness = _to_float(meta.get("acoustic_vocalness", song.get("acoustic_vocalness", song.get("has_vocal"))), 0.5)
+    drumness = _to_float(meta.get("acoustic_drumness", song.get("acoustic_drumness", song.get("has_drums"))), 0.5)
+    energy = _to_float(meta.get("acoustic_energy", song.get("acoustic_energy")), 0.5)
+    if song.get("has_vocal") is False:
+        vocalness = min(vocalness, 0.15)
+    elif song.get("has_vocal") is True and "acoustic_vocalness" not in meta and "acoustic_vocalness" not in song:
+        vocalness = max(vocalness, 0.85)
+    if song.get("has_drums") is False:
+        drumness = min(drumness, 0.15)
+    elif song.get("has_drums") is True and "acoustic_drumness" not in meta and "acoustic_drumness" not in song:
+        drumness = max(drumness, 0.85)
+
+    positive_values: list[float] = []
+    conflict_values: list[float] = []
+    positive_hits: list[str] = []
+    conflict_hits: list[str] = []
+
+    wants_no_vocals = _has_term(positive_text, _NO_VOCAL_TERMS) or _has_term(avoid_text, _VOCAL_TERMS)
+    wants_vocals = _has_term(positive_text, _VOCAL_TERMS) or _has_term(avoid_text, _NO_VOCAL_TERMS)
+    wants_low_drums = _has_term(positive_text, _NO_DRUM_TERMS) or _has_term(avoid_text, _DRUM_TERMS)
+    wants_drums = _has_term(positive_text, _DRUM_TERMS) or _has_term(avoid_text, _NO_DRUM_TERMS)
+    wants_low_energy = _has_term(positive_text, _LOW_ENERGY_TERMS) or _has_term(avoid_text, _HIGH_ENERGY_TERMS)
+    wants_high_energy = _has_term(positive_text, _HIGH_ENERGY_TERMS) or _has_term(avoid_text, _LOW_ENERGY_TERMS)
+
+    if wants_no_vocals and not wants_vocals:
+        positive_values.append(1.0 - vocalness)
+        conflict_values.append(vocalness)
+        positive_hits.append("no_vocal")
+        if vocalness > 0.55:
+            conflict_hits.append("vocalness")
+    elif wants_vocals and not wants_no_vocals:
+        positive_values.append(vocalness)
+        conflict_values.append(1.0 - vocalness)
+        positive_hits.append("vocal")
+        if vocalness < 0.45:
+            conflict_hits.append("instrumentalness")
+
+    if wants_low_drums and not wants_drums:
+        positive_values.append(1.0 - drumness)
+        conflict_values.append(drumness)
+        positive_hits.append("low_drums")
+        if drumness > 0.55:
+            conflict_hits.append("drumness")
+    elif wants_drums and not wants_low_drums:
+        positive_values.append(drumness)
+        conflict_values.append(1.0 - drumness)
+        positive_hits.append("drums")
+        if drumness < 0.45:
+            conflict_hits.append("low_drumness")
+
+    if wants_low_energy and not wants_high_energy:
+        positive_values.append(1.0 - energy)
+        conflict_values.append(energy)
+        positive_hits.append("low_energy")
+        if energy > 0.55:
+            conflict_hits.append("energy")
+    elif wants_high_energy and not wants_low_energy:
+        positive_values.append(energy)
+        conflict_values.append(1.0 - energy)
+        positive_hits.append("high_energy")
+        if energy < 0.45:
+            conflict_hits.append("low_energy")
+
+    if not positive_values and not conflict_values:
+        return {"active": False, "positive": 0.0, "conflict": 0.0, "positive_hits": [], "conflict_hits": []}
+
+    positive = _clamp(sum(positive_values) / max(len(positive_values), 1), 0.0, 1.0)
+    conflict = _clamp(sum(conflict_values) / max(len(conflict_values), 1), 0.0, 1.0)
+    return {
+        "active": True,
+        "positive": positive,
+        "conflict": conflict,
+        "positive_hits": sorted(set(positive_hits)),
+        "conflict_hits": sorted(set(conflict_hits)),
+    }
+
+
 def _metadata_for(item: Mapping[str, Any], metadata_by_title: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any]:
     song = item.get("song") or {}
     title = str(song.get("title") or "")
@@ -224,6 +411,7 @@ def apply_post_recall_adjustments(
     output_score_field: str = "_post_recall_score",
     apply_to_similarity: bool = False,
     config: PostRecallAdjustmentConfig = DEFAULT_CONFIG,
+    enable_acoustic_probe: bool = False,
     now_ms: float | None = None,
 ) -> list[dict]:
     """Annotate already-recalled candidates with bounded score adjustments.
@@ -247,9 +435,12 @@ def apply_post_recall_adjustments(
         meta = _metadata_for(item, metadata)
         song = item.get("song") or {}
         updated_at = meta.get("updated_at", song.get("updated_at", 0))
-        ts_alpha = _to_float(meta.get("ts_alpha", song.get("ts_alpha", 1.0)), 1.0)
-        ts_beta = _to_float(meta.get("ts_beta", song.get("ts_beta", 1.0)), 1.0)
-        last_exposed = meta.get("ts_last_exposed_at", song.get("ts_last_exposed_at", 0))
+        # Exposure is user-scoped metadata from (User)-[:EXPOSED]->(Song).
+        # Never fall back to legacy global Song.ts_* fields, which leak state
+        # across users and make offline evaluation order-dependent.
+        ts_alpha = _to_float(meta.get("ts_alpha", 1.0), 1.0)
+        ts_beta = _to_float(meta.get("ts_beta", 1.0), 1.0)
+        last_exposed = meta.get("ts_last_exposed_at", 0)
 
         effective_exposure = decayed_exposure_count(
             ts_beta,
@@ -268,6 +459,22 @@ def apply_post_recall_adjustments(
             soft_intent=soft_intent,
             hints=hints,
         )
+        acoustic = (
+            acoustic_probe_fit_scores(
+                song,
+                metadata=meta,
+                soft_intent=soft_intent,
+                hints=hints,
+            )
+            if enable_acoustic_probe
+            else {
+                "active": False,
+                "positive": 0.0,
+                "conflict": 0.0,
+                "positive_hits": [],
+                "conflict_hits": [],
+            }
+        )
         exposure = exposure_penalty(
             effective_exposure,
             pivot=config.exposure_penalty_pivot,
@@ -280,6 +487,8 @@ def apply_post_recall_adjustments(
             - config.exposure_penalty_weight * exposure
             + config.semantic_preference_weight * float(semantic["positive"])
             - config.semantic_conflict_weight * float(semantic["conflict"])
+            + config.acoustic_preference_weight * float(acoustic["positive"])
+            - config.acoustic_conflict_weight * float(acoustic["conflict"])
         )
         delta = _clamp(delta, -config.delta_limit, config.delta_limit)
         adjusted = _clamp(base_norm + delta, 0.0, 1.0)
@@ -292,6 +501,10 @@ def apply_post_recall_adjustments(
         item["_post_semantic_conflict_score"] = round(float(semantic["conflict"]), 4)
         item["_post_semantic_positive_hits"] = semantic["positive_hits"]
         item["_post_semantic_conflict_hits"] = semantic["conflict_hits"]
+        item["_post_acoustic_positive_score"] = round(float(acoustic["positive"]), 4)
+        item["_post_acoustic_conflict_score"] = round(float(acoustic["conflict"]), 4)
+        item["_post_acoustic_positive_hits"] = acoustic["positive_hits"]
+        item["_post_acoustic_conflict_hits"] = acoustic["conflict_hits"]
         item["_post_effective_exposure"] = round(effective_exposure, 4)
         item["_post_ts_alpha"] = round(ts_alpha, 4)
         item["_post_ts_beta"] = round(ts_beta, 4)
@@ -305,6 +518,8 @@ def apply_post_recall_adjustments(
             "exposure_penalty": item["_post_exposure_penalty"],
             "semantic_positive": item["_post_semantic_positive_score"],
             "semantic_conflict": item["_post_semantic_conflict_score"],
+            "acoustic_positive": item["_post_acoustic_positive_score"],
+            "acoustic_conflict": item["_post_acoustic_conflict_score"],
             "delta": item["_post_recall_delta"],
         }
 

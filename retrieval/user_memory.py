@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,14 @@ SEMANTIC_CONFLICT_FIELDS = {
     "add_artists": "avoid_artists",
     "avoid_artists": "add_artists",
 }
+
+
+def _append_unique_casefold(values, value):
+    result = list(values or [])
+    text = str(value or "").strip()
+    if text and text.casefold() not in {str(item).casefold() for item in result}:
+        result.append(text)
+    return result
 
 CANDIDATE_RELATION_BY_SONG_RELATION = {
     "LIKES": "LIKES_CANDIDATE",
@@ -56,6 +65,17 @@ class UserMemoryManager:
                 self.neo4j_client = get_neo4j_client()
             except ImportError:
                 logger.warning("未能显式导入 Neo4j 客户端，可能将导致记忆写库失败。")
+
+    def ensure_inferred_preference_schema(self) -> None:
+        """Create the lookup index used by the expiring L2 hot-path projection."""
+        if not self.neo4j_client:
+            return
+        self.neo4j_client.execute_query(
+            """
+            CREATE INDEX inferred_preference_lookup IF NOT EXISTS
+            FOR (p:InferredPreference) ON (p.user_id, p.memory_key)
+            """
+        )
     def ensure_user_exists(self, user_id: str, username: str = "DefaultUser"):
         """确保在图谱中存在该用户节点"""
         query = """
@@ -475,24 +495,59 @@ class UserMemoryManager:
                             prefs[field] = _json.loads(raw)
                         except (TypeError, ValueError):
                             prefs[field] = []
+            inferred_rows = self.get_active_inferred_preferences(user_id)
+            explicit_values = {
+                "add_genres": prefs.get("preferred_genres_explicit", []) or [],
+                "avoid_genres": prefs.get("avoid_genres", []) or [],
+                "add_moods": prefs.get("add_moods", []) or [],
+                "avoid_moods": prefs.get("avoid_moods", []) or [],
+                "add_scenarios": prefs.get("add_scenarios", []) or [],
+                "avoid_scenarios": prefs.get("avoid_scenarios", []) or [],
+                "add_artists": prefs.get("preferred_artists_explicit", []) or [],
+                "avoid_artists": prefs.get("avoid_artists", []) or [],
+                "activity_contexts": prefs.get("activity_contexts", []) or [],
+                "mood_tendency": prefs.get("mood_tendency", "") or "",
+                "language_preference": prefs.get("language_preference", "") or "",
+            }
+            output_field = {
+                "add_genres": "preferred_genres_explicit",
+                "add_artists": "preferred_artists_explicit",
+            }
+            active_inferred: list[dict[str, Any]] = []
+            for row in inferred_rows:
+                field = str(row.get("field") or "")
+                value = str(row.get("value") or "").strip()
+                if field not in {*SEMANTIC_LIST_FIELDS, "mood_tendency", "language_preference"} or not value:
+                    continue
+                same_explicit = explicit_values.get(field, [])
+                conflict_field = SEMANTIC_CONFLICT_FIELDS.get(field)
+                conflicting_explicit = explicit_values.get(conflict_field, []) if conflict_field else []
+                same_set = (
+                    {str(item).casefold() for item in same_explicit}
+                    if isinstance(same_explicit, list)
+                    else {str(same_explicit).casefold()} if same_explicit else set()
+                )
+                conflict_set = (
+                    {str(item).casefold() for item in conflicting_explicit}
+                    if isinstance(conflicting_explicit, list)
+                    else {str(conflicting_explicit).casefold()} if conflicting_explicit else set()
+                )
+                if value.casefold() in same_set or value.casefold() in conflict_set:
+                    continue
+                target = output_field.get(field, field)
+                if field in {"mood_tendency", "language_preference"}:
+                    if not str(prefs.get(target) or "").strip():
+                        prefs[target] = value
+                else:
+                    prefs[target] = _append_unique_casefold(prefs.get(target, []), value)
+                active_inferred.append(row)
+            prefs["inferred_preferences"] = active_inferred
             return prefs
         except Exception as e:
             logger.error(f"提取用户图谱偏好失败: {e}")
         return {}
-    # ============================================================
-    # 【升级】语义记忆偏好持久化方法
-    # 来源：《第八章 记忆与检索》 memory_hyde_analysis 建议
-    # 由 LLM 从对话中提取的用户显式偏好（喜欢/讨厌的流派）
-    # 歌手、情绪倾向等）写入 Neo4j User 节点属性，
-    # 使系统具备跨会话的长期记忆能力。
-    # ============================================================
     def update_semantic_preferences(self, user_id: str, extraction_result: Dict[str, Any]):
-        """
-        将从对话中提取的用户偏好持久化到 Neo4j User 节点属性。
-        Args:
-            user_id: 用户ID
-            extraction_result: LLM 提取的偏好 JSON，包含 add_genres, avoid_genres 等字段
-        """
+        """Persist user-confirmed L1 preferences on the User node."""
         if not self.neo4j_client:
             logger.warning("[SemanticMemory] Neo4j 客户端不可用，跳过偏好持久化")
             return
@@ -538,6 +593,118 @@ class UserMemoryManager:
             logger.info(f"[SemanticMemory] 成功更新用户 {user_id} 的语义偏好: {list(params.keys())}")
         except Exception as e:
             logger.error(f"[SemanticMemory] 偏好持久化失败: {e}")
+
+    def upsert_inferred_preference(self, user_id: str, record: Dict[str, Any]) -> bool:
+        """Project one effective L2 record into Neo4j without losing ledger provenance."""
+        if not self.neo4j_client:
+            return False
+        try:
+            self.ensure_inferred_preference_schema()
+            self.ensure_user_exists(user_id)
+            params = {
+                "user_id": user_id,
+                "memory_key": str(record.get("memory_key") or ""),
+                "field": str(record.get("field") or ""),
+                "value": str(record.get("value") or ""),
+                "scope": str(record.get("scope") or "contextual"),
+                "confidence": float(record.get("confidence") or 0.0),
+                "evidence_ids": list(record.get("evidence_ids") or []),
+                "counter_evidence_ids": list(record.get("counter_evidence_ids") or []),
+                "retrieval_cues": list(record.get("retrieval_cues") or []),
+                "decision_summary": str(record.get("decision_summary") or ""),
+                "ledger_record_id": str(record.get("ledger_record_id") or ""),
+                "source": str(record.get("source") or "memory_consolidator"),
+                "created_at": int(record.get("created_at") or int(time.time() * 1000)),
+                "expires_at": int(record.get("expires_at") or 0),
+            }
+            if not params["memory_key"] or not params["field"] or not params["value"]:
+                return False
+            query = """
+            MATCH (u:User {id: $user_id})
+            MERGE (p:InferredPreference {user_id: $user_id, memory_key: $memory_key})
+            SET p.field = $field,
+                p.value = $value,
+                p.scope = $scope,
+                p.confidence = $confidence,
+                p.evidence_ids = $evidence_ids,
+                p.counter_evidence_ids = $counter_evidence_ids,
+                p.retrieval_cues = $retrieval_cues,
+                p.decision_summary = $decision_summary,
+                p.ledger_record_id = $ledger_record_id,
+                p.source = $source,
+                p.created_at = $created_at,
+                p.expires_at = $expires_at,
+                p.status = 'active',
+                p.updated_at = timestamp()
+            MERGE (u)-[:HAS_INFERRED_PREFERENCE]->(p)
+            RETURN p.memory_key AS memory_key
+            """
+            return bool(self.neo4j_client.execute_query(query, params))
+        except Exception as exc:
+            logger.error(f"[MemoryV2] L2 projection failed: {exc}")
+            return False
+
+    def expire_inferred_preferences(self, user_id: str, now_ms: int | None = None) -> int:
+        """Mark expired L2 projections; reads also enforce the timestamp condition."""
+        if not self.neo4j_client:
+            return 0
+        now = int(now_ms if now_ms is not None else time.time() * 1000)
+        query = """
+        MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
+        WHERE p.status = 'active' AND p.expires_at > 0 AND p.expires_at <= $now
+        SET p.status = 'expired', p.expired_at = $now
+        RETURN count(p) AS expired_count
+        """
+        rows = self.neo4j_client.execute_query(query, {"user_id": user_id, "now": now})
+        return int(rows[0].get("expired_count") or 0) if rows else 0
+
+    def get_active_inferred_preferences(self, user_id: str, now_ms: int | None = None) -> list[Dict[str, Any]]:
+        if not self.neo4j_client:
+            return []
+        self.ensure_inferred_preference_schema()
+        now = int(now_ms if now_ms is not None else time.time() * 1000)
+        self.expire_inferred_preferences(user_id, now_ms=now)
+        query = """
+        MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
+        WHERE p.status = 'active' AND (p.expires_at IS NULL OR p.expires_at = 0 OR p.expires_at > $now)
+        RETURN p.memory_key AS memory_key, p.field AS field, p.value AS value,
+               p.scope AS scope, p.confidence AS confidence,
+               p.evidence_ids AS evidence_ids, p.counter_evidence_ids AS counter_evidence_ids,
+               p.retrieval_cues AS retrieval_cues, p.decision_summary AS decision_summary,
+               p.ledger_record_id AS ledger_record_id, p.source AS source,
+               p.created_at AS created_at, p.expires_at AS expires_at
+        ORDER BY p.confidence DESC, p.created_at DESC
+        LIMIT 200
+        """
+        return self.neo4j_client.execute_query(query, {"user_id": user_id, "now": now}) or []
+
+    def delete_inferred_preference(self, user_id: str, *, field: str = "", value: str = "", memory_key: str = "") -> bool:
+        if not self.neo4j_client:
+            return False
+        query = """
+        MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
+        WHERE ($memory_key <> '' AND p.memory_key = $memory_key)
+           OR ($memory_key = '' AND p.field = $field AND toLower(toString(p.value)) = toLower($value))
+        SET p.status = 'deleted', p.deleted_at = timestamp()
+        RETURN count(p) AS deleted_count
+        """
+        rows = self.neo4j_client.execute_query(
+            query,
+            {"user_id": user_id, "field": field, "value": value, "memory_key": memory_key},
+        )
+        return bool(rows and int(rows[0].get("deleted_count") or 0) > 0)
+
+    def clear_inferred_preferences(self, user_id: str) -> bool:
+        if not self.neo4j_client:
+            return False
+        query = """
+        MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
+        WHERE p.status = 'active'
+        SET p.status = 'deleted', p.deleted_at = timestamp()
+        RETURN count(p) AS deleted_count
+        """
+        rows = self.neo4j_client.execute_query(query, {"user_id": user_id})
+        return rows is not None
 
     def remove_semantic_preference(self, user_id: str, field: str, value: str) -> bool:
         """Remove one learned preference item from an allowed User list field."""

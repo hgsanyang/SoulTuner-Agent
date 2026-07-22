@@ -19,6 +19,12 @@ def test_delta_json_parser_accepts_fenced_payload():
     assert delta.confidence == 0.9
 
 
+def test_delta_operation_normalizes_slash_paths():
+    operation = DeltaOperation(op="replace", path="$.soft_intent/avoid", value="loud")
+
+    assert operation.path == "soft_intent.avoid"
+
+
 def test_delta_planner_uses_llm_for_complex_followup(monkeypatch):
     monkeypatch.setattr(settings, "intent_llm_provider", "dashscope")
     monkeypatch.setattr(settings, "llm_default_provider", "dashscope")

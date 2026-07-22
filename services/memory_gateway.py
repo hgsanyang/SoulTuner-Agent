@@ -10,11 +10,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Awaitable, Protocol
 
 from retrieval.user_memory import UserMemoryManager
 from services.feedback_logger import log_slate_feedback, log_user_event
+from services.memory_consolidator import MemoryConsolidator
+from services.memory_event_store import MemoryEventStore
+from services.memory_models import MemoryLayer
+from services.memory_retriever import MemoryRelevanceRetriever
+from services.memory_retriever import DEFAULT_LAYER_THRESHOLDS
+from services.memory_semantic_scorer import (
+    BgeMemorySemanticScorer,
+    MemorySemanticScorerUnavailable,
+)
+from services.runtime_mode import side_effects_disabled
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +53,7 @@ class MemoryWriteResult:
     slate_feedback_id: str | None = None
     preference_update: dict[str, Any] = field(default_factory=dict)
     graphzep_scheduled: bool = False
+    consolidation_scheduled: bool = False
     error: str = ""
 
 
@@ -50,6 +62,9 @@ class MemoryAdapter(Protocol):
         ...
 
     def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> None:
+        ...
+
+    def remember_inferred_preference(self, user_id: str, record: dict[str, Any]) -> bool:
         ...
 
     def get_user_profile(self, user_id: str, limit: int = 30) -> dict[str, Any]:
@@ -103,6 +118,9 @@ class Neo4jPreferenceAdapter:
             return
         self.manager.update_semantic_preferences(user_id, preferences)
 
+    def remember_inferred_preference(self, user_id: str, record: dict[str, Any]) -> bool:
+        return self.manager.upsert_inferred_preference(user_id, record)
+
     def get_user_profile(self, user_id: str, limit: int = 30) -> dict[str, Any]:
         prefs = self.manager.get_user_preferences(user_id, limit=limit) or {}
         return {
@@ -139,7 +157,7 @@ class Neo4jPreferenceAdapter:
         return False
 
     def clear_learned_preferences(self, user_id: str) -> bool:
-        return self.manager.clear_semantic_preferences(user_id)
+        return self.manager.clear_inferred_preferences(user_id)
 
 
 class NoopMemoryAdapter:
@@ -148,6 +166,9 @@ class NoopMemoryAdapter:
 
     def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> None:
         return None
+
+    def remember_inferred_preference(self, user_id: str, record: dict[str, Any]) -> bool:
+        return False
 
     def get_user_profile(self, user_id: str, limit: int = 30) -> dict[str, Any]:
         return {}
@@ -166,18 +187,25 @@ class GraphZepAdapter:
 
     async def remember_text(self, description: str, *, user_id: str = "local_admin", extra: dict[str, Any] | None = None) -> bool:
         try:
-            from services.graphzep_client import get_graphzep_client
+            from services.graphzep_client import get_graphzep_client, group_id_for_user
 
-            return await get_graphzep_client().add_user_event(event_description=description)
+            return await get_graphzep_client().add_user_event(
+                event_description=description,
+                group_id=group_id_for_user(user_id),
+            )
         except Exception as exc:
             logger.debug("[MemoryGateway] GraphZep side-write skipped: %s", exc)
             return False
 
     async def retrieve_context(self, query: str, *, user_id: str = "local_admin", max_facts: int = 8) -> str:
         try:
-            from services.graphzep_client import get_graphzep_client
+            from services.graphzep_client import get_graphzep_client, group_id_for_user
 
-            return await get_graphzep_client().search_facts(query=query, max_facts=max_facts)
+            return await get_graphzep_client().search_facts(
+                query=query,
+                group_ids=[group_id_for_user(user_id)],
+                max_facts=max_facts,
+            )
         except Exception:
             return "暂无用户长期记忆（GraphZep 服务不可用）"
 
@@ -251,6 +279,26 @@ class Mem0Adapter:
             logger.debug("[MemoryGateway] Mem0 retrieve skipped: %s", exc)
             return ""
 
+    async def healthcheck(self) -> bool:
+        return self._get_client() is not None
+
+    async def await_idle(self, *, timeout_seconds: float = 60.0) -> bool:
+        del timeout_seconds
+        return self._get_client() is not None
+
+    async def clear_user(self, *, user_id: str) -> bool:
+        client = self._get_client()
+        if client is None:
+            return False
+        try:
+            result = client.delete_all(user_id=user_id)
+            if asyncio.iscoroutine(result):
+                await result
+            return True
+        except Exception as exc:
+            logger.debug("[MemoryGateway] Mem0 user cleanup failed: %s", exc)
+            return False
+
 
 def _configured_episodic_adapters(enable_graphzep_sidecar: bool = True) -> list[EpisodicMemoryAdapter]:
     raw = os.getenv("MEMORY_EPISODIC_BACKENDS", "").strip()
@@ -273,12 +321,6 @@ def _clean_list(values: list[Any] | tuple[Any, ...] | set[Any] | None) -> list[s
             seen.add(key)
             out.append(text)
     return out
-
-
-def _merge_pref(target: dict[str, Any], key: str, values: list[str]) -> None:
-    cleaned = _clean_list(values)
-    if cleaned:
-        target[key] = _clean_list([*(target.get(key) or []), *cleaned])
 
 
 def _profile_list_count(profile: dict[str, Any], key: str) -> int:
@@ -357,48 +399,6 @@ def editable_memory_sections(profile: dict[str, Any]) -> list[dict[str, Any]]:
     return sections
 
 
-def derive_preferences_from_slate_feedback(
-    *,
-    rating: str,
-    reasons: list[str] | None = None,
-    note: str = "",
-) -> dict[str, Any]:
-    """Map whole-slate feedback to conservative hot-path preference updates."""
-
-    reason_text = " ".join([rating, *(reasons or []), note]).casefold()
-    update: dict[str, Any] = {}
-
-    if rating == "too_noisy" or any(token in reason_text for token in ["太吵", "刺耳", "土嗨", "edm"]):
-        _merge_pref(update, "avoid_genres", ["EDM", "Dance", "Hardcore", "Phonk"])
-        _merge_pref(update, "avoid_moods", ["Energetic", "Aggressive", "Party", "Driving"])
-        update["mood_tendency"] = "偏好更安静、柔软、低动态的推荐"
-
-    if rating == "too_quiet" or any(token in reason_text for token in ["太安静", "没劲", "更有劲"]):
-        _merge_pref(update, "add_moods", ["Energetic", "Upbeat", "Driving"])
-        _merge_pref(update, "add_scenarios", ["Workout", "Driving"])
-
-    if rating == "too_sad" or any(token in reason_text for token in ["太丧", "太悲", "苦情", "悲伤"]):
-        _merge_pref(update, "avoid_moods", ["Sad", "Heartbreak", "Melancholy", "Lonely"])
-        _merge_pref(update, "add_moods", ["Healing", "Warm", "Hopeful"])
-
-    if rating == "more_niche" or any(token in reason_text for token in ["更小众", "冷门", "新歌", "发现更多"]):
-        _merge_pref(update, "activity_contexts", ["discovery", "longtail", "less_familiar"])
-
-    if rating == "too_familiar" or "旧歌单" in reason_text or "已收藏" in reason_text:
-        _merge_pref(update, "activity_contexts", ["less_familiar", "avoid_overexposed"])
-
-    if rating == "closer_to_seed" or "贴近刚才" in reason_text:
-        _merge_pref(update, "activity_contexts", ["closer_to_seed_song"])
-
-    if rating == "wrong_context" or "场景不贴合" in reason_text:
-        _merge_pref(update, "activity_contexts", ["needs_context_refinement"])
-
-    if rating == "too_generic" or "太普通" in reason_text:
-        _merge_pref(update, "activity_contexts", ["more_distinctive", "less_generic"])
-
-    return update
-
-
 class MemoryGateway:
     def __init__(
         self,
@@ -406,14 +406,56 @@ class MemoryGateway:
         episodic: EpisodicMemoryAdapter | None = None,
         episodic_adapters: list[EpisodicMemoryAdapter] | None = None,
         enable_graphzep_sidecar: bool = True,
+        event_store: MemoryEventStore | None = None,
+        enable_event_ledger: bool | None = None,
+        memory_mode: str | None = None,
+        consolidator: MemoryConsolidator | None = None,
+        relevance_retriever: MemoryRelevanceRetriever | None = None,
+        enable_consolidation: bool | None = None,
+        strict_sidecar: bool = False,
     ):
-        self.primary = primary or Neo4jPreferenceAdapter()
-        if episodic_adapters is not None:
+        primary_was_injected = primary is not None
+        configured_mode = str(memory_mode or os.getenv("MEMORY_MODE", "structured")).strip().lower()
+        if episodic_adapters is not None and memory_mode is None:
+            configured_mode = "sidecar"
+        if configured_mode not in {"off", "structured", "semantic", "sidecar"}:
+            configured_mode = "structured"
+        self.mode = configured_mode
+        self.primary = (
+            NoopMemoryAdapter()
+            if self.mode == "off"
+            else (primary or Neo4jPreferenceAdapter())
+        )
+        ledger_enabled = (not primary_was_injected) if enable_event_ledger is None else enable_event_ledger
+        if self.mode == "off":
+            ledger_enabled = False
+        self.event_store = event_store or (MemoryEventStore() if ledger_enabled else None)
+        configured_consolidation = str(os.getenv("MEMORY_CONSOLIDATION_ENABLED", "1")).strip().lower()
+        self.consolidation_enabled = (
+            enable_consolidation
+            if enable_consolidation is not None
+            else configured_consolidation in {"1", "true", "yes", "on"}
+        )
+        self.consolidator = consolidator or (
+            MemoryConsolidator(self.event_store)
+            if self.event_store is not None and self.mode != "off"
+            else None
+        )
+        self.relevance_retriever = relevance_retriever or _configured_relevance_retriever()
+        self._consolidation_last_started: dict[str, float] = {}
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._background_failures: list[str] = []
+        self._background_completed = 0
+        if self.mode != "sidecar":
+            self.episodic_adapters = []
+        elif episodic_adapters is not None:
             self.episodic_adapters = episodic_adapters
         elif episodic is not None:
             self.episodic_adapters = [episodic]
         else:
             self.episodic_adapters = _configured_episodic_adapters(enable_graphzep_sidecar)
+        if self.mode == "sidecar" and strict_sidecar and not self.episodic_adapters:
+            raise RuntimeError("sidecar mode requires at least one configured adapter")
 
     async def remember_event(
         self,
@@ -425,6 +467,8 @@ class MemoryGateway:
         exposure_id: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         if event_type not in SUPPORTED_USER_EVENTS:
             return MemoryWriteResult(success=False, error="Unsupported user event type")
 
@@ -443,7 +487,18 @@ class MemoryGateway:
             exposure_id=exposure_id,
             extra=extra_payload,
         )
+        self._append_memory_record(
+            user_id=user_id,
+            layer=MemoryLayer.RAW_EVENT,
+            kind=event_type,
+            source="user_action",
+            evidence_id=feedback_event_id,
+            payload={"title": title, "artist": artist, "exposure_id": exposure_id, **extra_payload},
+            memory_key=f"song:{title.casefold()}:{artist.casefold()}:{event_type}",
+            why_used="Raw behavior evidence; not injected directly into ranking",
+        )
         self._invalidate_hot_profile(user_id)
+        consolidation_scheduled = self._schedule_consolidation(user_id)
 
         graphzep_scheduled = False
         if event_type != "play_start":
@@ -454,6 +509,7 @@ class MemoryGateway:
             description=description,
             feedback_event_id=feedback_event_id,
             graphzep_scheduled=graphzep_scheduled,
+            consolidation_scheduled=consolidation_scheduled,
         )
 
     async def remember_slate_feedback(
@@ -466,6 +522,8 @@ class MemoryGateway:
         user_id: str = "local_admin",
         extra: dict[str, Any] | None = None,
     ) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         feedback_id = log_slate_feedback(
             exposure_id=exposure_id,
             rating=rating,
@@ -474,14 +532,25 @@ class MemoryGateway:
             user_id=user_id,
             extra=extra or {},
         )
-        preference_update = derive_preferences_from_slate_feedback(
-            rating=rating,
-            reasons=reasons or [],
-            note=note,
+        # Whole-slate feedback is evidence, not an immediately permanent profile
+        # mutation. The LLM consolidator may turn repeated evidence into expiring L2.
+        self._append_memory_record(
+            user_id=user_id,
+            layer=MemoryLayer.RAW_EVENT,
+            kind="slate_feedback",
+            source="slate_feedback",
+            evidence_id=feedback_id,
+            payload={
+                "exposure_id": exposure_id,
+                "rating": rating,
+                "reasons": _clean_list(reasons),
+                "note": str(note or "")[:500],
+                **(extra or {}),
+            },
+            memory_key=f"slate:{feedback_id}",
+            why_used="Bounded user feedback evidence for later consolidation",
         )
-        if preference_update:
-            self.primary.remember_preference(user_id, preference_update)
-            self._invalidate_hot_profile(user_id)
+        consolidation_scheduled = self._schedule_consolidation(user_id)
 
         description = f"用户评价本次推荐歌单: {rating}"
         if reasons:
@@ -495,14 +564,111 @@ class MemoryGateway:
             success=True,
             description=description,
             slate_feedback_id=feedback_id,
-            preference_update=preference_update,
+            preference_update={},
             graphzep_scheduled=graphzep_scheduled,
+            consolidation_scheduled=consolidation_scheduled,
         )
 
     def remember_preference(self, *, user_id: str, preferences: dict[str, Any]) -> MemoryWriteResult:
+        """Write user-confirmed L1 preferences. Inference must use consolidate_user."""
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         self.primary.remember_preference(user_id, preferences)
+        self._append_preferences(
+            user_id=user_id,
+            preferences=preferences,
+            layer=MemoryLayer.EXPLICIT,
+            source="user_explicit",
+            evidence_id="manual_preference",
+            confidence=1.0,
+        )
         self._invalidate_hot_profile(user_id)
         return MemoryWriteResult(success=True, preference_update=preferences)
+
+    def remember_conversation_evidence(
+        self,
+        *,
+        user_id: str,
+        user_text: str,
+        scene: str = "",
+        time_label: str = "",
+        recommended_songs: list[str] | None = None,
+    ) -> MemoryWriteResult:
+        """Store user-only L0 evidence and debounce long-term consolidation."""
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
+        text = str(user_text or "").strip()
+        if not text:
+            return MemoryWriteResult(success=False, error="user_text is required")
+        record = self._append_memory_record(
+            user_id=user_id,
+            layer=MemoryLayer.RAW_EVENT,
+            kind="conversation_statement",
+            source="user_statement",
+            evidence_id="",
+            payload={
+                "user_text": text[:1200],
+                "scene": str(scene or "")[:120],
+                "time_label": str(time_label or "")[:60],
+                "recommended_songs": _clean_list(recommended_songs)[:10],
+            },
+            memory_key="",
+            why_used="User-authored evidence; assistant output is deliberately excluded",
+        )
+        scheduled = self._schedule_consolidation(user_id)
+        return MemoryWriteResult(
+            success=record is not None,
+            description="conversation_evidence_recorded",
+            feedback_event_id=getattr(record, "record_id", None),
+            consolidation_scheduled=scheduled,
+        )
+
+    async def consolidate_user(self, *, user_id: str, force: bool = False) -> dict[str, Any]:
+        """Run bounded LLM consolidation and project accepted L2 records."""
+        if side_effects_disabled() or self.event_store is None or self.consolidator is None:
+            return {"user_id": user_id, "skipped": True, "reason": "memory_ledger_disabled"}
+        if not force and not self._consolidation_ready(user_id):
+            return {"user_id": user_id, "skipped": True, "reason": "debounced_or_insufficient_evidence"}
+
+        self._consolidation_last_started[user_id] = time.monotonic()
+        try:
+            report = await self.consolidator.consolidate(user_id=user_id)
+            projected: list[str] = []
+            for candidate in report.accepted:
+                record = self._append_inferred_candidate(user_id=user_id, candidate=candidate)
+                if record is None:
+                    continue
+                payload = {
+                    **record.payload,
+                    "memory_key": record.memory_key,
+                    "confidence": record.confidence,
+                    "created_at": record.created_at,
+                    "expires_at": record.expires_at,
+                    "ledger_record_id": record.record_id,
+                    "source": record.source,
+                }
+                projector = getattr(self.primary, "remember_inferred_preference", None)
+                if callable(projector) and projector(user_id, payload):
+                    projected.append(record.memory_key)
+
+            audit = report.model_dump()
+            audit["projected_memory_keys"] = projected
+            self._append_memory_record(
+                user_id=user_id,
+                layer=MemoryLayer.RAW_EVENT,
+                kind="consolidation_audit",
+                source="memory_consolidator",
+                evidence_id="",
+                payload=audit,
+                memory_key="",
+                why_used="Auditable decision summary; excluded from future evidence",
+            )
+            if report.accepted:
+                self._invalidate_hot_profile(user_id)
+            return {**audit, "skipped": False}
+        except Exception as exc:
+            logger.warning("[MemoryV2] consolidation failed for %s: %s", user_id, exc)
+            return {"user_id": user_id, "skipped": True, "reason": str(exc)}
 
     async def remember_text(
         self,
@@ -511,16 +677,53 @@ class MemoryGateway:
         user_id: str = "local_admin",
         extra: dict[str, Any] | None = None,
     ) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=True, description="eval_read_only")
         scheduled = self._schedule_sidecar_write(description, user_id=user_id, extra=extra or {})
+        details = dict(extra or {})
+        # Episodic events carry their temporal window and scene explicitly so
+        # retrieval can reason about applicability instead of guessing from text.
+        # The scene is a free-form label (usually LLM/planner-authored); it joins
+        # the record's semantic text at retrieval time.
+        scene = str(details.pop("scene", "") or details.pop("scope", "") or "").strip()[:40]
+        ttl_days = int(details.pop("ttl_days", 0) or 0)
+        if not 1 <= ttl_days <= 365:
+            ttl_days = 90
+        self._append_memory_record(
+            user_id=user_id,
+            layer=MemoryLayer.EPISODIC,
+            kind="episode_summary",
+            source=str(details.get("source") or "conversation"),
+            evidence_id=str(details.get("evidence_id") or ""),
+            payload={
+                "description": description[:2000],
+                "scope": scene or "contextual",
+                "time_label": str(details.pop("time_label", "") or "")[:60],
+                **details,
+            },
+            confidence=float(details.get("confidence") or 0.65),
+            ttl_days=ttl_days,
+            why_used="Low-frequency episodic context; explicit preferences take precedence",
+        )
         return MemoryWriteResult(
             success=True,
             description=description,
             graphzep_scheduled=scheduled,
         )
 
-    async def retrieve_context(self, *, query: str, user_id: str = "local_admin", max_facts: int = 8) -> dict[str, Any]:
+    async def retrieve_context(
+        self,
+        *,
+        query: str,
+        user_id: str = "local_admin",
+        max_facts: int = 8,
+        scene: str = "",
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
         profile = self.get_user_profile(user_id)
         backend_results: dict[str, str] = {}
+        retrieved_records: list[dict[str, Any]] = []
+        relevance_error = ""
         if self.episodic_adapters:
             results = await asyncio.gather(
                 *[
@@ -536,14 +739,113 @@ class MemoryGateway:
                 else:
                     backend_results[adapter.name] = str(result or "").strip()
         lines: list[str] = []
+        if self.mode != "off" and self.event_store is not None:
+            records = self.event_store.effective_records(user_id=user_id, limit=200)
+            try:
+                selected = self.relevance_retriever.retrieve(
+                    query=query,
+                    records=records,
+                    max_facts=max_facts,
+                    include_episodic=self.mode in {"semantic", "sidecar"},
+                    scene=scene,
+                )
+            except MemorySemanticScorerUnavailable:
+                # Relevance failure is fail-closed: injecting no memory is safer
+                # than silently switching to the rejected lexical matcher.
+                selected = []
+                relevance_error = "semantic_scorer_unavailable"
+                logger.warning("[MemoryGateway] semantic relevance scorer unavailable")
+            ledger_lines: list[str] = []
+            for item in selected:
+                record = item.record
+                field = str(record.payload.get("field") or "").strip()
+                value = str(
+                    record.payload.get("value")
+                    or record.payload.get("user_text")
+                    or record.payload.get("description")
+                    or ""
+                ).strip()
+                if not value:
+                    continue
+                prefix = f"{field}=" if field else ""
+                ledger_lines.append(
+                    f"[{record.layer.value}; confidence={record.confidence:.2f}] {prefix}{value}"
+                )
+                retrieved_records.append(item.model_dump())
+            if ledger_lines:
+                backend_results["memory_v2"] = "\n".join(ledger_lines)
         for name, text in backend_results.items():
             if text and "暂无用户长期记忆" not in text:
                 lines.append(f"[{name}] {text}")
+        episodic_text = "\n".join(lines)
         return {
             "profile": profile,
-            "episodic": "\n".join(lines),
+            "episodic": episodic_text,
             "episodic_backends": backend_results,
+            "retrieved_records": retrieved_records,
+            "memory_trace": {
+                "mode": self.mode,
+                "user_id": user_id,
+                "scene": str(scene or ""),
+                "retrieved_count": len(retrieved_records),
+                "backend_names": sorted(backend_results),
+                "relevance_backend": self.relevance_retriever.backend_name,
+                "relevance_policy": self.relevance_retriever.describe(),
+                "relevance_error": relevance_error,
+                "latency_ms": round((time.perf_counter() - started) * 1000, 3),
+                "estimated_context_tokens": max(0, len(episodic_text) // 4),
+            },
         }
+
+    async def await_idle(self, *, timeout_seconds: float = 30.0) -> dict[str, Any]:
+        """Wait for tracked consolidation and sidecar writes to settle."""
+        deadline = time.monotonic() + max(0.1, float(timeout_seconds))
+        while self._background_tasks:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return {
+                    "idle": False,
+                    "completed": self._background_completed,
+                    "failures": list(self._background_failures),
+                    "pending": len(self._background_tasks),
+                }
+            tasks = list(self._background_tasks)
+            done, _ = await asyncio.wait(tasks, timeout=remaining)
+            if not done:
+                return {
+                    "idle": False,
+                    "completed": self._background_completed,
+                    "failures": list(self._background_failures),
+                    "pending": len(self._background_tasks),
+                }
+        sidecars: dict[str, bool] = {}
+        for adapter in self.episodic_adapters:
+            waiter = getattr(adapter, "await_idle", None)
+            if not callable(waiter):
+                continue
+            remaining = max(0.1, deadline - time.monotonic())
+            try:
+                sidecars[adapter.name] = bool(
+                    await asyncio.wait_for(
+                        waiter(timeout_seconds=remaining),
+                        timeout=remaining,
+                    )
+                )
+            except Exception as exc:
+                sidecars[adapter.name] = False
+                self._background_failures.append(str(exc))
+        report = {
+            "idle": True,
+            "completed": self._background_completed,
+            "failures": list(self._background_failures),
+            "pending": 0,
+            "sidecars": sidecars,
+        }
+        if sidecars and not all(sidecars.values()):
+            report["idle"] = False
+        self._background_completed = 0
+        self._background_failures.clear()
+        return report
 
     def get_user_profile(self, user_id: str = "local_admin", limit: int = 30) -> dict[str, Any]:
         try:
@@ -554,6 +856,15 @@ class MemoryGateway:
 
     def delete_memory(self, *, user_id: str, title: str = "", artist: str = "", memory_type: str = "") -> bool:
         ok = self.primary.delete_memory(user_id, title=title, artist=artist, memory_type=memory_type)
+        if self.event_store is not None:
+            for record in self.event_store.effective_records(user_id=user_id, limit=500):
+                payload = record.payload
+                if (
+                    str(payload.get("title") or "").casefold() == title.casefold()
+                    and str(payload.get("artist") or "").casefold() == artist.casefold()
+                    and (not memory_type or record.kind == memory_type)
+                ):
+                    self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
         self._invalidate_hot_profile(user_id)
         return ok
 
@@ -562,38 +873,233 @@ class MemoryGateway:
         episodic_backends = [adapter.name for adapter in self.episodic_adapters]
         return {
             "user_id": user_id,
+            "mode": self.mode,
             "hot_path": {
                 "likes_and_saves": "Neo4j user-song relations",
-                "explicit_preferences": "Neo4j User properties",
-                "slate_feedback": "JSONL + deterministic preference updates",
+                "explicit_preferences": "Neo4j User properties (L1)",
+                "inferred_preferences": "Expiring Neo4j InferredPreference projection (L2)",
+                "slate_feedback": "L0 evidence; consolidated only after validation",
             },
             "episodic_backends": episodic_backends,
             "profile": profile,
             "editable_sections": editable_memory_sections(profile),
             "diagnostics": summarize_memory_profile(profile, episodic_backends),
+            "records": self.list_memory_records(user_id=user_id),
+            "profile_views": self.profile_views(user_id=user_id),
         }
+
+    def profile_views(self, *, user_id: str = "local_admin") -> dict[str, Any]:
+        """Scope-grouped editable views over effective L1/L2 preferences."""
+        if self.event_store is None:
+            return {"views": [], "recent_tendency": {"items": []}}
+        from services.profile_views import build_profile_views
+
+        return build_profile_views(
+            self.event_store.effective_records(user_id=user_id, limit=500)
+        )
 
     def forget_preference_item(self, *, user_id: str, field: str, value: str) -> bool:
         manager = getattr(self.primary, "manager", None)
-        if manager is None or not hasattr(manager, "remove_semantic_preference"):
+        if manager is None:
             return False
-        ok = bool(manager.remove_semantic_preference(user_id, field, value))
+        explicit_ok = bool(
+            hasattr(manager, "remove_semantic_preference")
+            and manager.remove_semantic_preference(user_id, field, value)
+        )
+        inferred_ok = bool(
+            hasattr(manager, "delete_inferred_preference")
+            and manager.delete_inferred_preference(user_id, field=field, value=value)
+        )
+        ok = explicit_ok or inferred_ok
         if ok:
+            self._tombstone_preference(user_id=user_id, field=field, value=value)
             self._invalidate_hot_profile(user_id)
         return ok
 
     def clear_learned_preferences(self, *, user_id: str) -> bool:
         ok = bool(self.primary.clear_learned_preferences(user_id))
         if ok:
+            if self.event_store is not None:
+                for record in self.event_store.effective_records(user_id=user_id, limit=1000):
+                    if record.layer == MemoryLayer.INFERRED:
+                        self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
             self._invalidate_hot_profile(user_id)
         return ok
+
+    def list_memory_records(self, *, user_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        if self.event_store is None:
+            return []
+        return [record.model_dump() for record in self.event_store.effective_records(user_id=user_id, limit=limit)]
+
+    def delete_memory_record(self, *, user_id: str, record_id: str) -> bool:
+        if self.event_store is None:
+            return False
+        record = self.event_store.get(user_id=user_id, record_id=record_id)
+        if record is None:
+            return False
+        if record.layer == MemoryLayer.EXPLICIT:
+            field = str(record.payload.get("field") or "")
+            value = str(record.payload.get("value") or "")
+            manager = getattr(self.primary, "manager", None)
+            if field and value and manager is not None and hasattr(manager, "remove_semantic_preference"):
+                manager.remove_semantic_preference(user_id, field, value)
+        elif record.layer == MemoryLayer.INFERRED:
+            manager = getattr(self.primary, "manager", None)
+            if manager is not None and hasattr(manager, "delete_inferred_preference"):
+                manager.delete_inferred_preference(
+                    user_id,
+                    memory_key=record.memory_key,
+                )
+        tombstone = self.event_store.tombstone(user_id=user_id, target_record_id=record_id)
+        if tombstone is not None:
+            if record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
+                self._invalidate_episodes_mentioning(
+                    user_id=user_id, value=str(record.payload.get("value") or "")
+                )
+            self._invalidate_hot_profile(user_id)
+        return tombstone is not None
+
+    def _append_preferences(
+        self,
+        *,
+        user_id: str,
+        preferences: dict[str, Any],
+        layer: MemoryLayer,
+        source: str,
+        evidence_id: str,
+        confidence: float,
+        ttl_days: int | None = None,
+    ) -> None:
+        for preference_field, raw_value in (preferences or {}).items():
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            for value in values:
+                text = str(value or "").strip()
+                if not text:
+                    continue
+                self._append_memory_record(
+                    user_id=user_id,
+                    layer=layer,
+                    kind="preference",
+                    source=source,
+                    evidence_id=evidence_id,
+                    payload={"field": preference_field, "value": text},
+                    confidence=confidence,
+                    ttl_days=ttl_days,
+                    memory_key=f"preference:{preference_field}:{text.casefold()}",
+                    why_used=(
+                        "Explicit user preference overrides inferred memory"
+                        if layer == MemoryLayer.EXPLICIT
+                        else "Recent inferred preference; expires unless reinforced"
+                    ),
+                )
+
+    def _append_memory_record(self, *, ttl_days: int | None = None, **kwargs: Any):
+        if self.event_store is None:
+            return None
+        expires_at = None
+        if ttl_days is not None:
+            expires_at = int(time.time() * 1000) + ttl_days * 24 * 60 * 60 * 1000
+        return self.event_store.append(expires_at=expires_at, **kwargs)
+
+    def _append_inferred_candidate(self, *, user_id: str, candidate):
+        evidence_ids = list(candidate.evidence_ids)
+        return self._append_memory_record(
+            user_id=user_id,
+            layer=MemoryLayer.INFERRED,
+            kind="preference",
+            source="memory_consolidator",
+            evidence_id=evidence_ids[0] if evidence_ids else "",
+            payload={
+                "field": candidate.field,
+                "value": candidate.value,
+                "scope": candidate.scope,
+                "evidence_ids": evidence_ids,
+                "counter_evidence_ids": list(candidate.counter_evidence_ids),
+                "retrieval_cues": list(candidate.retrieval_cues),
+                "decision_summary": candidate.decision_summary,
+            },
+            confidence=float(candidate.confidence),
+            ttl_days=int(candidate.ttl_days),
+            memory_key=MemoryConsolidator.memory_key(candidate.field, candidate.value),
+            why_used="LLM-proposed preference passed deterministic evidence validation",
+        )
+
+    def _consolidation_ready(self, user_id: str) -> bool:
+        if not self.consolidation_enabled or self.event_store is None:
+            return False
+        min_events = max(2, int(os.getenv("MEMORY_CONSOLIDATION_MIN_EVENTS", "5")))
+        if self.event_store.pending_evidence_count(user_id=user_id) < min_events:
+            return False
+        cooldown = max(0, int(os.getenv("MEMORY_CONSOLIDATION_COOLDOWN_SECONDS", "900")))
+        last_started = self._consolidation_last_started.get(user_id, 0.0)
+        return time.monotonic() - last_started >= cooldown
+
+    def _schedule_consolidation(self, user_id: str) -> bool:
+        if not self._consolidation_ready(user_id):
+            return False
+        try:
+            self._track_background(self.consolidate_user(user_id=user_id, force=True))
+            self._consolidation_last_started[user_id] = time.monotonic()
+            return True
+        except RuntimeError:
+            return False
+
+    def _tombstone_preference(self, *, user_id: str, field: str, value: str) -> None:
+        if self.event_store is None:
+            return
+        key = f"preference:{field}:{value.casefold()}"
+        for record in self.event_store.effective_records(user_id=user_id, limit=500):
+            if record.memory_key == key:
+                self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
+        self._invalidate_episodes_mentioning(user_id=user_id, value=value)
+
+    def _invalidate_episodes_mentioning(self, *, user_id: str, value: str) -> None:
+        """Correction propagation: a user-corrected preference also retires
+        episodic records that recorded that exact value, so a stale episode
+        cannot re-surface a direction the user has explicitly withdrawn.
+        Deterministic exact-containment on the corrected value only — this is
+        deletion mechanics triggered by the user, not semantic routing."""
+        if self.event_store is None:
+            return
+        needle = str(value or "").strip().casefold()
+        if not needle:
+            return
+        for record in self.event_store.effective_records(user_id=user_id, limit=500):
+            if record.layer != MemoryLayer.EPISODIC:
+                continue
+            haystack = " ".join(
+                str(record.payload.get(key) or "")
+                for key in ("description", "value", "user_text")
+            ).casefold()
+            if needle in haystack:
+                self.event_store.tombstone(
+                    user_id=user_id,
+                    target_record_id=record.record_id,
+                    source="correction_propagation",
+                )
 
     def _schedule_sidecar_write(self, description: str, *, user_id: str, extra: dict[str, Any] | None = None) -> bool:
         scheduled = False
         for adapter in self.episodic_adapters:
-            asyncio.create_task(adapter.remember_text(description, user_id=user_id, extra=extra or {}))
+            self._track_background(
+                adapter.remember_text(description, user_id=user_id, extra=extra or {})
+            )
             scheduled = True
         return scheduled
+
+    def _track_background(self, awaitable: Awaitable[Any]) -> asyncio.Task[Any]:
+        task = asyncio.get_running_loop().create_task(awaitable)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_done)
+        return task
+
+    def _on_background_done(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.discard(task)
+        self._background_completed += 1
+        try:
+            task.result()
+        except Exception as exc:
+            self._background_failures.append(str(exc))
 
     @staticmethod
     def _invalidate_hot_profile(user_id: str) -> None:
@@ -612,6 +1118,34 @@ class MemoryGateway:
 
 
 _gateway: MemoryGateway | None = None
+
+
+def _configured_relevance_retriever() -> MemoryRelevanceRetriever:
+    backend = str(os.getenv("MEMORY_RELEVANCE_BACKEND", "bge")).strip().lower()
+    if backend == "char-ngram":
+        return MemoryRelevanceRetriever(
+            min_relevance=float(os.getenv("MEMORY_RETRIEVAL_MIN_RELEVANCE", "0.08"))
+        )
+    # Defaults are locked on the open calibration fixture (RELEVANCE_POLICY_VERSION);
+    # env overrides exist for controlled experiments and are always visible in the
+    # memory trace, so a changed threshold can never hide from an audit.
+    thresholds = {
+        MemoryLayer.EXPLICIT: float(
+            os.getenv("MEMORY_RELEVANCE_THRESHOLD_L1", str(DEFAULT_LAYER_THRESHOLDS[MemoryLayer.EXPLICIT]))
+        ),
+        MemoryLayer.INFERRED: float(
+            os.getenv("MEMORY_RELEVANCE_THRESHOLD_L2", str(DEFAULT_LAYER_THRESHOLDS[MemoryLayer.INFERRED]))
+        ),
+        MemoryLayer.EPISODIC: float(
+            os.getenv("MEMORY_RELEVANCE_THRESHOLD_L3", str(DEFAULT_LAYER_THRESHOLDS[MemoryLayer.EPISODIC]))
+        ),
+    }
+    return MemoryRelevanceRetriever(
+        min_relevance=0.08,
+        semantic_scorer=BgeMemorySemanticScorer(),
+        layer_thresholds=thresholds,
+        max_per_layer=1,
+    )
 
 
 def get_memory_gateway() -> MemoryGateway:

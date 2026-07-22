@@ -19,9 +19,8 @@ Profile Synthesizer — 动态用户画像聚合器
 """
 
 import json
-import logging
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from pydantic import BaseModel, Field

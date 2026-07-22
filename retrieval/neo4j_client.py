@@ -5,9 +5,9 @@ logger = logging.getLogger(__name__)
 
 class Neo4jClient:
     """Neo4j 图数据库连接与查询客户端"""
-    
+
     _instance = None
-    
+
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             cls._instance = super(Neo4jClient, cls).__new__(cls)
@@ -16,11 +16,11 @@ class Neo4jClient:
     def __init__(self):
         if hasattr(self, 'driver'):
             return
-            
+
         uri = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
         user = os.getenv("NEO4J_USER", "neo4j")
         password = os.getenv("NEO4J_PASSWORD", "12345678")
-        
+
         try:
             from neo4j import GraphDatabase
 
@@ -41,7 +41,7 @@ class Neo4jClient:
         if not self.driver:
             logger.error("Neo4j driver is not initialized.")
             return []
-            
+
         parameters = parameters or {}
         try:
             with self.driver.session() as session:

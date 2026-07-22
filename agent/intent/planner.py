@@ -15,6 +15,7 @@ from config.settings import settings
 from llms.prompts import LOCAL_PLANNER_PROMPT, UNIFIED_PLANNER_HUMAN, UNIFIED_PLANNER_SYSTEM
 from retrieval.gssc_context_builder import build_context
 from schemas.query_plan import MusicQueryPlan
+from schemas.tool_plan import tool_plan_alignment_issues
 
 from .adapters import (
     PlannerPayload,
@@ -26,17 +27,7 @@ from .adapters import (
 
 logger = get_logger(__name__)
 LOCAL_PROVIDERS = {"sglang", "vllm", "ollama"}
-MUSIC_REQUEST_CUES = (
-    "歌",
-    "音乐",
-    "听",
-    "推荐",
-    "来几首",
-    "来点",
-    "playlist",
-    "song",
-    "music",
-)
+UNIFIED_PLANNER_PROMPT_VERSION = "unified_planner_toolplan_v1_2026_07_13"
 
 
 class PlannerResultCache:
@@ -64,6 +55,7 @@ class PlannerResultCache:
         provider: str,
         model_name: str,
         current_date: str,
+        user_id: str = "",
     ) -> str:
         profile_context = json.dumps(
             [user_preferences, chat_history, previous_plan, graphzep_facts],
@@ -72,7 +64,7 @@ class PlannerResultCache:
         )
         profile_hash = hashlib.sha256(profile_context.encode("utf-8")).hexdigest()
         material = "\0".join(
-            [user_input.strip(), profile_hash, provider, model_name, current_date]
+            [user_input.strip(), profile_hash, provider, model_name, current_date, user_id]
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
@@ -101,29 +93,6 @@ class PlannerResultCache:
             self._items.popitem(last=False)
 
 
-def apply_routing_guardrails(plan: MusicQueryPlan, user_input: str) -> MusicQueryPlan:
-    """Prevent explicit music requests from being rounded into general chat."""
-    normalized_input = user_input.lower()
-    if plan.intent_type == "general_chat" and any(cue in normalized_input for cue in MUSIC_REQUEST_CUES):
-        plan.intent_type = "vector_search"
-        plan.parameters = {"query": user_input, "entities": []}
-        plan.context = plan.context or "模糊音乐推荐"
-        plan.reasoning = "明确求歌，向量兜底"
-        plan.retrieval_plan.use_graph = False
-        plan.retrieval_plan.use_vector = True
-        plan.retrieval_plan.use_web_search = False
-        plan.retrieval_plan.vector_acoustic_query = (
-            plan.retrieval_plan.vector_acoustic_query or user_input
-        )
-        if not plan.retrieval_plan.vector_acoustic_queries:
-            plan.retrieval_plan.vector_acoustic_queries = [plan.retrieval_plan.vector_acoustic_query]
-        plan.retrieval_plan.soft_intent.vibe = (
-            plan.retrieval_plan.soft_intent.vibe or user_input
-        )
-        logger.info("[IntentPlanner] guardrail corrected general_chat to vector_search")
-    return plan
-
-
 class IntentPlanner:
     """Select a provider adapter and return one validated query plan."""
 
@@ -142,6 +111,7 @@ class IntentPlanner:
         chat_history: str,
         previous_plan: str,
         graphzep_facts: str = "",
+        user_id: str = "local_admin",
     ) -> MusicQueryPlan:
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
             return MusicQueryPlan.model_validate({
@@ -175,6 +145,7 @@ class IntentPlanner:
             provider=provider,
             model_name=model_name,
             current_date=current_date,
+            user_id=user_id,
         )
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -185,6 +156,7 @@ class IntentPlanner:
             graphzep_facts=graphzep_facts,
             chat_history=chat_history,
             total_budget=0,
+            user_id=user_id,
         )
         payload = PlannerPayload(
             user_input=user_input,
@@ -227,7 +199,13 @@ class IntentPlanner:
                 UNIFIED_PLANNER_HUMAN,
                 payload,
             )
-        plan = apply_routing_guardrails(plan, user_input)
+        # LLM-first: semantic intent and entity grounding stay with the planner.
+        alignment_issues = tool_plan_alignment_issues(plan)
+        if alignment_issues:
+            logger.warning(
+                "[IntentPlanner] ToolPlan/RetrievalPlan alignment issues: %s",
+                ", ".join(alignment_issues),
+            )
         try:
             from services.teacher_log import log_teacher_example
 
@@ -235,7 +213,13 @@ class IntentPlanner:
                 "planner",
                 inputs=payload.as_dict(),
                 output=plan,
-                metadata={"provider": provider, "model": model_name, "temperature": settings.intent_temperature},
+                metadata={
+                    "provider": provider,
+                    "model": model_name,
+                    "temperature": settings.intent_temperature,
+                    "prompt_version": UNIFIED_PLANNER_PROMPT_VERSION,
+                    "planner_quality_mode": settings.planner_quality_mode,
+                },
             )
         except Exception:
             pass

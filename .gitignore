@@ -93,6 +93,8 @@ data/embeddings/
 data/kaggle/
 data/mtg/
 data/feedback/
+data/memory/
+data/teacher/
 data/yt_dlp_manual/
 data/knowledge_cache/
 
