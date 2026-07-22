@@ -1,0 +1,41 @@
+# CI-only dependency set for lint + unit tests.
+#
+# The full requirements.txt pulls heavy/niche ML libraries (torch, torchaudio,
+# sentence-transformers, transformers, librosa, muq, litellm, timm, nnAudio,
+# einops) that unit tests never need: every such import in the agent graph is
+# lazy, and the tests use fakes (heavy audio tests stub torch via sys.modules).
+# This set is derived from a static scan of top-level third-party imports in the
+# source the unit suite loads. Keeping it minimal makes CI fast and avoids
+# source-build flakiness (e.g. litellm / muq).
+#
+# If a unit test ever needs another lib at import time, CI will name it — add
+# just that lib here.
+
+# config / models (top-level in the graph)
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+numpy>=1.24.0
+
+# agent framework
+langchain-core>=0.1.0
+langgraph>=0.1.0
+
+# api server (imported by api/* modules the tests load)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# http clients
+aiohttp>=3.8.0
+httpx>=0.27.0
+requests>=2.31.0
+
+# graph db client (light; used by neo4j_client)
+neo4j>=5.0.0
+
+# token counting (retrieval/history.py, top-level)
+tiktoken>=0.7.0
+
+# tooling
+ruff
+pytest
