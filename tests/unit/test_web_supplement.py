@@ -140,3 +140,11 @@ def test_supplement_respects_both_switches(monkeypatch):
     monkeypatch.setenv("MUSIC_WEB_SEARCH_ENABLED", "1")
     monkeypatch.setenv("MUSIC_WEB_SUPPLEMENT_ENABLED", "0")
     assert supplement_enabled() is False  # 单独关补充路线，回退旧路径
+
+
+def test_supplement_disabled_under_eval_side_effects(monkeypatch):
+    # eval 模式下补充路线的 resolver 会落盘，必须整体禁用，保持离线评测本地纯净
+    monkeypatch.setenv("MUSIC_WEB_SEARCH_ENABLED", "1")
+    monkeypatch.setenv("MUSIC_WEB_SUPPLEMENT_ENABLED", "1")
+    monkeypatch.setenv("EVAL_DISABLE_SIDE_EFFECTS", "1")
+    assert supplement_enabled() is False

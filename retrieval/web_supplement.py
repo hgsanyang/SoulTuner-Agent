@@ -107,6 +107,16 @@ def is_duplicate_song(
 
 
 def supplement_enabled() -> bool:
+    """Whether the lane may run: both web switches on AND not in eval mode.
+
+    The lane's resolver stages online audio to disk, so it must never run
+    under eval_disable_side_effects — offline evaluation stays local-only
+    and deterministic.
+    """
+    from services.runtime_mode import side_effects_disabled
+
+    if side_effects_disabled():
+        return False
     return (
         os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0"
         and os.environ.get("MUSIC_WEB_SUPPLEMENT_ENABLED", "1") != "0"
