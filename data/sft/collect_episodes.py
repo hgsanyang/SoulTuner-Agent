@@ -73,7 +73,39 @@ def _plan_summary(plan) -> str:
     return "; ".join(parts)
 
 
-async def collect(episodes: list[dict], out_path: Path, case_timeout: float) -> dict:
+def _resume_state(episodes: list[dict], out_path: Path) -> set[str]:
+    """Return episode_ids already fully collected; rewrite the file to drop any
+    partial/corrupt records so a resumed run appends cleanly (robust to a run
+    that was killed mid-write)."""
+    if not out_path.exists():
+        return set()
+    turns_by_id: dict[str, int] = {}
+    for idx, ep in enumerate(episodes):
+        eid = str(ep.get("episode_id") or f"ep_{idx}")
+        turns_by_id[eid] = len([t for t in (ep.get("turns") or []) if str(t or "").strip()])
+    # Keep the LAST record per (episode_id, turn_id) so re-collected or corrupt
+    # partial lines never yield duplicates in the resumed file.
+    last_line: dict[tuple[str, int], str] = {}
+    for line in out_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # drop the truncated tail line
+        key = (str(rec.get("episode_id")), int(rec.get("turn_id", -1)))
+        last_line[key] = line
+    turns_seen: dict[str, set[int]] = {}
+    for (eid, tid) in last_line:
+        turns_seen.setdefault(eid, set()).add(tid)
+    done = {eid for eid, tids in turns_seen.items() if len(tids) >= turns_by_id.get(eid, 10**9)}
+    good_lines = [line for (eid, _tid), line in last_line.items() if eid in done]
+    out_path.write_text(("\n".join(good_lines) + "\n") if good_lines else "", encoding="utf-8")
+    return done
+
+
+async def collect(episodes: list[dict], out_path: Path, case_timeout: float, resume: bool = False, concurrency: int = 1) -> dict:
     from agent.intent.planner import UNIFIED_PLANNER_PROMPT_VERSION, IntentPlanner
     from llms.multi_llm import get_intent_chat_model
     from schemas.planner_decision import decision_token_estimate, from_query_plan
@@ -85,28 +117,40 @@ async def collect(episodes: list[dict], out_path: Path, case_timeout: float) -> 
     model_name = settings.intent_llm_model or settings.llm_default_model
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    written = 0
-    failed = 0
+    done_ids = _resume_state(episodes, out_path) if resume else set()
     started = time.time()
-    with out_path.open("w", encoding="utf-8") as sink:
-        for episode in episodes:
-            episode_id = str(episode.get("episode_id") or f"ep_{written}")
-            profile = str(episode.get("profile") or "无")
-            memories = list(episode.get("memories") or [])
-            memory_text = "；".join(str(m) for m in memories) if memories else ""
-            history_lines: list[str] = []
-            previous_plan_text = ""
-            for turn_index, query in enumerate(episode["turns"]):
+    counters = {"written": 0, "failed": 0, "skipped": 0}
+    write_lock = asyncio.Lock()
+    sem = asyncio.Semaphore(max(1, concurrency))
+    sink = out_path.open("a" if resume else "w", encoding="utf-8")
+
+    async def run_episode(index: int, episode: dict) -> None:
+        episode_id = str(episode.get("episode_id") or f"ep_{index}")
+        if episode_id in done_ids:
+            counters["skipped"] += 1
+            return
+        profile = str(episode.get("profile") or "无")
+        memories = list(episode.get("memories") or [])
+        seed_prov = episode.get("provenance") if isinstance(episode.get("provenance"), dict) else {}
+        seed_source = str((seed_prov or {}).get("source_type") or episode.get("source") or "synthetic")
+        memory_text = "；".join(str(m) for m in memories) if memories else ""
+        history_lines: list[str] = []
+        previous_plan_text = ""
+        # Episodes run concurrently (bounded by the semaphore); turns WITHIN an
+        # episode stay sequential so multi-turn dialog state threads correctly.
+        async with sem:
+            for turn_index, query in enumerate(episode.get("turns") or []):
                 query = str(query or "").strip()
                 if not query:
                     continue
                 turn_started = time.perf_counter()
+                chat_history_text = "\n".join(history_lines[-6:])
                 try:
                     plan = await asyncio.wait_for(
                         planner.plan(
                             user_input=query,
                             user_preferences=profile,
-                            chat_history="\n".join(history_lines[-6:]),
+                            chat_history=chat_history_text,
                             previous_plan=previous_plan_text,
                             graphzep_facts=memory_text,
                             user_id="__episode_collect__",
@@ -114,7 +158,7 @@ async def collect(episodes: list[dict], out_path: Path, case_timeout: float) -> 
                         timeout=case_timeout if case_timeout > 0 else None,
                     )
                 except Exception as exc:
-                    failed += 1
+                    counters["failed"] += 1
                     print(f"[{episode_id} t{turn_index}] FAIL {query[:32]}: {type(exc).__name__}")
                     break
                 decision = from_query_plan(plan)
@@ -122,6 +166,7 @@ async def collect(episodes: list[dict], out_path: Path, case_timeout: float) -> 
                     "episode_id": episode_id,
                     "turn_id": turn_index,
                     "current_query": query,
+                    "chat_history": chat_history_text,
                     "previous_plan": previous_plan_text,
                     "profile_snapshot": profile if profile != "无" else "",
                     "retrieved_memories": memories,
@@ -130,7 +175,7 @@ async def collect(episodes: list[dict], out_path: Path, case_timeout: float) -> 
                     "target_token_estimate": decision_token_estimate(decision),
                     "alignment_issues": tool_plan_alignment_issues(plan),
                     "provenance": {
-                        "source_type": "synthetic",
+                        "source_type": seed_source,
                         "teacher_model": model_name,
                         "teacher_provider": provider,
                         "planner_prompt_version": UNIFIED_PLANNER_PROMPT_VERSION,
@@ -140,18 +185,26 @@ async def collect(episodes: list[dict], out_path: Path, case_timeout: float) -> 
                         "latency_ms": round((time.perf_counter() - turn_started) * 1000, 1),
                     },
                 }
-                sink.write(json.dumps(record, ensure_ascii=False) + "\n")
-                sink.flush()
-                written += 1
+                async with write_lock:
+                    sink.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    sink.flush()
+                    counters["written"] += 1
                 history_lines.append(f"用户: {query}")
                 history_lines.append(f"助手: [{plan.intent_type}]")
                 previous_plan_text = _plan_summary(plan)
                 print(f"[{episode_id} t{turn_index}] OK {plan.intent_type} tok~{record['target_token_estimate']} {query[:28]}")
 
+    try:
+        await asyncio.gather(*(run_episode(i, ep) for i, ep in enumerate(episodes)))
+    finally:
+        sink.close()
+
     return {
         "episodes": len(episodes),
-        "turns_written": written,
-        "failed": failed,
+        "episodes_skipped_resume": counters["skipped"],
+        "turns_written": counters["written"],
+        "failed": counters["failed"],
+        "concurrency": concurrency,
         "elapsed_s": round(time.time() - started, 1),
         "out": str(out_path),
     }
@@ -162,15 +215,17 @@ def main() -> int:
     parser.add_argument("--episodes", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--case-timeout", type=float, default=120.0)
+    parser.add_argument("--resume", action="store_true", help="Skip already-complete episodes; drop partial tail and append")
+    parser.add_argument("--concurrency", type=int, default=5, help="Episodes collected in parallel (turns within an episode stay sequential)")
     args = parser.parse_args()
     episodes = load_episodes(args.episodes)
     if not episodes:
         print("no episodes loaded")
         return 1
-    print(f"collecting {len(episodes)} episodes -> {args.out}")
-    report = asyncio.run(collect(episodes, args.out, args.case_timeout))
+    print(f"collecting {len(episodes)} episodes -> {args.out} (resume={args.resume}, concurrency={args.concurrency})")
+    report = asyncio.run(collect(episodes, args.out, args.case_timeout, resume=args.resume, concurrency=args.concurrency))
     print(json.dumps({"summary": report}, ensure_ascii=False))
-    return 0 if report["turns_written"] > 0 else 1
+    return 0 if (report["turns_written"] > 0 or report["episodes_skipped_resume"] > 0) else 1
 
 
 if __name__ == "__main__":
