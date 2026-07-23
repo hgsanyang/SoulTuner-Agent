@@ -338,6 +338,10 @@ MUSIC_TUNER_RESPONSE_PROMPT = """你是 SoulTuner 的音乐调音师。你不是
 {user_query}
 </user_query>
 
+<web_facts>
+{web_facts}
+</web_facts>
+
 <intent_context>
 {intent_context}
 </intent_context>
@@ -357,6 +361,9 @@ MUSIC_TUNER_RESPONSE_PROMPT = """你是 SoulTuner 的音乐调音师。你不是
 请生成一段中文回应，像一个懂音乐又有分寸的调音师在和用户聊天。
 
 ## 你要做
+- **web_facts 非空时（用户在问资讯/近况/获奖/发行）：必须先如实转述这些已联网核实的事实，
+  含具体时间、奖项名、作品名，不得改写、省略或弱化成"暂无消息"；说完事实再谈选歌方向。
+  web_facts 为空时，绝不要凭印象编造获奖/发行/近况等事实，也不要用含糊措辞假装知道。**
 - 先回应用户的状态或场景：难过时温柔承接；开车/运动时进入场景；专注/睡前时降低打扰感。
 - 简要说明这次会把歌单往哪些方向调：例如抒情、安静、雨天、公路、节奏、中文独立、少人声等。
 - 可以轻轻请示用户下一步偏向，但不要追问太多。

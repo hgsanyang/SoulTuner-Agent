@@ -2067,9 +2067,31 @@ class MusicRecommendationGraph:
                     logger.warning(f"[Explanation] 未知模式 {explanation_mode!r}，降级为 tuner_async")
                 retrieval_plan = state.get("retrieval_plan", {}) or {}
                 refinement_options = state.get("refinement_options", []) or []
+                # INFORMATION 请求（"他获奖了吗""最新专辑是什么"）此前只由调音师凭
+                # 训练截止前的记忆作答 —— 联网只用于找歌，不用于答事实，于是把
+                # 检索失败包装成"暂无消息"。这里按 planner 自己的 request_mode
+                # 先联网取带证据的事实，再交给调音师如实转述（无关键词规则）。
+                web_facts = ""
+                if str((state.get("tool_plan") or {}).get("request_mode") or "") == "information" and _web_search_enabled():
+                    try:
+                        from services.music_information_answer import answer_music_information
+
+                        _info = await answer_music_information(user_query, state.get("chat_history", "") or "")
+                        if _info.searched and str(_info.answer or "").strip():
+                            _lines = [_info.answer.strip()]
+                            for _ev in _info.evidence:
+                                if _ev.claim:
+                                    _lines.append(f"- 依据：{_ev.claim}（{_ev.source or '来源未标注'}）")
+                            web_facts = "\n".join(_lines)[:2400]
+                            logger.info("[Explanation] 注入联网资讯事实 %d 字", len(web_facts))
+                        else:
+                            logger.info("[Explanation] 资讯检索未命中，保持空 web_facts（不编造）")
+                    except Exception as _e:
+                        logger.warning(f"[Explanation] 资讯检索失败: {type(_e).__name__}: {_e}")
                 prompt_template = MUSIC_TUNER_RESPONSE_PROMPT
                 prompt_payload = {
                     "user_query": user_query,
+                    "web_facts": web_facts,
                     "intent_context": state.get("intent_context", ""),
                     "retrieval_plan": json.dumps(retrieval_plan, ensure_ascii=False, default=str)[:2400],
                     "recommendation_overview": _build_tuner_recommendation_overview(recommendations),
