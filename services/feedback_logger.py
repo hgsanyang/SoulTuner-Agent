@@ -99,8 +99,15 @@ def log_exposure(
     retrieval_meta: dict[str, Any] | None = None,
     dialog_state: dict[str, Any] | None = None,
     timings: dict[str, Any] | None = None,
+    context: dict[str, Any] | None = None,
+    policy_version: str = "",
 ) -> str:
-    """Persist one recommendation slate for later offline replay."""
+    """Persist one recommendation slate for later offline replay.
+
+    ``context`` carries the listening context (timezone / local hour / day type /
+    session / scene). It cannot be backfilled later — you cannot reconstruct what
+    time it was for the user — so it is written at exposure time even when empty.
+    """
     exposure_id = request_id or str(uuid.uuid4())
     rows = [
         _feature_snapshot(song if isinstance(song, dict) else {}, rank=i + 1)
@@ -108,11 +115,14 @@ def log_exposure(
     ]
     payload = {
         "type": "exposure",
+        "schema_version": "feedback_events_v1",
         "exposure_id": exposure_id,
         "ts": int(time.time() * 1000),
         "user_id": user_id,
         "query_hash": hashlib.sha256(str(query or "").encode("utf-8")).hexdigest(),
         "intent_type": intent_type,
+        "policy_version": policy_version,
+        "context": context or {},
         "count": len(rows),
         "items": rows,
         "retrieval_meta": retrieval_meta or {},
@@ -123,6 +133,25 @@ def log_exposure(
         payload["query"] = query
     _append_jsonl(_jsonl_path("exposures.jsonl"), payload)
     return exposure_id
+
+
+def log_song_feedback(feedback: Any) -> str:
+    """Persist per-song feedback on the two independent channels.
+
+    ``feedback`` is a ``schemas.feedback_events.SongFeedback``. The taste channel
+    (like/save/dislike/block) and the context channel (fits/partial/off + reason)
+    are stored side by side and NEVER merged: a track can be a long-term
+    favourite and still wrong for tonight.
+    """
+    payload = feedback.model_dump(mode="json") if hasattr(feedback, "model_dump") else dict(feedback)
+    feedback_id = str(uuid.uuid4())
+    payload.update({
+        "type": "song_feedback",
+        "song_feedback_id": feedback_id,
+        "ts": int(time.time() * 1000),
+    })
+    _append_jsonl(_jsonl_path("song_feedback.jsonl"), payload)
+    return feedback_id
 
 
 def log_user_event(

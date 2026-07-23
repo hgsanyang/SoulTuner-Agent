@@ -1031,12 +1031,21 @@ class UserEventRequest(BaseModel):
 
 
 class SlateFeedbackRequest(BaseModel):
-    """一整组推荐结果的反馈。"""
+    """一整组推荐结果的反馈。
+
+    best/worst 让用户不必逐首听完也能给出归因：指出最符合与最不符合的 1-3 首，
+    就够把"整组一般"拆成可用的正负信号。未被选中的歌保持"未知"，不算负样本。
+    """
     exposure_id: str
     rating: str
     reasons: List[str] = []
     note: str = ""
     user_id: str = "local_admin"
+    best_music_ids: List[str] = []
+    worst_music_ids: List[str] = []
+    timezone: str = ""
+    session_id: str = ""
+    scene: str = ""
     extra: Optional[Dict[str, Any]] = None
 
 
@@ -1158,6 +1167,104 @@ async def capture_user_event(request: UserEventRequest):
         return {"success": False, "error": str(e)}
 
 
+class SongFeedbackRequest(BaseModel):
+    """Per-song feedback on two independent channels (see schemas/feedback_events)."""
+
+    exposure_id: str = ""
+    music_id: str = ""
+    title: str = ""
+    artist: str = ""
+    user_id: str = "local_admin"
+    taste: Optional[str] = None          # like | save | dislike | block
+    context_fit: Optional[str] = None    # fits | partial | off
+    off_reasons: List[str] = []
+    note: str = ""
+    timezone: str = ""
+    session_id: str = ""
+    scene: str = ""
+    rank: Optional[int] = None
+    propensity: Optional[float] = None
+    policy_version: str = ""
+    catalog_origin: Optional[str] = None
+    known_to_user: Optional[bool] = None
+
+
+@app.post("/api/song-feedback")
+async def capture_song_feedback(request: SongFeedbackRequest):
+    """Record per-song feedback.
+
+    Two channels are stored separately and never merged: `taste` is a long-term
+    preference signal, `context_fit` judges THIS slate in THIS context. A track
+    can be a favourite and still wrong for tonight. Free-text `note` is always
+    accepted. Not rating a song stays UNKNOWN — never a negative sample.
+    """
+    try:
+        import time as _t
+
+        from schemas.feedback_events import (
+            ExposureBookkeeping,
+            SongFeedback,
+            derive_context,
+        )
+        from services.feedback_logger import log_song_feedback
+
+        if not request.exposure_id.strip():
+            raise HTTPException(status_code=422, detail="exposure_id is required")
+
+        try:
+            feedback = SongFeedback(
+                exposure_id=request.exposure_id,
+                music_id=request.music_id,
+                title=request.title,
+                artist=request.artist,
+                user_id=request.user_id,
+                taste=request.taste,
+                context_fit=request.context_fit,
+                off_reasons=request.off_reasons,
+                note=request.note,
+                context=derive_context(
+                    int(_t.time() * 1000), request.timezone,
+                    session_id=request.session_id, scene=request.scene,
+                ),
+                exposure=ExposureBookkeeping(
+                    rank=request.rank,
+                    propensity=request.propensity,
+                    policy_version=request.policy_version,
+                    catalog_origin=request.catalog_origin,
+                    known_to_user=request.known_to_user,
+                ),
+            )
+        except Exception as exc:  # unknown enum value etc.
+            raise HTTPException(status_code=422, detail=f"invalid feedback: {exc}")
+
+        if feedback.is_empty():
+            raise HTTPException(status_code=422, detail="feedback carries no signal")
+
+        feedback_id = log_song_feedback(feedback)
+
+        # The taste channel (and only that channel) feeds long-term memory and
+        # the positive-feedback ingest flywheel; context_fit must not.
+        flywheel_scheduled = False
+        if request.taste in {"like", "save"}:
+            try:
+                from services.online_audio_flywheel import schedule_online_feedback_flywheel
+
+                flywheel_scheduled = schedule_online_feedback_flywheel(
+                    event_type=request.taste, title=request.title, artist=request.artist,
+                    extra={"song_id": request.music_id, "source": "online_search"},
+                )
+            except Exception as exc:
+                logger.debug("[song-feedback] flywheel skipped: %s", exc)
+
+        return {"success": True, "song_feedback_id": feedback_id,
+                "online_flywheel_scheduled": flywheel_scheduled}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"逐首反馈记录失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/slate-feedback")
 async def capture_slate_feedback(request: SlateFeedbackRequest):
     """Record feedback for an entire recommendation slate.
@@ -1172,7 +1279,22 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
         if request.rating not in SUPPORTED_SLATE_RATINGS:
             raise HTTPException(status_code=422, detail="Unsupported slate rating")
 
+        import time as _t
+
+        from schemas.feedback_events import derive_context
         from services.memory_gateway import get_memory_gateway
+
+        # best/worst + listening context ride along in `extra` so ranking replay
+        # can attribute the slate without changing the gateway contract.
+        slate_extra = dict(request.extra or {})
+        slate_extra.update({
+            "best_music_ids": request.best_music_ids[:3],
+            "worst_music_ids": request.worst_music_ids[:3],
+            "context": derive_context(
+                int(_t.time() * 1000), request.timezone,
+                session_id=request.session_id, scene=request.scene,
+            ).model_dump(mode="json"),
+        })
 
         result = await get_memory_gateway().remember_slate_feedback(
             exposure_id=request.exposure_id,
@@ -1180,7 +1302,7 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
             reasons=request.reasons,
             note=request.note,
             user_id=request.user_id,
-            extra=request.extra or {},
+            extra=slate_extra,
         )
         return {
             "success": True,

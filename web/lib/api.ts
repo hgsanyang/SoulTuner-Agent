@@ -224,12 +224,78 @@ export type SlateFeedbackRating =
     | 'closer_to_seed'
     | 'wrong_context';
 
+/** Why a track did not fit THIS context (free text is always allowed too). */
+export type SongOffReason =
+    | 'mood_mismatch' | 'too_loud' | 'too_flat' | 'wrong_language'
+    | 'wrong_era' | 'overplayed' | 'want_unfamiliar' | 'bad_audio';
+
+export const SONG_OFF_REASON_LABELS: Record<SongOffReason, string> = {
+    mood_mismatch: '氛围不对',
+    too_loud: '太吵',
+    too_flat: '太平',
+    wrong_language: '语言不对',
+    wrong_era: '年代不对',
+    overplayed: '已经听腻',
+    want_unfamiliar: '想要更陌生',
+    bad_audio: '音源有问题',
+};
+
+/**
+ * Per-song feedback on two INDEPENDENT channels.
+ * - taste: long-term preference (like/save/dislike/block) — the heart/collect buttons
+ * - contextFit: whether it suited THIS slate right now (fits/partial/off)
+ * A song can be a favourite and still wrong for tonight, so these never merge.
+ * Leaving a song unrated stays UNKNOWN — it is not a negative sample.
+ */
+export async function sendSongFeedback(params: {
+    exposureId: string;
+    musicId?: string;
+    title?: string;
+    artist?: string;
+    taste?: 'like' | 'save' | 'dislike' | 'block';
+    contextFit?: 'fits' | 'partial' | 'off';
+    offReasons?: SongOffReason[];
+    note?: string;
+    rank?: number;
+    sessionId?: string;
+    scene?: string;
+    userId?: string;
+}): Promise<{ success: boolean; song_feedback_id?: string; error?: string }> {
+    const resp = await fetch('http://localhost:8501/api/song-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            exposure_id: params.exposureId,
+            music_id: params.musicId || '',
+            title: params.title || '',
+            artist: params.artist || '',
+            taste: params.taste ?? null,
+            context_fit: params.contextFit ?? null,
+            off_reasons: params.offReasons || [],
+            note: params.note || '',
+            rank: params.rank ?? null,
+            session_id: params.sessionId || '',
+            scene: params.scene || '',
+            // the user's own timezone — the server must never assume its own
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+            user_id: params.userId || 'local_admin',
+        }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: '反馈失败' }));
+        throw new Error(err.detail || `反馈失败: ${resp.status}`);
+    }
+    return resp.json();
+}
+
 export async function sendSlateFeedback(params: {
     exposureId: string;
     rating: SlateFeedbackRating;
     reasons?: string[];
     note?: string;
     userId?: string;
+    bestMusicIds?: string[];
+    worstMusicIds?: string[];
     extra?: Record<string, any>;
 }): Promise<{ success: boolean; feedback_id?: string; error?: string }> {
     const resp = await fetch('http://localhost:8501/api/slate-feedback', {
@@ -241,6 +307,9 @@ export async function sendSlateFeedback(params: {
             reasons: params.reasons || [],
             note: params.note || '',
             user_id: params.userId || 'local_admin',
+            best_music_ids: params.bestMusicIds || [],
+            worst_music_ids: params.worstMusicIds || [],
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
             extra: params.extra || {},
         }),
     });
