@@ -101,6 +101,7 @@ def log_exposure(
     timings: dict[str, Any] | None = None,
     context: dict[str, Any] | None = None,
     policy_version: str = "",
+    provisional: bool = False,
 ) -> str:
     """Persist one recommendation slate for later offline replay.
 
@@ -122,6 +123,11 @@ def log_exposure(
         "query_hash": hashlib.sha256(str(query or "").encode("utf-8")).hexdigest(),
         "intent_type": intent_type,
         "policy_version": policy_version,
+        # A provisional record is written BEFORE the songs are streamed, so
+        # feedback always has something to attribute to; the final record is
+        # written with the same exposure_id once the graph finishes and
+        # supersedes it (lookup_exposure keeps the last write).
+        "provisional": bool(provisional),
         "context": context or {},
         "count": len(rows),
         "items": rows,

@@ -116,6 +116,33 @@ def test_slate_best_worst_must_come_from_the_slate(client):
         assert resp.json().get("success") is True
 
 
+def test_final_exposure_supersedes_provisional(client):
+    """The provisional record written before songs stream must be superseded by
+    the final one (same exposure_id), so feedback attributes to the real slate."""
+    api, tmp_path, fl = client
+    fl.log_exposure(query="q", user_id="u", request_id="expX",
+                    recommendations=[{"title": "A", "music_id": "m1"}], provisional=True)
+    fl.log_exposure(query="q", user_id="u", request_id="expX", intent_type="hybrid_search",
+                    recommendations=[{"title": "A", "music_id": "m1"},
+                                     {"title": "B", "music_id": "m2"}],
+                    policy_version="rank-v7")
+    found = fl.lookup_exposure("expX")
+    assert found is not None
+    assert found["provisional"] is False          # last write wins
+    assert found["intent_type"] == "hybrid_search"
+    assert len(found["items"]) == 2
+
+
+def test_feedback_works_against_provisional_exposure(client):
+    """A user who rates the moment a card appears must not be rejected."""
+    api, tmp_path, fl = client
+    fl.log_exposure(query="q", user_id="u", request_id="expP",
+                    recommendations=[{"title": "再见", "music_id": "m1"}], provisional=True)
+    resp = api.post("/api/song-feedback", json={"exposure_id": "expP", "music_id": "m1",
+                                                "context_fit": "fits"})
+    assert resp.status_code == 200, resp.text
+
+
 def test_slate_song_cannot_be_best_and_worst(client):
     api, tmp_path, fl = client
     _write_exposure(fl, tmp_path)

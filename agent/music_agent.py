@@ -357,6 +357,23 @@ class MusicRecommendationAgent:
                 # ★ 处理歌曲数据（在解释文本之前到达）
                 if isinstance(chunk, dict) and "__songs__" in chunk:
                     songs_list = chunk["__songs__"]
+                    # ★ 曝光先落盘、再发歌：卡片一旦到达前端用户就能评价，
+                    # 而此前曝光要等整图跑完才写，用户可能"先评价、后有曝光"，
+                    # 反馈就成了无法归因的孤儿（只能靠 409 让客户端重试）。
+                    # 这里用同一个 _request_id 先写一条 provisional 记录；
+                    # 图跑完后的终写会以相同 id 覆盖它（lookup 取最后一条）。
+                    if songs_list and not settings.eval_disable_side_effects:
+                        try:
+                            log_exposure(
+                                query=query,
+                                user_id=user_id,
+                                request_id=_request_id,
+                                recommendations=songs_list,
+                                context=_listening_context(client_context),
+                                provisional=True,
+                            )
+                        except Exception as _pre_log_error:
+                            logger.warning(f"[Feedback] 预写曝光失败: {_pre_log_error}")
                     yield {
                         "type": "recommendations_start",
                         "count": len(songs_list),
