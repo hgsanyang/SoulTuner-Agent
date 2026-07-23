@@ -20,6 +20,9 @@ HARD (batch fails if any occur):
                     and re-checked, so raw-plan quirks the deterministic
                     compiler heals (era gap-check, clarification retrieval) do
                     NOT disqualify a sample; we measure what the student produces.
+  V09 tool_intent   tool_names (authoritative lane choice) must not contradict
+                    intent: dense-intent has dense, graph has graph, web has web,
+                    clarification/general_chat carry no lanes.
 
 WARN (reported, non-blocking):
   W01 language_hint explicit language request but hard.language unset
@@ -95,7 +98,7 @@ def _load_records(path: Path) -> list[dict]:
 
 def verify(path: Path, write_clean: Path | None = None) -> dict:
     from data.sft.augment_queries import _normalize
-    from schemas.planner_decision import PlannerDecisionV2, compile_to_query_plan
+    from schemas.planner_decision import PlannerDecisionV2, _normalized_tool_lanes, compile_to_query_plan
     from schemas.tool_plan import compile_legacy_tool_plan, tool_plan_alignment_issues
 
     excluded = _eval_exclusions()
@@ -164,6 +167,18 @@ def verify(path: Path, write_clean: Path | None = None) -> dict:
         # V07 HyDE present for dense lane
         if decision.intent in DENSE_INTENTS and not decision.acoustic_queries:
             hard_fail["V07_hyde_present"].append(f"{tag}: {decision.intent} no acoustic_queries")
+
+        # V09 tool_names <-> intent invariant (tool_names is the authoritative lane
+        # choice; when present it must not contradict the intent).
+        lanes = _normalized_tool_lanes(decision.tool_names)
+        if lanes:
+            if decision.intent in NO_CONSTRAINT_INTENTS:
+                hard_fail["V09_tool_intent"].append(f"{tag}: {decision.intent} carries lanes {sorted(lanes)}")
+            else:
+                required = {"graph_search": "graph", "vector_search": "dense",
+                            "hybrid_search": "dense", "web_search": "web"}.get(decision.intent)
+                if required and required not in lanes:
+                    hard_fail["V09_tool_intent"].append(f"{tag}: {decision.intent} lanes {sorted(lanes)} missing '{required}'")
 
         # W05 raw-plan alignment quirks the compiler heals (informational only).
         raw_issues = rec.get("alignment_issues") or []

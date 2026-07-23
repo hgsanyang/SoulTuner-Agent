@@ -51,11 +51,13 @@ graph_search（实体/硬属性精确查找）| hybrid_search（有标签又有�
 - decision_summary: ""  // 不超过 30 字结论
 
 ## 硬规则
-1. 语种（中文/英文/日语/粤语）与"纯音乐/器乐/无人声"是硬约束，必须写入 hard.language / hard.instrumental，不能只靠声学描述——文搜音模型听不出语种。
-2. hybrid_search / vector_search 必须给 acoustic_queries；graph_search 不填。
-3. 当前请求永远优先于长期画像/记忆；画像只作排序偏好，别写进 hard 约束（除非当前输入明确提到）。
-4. 指代（那首/上一首/这个歌手）能从历史或上轮解析就解析并继承，解析不了才 clarification。
-5. 严重矛盾（如"纯音乐但突出人声"）用 clarification 反问，不要硬猜。"""
+1. 语种（中文/英文/日语/粤语）是硬过滤属性，必须写入 hard.language——文搜音模型听不出语种，只能靠图谱硬过滤。
+2. 纯音乐/器乐/无人声是声学意图，不靠稀疏标签硬排除：置 hard.instrumental=true 作信号，并在 acoustic_queries 里明确写 "purely instrumental, no vocals"，由声学召回+排序满足。
+3. hybrid_search / vector_search 必须给 acoustic_queries；graph_search 不填。
+4. tool_names 是权威的召回通道选择，必须与 intent 自洽（vector/hybrid 含 dense，graph 含 graph，web 含 web，clarification/general_chat 为空）；纯 web 资讯可只 web，实体查询可 graph+web 补充。
+5. 当前请求永远优先于长期画像/记忆；画像只作排序偏好，别写进 hard 约束（除非当前输入明确提到）。
+6. 指代（那首/上一首/这个歌手）能从历史或上轮解析就解析并继承，解析不了才 clarification。
+7. 严重矛盾（如"纯音乐但突出人声"）用 clarification 反问，不要硬猜。"""
 
 
 def _load_clean(path: Path) -> list[dict]:
@@ -105,20 +107,47 @@ def to_chatml(rec: dict) -> dict:
 
 def stratified_split(records: list[dict], eval_frac: float, seed: int) -> tuple[list[dict], list[dict]]:
     random.seed(seed)
-    groups: dict[str, list[dict]] = defaultdict(list)
+    # Split by EPISODE, never by turn: a multi-turn conversation must live
+    # entirely in one split or context ability is evaluated on leaked history.
+    by_episode: dict[str, list[dict]] = defaultdict(list)
     for rec in records:
-        intent = (rec.get("teacher_decision") or {}).get("intent") or "unknown"
-        groups[intent].append(rec)
+        by_episode[str(rec.get("episode_id"))].append(rec)
+    for recs in by_episode.values():
+        recs.sort(key=lambda r: r.get("turn_id", 0))
+    strata: dict[str, list[list[dict]]] = defaultdict(list)
+    for recs in by_episode.values():
+        intent = (recs[-1].get("teacher_decision") or {}).get("intent") or "unknown"
+        strata[intent].append(recs)
     train: list[dict] = []
     eval_: list[dict] = []
-    for intent, items in groups.items():
-        random.shuffle(items)
-        n_eval = max(1, round(len(items) * eval_frac)) if len(items) > 1 else 0
-        eval_.extend(items[:n_eval])
-        train.extend(items[n_eval:])
+    for intent, episodes in sorted(strata.items()):
+        random.shuffle(episodes)
+        n_eval = max(1, round(len(episodes) * eval_frac)) if len(episodes) > 1 else 0
+        for recs in episodes[:n_eval]:
+            eval_.extend(recs)
+        for recs in episodes[n_eval:]:
+            train.extend(recs)
     random.shuffle(train)
     random.shuffle(eval_)
     return train, eval_
+
+
+def _split_audit(train: list[dict], eval_: list[dict]) -> dict:
+    """Overlap audit — episode, query-hash must both be zero (no leakage)."""
+    def eids(recs: list[dict]) -> set[str]:
+        return {str(r.get("episode_id")) for r in recs}
+
+    def qhashes(recs: list[dict]) -> set[str]:
+        return {" ".join(str(r.get("current_query") or "").split()).casefold() for r in recs}
+
+    ep_overlap = eids(train) & eids(eval_)
+    q_overlap = qhashes(train) & qhashes(eval_)
+    q_overlap.discard("")
+    return {
+        "episode_overlap": len(ep_overlap),
+        "query_overlap": len(q_overlap),
+        "episode_overlap_examples": sorted(ep_overlap)[:5],
+    }
 
 
 def main() -> int:
@@ -136,6 +165,12 @@ def main() -> int:
         return 1
     train, eval_ = stratified_split(records, args.eval_frac, args.seed)
 
+    # Fail-closed: never write leaked splits.
+    audit = _split_audit(train, eval_)
+    if audit["episode_overlap"] or audit["query_overlap"]:
+        print(json.dumps({"ABORT_leakage": audit}, ensure_ascii=False, indent=2))
+        return 1
+
     for split, path in ((train, args.train), (eval_, args.eval)):
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as sink:
@@ -150,6 +185,7 @@ def main() -> int:
         "records": len(records),
         "train": len(train),
         "eval": len(eval_),
+        "leakage_audit": audit,
         "train_intent_dist": dist(train),
         "eval_intent_dist": dist(eval_),
         "train_out": str(args.train),

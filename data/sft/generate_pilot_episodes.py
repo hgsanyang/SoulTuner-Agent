@@ -129,7 +129,7 @@ def _targets(total: int, only: set[str] | None = None) -> list[tuple[str, int, s
     return out
 
 
-async def generate(target: int, per_call: int, out_path: Path, only: set[str] | None = None) -> dict:
+async def generate(target: int, per_call: int, out_path: Path, only: set[str] | None = None, id_prefix: str = "") -> dict:
     from config.settings import settings
     from llms.chat_models import get_chat_model
 
@@ -162,7 +162,7 @@ async def generate(target: int, per_call: int, out_path: Path, only: set[str] | 
                 seen.add(first)
                 kept.append(
                     {
-                        "episode_id": f"{name}_{per_category.get(name, 0):04d}",
+                        "episode_id": f"{id_prefix}{name}_{per_category.get(name, 0):04d}",
                         "category": name,
                         "profile": ep.profile.strip(),
                         "memories": [m.strip() for m in ep.memories if m.strip()],
@@ -196,9 +196,10 @@ def main() -> int:
     parser.add_argument("--per-call", type=int, default=20)
     parser.add_argument("--out", type=Path, default=PROJECT_ROOT / "data" / "sft" / "pilot_episodes.jsonl")
     parser.add_argument("--only", type=str, default="", help="Comma-separated category names to generate (subset of COMPOSITION)")
+    parser.add_argument("--id-prefix", dest="id_prefix", type=str, default="", help="Namespace for episode_id (use e.g. 'supp_' for supplements to avoid id collision)")
     args = parser.parse_args()
     only = {c.strip() for c in args.only.split(",") if c.strip()} or None
-    report = asyncio.run(generate(args.target, args.per_call, args.out, only=only))
+    report = asyncio.run(generate(args.target, args.per_call, args.out, only=only, id_prefix=args.id_prefix))
     print(json.dumps({"summary": report}, ensure_ascii=False))
     return 0 if report["generated"] > 0 else 1
 
