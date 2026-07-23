@@ -1168,25 +1168,29 @@ async def capture_user_event(request: UserEventRequest):
 
 
 class SongFeedbackRequest(BaseModel):
-    """Per-song feedback on two independent channels (see schemas/feedback_events)."""
+    """Per-song CONTEXT feedback (see schemas/feedback_events).
+
+    Long-term taste (like/save/dislike/block) is NOT accepted here — /api/user-event
+    stays its single authoritative entry point, so there is exactly one write path
+    into memory and the ingest flywheel.
+
+    Ranking/policy truth (rank, propensity, policy_version, catalog_origin) is NOT
+    accepted from the client either: the server backfills it from its own exposure
+    record. The browser must not be able to rewrite what our policy did.
+    """
 
     exposure_id: str = ""
     music_id: str = ""
     title: str = ""
     artist: str = ""
     user_id: str = "local_admin"
-    taste: Optional[str] = None          # like | save | dislike | block
     context_fit: Optional[str] = None    # fits | partial | off
     off_reasons: List[str] = []
     note: str = ""
     timezone: str = ""
     session_id: str = ""
     scene: str = ""
-    rank: Optional[int] = None
-    propensity: Optional[float] = None
-    policy_version: str = ""
-    catalog_origin: Optional[str] = None
-    known_to_user: Optional[bool] = None
+    device: str = ""
 
 
 @app.post("/api/song-feedback")
@@ -1206,32 +1210,48 @@ async def capture_song_feedback(request: SongFeedbackRequest):
             SongFeedback,
             derive_context,
         )
-        from services.feedback_logger import log_song_feedback
+        from services.feedback_logger import find_exposure_item, log_song_feedback, lookup_exposure
 
         if not request.exposure_id.strip():
             raise HTTPException(status_code=422, detail="exposure_id is required")
 
+        # Orphan guard: feedback must reference an exposure we actually recorded,
+        # and a song that was actually in it. Songs stream to the UI over SSE
+        # before the graph finishes, so a user CAN rate before the exposure is
+        # persisted — we reject with 409 so the client can retry rather than
+        # silently storing a judgement we can never attribute.
+        exposure = lookup_exposure(request.exposure_id)
+        if exposure is None:
+            raise HTTPException(status_code=409, detail="exposure not persisted yet; retry shortly")
+        item = find_exposure_item(exposure, music_id=request.music_id,
+                                  title=request.title, artist=request.artist)
+        if item is None:
+            raise HTTPException(status_code=422, detail="song was not part of this exposure")
+
         try:
             feedback = SongFeedback(
                 exposure_id=request.exposure_id,
-                music_id=request.music_id,
-                title=request.title,
-                artist=request.artist,
+                music_id=str(item.get("music_id") or request.music_id or ""),
+                title=str(item.get("title") or request.title or ""),
+                artist=str(item.get("artist") or request.artist or ""),
                 user_id=request.user_id,
-                taste=request.taste,
                 context_fit=request.context_fit,
                 off_reasons=request.off_reasons,
                 note=request.note,
                 context=derive_context(
                     int(_t.time() * 1000), request.timezone,
                     session_id=request.session_id, scene=request.scene,
+                    device=request.device,
                 ),
+                # Policy truth comes from OUR exposure record, not the browser.
                 exposure=ExposureBookkeeping(
-                    rank=request.rank,
-                    propensity=request.propensity,
-                    policy_version=request.policy_version,
-                    catalog_origin=request.catalog_origin,
-                    known_to_user=request.known_to_user,
+                    rank=item.get("rank"),
+                    propensity=item.get("propensity"),
+                    policy_version=str(exposure.get("policy_version") or ""),
+                    is_exploration=bool(item.get("is_exploration")),
+                    catalog_origin=item.get("catalog_origin"),
+                    known_to_user=item.get("known_to_user"),
+                    exposure_count=int(item.get("exposure_count") or 0),
                 ),
             )
         except Exception as exc:  # unknown enum value etc.
@@ -1241,23 +1261,9 @@ async def capture_song_feedback(request: SongFeedbackRequest):
             raise HTTPException(status_code=422, detail="feedback carries no signal")
 
         feedback_id = log_song_feedback(feedback)
-
-        # The taste channel (and only that channel) feeds long-term memory and
-        # the positive-feedback ingest flywheel; context_fit must not.
-        flywheel_scheduled = False
-        if request.taste in {"like", "save"}:
-            try:
-                from services.online_audio_flywheel import schedule_online_feedback_flywheel
-
-                flywheel_scheduled = schedule_online_feedback_flywheel(
-                    event_type=request.taste, title=request.title, artist=request.artist,
-                    extra={"song_id": request.music_id, "source": "online_search"},
-                )
-            except Exception as exc:
-                logger.debug("[song-feedback] flywheel skipped: %s", exc)
-
-        return {"success": True, "song_feedback_id": feedback_id,
-                "online_flywheel_scheduled": flywheel_scheduled}
+        # No memory / flywheel write here on purpose: long-term taste has exactly
+        # one authoritative entry point (/api/user-event).
+        return {"success": True, "song_feedback_id": feedback_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -1281,19 +1287,44 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 
         import time as _t
 
-        from schemas.feedback_events import derive_context
+        from schemas.feedback_events import SlateFeedback, derive_context
+        from services.feedback_logger import lookup_exposure
         from services.memory_gateway import get_memory_gateway
+
+        # Same orphan guard as per-song feedback, and best/worst must name songs
+        # that were actually in this slate (a client cannot invent them).
+        exposure = lookup_exposure(request.exposure_id)
+        if exposure is None:
+            raise HTTPException(status_code=409, detail="exposure not persisted yet; retry shortly")
+        exposed_ids = {str(i.get("music_id")) for i in (exposure.get("items") or []) if i.get("music_id")}
+        best = [m for m in request.best_music_ids if m in exposed_ids][:3]
+        worst = [m for m in request.worst_music_ids if m in exposed_ids][:3]
+        if set(best) & set(worst):
+            raise HTTPException(status_code=422, detail="a song cannot be both best and worst")
+
+        context = derive_context(
+            int(_t.time() * 1000), request.timezone,
+            session_id=request.session_id, scene=request.scene,
+        )
+        try:
+            # Validate through the strict contract so the written record and the
+            # declared schema cannot drift apart.
+            strict = SlateFeedback(
+                exposure_id=request.exposure_id, user_id=request.user_id,
+                best_music_ids=best, worst_music_ids=worst,
+                note=request.note, context=context,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"invalid slate feedback: {exc}")
 
         # best/worst + listening context ride along in `extra` so ranking replay
         # can attribute the slate without changing the gateway contract.
         slate_extra = dict(request.extra or {})
         slate_extra.update({
-            "best_music_ids": request.best_music_ids[:3],
-            "worst_music_ids": request.worst_music_ids[:3],
-            "context": derive_context(
-                int(_t.time() * 1000), request.timezone,
-                session_id=request.session_id, scene=request.scene,
-            ).model_dump(mode="json"),
+            "schema_version": strict.schema_version,
+            "best_music_ids": strict.best_music_ids,
+            "worst_music_ids": strict.worst_music_ids,
+            "context": context.model_dump(mode="json"),
         })
 
         result = await get_memory_gateway().remember_slate_feedback(

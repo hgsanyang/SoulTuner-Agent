@@ -20,14 +20,16 @@ export default function SongFeedbackPanel({
     musicId,
     title,
     artist,
-    rank,
+    sessionId,
+    scene,
     onClose,
 }: {
     exposureId: string;
     musicId?: string;
     title: string;
     artist?: string;
-    rank?: number;
+    sessionId?: string;
+    scene?: string;
     onClose: () => void;
 }) {
     const [fit, setFit] = useState<'fits' | 'partial' | 'off' | null>(null);
@@ -39,21 +41,33 @@ export default function SongFeedbackPanel({
     const toggleReason = (r: SongOffReason) =>
         setReasons(prev => (prev.includes(r) ? prev.filter(x => x !== r) : [...prev, r]));
 
+    /** Reasons only mean anything under "不符合" — clear them when leaving it,
+     *  otherwise a user who switches back to 很符合 writes a self-contradicting
+     *  record (fits + "太吵"). */
+    const chooseFit = (v: 'fits' | 'partial' | 'off') => {
+        const next = fit === v ? null : v;
+        setFit(next);
+        if (next !== 'off') setReasons([]);
+    };
+
     const canSubmit = Boolean(fit) || reasons.length > 0 || note.trim().length > 0;
 
     const submit = async () => {
         if (!canSubmit || state === 'sending') return;
         setState('sending');
         try {
+            // rank/policy are NOT sent: the server backfills them from its own
+            // exposure record so the browser cannot restate what the policy did.
             await sendSongFeedback({
                 exposureId,
                 musicId,
                 title,
                 artist,
-                rank,
                 contextFit: fit ?? undefined,
                 offReasons: reasons,
                 note: note.trim(),
+                sessionId,
+                scene,
             });
             setState('done');
             setTimeout(onClose, 900);
@@ -94,7 +108,7 @@ export default function SongFeedbackPanel({
 
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                 {([['fits', '很符合'], ['partial', '一般'], ['off', '不符合']] as const).map(([v, label]) => (
-                    <button key={v} onClick={() => setFit(fit === v ? null : v)} style={chip(fit === v)}>
+                    <button key={v} onClick={() => chooseFit(v)} style={chip(fit === v)}>
                         {label}
                     </button>
                 ))}

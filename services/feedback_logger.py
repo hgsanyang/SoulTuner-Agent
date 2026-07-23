@@ -135,6 +135,53 @@ def log_exposure(
     return exposure_id
 
 
+def lookup_exposure(exposure_id: str) -> dict[str, Any] | None:
+    """Return the persisted exposure record, or None if it does not exist.
+
+    The exposure is the server's own record of what the policy showed. Feedback
+    must be validated and enriched against it — never against numbers the
+    browser reports about our own ranking.
+    """
+    exposure_id = str(exposure_id or "").strip()
+    if not exposure_id:
+        return None
+    path = _jsonl_path("exposures.jsonl")
+    if not path.exists():
+        return None
+    found = None
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or exposure_id not in line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if row.get("exposure_id") == exposure_id:
+                found = row  # keep the last write for this id
+    return found
+
+
+def find_exposure_item(exposure: dict[str, Any], *, music_id: str = "",
+                       title: str = "", artist: str = "") -> dict[str, Any] | None:
+    """Locate the exposed item this feedback is about (identity, not position)."""
+    items = exposure.get("items") or []
+    mid = str(music_id or "").strip()
+    if mid:
+        for item in items:
+            if str(item.get("music_id") or "") == mid:
+                return item
+    t, a = str(title or "").strip().casefold(), str(artist or "").strip().casefold()
+    if t:
+        for item in items:
+            if str(item.get("title") or "").strip().casefold() == t and (
+                not a or str(item.get("artist") or "").strip().casefold() == a
+            ):
+                return item
+    return None
+
+
 def log_song_feedback(feedback: Any) -> str:
     """Persist per-song feedback on the two independent channels.
 

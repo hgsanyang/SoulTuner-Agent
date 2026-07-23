@@ -241,10 +241,13 @@ export const SONG_OFF_REASON_LABELS: Record<SongOffReason, string> = {
 };
 
 /**
- * Per-song feedback on two INDEPENDENT channels.
- * - taste: long-term preference (like/save/dislike/block) — the heart/collect buttons
- * - contextFit: whether it suited THIS slate right now (fits/partial/off)
- * A song can be a favourite and still wrong for tonight, so these never merge.
+ * Per-song CONTEXT feedback: did this track suit THIS slate right now.
+ *
+ * Long-term taste (like/save/dislike/block) is deliberately NOT sent here —
+ * `sendUserEvent` (/api/user-event) stays its single authoritative entry point,
+ * so there is exactly one write path into memory and the ingest flywheel.
+ * Ranking/policy fields are not sent either: the server backfills them from its
+ * own exposure record, because the browser must not restate what our policy did.
  * Leaving a song unrated stays UNKNOWN — it is not a negative sample.
  */
 export async function sendSongFeedback(params: {
@@ -252,13 +255,12 @@ export async function sendSongFeedback(params: {
     musicId?: string;
     title?: string;
     artist?: string;
-    taste?: 'like' | 'save' | 'dislike' | 'block';
     contextFit?: 'fits' | 'partial' | 'off';
     offReasons?: SongOffReason[];
     note?: string;
-    rank?: number;
     sessionId?: string;
     scene?: string;
+    device?: string;
     userId?: string;
 }): Promise<{ success: boolean; song_feedback_id?: string; error?: string }> {
     const resp = await fetch('http://localhost:8501/api/song-feedback', {
@@ -269,13 +271,12 @@ export async function sendSongFeedback(params: {
             music_id: params.musicId || '',
             title: params.title || '',
             artist: params.artist || '',
-            taste: params.taste ?? null,
             context_fit: params.contextFit ?? null,
             off_reasons: params.offReasons || [],
             note: params.note || '',
-            rank: params.rank ?? null,
             session_id: params.sessionId || '',
             scene: params.scene || '',
+            device: params.device || (typeof navigator !== 'undefined' ? 'web' : ''),
             // the user's own timezone — the server must never assume its own
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
             user_id: params.userId || 'local_admin',

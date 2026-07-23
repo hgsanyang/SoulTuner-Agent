@@ -445,7 +445,6 @@ export default function SongCard({
           musicId={song_id}
           title={title}
           artist={artist}
-          rank={exposure_rank}
           onClose={() => setShowFeedback(false)}
         />
       )}
