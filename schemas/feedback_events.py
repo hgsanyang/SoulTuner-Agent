@@ -45,6 +45,21 @@ OffReason = Literal[
     "want_unfamiliar",   # 想要更陌生
     "bad_audio",         # 版本或音源有问题
 ]
+# Why a whole SLATE missed. Deliberately a separate vocabulary from OffReason:
+# these judge the LIST, not a track. "太重复" and "太冷门" cannot be said about a
+# single song, and "this one is too loud" is not the same complaint as "the whole
+# set is too mainstream". Slugs (not display labels) are stored so renaming a
+# button never splits the history into two categories.
+SlateReason = Literal[
+    "too_loud",               # 太吵
+    "too_sad",                # 太悲伤
+    "too_mainstream",         # 太热门
+    "too_obscure",            # 太冷门
+    "too_repetitive",         # 重复太多
+    "scene_mismatch",         # 场景不合
+    "wrong_language_or_era",  # 语言/年代不准
+    "other",                  # 其他（配合 note 自由文本）
+]
 # Where a track came from — needed to split evaluation cohorts, otherwise a
 # local library full of the user's own favourites flatters every metric.
 CatalogOrigin = Literal["prior_favorite", "local_unheard", "online_new", "neutral_open"]
@@ -113,9 +128,19 @@ class SlateFeedback(_Strict):
     overall: Optional[ContextFit] = None
     best_music_ids: list[str] = Field(default_factory=list, max_length=3)
     worst_music_ids: list[str] = Field(default_factory=list, max_length=3)
-    off_reasons: list[OffReason] = Field(default_factory=list)
+    reasons: list[SlateReason] = Field(default_factory=list)
     note: str = Field(default="", max_length=500)
     context: ListeningContext = Field(default_factory=ListeningContext)
+
+
+# The UI rates a slate 整体合适/部分合适/不太合适; the stored judgement uses the
+# same three-way scale as per-song context_fit so the two channels are directly
+# comparable offline.
+SLATE_RATING_TO_OVERALL: dict[str, ContextFit] = {
+    "great": "fits",
+    "partial": "partial",
+    "off": "off",
+}
 
 
 def derive_context(ts_ms: int, timezone: str, *, session_id: str = "", scene: str = "",

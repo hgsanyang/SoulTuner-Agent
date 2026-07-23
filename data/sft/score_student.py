@@ -112,7 +112,8 @@ def score(eval_path: Path, pred_path: Path) -> dict:
                 t["clar_fn"] += 1
             continue
         try:
-            compile_to_query_plan(pred); t["compilable"] += 1
+            compile_to_query_plan(pred)
+            t["compilable"] += 1
         except Exception:
             pass
         pred_clar = pred.intent == "clarification"
@@ -138,7 +139,9 @@ def score(eval_path: Path, pred_path: Path) -> dict:
         if pred.metadata.model_dump() == gold.metadata.model_dump():
             t["metadata"] += 1
         gl, pl = _lanes(gold), _lanes(pred)
-        lane_tp += len(gl & pl); lane_fp += len(pl - gl); lane_fn += len(gl - pl)
+        lane_tp += len(gl & pl)
+        lane_fp += len(pl - gl)
+        lane_fn += len(gl - pl)
         if "dense" in gl:
             t["dense"] += 1
             if pred.acoustic_queries:

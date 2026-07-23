@@ -20,12 +20,16 @@ be retained.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+import uuid
 from contextlib import closing
 import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
+
+logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 
@@ -49,6 +53,9 @@ def _connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=10000")
+    # The DDL is re-run on every connect on purpose: measured at ~0.1ms of the
+    # ~5ms write, so memoising it would only buy staleness bugs when the file is
+    # removed underneath us. 5ms is noise against a multi-second recommendation.
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS exposures (
@@ -178,6 +185,16 @@ def _insert_event(table: str, id_column: str, id_value: str, payload: dict[str, 
                   columns: dict[str, Any]) -> None:
     if _writes_disabled():
         return
+    if not id_value:
+        # An empty primary key is silently catastrophic here: INSERT OR REPLACE
+        # makes every such row overwrite the previous one, so the table keeps
+        # exactly one event and the loss is invisible until you count rows.
+        # Retain the event under a synthetic id and say loudly that a writer is
+        # sending the wrong key name.
+        id_value = str(uuid.uuid4())
+        logger.warning("[feedback] %s written without %s; using synthetic id %s",
+                       table, id_column, id_value)
+        payload = {**payload, id_column: id_value}
     cols = [id_column, "ts", *columns.keys(), "payload"]
     values = [id_value, int(payload.get("ts") or _now_ms()), *columns.values(),
               json.dumps(payload, ensure_ascii=False)]

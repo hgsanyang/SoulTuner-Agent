@@ -60,6 +60,22 @@ def _song_identity(song: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _catalog_origin(song: dict[str, Any], item: dict[str, Any]) -> str | None:
+    """Where this candidate came from — or None when we genuinely do not know.
+
+    Only the online lane is unambiguous. Telling a local hit apart from the
+    user's own prior favourite needs the favourites set, which is not available
+    here, and guessing "local_unheard" for a track they already love would
+    manufacture exactly the bias this field exists to expose. So: label what we
+    know, leave the rest unknown.
+    """
+    sources = set(song.get("recall_sources") or song.get("_recall_sources")
+                  or item.get("_recall_sources") or [])
+    if str(song.get("source") or item.get("source") or ""):
+        sources.add(str(song.get("source") or item.get("source")))
+    return "online_new" if "web" in sources else None
+
+
 def _feature_snapshot(item: dict[str, Any], rank: int) -> dict[str, Any]:
     song = item.get("song") if isinstance(item.get("song"), dict) else item
     identity = _song_identity(song)
@@ -69,6 +85,12 @@ def _feature_snapshot(item: dict[str, Any], rank: int) -> dict[str, Any]:
         or {}
     )
     return {
+        # Exposure bookkeeping for later debiasing. `propensity` stays absent on
+        # purpose: the ranker is deterministic apart from the Thompson-sampled
+        # exploration slots and does not yet report the probability it showed an
+        # item with, so writing 1.0 would be a fabricated number.
+        "catalog_origin": _catalog_origin(song, item),
+        "exposure_count": _first_present(item, "_post_effective_exposure"),
         **identity,
         "rank": rank,
         "music_id": song.get("music_id") or song.get("id"),
@@ -140,9 +162,41 @@ def log_exposure(
     }
     if os.getenv("FEEDBACK_LOG_RAW_QUERY", "0").lower() in {"1", "true", "yes"}:
         payload["query"] = query
+    if not provisional:
+        _carry_forward_from_provisional(payload)
     _append_jsonl(_jsonl_path("exposures.jsonl"), payload)  # export snapshot
     _store("upsert_exposure", payload)  # canonical
     return exposure_id
+
+
+# Fields the provisional write captures that the final write cannot reconstruct.
+# The listening context is measured on the client at the moment the cards are
+# shown; by the time the graph finishes, "what time was it for the user" is gone.
+_CARRY_FORWARD_FIELDS = ("context", "policy_version")
+
+
+def _carry_forward_from_provisional(payload: dict[str, Any]) -> None:
+    """Let the final record REFINE the provisional one instead of replacing it.
+
+    Provisional and final writes share an exposure_id and the last one wins, so a
+    caller that simply forgets an argument silently destroys what the first write
+    captured. That is exactly what happened to the listening context on the
+    streaming path. Rather than trusting every call site to restate every field,
+    carry the unreconstructable ones forward whenever the final write left them
+    empty — the caller can still override by passing a value.
+    """
+    if not any(not payload.get(field) for field in _CARRY_FORWARD_FIELDS):
+        return
+    try:
+        prior = lookup_exposure(str(payload.get("exposure_id") or ""))
+    except Exception as exc:  # pragma: no cover - telemetry must not fail a request
+        logger.debug("[feedback] carry-forward lookup skipped: %s", exc)
+        return
+    if not prior:
+        return
+    for field in _CARRY_FORWARD_FIELDS:
+        if not payload.get(field) and prior.get(field):
+            payload[field] = prior[field]
 
 
 def _store(fn_name: str, payload: dict[str, Any]) -> None:
@@ -285,6 +339,10 @@ def log_slate_feedback(
     feedback_id = str(uuid.uuid4())
     payload = {
         "type": "slate_feedback",
+        # `slate_feedback_id` is the canonical key (it is the store's primary key
+        # and matches song_feedback_id / event_id). `feedback_id` is kept as a
+        # legacy alias because existing JSONL logs and replay code read it.
+        "slate_feedback_id": feedback_id,
         "feedback_id": feedback_id,
         "ts": int(time.time() * 1000),
         "user_id": user_id,

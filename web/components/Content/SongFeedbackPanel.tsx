@@ -58,7 +58,7 @@ export default function SongFeedbackPanel({
         try {
             // rank/policy are NOT sent: the server backfills them from its own
             // exposure record so the browser cannot restate what the policy did.
-            await sendSongFeedback({
+            const result = await sendSongFeedback({
                 exposureId,
                 musicId,
                 title,
@@ -69,6 +69,9 @@ export default function SongFeedbackPanel({
                 sessionId,
                 scene,
             });
+            // The endpoint answers 200 with {success:false} when the write fails,
+            // so resp.ok alone would show "已记录" for feedback nobody stored.
+            if (!result?.success) throw new Error(result?.error || '服务端未确认');
             setState('done');
             setTimeout(onClose, 900);
         } catch (e: any) {

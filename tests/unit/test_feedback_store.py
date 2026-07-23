@@ -81,3 +81,35 @@ def test_logger_mirrors_into_store(store):
                     recommendations=[{"title": "A", "music_id": "m1"}])
     assert fs.get_exposure("mirror1") is not None
     assert fl.lookup_exposure("mirror1") is not None
+
+
+def test_every_logged_slate_feedback_is_retained(store):
+    """Regression: the logger wrote `feedback_id` while the store keyed on
+    `slate_feedback_id`, so every row landed under the primary key "" and
+    INSERT OR REPLACE collapsed the whole table to a single event."""
+    for i in range(3):
+        fl.log_slate_feedback(exposure_id=f"e{i}", rating="partial", note=f"n{i}")
+    assert fs.counts()["slate_feedback"] == 3
+    assert len(fl.load_jsonl(fl._jsonl_path(fl.SLATE_FEEDBACK_FILE))) == 3
+
+
+def test_exposure_captures_the_bookkeeping_it_can_know(store):
+    """The debias fields were read by the feedback API but never written by the
+    exposure snapshot, so production always stored None while the API test
+    passed on a hand-written fixture."""
+    fl.log_exposure(query="q", user_id="u", request_id="bk1", recommendations=[
+        {"title": "A", "music_id": "m1", "recall_sources": ["web"], "_post_effective_exposure": 2.5},
+        {"title": "B", "music_id": "m2", "recall_sources": ["graph"]},
+    ])
+    items = fs.get_exposure("bk1")["items"]
+    assert items[0]["catalog_origin"] == "online_new"
+    assert items[0]["exposure_count"] == 2.5
+    # a local hit is left UNKNOWN rather than guessed as unheard
+    assert items[1]["catalog_origin"] is None
+
+
+def test_event_without_its_id_is_kept_not_collapsed(store):
+    """A writer sending the wrong key name must cost us a warning, not the table."""
+    for i in range(3):
+        fs.insert_song_feedback({"ts": i, "exposure_id": "e1", "music_id": f"m{i}"})
+    assert fs.counts()["song_feedback"] == 3

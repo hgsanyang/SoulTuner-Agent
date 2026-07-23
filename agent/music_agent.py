@@ -260,6 +260,10 @@ class MusicRecommendationAgent:
 
         # 为本次请求生成唯一 ID，用于隔离并发请求的流式队列
         _request_id = str(_uuid.uuid4())
+        # Derive the listening context ONCE: the provisional and final exposure
+        # writes share an id, so deriving it twice would stamp two different
+        # timestamps on what is one moment of listening.
+        _exposure_context = _listening_context(client_context)
 
         try:
             logger.info(f"开始处理音乐推荐请求(流式): {query} [req={_request_id[:8]}]")
@@ -369,7 +373,7 @@ class MusicRecommendationAgent:
                                 user_id=user_id,
                                 request_id=_request_id,
                                 recommendations=songs_list,
-                                context=_listening_context(client_context),
+                                context=_exposure_context,
                                 provisional=True,
                             )
                         except Exception as _pre_log_error:
@@ -435,6 +439,13 @@ class MusicRecommendationAgent:
                         retrieval_meta=result.get("retrieval_meta", {}),
                         dialog_state=result.get("dialog_state", {}),
                         timings=result.get("timings", {}),
+                        # This write REPLACES the provisional record above, so
+                        # every field the provisional one carried must be
+                        # restated here — omitting the context silently erased
+                        # the listening context on the streaming path, which is
+                        # the one production actually uses.
+                        context=_exposure_context,
+                        policy_version=str((result.get("retrieval_meta") or {}).get("policy_version") or ""),
                     )
                 except Exception as log_error:
                     logger.warning(f"[Feedback] 流式曝光日志写入失败: {log_error}")

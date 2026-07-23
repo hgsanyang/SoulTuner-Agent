@@ -147,6 +147,61 @@ def test_feedback_works_against_provisional_exposure(client):
     assert resp.status_code == 200, resp.text
 
 
+def test_final_exposure_write_must_not_erase_the_listening_context(client):
+    """Regression: the streaming path's final write omitted `context`, and since
+    the final record REPLACES the provisional one, it erased the listening
+    context that had just been captured — unrecoverably, on the only path
+    production uses."""
+    api, tmp_path, fl = client
+    ctx = {"ts_ms": 1784989800000, "timezone": "Asia/Shanghai", "local_hour": 23,
+           "day_type": "weekday"}
+    fl.log_exposure(query="q", user_id="u", request_id="expC",
+                    recommendations=[{"title": "A", "music_id": "m1"}],
+                    context=ctx, provisional=True)
+    # the final write deliberately does NOT restate the context — that is the
+    # mistake the call site made, and the logger must survive it
+    fl.log_exposure(query="q", user_id="u", request_id="expC", intent_type="hybrid_search",
+                    recommendations=[{"title": "A", "music_id": "m1"}],
+                    policy_version="rank-v7")
+    final = fl.lookup_exposure("expC")
+    assert final["context"].get("local_hour") == 23
+    assert final["intent_type"] == "hybrid_search"   # the refinement still lands
+    assert final["policy_version"] == "rank-v7"
+
+
+def test_final_exposure_write_can_still_override_the_context(client):
+    """Carry-forward fills gaps; it must never overrule what the caller passed."""
+    api, tmp_path, fl = client
+    fl.log_exposure(query="q", user_id="u", request_id="expD",
+                    recommendations=[{"title": "A", "music_id": "m1"}],
+                    context={"timezone": "Asia/Shanghai", "local_hour": 9},
+                    provisional=True)
+    fl.log_exposure(query="q", user_id="u", request_id="expD",
+                    recommendations=[{"title": "A", "music_id": "m1"}],
+                    context={"timezone": "Europe/Berlin", "local_hour": 3})
+    assert fl.lookup_exposure("expD")["context"]["local_hour"] == 3
+
+
+def test_slate_rating_and_reasons_are_stored_as_contract_values(client):
+    """The strict contract's `overall`/`reasons` were declared but never filled,
+    and the UI sent display labels, so the record could not be joined offline."""
+    api, tmp_path, fl = client
+    _write_exposure(fl, tmp_path)
+    resp = api.post("/api/slate-feedback", json={
+        "exposure_id": "exp1", "rating": "off",
+        "reasons": ["too_repetitive", "太吵"],   # one slug, one legacy label
+        "timezone": "Asia/Shanghai",
+    })
+    assert resp.status_code == 200, resp.text
+    rows = [json.loads(x) for x in
+            (tmp_path / "slate_feedback.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert len(rows) == 1
+    assert rows[0]["reasons"] == ["too_repetitive"]          # validated slugs only
+    assert rows[0]["extra"]["overall"] == "off"              # same scale as context_fit
+    assert rows[0]["extra"]["reasons_raw"] == ["太吵"]        # nothing silently dropped
+    assert rows[0]["slate_feedback_id"]
+
+
 def test_slate_song_cannot_be_best_and_worst(client):
     api, tmp_path, fl = client
     _write_exposure(fl, tmp_path)

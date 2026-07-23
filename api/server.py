@@ -10,7 +10,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import AsyncGenerator, Dict, Any, Optional, List
+from typing import AsyncGenerator, Dict, Any, Optional, List, get_args
 
 # 添加项目根目录到Python路径(如果还没有)
 project_root = Path(__file__).parent.parent
@@ -1301,7 +1301,12 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 
         import time as _t
 
-        from schemas.feedback_events import SlateFeedback, derive_context
+        from schemas.feedback_events import (
+            SLATE_RATING_TO_OVERALL,
+            SlateFeedback,
+            SlateReason,
+            derive_context,
+        )
         from services.feedback_logger import lookup_exposure
         from services.memory_gateway import get_memory_gateway
 
@@ -1320,13 +1325,22 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
             int(_t.time() * 1000), request.timezone,
             session_id=request.session_id, scene=request.scene,
         )
+        # Reasons are stored as slugs, not display labels. Older clients (and the
+        # pre-slug UI) send Chinese button text; keep those verbatim in
+        # `reasons_raw` rather than dropping them, so a vocabulary change is
+        # visible in the data instead of silently splitting one category in two.
+        known_reasons = set(get_args(SlateReason))
+        reasons = [r for r in request.reasons if r in known_reasons]
+        unknown_reasons = [r for r in request.reasons if r not in known_reasons]
+
         try:
             # Validate through the strict contract so the written record and the
             # declared schema cannot drift apart.
             strict = SlateFeedback(
                 exposure_id=request.exposure_id, user_id=request.user_id,
+                overall=SLATE_RATING_TO_OVERALL.get(request.rating),
                 best_music_ids=best, worst_music_ids=worst,
-                note=request.note, context=context,
+                reasons=reasons, note=request.note, context=context,
             )
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"invalid slate feedback: {exc}")
@@ -1336,15 +1350,18 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
         slate_extra = dict(request.extra or {})
         slate_extra.update({
             "schema_version": strict.schema_version,
+            "overall": strict.overall,
             "best_music_ids": strict.best_music_ids,
             "worst_music_ids": strict.worst_music_ids,
             "context": context.model_dump(mode="json"),
         })
+        if unknown_reasons:
+            slate_extra["reasons_raw"] = unknown_reasons
 
         result = await get_memory_gateway().remember_slate_feedback(
             exposure_id=request.exposure_id,
             rating=request.rating,
-            reasons=request.reasons,
+            reasons=strict.reasons,   # validated slugs; raw text kept in extra
             note=request.note,
             user_id=request.user_id,
             extra=slate_extra,

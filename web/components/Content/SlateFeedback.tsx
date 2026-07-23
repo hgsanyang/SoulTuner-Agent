@@ -17,7 +17,21 @@ const PRIMARY_OPTIONS: { rating: SlateFeedbackRating; label: string }[] = [
   { rating: 'off', label: '不太合适' },
 ];
 
-const REASON_OPTIONS = ['太吵', '太悲伤', '太热门', '太冷门', '重复太多', '场景不合', '语言/年代不准', '其他'];
+/**
+ * 存的是 slug 不是按钮文字：改个中文标签就不该让历史数据分裂成两类。
+ * 与逐首反馈的 OffReason 是两套词表 —— 这里评判的是「整组」（重复/太冷门
+ * 不可能用来说一首歌），后端 schemas/feedback_events.py 的 SlateReason 是唯一真值。
+ */
+const REASON_OPTIONS: { value: string; label: string }[] = [
+  { value: 'too_loud', label: '太吵' },
+  { value: 'too_sad', label: '太悲伤' },
+  { value: 'too_mainstream', label: '太热门' },
+  { value: 'too_obscure', label: '太冷门' },
+  { value: 'too_repetitive', label: '重复太多' },
+  { value: 'scene_mismatch', label: '场景不合' },
+  { value: 'wrong_language_or_era', label: '语言/年代不准' },
+  { value: 'other', label: '其他' },
+];
 
 export type SlatePickSong = { musicId: string; title: string; artist?: string };
 export type SlatePicks = { best: string[]; worst: string[] };
@@ -197,12 +211,12 @@ export default function SlateFeedback({
       {expandedRating && (
         <div style={{ marginTop: '0.65rem' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.55rem' }}>
-            {REASON_OPTIONS.map(reason => {
-              const selected = reasons.includes(reason);
+            {REASON_OPTIONS.map(({ value, label }) => {
+              const selected = reasons.includes(value);
               return (
                 <button
-                  key={reason}
-                  onClick={() => toggleReason(reason)}
+                  key={value}
+                  onClick={() => toggleReason(value)}
                   disabled={submitting}
                   style={{
                     padding: '0.32rem 0.6rem',
@@ -214,12 +228,12 @@ export default function SlateFeedback({
                     cursor: submitting ? 'wait' : 'pointer',
                   }}
                 >
-                  {reason}
+                  {label}
                 </button>
               );
             })}
           </div>
-          {reasons.includes('其他') && (
+          {reasons.includes('other') && (
             <input
               value={note}
               onChange={event => setNote(event.target.value)}
