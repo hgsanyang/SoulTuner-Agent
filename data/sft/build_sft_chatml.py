@@ -107,15 +107,16 @@ def to_chatml(rec: dict) -> dict:
 
 def stratified_split(records: list[dict], eval_frac: float, seed: int) -> tuple[list[dict], list[dict]]:
     random.seed(seed)
-    # Split by EPISODE, never by turn: a multi-turn conversation must live
-    # entirely in one split or context ability is evaluated on leaked history.
-    by_episode: dict[str, list[dict]] = defaultdict(list)
+    # Split by SEED FAMILY, never by turn: a multi-turn conversation — and every
+    # augmentation/rewrite sharing a parent_seed_id — must live entirely in one
+    # split, or context ability is evaluated on leaked/near-duplicate history.
+    by_family: dict[str, list[dict]] = defaultdict(list)
     for rec in records:
-        by_episode[str(rec.get("episode_id"))].append(rec)
-    for recs in by_episode.values():
-        recs.sort(key=lambda r: r.get("turn_id", 0))
+        by_family[_family_key(rec)].append(rec)
+    for recs in by_family.values():
+        recs.sort(key=lambda r: (str(r.get("episode_id")), r.get("turn_id", 0)))
     strata: dict[str, list[list[dict]]] = defaultdict(list)
-    for recs in by_episode.values():
+    for recs in by_family.values():
         intent = (recs[-1].get("teacher_decision") or {}).get("intent") or "unknown"
         strata[intent].append(recs)
     train: list[dict] = []
@@ -132,19 +133,31 @@ def stratified_split(records: list[dict], eval_frac: float, seed: int) -> tuple[
     return train, eval_
 
 
+def _family_key(rec: dict) -> str:
+    """Split unit: the seed family (parent_seed_id) so rewrites never split;
+    falls back to episode_id for data collected before lineage was recorded."""
+    prov = rec.get("provenance") or {}
+    return str(prov.get("parent_seed_id") or rec.get("episode_id"))
+
+
 def _split_audit(train: list[dict], eval_: list[dict]) -> dict:
-    """Overlap audit — episode, query-hash must both be zero (no leakage)."""
+    """Overlap audit — episode, seed-family, query-hash must ALL be zero."""
     def eids(recs: list[dict]) -> set[str]:
         return {str(r.get("episode_id")) for r in recs}
+
+    def families(recs: list[dict]) -> set[str]:
+        return {_family_key(r) for r in recs}
 
     def qhashes(recs: list[dict]) -> set[str]:
         return {" ".join(str(r.get("current_query") or "").split()).casefold() for r in recs}
 
     ep_overlap = eids(train) & eids(eval_)
+    fam_overlap = families(train) & families(eval_)
     q_overlap = qhashes(train) & qhashes(eval_)
     q_overlap.discard("")
     return {
         "episode_overlap": len(ep_overlap),
+        "seed_family_overlap": len(fam_overlap),
         "query_overlap": len(q_overlap),
         "episode_overlap_examples": sorted(ep_overlap)[:5],
     }
@@ -167,7 +180,7 @@ def main() -> int:
 
     # Fail-closed: never write leaked splits.
     audit = _split_audit(train, eval_)
-    if audit["episode_overlap"] or audit["query_overlap"]:
+    if audit["episode_overlap"] or audit["seed_family_overlap"] or audit["query_overlap"]:
         print(json.dumps({"ABORT_leakage": audit}, ensure_ascii=False, indent=2))
         return 1
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from schemas.query_plan import (
     HardConstraints,
@@ -104,6 +104,31 @@ class PlannerDecisionV2(_Strict):
     # short human audit note only; execution never depends on it, and hidden
     # chain-of-thought is never stored.
     decision_summary: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def _enforce_invariants(self) -> "PlannerDecisionV2":
+        # tool_names must be known recall lanes (reject silent unknowns).
+        for name in self.tool_names:
+            if str(name or "").strip().casefold() not in _TOOL_NAME_ALIASES:
+                raise ValueError(f"unknown tool_name '{name}' (allowed: graph/dense/web + aliases)")
+        lanes = _normalized_tool_lanes(self.tool_names)
+        has_text = bool((self.clarification or "").strip())
+        # clarification: intent <-> text <-> no-lanes are mutually locked.
+        if self.intent == "clarification":
+            if not has_text:
+                raise ValueError("intent=clarification requires clarification text")
+            if lanes:
+                raise ValueError("clarification must carry no tool lanes")
+        elif has_text:
+            raise ValueError("clarification text only allowed when intent=clarification")
+        if self.intent == "general_chat" and lanes:
+            raise ValueError("general_chat must carry no tool lanes")
+        # a recall intent, when it names lanes, must include its required lane.
+        required = {"graph_search": "graph", "vector_search": "dense",
+                    "hybrid_search": "dense", "web_search": "web"}.get(self.intent)
+        if lanes and required and required not in lanes:
+            raise ValueError(f"intent={self.intent} requires lane '{required}', got {sorted(lanes)}")
+        return self
 
 
 def _normalized_tool_lanes(tool_names: list[str]) -> set[str]:

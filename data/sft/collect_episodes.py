@@ -176,6 +176,8 @@ async def collect(episodes: list[dict], out_path: Path, case_timeout: float, res
                     "alignment_issues": tool_plan_alignment_issues(plan),
                     "provenance": {
                         "source_type": seed_source,
+                        "template_family": str((seed_prov or {}).get("template_family") or (seed_prov or {}).get("category") or ""),
+                        "parent_seed_id": str((seed_prov or {}).get("parent_seed_id") or episode_id),
                         "teacher_model": model_name,
                         "teacher_provider": provider,
                         "planner_prompt_version": UNIFIED_PLANNER_PROMPT_VERSION,

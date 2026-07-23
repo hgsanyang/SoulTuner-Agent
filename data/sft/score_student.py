@@ -164,9 +164,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--eval", type=Path, required=True)
     parser.add_argument("--pred", type=Path, required=True)
+    parser.add_argument("--no-strict", dest="strict", action="store_false",
+                        help="Do not fail the pipeline on incomplete coverage / invalid schema")
     args = parser.parse_args()
     report = score(args.eval, args.pred)
+    cov = report["coverage"]
+    gate_fail = (
+        not cov["complete"]
+        or cov["missing"] > 0
+        or cov["duplicate"] > 0
+        or cov["extra"] > 0
+        or report["schema_valid"] < 1.0
+    )
+    report["gate"] = {"passed": not gate_fail, "strict": args.strict}
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    if gate_fail and args.strict:
+        print("GATE FAIL: incomplete coverage or invalid schema — pipeline must not proceed", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -160,14 +160,23 @@ async def generate(target: int, per_call: int, out_path: Path, only: set[str] | 
                 if not first or first in seen or first in excluded:
                     continue
                 seen.add(first)
+                eid = f"{id_prefix}{name}_{per_category.get(name, 0):04d}"
                 kept.append(
                     {
-                        "episode_id": f"{id_prefix}{name}_{per_category.get(name, 0):04d}",
+                        "episode_id": eid,
                         "category": name,
                         "profile": ep.profile.strip(),
                         "memories": [m.strip() for m in ep.memories if m.strip()],
                         "turns": [t.strip() for t in ep.turns if t.strip()],
-                        "provenance": {"source_type": "pilot_synthetic", "category": name},
+                        "provenance": {
+                            "source_type": "pilot_synthetic",
+                            "category": name,
+                            "template_family": name,
+                            # each generated episode is an original seed; a future
+                            # augmentation step must set parent_seed_id to the seed
+                            # it was rewritten from so rewrites never split.
+                            "parent_seed_id": eid,
+                        },
                     }
                 )
                 got.append(ep.turns[0])
