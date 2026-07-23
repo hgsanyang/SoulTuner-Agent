@@ -19,21 +19,34 @@ const PRIMARY_OPTIONS: { rating: SlateFeedbackRating; label: string }[] = [
 
 const REASON_OPTIONS = ['太吵', '太悲伤', '太热门', '太冷门', '重复太多', '场景不合', '语言/年代不准', '其他'];
 
+export type SlatePickSong = { musicId: string; title: string; artist?: string };
+export type SlatePicks = { best: string[]; worst: string[] };
+
+const MAX_PICKS = 3;
+
 export default function SlateFeedback({
   exposureId,
   songCount,
+  songs = [],
   submittedRating,
   onSubmit,
 }: {
   exposureId: string;
   songCount: number;
+  /** 用于「最符合/最不符合」挑选；缺 musicId 的歌无法归因，不显示。 */
+  songs?: SlatePickSong[];
   submittedRating?: string;
-  onSubmit: (rating: SlateFeedbackRating, reasons: string[], note: string) => Promise<boolean>;
+  onSubmit: (rating: SlateFeedbackRating, reasons: string[], note: string, picks: SlatePicks) => Promise<boolean>;
 }) {
   const [expandedRating, setExpandedRating] = useState<SlateFeedbackRating | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [best, setBest] = useState<string[]>([]);
+  const [worst, setWorst] = useState<string[]>([]);
+
+  // 只有带 musicId 的歌能被服务端对回曝光记录并归因；其余不显示。
+  const pickable = songs.filter(s => s.musicId && s.title);
 
   if (!exposureId || songCount === 0) return null;
 
@@ -61,11 +74,24 @@ export default function SlateFeedback({
     setReasons(prev => prev.includes(reason) ? prev.filter(r => r !== reason) : [...prev, reason]);
   };
 
+  /** 一首歌不能既是最符合又是最不符合；选进一边就从另一边移除。 */
+  const togglePick = (which: 'best' | 'worst', musicId: string) => {
+    const [list, setList] = which === 'best' ? [best, setBest] as const : [worst, setWorst] as const;
+    const [other, setOther] = which === 'best' ? [worst, setWorst] as const : [best, setBest] as const;
+    if (list.includes(musicId)) {
+      setList(list.filter(id => id !== musicId));
+      return;
+    }
+    if (list.length >= MAX_PICKS) return;
+    if (other.includes(musicId)) setOther(other.filter(id => id !== musicId));
+    setList([...list, musicId]);
+  };
+
   const submit = async (rating: SlateFeedbackRating) => {
     if (submitting) return;
     setSubmitting(true);
     try {
-      await onSubmit(rating, reasons, note);
+      await onSubmit(rating, reasons, note, { best, worst });
     } finally {
       setSubmitting(false);
     }
@@ -118,6 +144,55 @@ export default function SlateFeedback({
           );
         })}
       </div>
+
+      {expandedRating && pickable.length > 0 && (
+        <div style={{ marginTop: '0.65rem' }}>
+          {(['best', 'worst'] as const).map(which => {
+            const selected = which === 'best' ? best : worst;
+            const full = selected.length >= MAX_PICKS;
+            return (
+              <div key={which} style={{ marginBottom: '0.5rem' }}>
+                <div style={{ color: theme.colors.text.muted, fontSize: '0.72rem', marginBottom: '0.3rem' }}>
+                  {which === 'best' ? '哪几首最符合？' : '哪几首最不符合？'}
+                  <span style={{ opacity: 0.6 }}>（可选，最多 {MAX_PICKS} 首；没选的算「未知」，不当负样本）</span>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                  {pickable.map(song => {
+                    const on = selected.includes(song.musicId);
+                    const disabled = submitting || (!on && full);
+                    const accent = which === 'best' ? '29,185,84' : '255,120,120';
+                    return (
+                      <button
+                        key={`${which}-${song.musicId}`}
+                        onClick={() => togglePick(which, song.musicId)}
+                        disabled={disabled}
+                        title={song.artist ? `${song.title} — ${song.artist}` : song.title}
+                        style={{
+                          padding: '0.28rem 0.55rem',
+                          borderRadius: '999px',
+                          border: `1px solid ${on ? `rgba(${accent},0.55)` : 'rgba(255,255,255,0.14)'}`,
+                          backgroundColor: on ? `rgba(${accent},0.18)` : 'rgba(255,255,255,0.05)',
+                          color: on ? `rgb(${accent})` : 'rgba(255,255,255,0.7)',
+                          fontSize: '0.74rem',
+                          maxWidth: '13rem',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          cursor: disabled ? 'default' : 'pointer',
+                          opacity: disabled && !on ? 0.45 : 1,
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        {song.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {expandedRating && (
         <div style={{ marginTop: '0.65rem' }}>

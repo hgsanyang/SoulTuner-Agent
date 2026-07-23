@@ -341,6 +341,7 @@ export default function RecommendationsPage() {
     reasons: string[],
     note: string,
     songCount: number,
+    picks?: { best: string[]; worst: string[] },
   ): Promise<boolean> => {
     if (!exposureId) {
       showToast('还没有可评价的推荐批次');
@@ -352,6 +353,8 @@ export default function RecommendationsPage() {
         rating,
         reasons,
         note,
+        bestMusicIds: picks?.best || [],
+        worstMusicIds: picks?.worst || [],
         extra: {
           song_count: songCount,
           web_search_enabled: webSearchEnabled,
@@ -696,9 +699,14 @@ export default function RecommendationsPage() {
                         <SlateFeedback
                           exposureId={latestExposureId}
                           songCount={msg.songs?.length || 0}
+                          songs={(msg.songs || []).map((s: any) => ({
+                            musicId: String(s?.music_id ?? s?.id ?? s?.song_id ?? ''),
+                            title: String(s?.title ?? ''),
+                            artist: s?.artist ? String(s.artist) : undefined,
+                          }))}
                           submittedRating={slateFeedbackStatus[latestExposureId]}
-                          onSubmit={(rating, reasons, note) =>
-                            submitSlateFeedback(latestExposureId, rating, reasons, note, msg.songs?.length || 0)
+                          onSubmit={(rating, reasons, note, picks) =>
+                            submitSlateFeedback(latestExposureId, rating, reasons, note, msg.songs?.length || 0, picks)
                           }
                         />
                       )}
