@@ -74,6 +74,8 @@ export interface StreamParams {
     userId?: string;
     llmProvider?: string;       // 模型供应商
     webSearchEnabled?: boolean; // 联网搜索开关
+    sessionId?: string;         // 会话边界（用于时序习惯聚合）
+    scene?: string;             // 用户本轮明说的场景
 }
 
 export function streamRecommendations(
@@ -96,6 +98,11 @@ export function streamRecommendations(
                     dialog_state: params.dialogState || {},
                     user_id: params.userId || 'local_admin',
                     web_search_enabled: params.webSearchEnabled !== false,  // 默认 true
+                    // 收听上下文：只有客户端知道用户时区/会话/场景，事后无法回填
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+                    session_id: params.sessionId || '',
+                    scene: params.scene || '',
+                    device: 'web',
                 }),
                 signal: controller.signal,
             });

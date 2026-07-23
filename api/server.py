@@ -295,6 +295,12 @@ class RecommendationRequest(BaseModel):
     user_id: str = "local_admin"
     llm_provider: str = "dashscope"            # 模型供应商: dashscope / siliconflow / google / ...
     web_search_enabled: bool = True           # 是否开启联网搜索
+    # 客户端测得的收听上下文（只有客户端知道用户时区/会话/场景），随请求带上，
+    # 事后无法回填；服务端不得用自己的时钟顶替。
+    timezone: str = ""
+    session_id: str = ""
+    scene: str = ""
+    device: str = ""
 
 
 class PlaylistRequest(BaseModel):
@@ -403,6 +409,7 @@ async def stream_recommendations(
     dialog_state: Optional[Dict[str, Any]] = None,
     user_id: str = "local_admin",
     web_search_enabled: bool = True,
+    client_context: Optional[Dict[str, Any]] = None,
     is_disconnected=None,
 ) -> AsyncGenerator[str, None]:
     """
@@ -462,6 +469,7 @@ async def stream_recommendations(
             user_preferences=user_preferences,
             dialog_state=dialog_state,
             user_id=user_id,
+            client_context=client_context,
         ):
             # ★ 检测客户端是否已断开（用户点击了"停止生成"）
             if is_disconnected:
@@ -625,6 +633,12 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
             user_preferences=request.user_preferences,
             chat_history=request.chat_history,
             dialog_state=request.dialog_state,
+            client_context={
+                "timezone": request.timezone,
+                "session_id": request.session_id,
+                "scene": request.scene,
+                "device": request.device,
+            },
             user_id=request.user_id,
             web_search_enabled=request.web_search_enabled,
             is_disconnected=raw_request.is_disconnected,

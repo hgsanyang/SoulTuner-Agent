@@ -19,6 +19,31 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 logger = get_logger(__name__)
 
 
+def _listening_context(client_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build the exposure's listening context from what the client measured.
+
+    Only the CLIENT knows the user's timezone/session/scene; the server must not
+    substitute its own clock. When the client sends nothing we still write the
+    (empty) context block so the field exists and its absence is visible in
+    audits, rather than looking like it was never part of the schema.
+    """
+    payload = client_context or {}
+    try:
+        import time as _t
+
+        from schemas.feedback_events import derive_context
+
+        return derive_context(
+            int(_t.time() * 1000),
+            str(payload.get("timezone") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            scene=str(payload.get("scene") or ""),
+            device=str(payload.get("device") or ""),
+        ).model_dump(mode="json")
+    except Exception:  # never fail a recommendation over telemetry
+        return {}
+
+
 class MusicRecommendationAgent:
     """音乐推荐智能体主类"""
 
@@ -35,6 +60,10 @@ class MusicRecommendationAgent:
         user_preferences: Optional[Dict[str, Any]] = None,
         dialog_state: Optional[Dict[str, Any]] = None,
         user_id: str = "local_admin",
+        # Listening context measured on the CLIENT (timezone/session/scene/device).
+        # It cannot be reconstructed later — the server does not know what time
+        # it was for the user — so it must ride along with the request.
+        client_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         获取音乐推荐
@@ -162,6 +191,8 @@ class MusicRecommendationAgent:
                         retrieval_meta=result.get("retrieval_meta", {}),
                         dialog_state=result.get("dialog_state", {}),
                         timings=timings,
+                        context=_listening_context(client_context),
+                        policy_version=str((result.get("retrieval_meta") or {}).get("policy_version") or ""),
                     )
                 except Exception as log_error:
                     logger.warning(f"[Feedback] 曝光日志写入失败: {log_error}")
@@ -210,6 +241,10 @@ class MusicRecommendationAgent:
         user_preferences: Optional[Dict[str, Any]] = None,
         dialog_state: Optional[Dict[str, Any]] = None,
         user_id: str = "local_admin",
+        # Listening context measured on the CLIENT (timezone/session/scene/device).
+        # It cannot be reconstructed later — the server does not know what time
+        # it was for the user — so it must ride along with the request.
+        client_context: Optional[Dict[str, Any]] = None,
     ):
         """
         流式获取推荐结果（异步生成器）
