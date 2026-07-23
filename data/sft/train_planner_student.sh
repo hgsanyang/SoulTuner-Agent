@@ -27,16 +27,30 @@ export USE_MODELSCOPE_HUB=1
 export NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 # export HIP_VISIBLE_DEVICES=0
 
-# ---- ①锁版本 (未锁易踩 MoE 模板/loss=0) ------------------------------------
-# 建议在容器里固定并记录; 训练前打印实际版本入日志便于复现。
-echo "== 版本快照 =="
-python - <<'PY'
-import importlib.metadata as m
-for p in ("ms-swift","transformers","peft","torch","trl","accelerate"):
-    try: print(f"  {p} == {m.version(p)}")
-    except Exception: print(f"  {p} == (not installed)")
+# ---- ①锁版本 (未锁易踩 MoE 模板/loss=0), 硬拒过旧 ms-swift --------------------
+: "${MIN_MS_SWIFT:=3.4.0}"
+echo "== 版本锁定 (ms-swift >= $MIN_MS_SWIFT) =="
+python - "$MIN_MS_SWIFT" <<'PY'
+import importlib.metadata as m, sys
+try:
+    from packaging.version import Version
+except Exception:
+    print("FAIL: 缺 packaging"); sys.exit(4)
+minv = sys.argv[1]; snap = {}
+for p in ("ms-swift", "transformers", "peft", "torch", "trl", "accelerate"):
+    try: snap[p] = m.version(p)
+    except Exception: snap[p] = None
+for p, v in snap.items(): print(f"  {p} == {v}")
+if not snap.get("ms-swift"):
+    print("FAIL: ms-swift 未安装"); sys.exit(4)
+if Version(snap["ms-swift"]) < Version(minv):
+    print(f"FAIL: ms-swift {snap['ms-swift']} < {minv} (MoE LoRA 已知坑)"); sys.exit(4)
 PY
-# 若首次: pip install 'ms-swift>=<锁定版>' 并 pip freeze > requirements-train.lock
+mkdir -p "$PREFLIGHT_DIR" "$OUTPUT_DIR"
+# 复现: pip freeze > requirements-train.lock 并纳入版本管理。
+# ⚠Qwen3.6 默认可能带 thinking: 训练目标无 <think>, 但推理需关闭 thinking
+#   (按你安装的 ms-swift 版本设置 template 的 enable_thinking=false, 并抽查
+#    一条 swift infer 输出确认无 <think> 块)。
 
 # ---- 公共 LoRA 配置 ---------------------------------------------------------
 # ⚠MoE + 视觉模型注意:
@@ -50,6 +64,7 @@ COMMON=(
   --val_dataset "$VAL_FILE"
   --torch_dtype bfloat16
   --freeze_vit true
+  --freeze_aligner true
   --lora_rank 16 --lora_alpha 32 --lora_dropout 0.05
   --target_modules all-linear
   --max_length 2048
@@ -88,23 +103,27 @@ for f in logs:
             continue
         if isinstance(r, dict) and "loss" in r:
             steps.append(r)
-if not steps:
-    print("PREFLIGHT FAIL: 未找到含 loss 的结构化训练日志"); sys.exit(3)
+if len(steps) < 10:
+    print(f"PREFLIGHT FAIL: 只解析出 {len(steps)} 条含 loss 的训练记录 (<10)"); sys.exit(3)
 last = steps[-1]
 loss = float(last.get("loss", 0) or 0)
 if not math.isfinite(loss) or loss <= 0:
     print(f"PREFLIGHT FAIL: 末步 loss={loss} (应 >0 且有限) — 疑似 MoE loss=0 坑 (#8142)"); sys.exit(3)
 acc = last.get("token_acc", last.get("acc"))
-if acc is not None and float(acc) <= 0:
+acc_checked = acc is not None
+if acc_checked and float(acc) <= 0:
     print(f"PREFLIGHT FAIL: token_acc={acc} <= 0"); sys.exit(3)
-gstep = max(int(s.get("global_step", 0) or 0) for s in steps)
+# ms-swift 不同版本用 global_step 或 current_steps
+gstep = max(int(s.get("global_step") or s.get("current_steps") or 0) for s in steps)
 if gstep < 50:
     print(f"PREFLIGHT FAIL: 只完成 {gstep} 步 (<50)"); sys.exit(3)
-adapters = (glob.glob(os.path.join(d, "**", "adapter_model.safetensors"), recursive=True)
-            or glob.glob(os.path.join(d, "**", "*.safetensors"), recursive=True))
-if not adapters:
-    print("PREFLIGHT FAIL: 未生成 LoRA adapter 权重"); sys.exit(3)
-print(f"PREFLIGHT OK: steps={gstep} last_loss={loss:.4f} token_acc={acc} adapters={len(adapters)}")
+# adapter 必须同时有 config + 权重 (不接受任意 .safetensors)
+cfgs = glob.glob(os.path.join(d, "**", "adapter_config.json"), recursive=True)
+wts = glob.glob(os.path.join(d, "**", "adapter_model.safetensors"), recursive=True)
+if not (cfgs and wts):
+    print(f"PREFLIGHT FAIL: 缺 adapter_config.json({len(cfgs)}) 或 adapter_model.safetensors({len(wts)})"); sys.exit(3)
+print(f"PREFLIGHT OK: steps={gstep} records={len(steps)} last_loss={loss:.4f} "
+      f"token_acc={'(absent)' if not acc_checked else acc} adapter=config+weights")
 PY
 echo "== PREFLIGHT 通过 =="
 

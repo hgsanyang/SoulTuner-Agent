@@ -180,6 +180,17 @@ def verify(path: Path, write_clean: Path | None = None) -> dict:
                 if required and required not in lanes:
                     hard_fail["V09_tool_intent"].append(f"{tag}: {decision.intent} lanes {sorted(lanes)} missing '{required}'")
 
+        # V10 recall-class TARGET must carry explicit CANONICAL tool_names.
+        # (schema allows empty for inference fallback, but a training target for
+        # a recall intent must name graph/dense/web — no empty, no aliases.)
+        if decision.intent in {"graph_search", "vector_search", "hybrid_search", "web_search"}:
+            if not decision.tool_names:
+                hard_fail["V10_recall_tools"].append(f"{tag}: {decision.intent} empty tool_names")
+            else:
+                noncanon = [t for t in decision.tool_names if str(t).strip().casefold() not in {"graph", "dense", "web"}]
+                if noncanon:
+                    hard_fail["V10_recall_tools"].append(f"{tag}: non-canonical tool_names {noncanon}")
+
         # W05 raw-plan alignment quirks the compiler heals (informational only).
         raw_issues = rec.get("alignment_issues") or []
         if raw_issues and not compiled_issues:

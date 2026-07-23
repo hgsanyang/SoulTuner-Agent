@@ -58,12 +58,22 @@ def score(eval_path: Path, pred_path: Path) -> dict:
     golds = [json.loads(line) for line in eval_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     preds = [json.loads(line) for line in pred_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    gold_by_key = {_user_key(g): g for g in golds}
+    gold_by_key: dict[str, dict] = {}
+    gold_duplicate = 0
+    gold_empty_key = 0
+    for g in golds:
+        k = _user_key(g)
+        if not k:
+            gold_empty_key += 1
+            continue
+        if k in gold_by_key:
+            gold_duplicate += 1  # would silently overwrite otherwise
+        gold_by_key[k] = g
     pred_by_key: dict[str, dict] = {}
     duplicate = 0
     for p in preds:
         k = _user_key(p)
-        if k in pred_by_key:
+        if not k or k in pred_by_key:
             duplicate += 1
         else:
             pred_by_key[k] = p
@@ -77,8 +87,11 @@ def score(eval_path: Path, pred_path: Path) -> dict:
         "missing": len(missing),
         "duplicate": duplicate,
         "extra": len(extra),
+        "gold_duplicate": gold_duplicate,
+        "gold_empty_key": gold_empty_key,
         "coverage": round(len(matched) / len(gold_by_key), 4) if gold_by_key else 0.0,
-        "complete": len(missing) == 0 and duplicate == 0 and len(extra) == 0,
+        "complete": (len(missing) == 0 and duplicate == 0 and len(extra) == 0
+                     and gold_duplicate == 0 and gold_empty_key == 0),
     }
 
     n = len(gold_by_key)  # denominator is ALWAYS the full gold set — misses count as failures
