@@ -18,11 +18,21 @@ def test_valid_v3_decisions():
     PlannerDecisionV3(request_kind="recommendation", tool_names=["graph", "dense"],
                       acoustic_queries=["warm mellow"])
     PlannerDecisionV3(request_kind="information", tool_names=["web"])
-    PlannerDecisionV3(request_kind="acquisition", tool_names=["ingest"])
-    PlannerDecisionV3(request_kind="library", tool_names=["library"])
+    # a fact already in the catalog/knowledge cards need not hit the network
+    PlannerDecisionV3(request_kind="information", tool_names=["graph"])
+    # no registered tool executes these yet -> they carry no lane
+    PlannerDecisionV3(request_kind="acquisition")
+    PlannerDecisionV3(request_kind="library")
     PlannerDecisionV3(request_kind="conversation")
     PlannerDecisionV3(request_kind="recommendation", response_mode="clarify",
                       clarification="你想要哪种?")
+
+
+def test_not_yet_executable_kinds_carry_no_lane():
+    with pytest.raises(ValueError):
+        PlannerDecisionV3(request_kind="acquisition", tool_names=["web"])
+    with pytest.raises(ValueError):
+        PlannerDecisionV3(request_kind="library", tool_names=["graph"])
 
 
 def test_clarify_is_an_action_not_a_kind():
@@ -39,14 +49,28 @@ def test_clarify_is_an_action_not_a_kind():
 
 
 def test_request_kind_requires_capable_lane():
+    # web alone cannot serve a recommendation (needs a local recall lane)
     with pytest.raises(ValueError):
         PlannerDecisionV3(request_kind="recommendation", tool_names=["web"])
+    # dense (acoustic) cannot answer a factual question
     with pytest.raises(ValueError):
-        PlannerDecisionV3(request_kind="information", tool_names=["graph"])
+        PlannerDecisionV3(request_kind="information", tool_names=["dense"])
     with pytest.raises(ValueError):
         PlannerDecisionV3(request_kind="recommendation")  # no lanes at all
     with pytest.raises(ValueError):
         PlannerDecisionV3(request_kind="conversation", tool_names=["dense"])
+
+
+def test_web_search_migration_is_flagged_ambiguous():
+    from schemas.planner_decision_v3 import migration_note
+
+    # "Billboard 冠军是谁" vs "推荐几首本周新歌" share the legacy web_search intent
+    assert migration_note(PlannerDecisionV2(intent="web_search", tool_names=["web"])).ambiguous
+    assert migration_note(PlannerDecisionV2(intent="clarification", clarification="?")).ambiguous
+    assert not migration_note(
+        PlannerDecisionV2(intent="hybrid_search", tool_names=["graph", "dense"],
+                          acoustic_queries=["x"])
+    ).ambiguous
 
 
 @pytest.mark.parametrize(

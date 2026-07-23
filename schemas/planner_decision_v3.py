@@ -27,6 +27,7 @@ compiler, so the existing pipeline consumes it unchanged. Migration from the
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
@@ -46,11 +47,29 @@ PLANNER_DECISION_V3_VERSION = "planner_decision_v3"
 
 RequestKind = Literal["recommendation", "information", "acquisition", "library", "conversation"]
 ResponseMode = Literal["answer", "clarify"]
-ToolLane = Literal["graph", "dense", "web", "library", "ingest"]
 
-# Lanes V2 can represent; library/ingest have no V2 encoding and are dropped on
-# the way back (documented asymmetry — V2 simply cannot say them).
+# ONLY lanes that a registered ToolPlan tool can actually execute today
+# (schemas/tool_plan.py::ToolName has no library/ingest tool). Declaring
+# library/ingest here would claim an authority we cannot execute, so those
+# request kinds carry no lane until the ToolPlan work lands.
+ToolLane = Literal["graph", "dense", "web"]
 _V2_LANES = ("graph", "dense", "web")
+
+# Request kinds whose executor does not exist yet: they may be produced, but
+# must NOT enter a training set until real tools back them.
+NOT_YET_EXECUTABLE_KINDS = frozenset({"acquisition", "library"})
+
+# A kind may be served by any of these lanes. `information` is deliberately not
+# web-only: "这首歌哪年发行" is often already in the graph/knowledge cards, and
+# forcing a web call there would be both slower and wrong.
+KIND_LANES: dict[str, set[str]] = {
+    "recommendation": {"graph", "dense", "web"},
+    "information": {"graph", "web"},
+}
+KIND_REQUIRED_ANY: dict[str, set[str]] = {
+    "recommendation": {"graph", "dense"},
+    "information": {"graph", "web"},
+}
 
 
 class PlannerDecisionV3(_Strict):
@@ -86,15 +105,22 @@ class PlannerDecisionV3(_Strict):
             if lanes:
                 raise ValueError("conversation must carry no tool lanes")
             return self
-        # answer-mode request kinds must name a lane that can serve them.
+        if self.request_kind in NOT_YET_EXECUTABLE_KINDS:
+            # No registered tool can execute these yet; they must not pretend to.
+            if lanes:
+                raise ValueError(
+                    f"request_kind={self.request_kind} has no executable tool yet; leave tool_names empty"
+                )
+            return self
+        # answer-mode retrieval kinds must name a lane that can serve them.
         if not lanes:
             raise ValueError(f"request_kind={self.request_kind} requires at least one tool lane")
-        required_any = {
-            "recommendation": {"graph", "dense"},
-            "information": {"web"},
-            "acquisition": {"ingest"},
-            "library": {"library"},
-        }[self.request_kind]
+        allowed = KIND_LANES[self.request_kind]
+        if not lanes <= allowed:
+            raise ValueError(
+                f"request_kind={self.request_kind} allows {sorted(allowed)}, got {sorted(lanes)}"
+            )
+        required_any = KIND_REQUIRED_ANY[self.request_kind]
         if not (lanes & required_any):
             raise ValueError(
                 f"request_kind={self.request_kind} requires one of {sorted(required_any)}, got {sorted(lanes)}"
@@ -140,21 +166,49 @@ def _legacy_intent_to_kind(intent: str) -> tuple[RequestKind, ResponseMode]:
     return "recommendation", "answer"
 
 
+@dataclass(frozen=True)
+class MigrationNote:
+    """Whether a migrated sample is semantically safe for training."""
+
+    ambiguous: bool = False
+    reason: str = ""
+
+
+def migration_note(decision: PlannerDecisionV2) -> MigrationNote:
+    """Flag V2 samples whose V3 meaning cannot be derived from the intent alone.
+
+    ``web_search`` is the big one: the same legacy intent covers "Billboard 本周
+    冠军是谁" (information) and "求推荐几首本周发行的 K-hiphop" (recommendation +
+    web). Blanket-mapping it to ``information`` would mint wrong labels, so these
+    are marked and must be re-judged from the original query before training.
+    """
+    if decision.intent == "web_search":
+        return MigrationNote(True, "web_search covers information / recommendation+web; re-judge from query")
+    if decision.intent == "recommend_by_favorites":
+        return MigrationNote(True, "favorites = library view vs favorites-seeded recommendation; re-judge")
+    if decision.intent == "clarification":
+        return MigrationNote(True, "V2 does not record what the user was asking when the agent clarified")
+    return MigrationNote(False, "")
+
+
 def migrate_v2_to_v3(decision: PlannerDecisionV2) -> PlannerDecisionV3:
-    """Pure, offline migration of a collected V2 target to V3 (no teacher call)."""
+    """Pure, offline structural migration (no teacher call).
+
+    Structure only — see ``migration_note`` for samples whose *meaning* needs a
+    re-judgement before they may enter a training set.
+    """
     kind, mode = _legacy_intent_to_kind(decision.intent)
     lanes = sorted(_normalized_tool_lanes(decision.tool_names))
-    if mode == "clarify" or kind == "conversation":
+    if mode == "clarify" or kind == "conversation" or kind in NOT_YET_EXECUTABLE_KINDS:
         lanes = []
     elif not lanes:
         # V2 allowed empty lanes (compiler fallback); V3 requires an explicit
         # lane, so materialise the fallback the compiler would have used.
         lanes = {"graph_search": ["graph"], "vector_search": ["dense"],
                  "hybrid_search": ["graph", "dense"], "web_search": ["web"]}.get(decision.intent, ["graph"])
-    if kind == "acquisition":
-        lanes = ["ingest"]
-    elif kind == "library":
-        lanes = ["library"]
+    if kind == "information":
+        # information may be served by graph or web; drop lanes it cannot use.
+        lanes = [x for x in lanes if x in KIND_LANES["information"]] or ["web"]
     return PlannerDecisionV3(
         request_kind=kind,
         response_mode=mode,
