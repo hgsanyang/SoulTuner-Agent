@@ -6,8 +6,12 @@
 |------|------|
 | `hybrid_retrieval.py` | 双路内容召回（GraphRAG + MuQ/Vector）+ Web 兜底，个性化/冷启动作为限幅召回后加分/减分项，内容双锚精排 + MMR 重排 |
 | `post_recall_adjustments.py` | 召回后统一加分/减分层：个性化、新鲜度、冷门度、过曝时间衰减惩罚，输出限幅 delta |
+| `muq_embedder.py` | MuQ-MuLan 音频/文本编码（文搜音主锚） |
 | `audio_embedder.py` | M2D-CLAP 跨模态 + OMAR-RQ 声学双模型编码（含文本 embedding 缓存） |
 | `portable_m2d.py` | M2D-CLAP 模型权重加载器（第三方） |
+| `recall_sources.py` / `retrieval_fusion.py` | 各路召回源定义与加权 RRF 融合 |
+| `web_supplement.py` | 联网补充候选（去重 + 可播放校验） |
+| `alignment_calibration.py` / `acoustic_probe.py` | 文搜音对齐标定与声学探针 |
 | `cross_encoder_reranker.py` | Cross-Encoder 可选精排（默认关闭，实验性功能） |
 | `neo4j_client.py` | Neo4j 连接与 Cypher 查询封装 |
 | `gssc_context_builder.py` | GSSC Token 预算管理（长期记忆 + Chat History 配额分配 + LLM 压缩） |

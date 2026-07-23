@@ -100,6 +100,14 @@ def main() -> int:
 
     first = (exposure.get("items") or [])[0]
     music_id = str(first.get("music_id") or "")
+
+    # Counted BEFORE the feedback calls: asserting "there is at least one row"
+    # is what let a bug through where every slate feedback overwrote the previous
+    # one, leaving the table permanently at exactly 1. Only a delta catches that.
+    from services import feedback_store
+
+    before = feedback_store.counts()
+
     print("== 3. 逐首语境反馈（策略字段必须由服务端回填） ==")
     with httpx.Client(timeout=30, trust_env=False) as client:
         resp = client.post(f"{args.base}/api/song-feedback", json={
@@ -125,14 +133,14 @@ def main() -> int:
     print("   ok")
 
     print("== 5. 正式存储（SQLite）应有记录 ==")
-    from services import feedback_store
-
     counts = feedback_store.counts()
-    print(f"   {counts}")
+    print(f"   {before} -> {counts}")
     if feedback_store.get_exposure(exposure_id) is None:
         _fail("store", "SQLite 中没有该曝光（#5 镜像未生效？）")
-    if counts.get("song_feedback", 0) < 1 or counts.get("slate_feedback", 0) < 1:
-        _fail("store", "反馈未进入 SQLite")
+    for table in ("song_feedback", "slate_feedback"):
+        grew = counts.get(table, 0) - before.get(table, 0)
+        if grew < 1:
+            _fail("store", f"{table} 没有新增行（写入被覆盖或主键冲突？）")
 
     print("\n== 冒烟全部通过 ==")
     return 0
