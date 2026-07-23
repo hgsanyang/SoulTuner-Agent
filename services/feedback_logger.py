@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import logging
 import math
 import os
 import time
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from services.runtime_mode import side_effects_disabled
+
+logger = logging.getLogger(__name__)
 
 
 POSITIVE_EVENTS = {"like", "save", "full_play", "repeat"}
@@ -137,8 +140,23 @@ def log_exposure(
     }
     if os.getenv("FEEDBACK_LOG_RAW_QUERY", "0").lower() in {"1", "true", "yes"}:
         payload["query"] = query
-    _append_jsonl(_jsonl_path("exposures.jsonl"), payload)
+    _append_jsonl(_jsonl_path("exposures.jsonl"), payload)  # export snapshot
+    _store("upsert_exposure", payload)  # canonical
     return exposure_id
+
+
+def _store(fn_name: str, payload: dict[str, Any]) -> None:
+    """Mirror an event into the canonical SQLite store.
+
+    Best-effort on purpose: telemetry must never be able to fail a user request.
+    JSONL keeps being written regardless, so nothing is lost if this fails.
+    """
+    try:
+        from services import feedback_store
+
+        getattr(feedback_store, fn_name)(payload)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("[feedback] store write skipped (%s): %s", fn_name, exc)
 
 
 def lookup_exposure(exposure_id: str) -> dict[str, Any] | None:
@@ -151,6 +169,16 @@ def lookup_exposure(exposure_id: str) -> dict[str, Any] | None:
     exposure_id = str(exposure_id or "").strip()
     if not exposure_id:
         return None
+    # SQLite is canonical: an upsert gives us last-write-wins for the
+    # provisional/final pair without scanning the whole log.
+    try:
+        from services import feedback_store
+
+        found = feedback_store.get_exposure(exposure_id)
+        if found is not None:
+            return found
+    except Exception as exc:  # pragma: no cover - fall back to the JSONL scan
+        logger.debug("[feedback] store lookup skipped: %s", exc)
     path = _jsonl_path("exposures.jsonl")
     if not path.exists():
         return None
@@ -203,7 +231,8 @@ def log_song_feedback(feedback: Any) -> str:
         "song_feedback_id": feedback_id,
         "ts": int(time.time() * 1000),
     })
-    _append_jsonl(_jsonl_path("song_feedback.jsonl"), payload)
+    _append_jsonl(_jsonl_path("song_feedback.jsonl"), payload)  # export snapshot
+    _store("insert_song_feedback", payload)  # canonical
     return feedback_id
 
 
@@ -233,7 +262,8 @@ def log_user_event(
         "progress_ratio": extra_payload.get("progress_ratio"),
         "session_id": extra_payload.get("session_id"),
     }
-    _append_jsonl(_jsonl_path("events.jsonl"), payload)
+    _append_jsonl(_jsonl_path("events.jsonl"), payload)  # export snapshot
+    _store("insert_user_event", payload)  # canonical
     return event_id
 
 
@@ -264,7 +294,8 @@ def log_slate_feedback(
         "note": str(note or "").strip()[:1000],
         "extra": extra or {},
     }
-    _append_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE), payload)
+    _append_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE), payload)  # export snapshot
+    _store("insert_slate_feedback", payload)  # canonical
     return feedback_id
 
 

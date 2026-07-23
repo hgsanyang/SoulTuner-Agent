@@ -19,13 +19,17 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("FEEDBACK_LOG_DIR", str(tmp_path))
+    # one env var drives both the JSONL snapshots and the SQLite store
+    monkeypatch.setenv("MUSIC_FEEDBACK_DIR", str(tmp_path))
     import services.feedback_logger as fl
+    import services.feedback_store as fs
 
+    fs.reset_connection()
     monkeypatch.setattr(fl, "_jsonl_path", lambda name: tmp_path / name)
     from api.server import app
 
-    return TestClient(app), tmp_path, fl
+    yield TestClient(app), tmp_path, fl
+    fs.reset_connection()
 
 
 def _write_exposure(fl, tmp_path, exposure_id="exp1"):
