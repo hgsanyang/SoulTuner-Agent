@@ -1188,7 +1188,7 @@ class MusicRecommendationGraph:
                             retrieval_plan,
                             catalog_gap,
                         )
-                        logger.info("[web_fallback] 外部候选发现: %s", discovery_query)
+                        logger.info("[web_fallback] 外部候选发现: %s", safe_query(discovery_query))
                         discovery_docs = await _federated_search_async(discovery_query)
                         candidates = extract_song_candidates(
                             discovery_docs,
@@ -1279,10 +1279,10 @@ class MusicRecommendationGraph:
                             ]
                         if candidate_songs:
                             if clean_query != query:
-                                logger.info("[web_fallback] 查询候选命中: %s", clean_query)
+                                logger.info("[web_fallback] 查询候选命中: %s", safe_query(clean_query))
                             songs = candidate_songs
                             break
-                        logger.info("[web_fallback] 查询候选无结果: %s", clean_query)
+                        logger.info("[web_fallback] 查询候选无结果: %s", safe_query(clean_query))
 
                     if not songs and netease_plan.artist_terms and not netease_plan.song_terms:
                         artist_search_limit = max(search_limit, 20)
@@ -1589,7 +1589,7 @@ class MusicRecommendationGraph:
                     ).strip()
                     clean = re.sub(r'(这首歌|这首歌曲|歌曲|这首)[\s。.]*$', '', clean).strip()
                     song_queries = [clean] if clean else [raw_query]
-                    logger.info(f"[acquire] 清洗后搜索词: {raw_query!r} → {song_queries}")
+                    logger.info(f"[acquire] 清洗后搜索词: {safe_query(raw_query)} → {len(song_queries)} 个")
 
         if not song_queries:
             return {
@@ -1745,7 +1745,7 @@ class MusicRecommendationGraph:
                         graphzep_facts=state.get("graphzep_facts", ""),
                         user_id=user_id,
                     )
-                    logger.info(f"[Favorites] 偏好查询文本: {preference_query}")
+                    logger.info(f"[Favorites] 偏好查询文本: {safe_query(preference_query)}")
 
                     # ── Tier 2: Discoveries（向量检索发现新歌）──
                     retriever = MusicHybridRetrieval(llm_client=get_llm())
@@ -2308,7 +2308,7 @@ class MusicRecommendationGraph:
                 # 其他推荐类型，走统一检索管线
                 retriever = MusicHybridRetrieval(llm_client=get_llm())
                 fallback_query = state.get("input", intent_type)
-                logger.info(f"调用检索引擎进行增强推荐(fallback): {fallback_query}")
+                logger.info(f"调用检索引擎进行增强推荐(fallback): {safe_query(fallback_query)}")
                 raw_hybrid_result = retriever.retrieve(fallback_query, limit=settings.graph_search_limit)
                 if raw_hybrid_result and hasattr(raw_hybrid_result, 'data'):
                     recommendations = raw_hybrid_result.data if raw_hybrid_result.data else []

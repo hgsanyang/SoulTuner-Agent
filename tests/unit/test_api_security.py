@@ -105,6 +105,42 @@ def test_api_request_needs_key_prefix_rule():
     assert api_request_needs_key("/audio/x.mp3", "GET") is False        # static, not /api/
 
 
+def test_admin_key_alone_does_not_lock_the_whole_ui(monkeypatch):
+    """Codex R3.5: setting ADMIN_API_KEY must gate destructive ops but must NOT
+    401 the recommend/library/feedback pages — the browser sends no key, and
+    locking everything the moment you protect a delete button breaks the app."""
+    import api.security as sec
+
+    # admin key set, but NO access key and NO API_KEY_REQUIRED
+    monkeypatch.setattr(settings, "admin_api_key", "admin-secret")
+    monkeypatch.setattr(settings, "api_access_key", "")
+    monkeypatch.setattr(settings, "api_key_required", False)
+    monkeypatch.delenv("API_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("API_KEY_REQUIRED", raising=False)
+
+    # blanket gate is OFF: normal UI routes are not blocked by the middleware
+    assert sec.access_control_required() is False
+    assert sec.check_api_request_auth("/api/library/songs", "GET", None) is None
+    assert sec.check_api_request_auth("/api/recommendations", "POST", None) is None
+    # but destructive ops still require the admin key (their own dependency)
+    assert sec.admin_key_required() is True
+
+
+def test_access_key_gates_all_api_when_set(monkeypatch):
+    """With API_ACCESS_KEY configured, every /api/* needs it (LAN mode)."""
+    import api.security as sec
+
+    monkeypatch.setattr(settings, "api_access_key", "lan-key")
+    monkeypatch.setattr(settings, "admin_api_key", "")
+    monkeypatch.setattr(settings, "api_key_required", False)
+    monkeypatch.setenv("API_ACCESS_KEY", "lan-key")
+
+    assert sec.access_control_required() is True
+    assert sec.check_api_request_auth("/api/library/songs", "GET", None) is not None
+    assert sec.check_api_request_auth("/api/library/songs", "GET", "lan-key") is None
+    assert sec.check_api_request_auth("/health", "GET", None) is None  # liveness open
+
+
 def test_safe_query_redacts_by_default(monkeypatch):
     from config.logging_config import safe_query
 

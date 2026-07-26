@@ -47,7 +47,11 @@ def _admin_api_key() -> str:
 
 
 def admin_key_required() -> bool:
-    """Local mode stays keyless unless a key or shared safe mode is configured."""
+    """Whether DESTRUCTIVE ops (delete/config/rebuild) need the admin key.
+
+    Triggered by the admin key being set, an explicit API_KEY_REQUIRED, or shared
+    safe mode. This gates only the dangerous-op dependencies — NOT every /api/*.
+    """
     try:
         from config.settings import settings
 
@@ -55,6 +59,43 @@ def admin_key_required() -> bool:
     except Exception:
         configured = _truthy(os.getenv("API_KEY_REQUIRED"))
     return configured or bool(_admin_api_key()) or shared_safe_mode_enabled()
+
+
+def _access_api_key() -> str:
+    """Key for blanket /api/* access. Prefer an explicit API_ACCESS_KEY; fall back
+    to the admin key so a single-key LAN lockdown still works."""
+    key = str(os.getenv("API_ACCESS_KEY", "") or "").strip()
+    if not key:
+        try:
+            from config.settings import settings
+
+            key = str(getattr(settings, "api_access_key", "") or "").strip()
+        except Exception:
+            key = ""
+    return key or _admin_api_key()
+
+
+def access_control_required() -> bool:
+    """Whether ALL /api/* needs a key (LAN / shared mode).
+
+    Deliberately NOT triggered by an admin key alone: protecting a delete button
+    must not 401 the recommend/library/feedback pages, which the browser calls
+    without any key. Turn this on with API_ACCESS_KEY or an explicit
+    API_KEY_REQUIRED (or shared safe mode).
+    """
+    if str(os.getenv("API_ACCESS_KEY", "") or "").strip():
+        return True
+    try:
+        from config.settings import settings
+
+        if str(getattr(settings, "api_access_key", "") or "").strip():
+            return True
+        if bool(getattr(settings, "api_key_required", False)):
+            return True
+    except Exception:
+        if _truthy(os.getenv("API_KEY_REQUIRED")):
+            return True
+    return shared_safe_mode_enabled()
 
 
 async def require_admin_api_key(
@@ -99,16 +140,17 @@ def api_request_needs_key(path: str, method: str) -> bool:
 def check_api_request_auth(path: str, method: str, x_api_key: str | None) -> tuple[int, str] | None:
     """Return (status, detail) if the request must be rejected, else None.
 
-    Enforced only when a key is configured (LAN / shared mode); a purely local
-    single-user install has no key and stays completely open.
+    The blanket /api/* gate uses ACCESS control, not admin: an admin key alone
+    leaves the UI open (only destructive ops are gated by their own dependency).
+    A purely local single-user install has no key and stays completely open.
     """
-    if not admin_key_required():
+    if not access_control_required():
         return None
     if not api_request_needs_key(path, method):
         return None
-    expected = _admin_api_key()
+    expected = _access_api_key()
     if not expected:
-        return (403, "API key required but none is configured on the server.")
+        return (403, "API access key required but none is configured on the server.")
     if x_api_key != expected:
         return (401, "Invalid or missing X-API-Key.")
     return None

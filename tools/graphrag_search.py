@@ -826,7 +826,8 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         {order_clause}
         LIMIT $limit
         """
-        logger.info(f"Agent 触发执行图谱精准 Cypher: {cypher_query}")
+        # The Cypher body embeds user-named entities (artist/song); redact it.
+        logger.info(f"Agent 触发执行图谱精准 Cypher: {safe_query(cypher_query)}")
         # 合并 typed entity 参数到查询参数
         query_params = {"tags": tags, "limit": limit}
         if cypher_params_extra:

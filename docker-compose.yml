@@ -13,11 +13,13 @@ name: soultuner-agent
 services:
   # ---- Neo4j 图数据库 ----
   neo4j:
-    # 固定版本的 Community 镜像（公开开源入口无需接受 Enterprise 许可证）。
-    # ★ 必须与已有数据卷同一大版本——Neo4j 存储格式不能跨大版本降级。若你的卷
-    #   是更早/更新的版本，改 NEO4J_IMAGE 到对应的 -community 标签，并先 dump 备份。
-    #   需要 Enterprise 特性时：NEO4J_IMAGE=neo4j:2026.03.1-enterprise + 接受许可证。
-    image: ${NEO4J_IMAGE:-neo4j:2026.03.1-community}
+    # 默认 Enterprise：现有数据卷用的是 Enterprise 专有的 `block` 存储格式，
+    # Community 只支持 `aligned`，直接把 block 卷交给 Community 会启动失败——
+    # 这不是版本降级，而是存储格式不兼容，必须离线迁移(见 docs/NEO4J_MIGRATION.md)。
+    # ★ 全新空卷可以改用 Community：NEO4J_IMAGE=neo4j:2026.03.1-community
+    #   （Community 无需接受许可证）。已有 block 卷切 Community 前务必按 runbook
+    #   完成 block→aligned 克隆迁移并核对节点/关系/索引/向量。
+    image: ${NEO4J_IMAGE:-neo4j:2026.03.1-enterprise}
     container_name: soultuner-neo4j
     ports:
       - "${BIND_HOST:-127.0.0.1}:7474:7474"       # Neo4j Browser (http://localhost:7474)
@@ -25,8 +27,8 @@ services:
     environment:
       # ★ 口令从 .env 读取（NEO4J_PASSWORD）。首次部署请在 .env 设置强口令；下方默认仅为本地开发兜底。
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-changeme_dev_only}
-      # 仅 Enterprise 镜像需要；Community 会忽略该变量。切到 Enterprise 时设为 "yes" 表示接受评估许可证。
-      NEO4J_ACCEPT_LICENSE_AGREEMENT: ${NEO4J_ACCEPT_LICENSE_AGREEMENT:-}
+      # Enterprise 默认镜像需要接受评估许可证（非商业免费）；Community 会忽略该变量。
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: ${NEO4J_ACCEPT_LICENSE_AGREEMENT:-eval}
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1G

@@ -384,7 +384,7 @@ def _translate_query(query: str) -> str:
     query_stripped = query.strip()
     if query_stripped in _TRANSLATION_CACHE:
         translated = _TRANSLATION_CACHE[query_stripped]
-        logger.info(f"[SemanticSearch] 命中翻译缓存: '{query_stripped}' → '{translated}'")
+        logger.info(f"[SemanticSearch] 命中翻译缓存: '{safe_query(query_stripped)}' → '{safe_query(translated)}'")
         return translated
     return query
 

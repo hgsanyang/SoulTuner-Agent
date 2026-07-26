@@ -147,6 +147,35 @@ SLATE_RATING_TO_OVERALL: dict[str, ContextFit] = {
     "off": "off",
 }
 
+# Pre-`overall` records stored a single `rating` that conflated the verdict with
+# the reason. Map every legacy value onto the canonical 3-way judgement so old and
+# new records are read the same way. All the old negative "reasons" collapse to
+# "off"; the discovery-direction hints are neutral ("partial").
+_LEGACY_SLATE_NEGATIVE = {
+    "off", "wrong_context", "too_noisy", "too_sad", "too_quiet", "too_generic", "too_familiar",
+}
+_LEGACY_SLATE_NEUTRAL = {"partial", "more_discovery", "more_niche", "closer_to_seed"}
+
+
+def slate_overall(feedback: dict) -> Optional[ContextFit]:
+    """The canonical slate judgement for any record, new or legacy.
+
+    THE single adapter every runtime consumer must use: new records carry
+    `overall`; legacy records carry only `rating`, converted here. `rating` must
+    appear nowhere else in runtime code.
+    """
+    overall = str(feedback.get("overall") or "").strip()
+    if overall in {"fits", "partial", "off"}:
+        return overall  # type: ignore[return-value]
+    rating = str(feedback.get("rating") or "").strip()
+    if rating == "great":
+        return "fits"
+    if rating in _LEGACY_SLATE_NEGATIVE:
+        return "off"
+    if rating in _LEGACY_SLATE_NEUTRAL:
+        return "partial"
+    return None
+
 
 def derive_context(ts_ms: int, timezone: str, *, session_id: str = "", scene: str = "",
                    device: str = "") -> ListeningContext:

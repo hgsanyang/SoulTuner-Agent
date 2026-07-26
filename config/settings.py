@@ -524,6 +524,12 @@ class GlobalSettings(BaseSettings):
         validation_alias="API_KEY_REQUIRED",
         description="是否强制后台管理接口必须携带 X-API-Key",
     )
+    api_access_key: str = Field(
+        default="",
+        validation_alias="API_ACCESS_KEY",
+        description="可选的普通访问密钥：设置后 LAN 下所有 /api/* 都需携带；与 admin_api_key 分开，"
+        "仅设 admin_api_key 不会锁住整个 UI",
+    )
 
     # ================================================================
     # 8. 网络请求超时（秒）

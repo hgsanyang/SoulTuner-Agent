@@ -287,6 +287,10 @@ def load_slate_feedback() -> list[dict[str, Any]]:
     return _load_table("slate_feedback")
 
 
+def load_song_feedback() -> list[dict[str, Any]]:
+    return _load_table("song_feedback")
+
+
 def export_jsonl(table: str, out_path: Path, *, since_ms: int | None = None) -> int:
     """Dump a table back to JSONL — training snapshots stay reproducible."""
     sql = f"SELECT payload FROM {table}"

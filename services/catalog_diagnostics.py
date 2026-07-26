@@ -127,7 +127,12 @@ def summarize_catalog_bias(
             for value in _iter_values(item.get("artist")):
                 exposed_artists[value] += 1
 
-    feedback_ratings = Counter(str(row.get("rating") or "").strip() for row in slate_feedback if row.get("rating"))
+    # Count the canonical `overall` (via the shared adapter), never raw `rating`.
+    from schemas.feedback_events import slate_overall
+
+    feedback_ratings = Counter(
+        slate_overall(row) for row in slate_feedback if slate_overall(row)
+    )
     feedback_reasons = Counter()
     for row in slate_feedback:
         for reason in _iter_values(row.get("reasons")):
