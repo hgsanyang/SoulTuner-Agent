@@ -27,10 +27,10 @@
 
 ## 🎯 What it is
 
-SoulTuner is a music recommendation agent that runs **on your own machine**. Describe what you want to hear in one ordinary sentence; it works out what you meant, finds the music, and gets better at it the more you use it.
+SoulTuner is a music recommendation agent that runs **on your own machine**. Describe what you want to hear in one ordinary sentence; it works out what you meant and finds the music.
 
 - 🗣️ **Just say it** — "I'm feeling really down today, I just want some quiet time alone." No need to pick genres or keywords first.
-- 🧠 **Learns your taste** — every like, save, skip and conversation builds your music profile.
+- 🧠 **Builds a profile from your feedback** — every like, save, skip and conversation updates a structured taste profile that softly nudges future ranking. (The exposure/feedback ledger also collects the data for an offline-learned ranking policy, which stays opt-in — it is not trained or promoted automatically.)
 - 🌐 **Goes online when your library falls short** — a supplement lane finds songs backed by charts, community consensus or curated playlists (one switch turns it off for fully local operation).
 - 🗺️ **Music Journey** — describe a story or a scene and the agent arranges a set with a real emotional arc.
 - ♻️ **Discover → preview → ingest** — good songs land in a staging area first; confirm and they are ingested with automatic acoustic analysis.
@@ -136,12 +136,12 @@ your sentence
         SSE streaming → frontend (Next.js)
                        │
                        ▼
-        your feedback ─┘  feeds the next ranking
+        your feedback ─┘  recorded, and updates your taste profile
 ```
 
 **Two design choices worth calling out:**
 
-**Retrieval only hard-filters what you actually pinned down.** Artist, language and instrumental-only go into the WHERE clause; mood, scene and vibe go into ranking instead. That keeps "only Eason Chan" exact while stopping "quiet, rainy, gentle" from filtering itself down to nothing.
+**Retrieval only hard-filters what you actually pinned down.** Artist, language and region go into the WHERE clause; everything else — mood, scene, vibe, and even "instrumental only" — is treated as an acoustic/semantic intent and handled by dense retrieval and ranking, not sparse-label exclusion. That keeps "only Eason Chan" exact while stopping "quiet, rainy, gentle" from filtering itself down to nothing.
 
 **Feedback runs on two channels that never mix.** "I love this song" is long-term taste; "does this suit what I want right now" judges only this set — a track can be a lasting favourite and still wrong for tonight. Merging them poisons both. A song you did not rate stays *unknown*, never a negative sample.
 
@@ -211,34 +211,31 @@ The initial architecture came from [imagist13/Muisc-Research](https://github.com
 
 ### Implemented in this system
 
-| # | Reference | Where it lands |
-|---|---|---|
-| 1 | Zhu, H. et al. (2025). *MuQ: Self-Supervised Music Representation Learning with Mel Residual Vector Quantization.* [arXiv:2501.01108](https://arxiv.org/abs/2501.01108) | MuQ-MuLan, the primary text-to-music anchor |
-| 2 | Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.* (IEEE Access) [arXiv:2503.22104](https://arxiv.org/abs/2503.22104) | Text-to-music fallback and semantic rerank |
-| 3 | Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model Trained with Multi-Feature Masked Token Prediction.* (ACM MM 2025) [arXiv:2507.03482](https://arxiv.org/abs/2507.03482) | Acoustic-similarity auxiliary anchor |
-| 4 | Gao, L. et al. (2023). *Precise Zero-Shot Dense Retrieval without Relevance Labels.* (ACL 2023) | HyDE: turn the user's sentence into a hypothetical music description before retrieving |
-| 5 | Cormack, G. V. et al. (2009). *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods.* (SIGIR 2009) | Weighted RRF fusion across recall paths |
-| 6 | Carbonell, J. & Goldstein, J. (1998). *The Use of MMR, Diversity-Based Reranking for Reordering Documents and Producing Summaries.* (SIGIR 1998) | Final diversity rerank |
-| 7 | Chapelle, O. & Li, L. (2011). *An Empirical Evaluation of Thompson Sampling.* (NeurIPS 2011) | Long-tail exploration slot |
-| 8 | Joachims, T. et al. (2017). *Unbiased Learning-to-Rank with Biased Feedback.* (WSDM 2017) | Rationale for exposure bookkeeping and feedback debiasing |
-| 9 | Xiao, S. et al. (2023). *C-Pack: Packed Resources for General Chinese Embeddings.* | BGE, used to judge memory relevance |
-| 10 | Wang, S. et al. (2025). *Knowledge Graph Retrieval-Augmented Generation for LLM-based Recommendation.* (ACL 2025) | Graph recall path |
+| Reference | Where it lands |
+|---|---|
+| Zhu, H. et al. (2025). *MuQ / MuQ-MuLan: Self-Supervised Music Representation Learning with Mel Residual Vector Quantization.* [arXiv:2501.01108](https://arxiv.org/abs/2501.01108) | Primary text-to-music anchor |
+| Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.* (IEEE Access) [arXiv:2503.22104](https://arxiv.org/abs/2503.22104) | Text-to-music fallback + semantic rerank |
+| Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model.* (ACM MM 2025) [arXiv:2507.03482](https://arxiv.org/abs/2507.03482) | Acoustic-similarity auxiliary anchor |
+| Gao, L. et al. (2023). *Precise Zero-Shot Dense Retrieval without Relevance Labels* (HyDE). (ACL 2023) | Turn the user's sentence into a hypothetical music description before retrieving |
+| Xu, W. et al. (2025). *A-MEM: Agentic Memory for LLM Agents.* [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) | Memory interlinking / evolution in the memory layer |
+
+Classic building blocks — reciprocal rank fusion, MMR diversity, Thompson-sampling exploration, unbiased learning-to-rank, BGE relevance — are used too, but cited where they live (code comments and the Technical Report) rather than headlined here.
 
 ### Shaped the design, not yet built
 
-These informed the roadmap and have no counterpart in the code today. They are listed to explain *why the design looks like this*, not to claim the work is done.
+Listed to explain *why the design looks like this* — they have no counterpart in the code today.
 
+- Palumbo, E. et al. (Spotify, 2025). *You Say Search, I Say Recs.* (RecSys 2025) — agentic query understanding + parallel-tool exploratory recommendation, the closest analogue to this router
+- Wang, Y. et al. (2023). *RecMind: Large Language Model Powered Agent for Recommendation.* [arXiv:2308.14296](https://arxiv.org/abs/2308.14296) — LLM recommendation agent with tool planning
+- Wu, D. et al. (2025). *LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory.* (ICLR 2025) — target design for the sealed memory eval (extraction / multi-session / temporal / update / abstention)
+- Manco, I. et al. (2023). *The Song Describer Dataset.* [arXiv:2311.10057](https://arxiv.org/abs/2311.10057) — public music-language retrieval/caption eval data
 - Rasmussen, P. et al. (2025). *Zep: A Temporal Knowledge Graph Architecture for Agent Memory.* — origin of the layered-memory idea; the GraphZep adapter is now optional legacy
-- Palumbo, E. et al. (Spotify, 2025). *You Say Search, I Say Recs.* (RecSys 2025) — agentic query understanding and exploratory search
-- D'Amico, E. et al. (Spotify, 2025). *Deploying Semantic ID-based Generative Retrieval at Spotify.*
-- Penha, G. et al. (2025). *Semantic IDs for Joint Generative Search and Recommendation.* (RecSys 2025 LBR)
-- Palumbo, E. et al. (2025). *Text2Tracks: Prompt-based Music Recommendation via Generative Retrieval.*
-- Xu, S. et al. (2025). *Climber: Toward Efficient Scaling Laws for Large Recommendation Models.*
 
 ---
 
 ## 📄 License
 
-MIT License
+- **SoulTuner source code:** MIT (see [LICENSE](LICENSE)).
+- **MuQ-MuLan model weights:** CC-BY-NC 4.0 — **non-commercial only**. The default setup downloads these weights, so *using the default configuration commercially requires replacing them or obtaining a separate licence for the restricted models.* M2D-CLAP and OMAR-RQ carry their own upstream licences.
 
-⚠️ **Disclaimer**: This project exists for study and architecture research only. **Strictly no commercial use.** It does not provide, contain or distribute any copyrighted audio or lyrics; users must obtain audio through lawful channels themselves.
+⚠️ **Disclaimer**: For study and architecture research. It does not provide, contain or distribute any copyrighted audio or lyrics; obtain audio through lawful channels yourself.

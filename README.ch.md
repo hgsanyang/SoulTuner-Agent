@@ -27,10 +27,10 @@
 
 ## 🎯 这是什么
 
-SoulTuner 是一个**跑在你自己机器上**的音乐推荐智能体。你用一句人话描述想听什么，它负责听懂、找歌、并且越用越懂你。
+SoulTuner 是一个**跑在你自己机器上**的音乐推荐智能体。你用一句人话描述想听什么，它负责听懂、找歌。
 
 - 🗣️ **说人话就行** — "今天心情特别差，想一个人静一静"，不需要你先想好流派和关键词
-- 🧠 **越用越懂你** — 点赞、收藏、跳过和每一次对话都在构建你的音乐画像
+- 🧠 **反馈会沉淀成画像** — 点赞、收藏、跳过和每次对话都会更新你的结构化偏好画像，对之后的排序做**轻推**。（曝光/反馈账本也在为一个离线学习的排序策略攒数据，但那条策略是**可选的、默认不训练也不上线**。）
 - 🌐 **本地没有就去网上找** — 联网补充路线找有榜单/口碑/歌单支撑的歌（可一键关闭，关掉就是纯本地）
 - 🗺️ **音乐旅程** — 描述一段故事或场景，AI 编排一整段有起承转合的歌单
 - ♻️ **发现→试听→入库** — 遇到好歌先下载到暂存区试听，确认后一键入库并自动做声学分析
@@ -136,12 +136,12 @@ MUSIC_DATA_PATH=../data
         SSE 流式推送 → 前端（Next.js）
                        │
                        ▼
-        你的反馈 ──────┘  回流成下一次的排序依据
+        你的反馈 ──────┘  记录下来，更新你的偏好画像
 ```
 
 **两个设计选择值得单独说：**
 
-**检索层只硬过滤"说死了的条件"。** 歌手、语言、纯音乐这类明确要求进 WHERE；情绪、场景、氛围一律进排序而不进过滤。这样"只听陈奕迅"不会跑偏，"安静、雨天、柔软"也不会被过滤成空结果。
+**检索层只硬过滤"说死了的条件"。** 只有歌手、语言、地区进 WHERE；其余——情绪、场景、氛围，**连"只要纯音乐"也算**——都当作声学/语义意图，交给向量召回和排序，而不是用稀疏标签硬排除。这样"只听陈奕迅"不会跑偏，"安静、雨天、柔软"也不会被过滤成空结果。
 
 **反馈分成两条互不干扰的通道。** 「喜欢这首歌」是长期口味，「这首适合我此刻要的吗」是当前这一组的判断——一首歌可以既是心头好又不适合今晚。混在一起会同时污染两边，所以分开记录。没评价的歌算「未知」，不当负样本。
 
@@ -211,34 +211,31 @@ tests/       单元测试 + 结果导向评测
 
 ### 系统里真正实现了的
 
-| # | 文献 | 对应到哪 |
-|---|---|---|
-| 1 | Zhu, H. et al. (2025). *MuQ: Self-Supervised Music Representation Learning with Mel Residual Vector Quantization.* [arXiv:2501.01108](https://arxiv.org/abs/2501.01108) | MuQ-MuLan：文搜音主锚 |
-| 2 | Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.* (IEEE Access) [arXiv:2503.22104](https://arxiv.org/abs/2503.22104) | 文搜音回退与语义精排 |
-| 3 | Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model Trained with Multi-Feature Masked Token Prediction.* (ACM MM 2025) [arXiv:2507.03482](https://arxiv.org/abs/2507.03482) | 声学相似性辅助锚 |
-| 4 | Gao, L. et al. (2023). *Precise Zero-Shot Dense Retrieval without Relevance Labels.* (ACL 2023) | HyDE：把用户的话先写成假想音乐描述再检索 |
-| 5 | Cormack, G. V. et al. (2009). *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods.* (SIGIR 2009) | 多路召回的加权 RRF 融合 |
-| 6 | Carbonell, J. & Goldstein, J. (1998). *The Use of MMR, Diversity-Based Reranking for Reordering Documents and Producing Summaries.* (SIGIR 1998) | 最终多样性重排 |
-| 7 | Chapelle, O. & Li, L. (2011). *An Empirical Evaluation of Thompson Sampling.* (NeurIPS 2011) | 冷门歌探索槽 |
-| 8 | Joachims, T. et al. (2017). *Unbiased Learning-to-Rank with Biased Feedback.* (WSDM 2017) | 曝光记账与反馈去偏的依据 |
-| 9 | Xiao, S. et al. (2023). *C-Pack: Packed Resources for General Chinese Embeddings.* | BGE：记忆相关性判定 |
-| 10 | Wang, S. et al. (2025). *Knowledge Graph Retrieval-Augmented Generation for LLM-based Recommendation.* (ACL 2025) | 图谱召回路线 |
+| 文献 | 对应到哪 |
+|---|---|
+| Zhu, H. et al. (2025). *MuQ / MuQ-MuLan: Self-Supervised Music Representation Learning with Mel Residual Vector Quantization.* [arXiv:2501.01108](https://arxiv.org/abs/2501.01108) | 文搜音主锚 |
+| Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.* (IEEE Access) [arXiv:2503.22104](https://arxiv.org/abs/2503.22104) | 文搜音回退 + 语义精排 |
+| Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model.* (ACM MM 2025) [arXiv:2507.03482](https://arxiv.org/abs/2507.03482) | 声学相似性辅助锚 |
+| Gao, L. et al. (2023). *Precise Zero-Shot Dense Retrieval without Relevance Labels*（HyDE）. (ACL 2023) | 把用户的话先写成假想音乐描述再检索 |
+| Xu, W. et al. (2025). *A-MEM: Agentic Memory for LLM Agents.* [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) | 记忆层的互链与演化 |
+
+RRF 融合、MMR 多样性、Thompson Sampling 探索、无偏 LTR、BGE 相关性这些经典构件也在用，但放在**代码注释和技术报告**里就近说明，不在这里作为主参考文献罗列。
 
 ### 影响了设计、但还没实现的
 
-这些塑造了路线图，代码里目前没有对应实现——列在这里是为了说明"为什么这么设计"，不是声称已经做了。
+列在这里是为了说明"为什么这么设计"，代码里目前没有对应实现。
 
+- Palumbo, E. et al. (Spotify, 2025). *You Say Search, I Say Recs.* (RecSys 2025) — 与本项目 router 最接近：Agent 做查询理解 + 多工具并行的探索式推荐
+- Wang, Y. et al. (2023). *RecMind: Large Language Model Powered Agent for Recommendation.* [arXiv:2308.14296](https://arxiv.org/abs/2308.14296) — LLM 推荐 Agent 与工具规划
+- Wu, D. et al. (2025). *LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory.* (ICLR 2025) — 密封记忆评测的设计蓝本（抽取/多会话/时间/更新/拒答）
+- Manco, I. et al. (2023). *The Song Describer Dataset.* [arXiv:2311.10057](https://arxiv.org/abs/2311.10057) — 音乐-语言检索/caption 的公开评测数据
 - Rasmussen, P. et al. (2025). *Zep: A Temporal Knowledge Graph Architecture for Agent Memory.* — 记忆分层的思路来源；GraphZep 适配器现已降级为可选 legacy
-- Palumbo, E. et al. (Spotify, 2025). *You Say Search, I Say Recs.* (RecSys 2025) — 用 Agent 做查询理解与探索式检索
-- D'Amico, E. et al. (Spotify, 2025). *Deploying Semantic ID-based Generative Retrieval at Spotify.*
-- Penha, G. et al. (2025). *Semantic IDs for Joint Generative Search and Recommendation.* (RecSys 2025 LBR)
-- Palumbo, E. et al. (2025). *Text2Tracks: Prompt-based Music Recommendation via Generative Retrieval.*
-- Xu, S. et al. (2025). *Climber: Toward Efficient Scaling Laws for Large Recommendation Models.*
 
 ---
 
 ## 📄 许可证
 
-MIT License
+- **SoulTuner 源码**：MIT（见 [LICENSE](LICENSE)）。
+- **MuQ-MuLan 模型权重**：CC-BY-NC 4.0，**仅限非商业用途**。默认配置会下载这份权重，因此**若要商用默认配置，必须替换这些权重或另行取得受限模型的授权**。M2D-CLAP、OMAR-RQ 各自遵循其上游许可证。
 
-⚠️ **免责声明**：本项目仅供学习与架构研究，**严禁商业用途**。不提供、不包含也不分发任何受版权保护的音频或歌词资源，音频数据需用户自行通过合法渠道获取。
+⚠️ **免责声明**：本项目仅供学习与架构研究。不提供、不包含也不分发任何受版权保护的音频或歌词资源，音频数据需用户自行通过合法渠道获取。
