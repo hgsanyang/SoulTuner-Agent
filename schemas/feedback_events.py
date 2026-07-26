@@ -93,7 +93,12 @@ class ExposureBookkeeping(_Strict):
     is_exploration: bool = False
     catalog_origin: Optional[CatalogOrigin] = None
     known_to_user: Optional[bool] = None                # None = unknown, not False
-    exposure_count: int = Field(default=0, ge=0)
+    # Two DIFFERENT quantities that used to be crushed into one int:
+    #   historical_exposure_count — how many times we have shown this before (a count)
+    #   effective_exposure         — the time-decayed float the ranker penalised on
+    # None = unknown (we did not record it), which is not the same as 0.
+    historical_exposure_count: Optional[int] = Field(default=None, ge=0)
+    effective_exposure: Optional[float] = Field(default=None, ge=0.0)
 
 
 class SongFeedback(_Strict):

@@ -9,7 +9,7 @@ import time
 from typing import Dict, Any, Optional, List
 
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from config.settings import settings
 from agent.music_graph import MusicRecommendationGraph
 from schemas.music_state import MusicAgentState
@@ -78,7 +78,7 @@ class MusicRecommendationAgent:
         """
         request_started = time.perf_counter()
         try:
-            logger.info(f"开始处理音乐推荐请求: {query}")
+            logger.info(f"开始处理音乐推荐请求: {safe_query(query)}")
 
             # 构建初始状态
             # 将历史记录中的字典转换为 BaseMessage 以适配 LangGraph 规范
@@ -266,7 +266,7 @@ class MusicRecommendationAgent:
         _exposure_context = _listening_context(client_context)
 
         try:
-            logger.info(f"开始处理音乐推荐请求(流式): {query} [req={_request_id[:8]}]")
+            logger.info(f"开始处理音乐推荐请求(流式): {safe_query(query)} [req={_request_id[:8]}]")
             _stream_start = _time.time()
 
             # 构建对话历史

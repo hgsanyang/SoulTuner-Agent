@@ -5,12 +5,14 @@ from pathlib import Path
 import math
 
 # ---- 配置 ----
+_PROCESSED = Path(os.environ.get("MUSIC_PROCESSED_AUDIO_ROOT") or
+                  Path(__file__).resolve().parents[3] / "data" / "processed_audio")
 # 读取歌词的目录
-LYRICS_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\lyrics"
+LYRICS_DIR = str(_PROCESSED / "lyrics")
 # 读取元数据的目录（用来给 Gemini 提供歌曲背景信息）
-METADATA_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\metadata"
-# 输出 prompt txt 的目录
-OUTPUT_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\Muisc-Research\data\pipeline\gemini_prompts"
+METADATA_DIR = str(_PROCESSED / "metadata")
+# 输出 prompt txt 的目录（本脚本同级的 gemini_prompts/）
+OUTPUT_DIR = str(Path(__file__).resolve().parent / "gemini_prompts")
 # 每次打包几首歌给 Gemini（取决于上下文长度，Gemini 1.5 Pro 支持 100 万 token 上下文，可轻松处理 80~150 首）
 BATCH_SIZE = 100
 

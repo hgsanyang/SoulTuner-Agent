@@ -62,7 +62,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # ---- 默认目录配置（可通过 CLI 参数覆盖） ----
-DEFAULT_DATA_ROOT = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio"
+DEFAULT_DATA_ROOT = os.environ.get("MUSIC_PROCESSED_AUDIO_ROOT") or str(
+    Path(__file__).resolve().parents[3] / "data" / "processed_audio"
+)
 DEFAULT_AUDIO_DIR = os.path.join(DEFAULT_DATA_ROOT, "audio")
 DEFAULT_COVER_DIR = os.path.join(DEFAULT_DATA_ROOT, "covers")
 DEFAULT_LYRICS_DIR = os.path.join(DEFAULT_DATA_ROOT, "lyrics")

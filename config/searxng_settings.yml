@@ -18,7 +18,9 @@ search:
     - json         # ← 关键：启用 JSON 格式，Python 直接解析
 
 server:
-  secret_key: "music-agent-searxng-secret-2025"
+  # 不要在此写死密钥。SearXNG 会优先读取环境变量 SEARXNG_SECRET；
+  # 如需挂载本文件，请通过该环境变量注入随机密钥（openssl rand -hex 32）。
+  secret_key: "${SEARXNG_SECRET}"
   limiter: false   # ← 关闭速率限制（本地内部调用无需限制）
   image_proxy: false
   http_protocol_version: "1.0"

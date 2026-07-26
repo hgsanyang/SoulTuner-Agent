@@ -39,7 +39,7 @@ def _write_exposure(fl, tmp_path, exposure_id="exp1"):
         "items": [
             {"music_id": "m1", "title": "再见", "artist": "张震岳", "rank": 1,
              "propensity": 0.42, "is_exploration": True, "catalog_origin": "online_new",
-             "exposure_count": 3},
+             "historical_exposure_count": 3, "effective_exposure": 2.5},
             {"music_id": "m2", "title": "小宇", "artist": "张震岳", "rank": 2},
         ],
     }
@@ -197,7 +197,7 @@ def test_slate_rating_and_reasons_are_stored_as_contract_values(client):
             (tmp_path / "slate_feedback.jsonl").read_text(encoding="utf-8").splitlines() if x.strip()]
     assert len(rows) == 1
     assert rows[0]["reasons"] == ["too_repetitive"]          # validated slugs only
-    assert rows[0]["extra"]["overall"] == "off"              # same scale as context_fit
+    assert rows[0]["overall"] == "off"                       # canonical, top-level, same scale as context_fit
     assert rows[0]["extra"]["reasons_raw"] == ["太吵"]        # nothing silently dropped
     assert rows[0]["slate_feedback_id"]
 

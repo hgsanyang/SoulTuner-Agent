@@ -98,12 +98,16 @@ def test_exposure_captures_the_bookkeeping_it_can_know(store):
     exposure snapshot, so production always stored None while the API test
     passed on a hand-written fixture."""
     fl.log_exposure(query="q", user_id="u", request_id="bk1", recommendations=[
-        {"title": "A", "music_id": "m1", "recall_sources": ["web"], "_post_effective_exposure": 2.5},
+        {"title": "A", "music_id": "m1", "recall_sources": ["online_search"],
+         "_post_effective_exposure": 2.5},
         {"title": "B", "music_id": "m2", "recall_sources": ["graph"]},
     ])
     items = fs.get_exposure("bk1")["items"]
+    # online_search must be recognised, not only the literal "web"
     assert items[0]["catalog_origin"] == "online_new"
-    assert items[0]["exposure_count"] == 2.5
+    # the decayed float lands in effective_exposure, NOT an int-named count
+    assert items[0]["effective_exposure"] == 2.5
+    assert items[0]["historical_exposure_count"] is None
     # a local hit is left UNKNOWN rather than guessed as unheard
     assert items[1]["catalog_origin"] is None
 

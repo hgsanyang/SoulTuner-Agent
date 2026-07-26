@@ -130,10 +130,16 @@ def build_strict_labeled_rows(
             diagnostics["unknown_exposure_id"] += 1
             continue
 
-        exposure_ts = int(exposure.get("ts") or 0)
+        # Anchor on when the slate was SHOWN, not on `ts`. The exposure is written
+        # twice (provisional when songs stream, final when the graph finishes), so
+        # `ts` on the surviving record is the LATER write; a user who rates the
+        # moment the card appears has event_ts < that, and using `ts` would drop
+        # the feedback as "outside the window". `shown_at_ms` is pinned to the
+        # first write for exactly this reason.
+        shown_at = int(exposure.get("shown_at_ms") or exposure.get("ts") or 0)
         event_ts = int(event.get("ts") or 0)
-        if exposure_ts and event_ts and not (
-            exposure_ts <= event_ts <= exposure_ts + attribution_window_ms
+        if shown_at and event_ts and not (
+            shown_at <= event_ts <= shown_at + attribution_window_ms
         ):
             diagnostics["outside_attribution_window"] += 1
             continue
@@ -223,10 +229,11 @@ def build_slate_feedback_rows(
             diagnostics["unknown_exposure_id"] += 1
             continue
 
-        exposure_ts = int(exposure.get("ts") or 0)
+        # Anchor on shown-time, not `ts` — see build_strict_labeled_rows.
+        shown_at = int(exposure.get("shown_at_ms") or exposure.get("ts") or 0)
         feedback_ts = int(feedback.get("ts") or 0)
-        if exposure_ts and feedback_ts and not (
-            exposure_ts <= feedback_ts <= exposure_ts + attribution_window_ms
+        if shown_at and feedback_ts and not (
+            shown_at <= feedback_ts <= shown_at + attribution_window_ms
         ):
             diagnostics["outside_attribution_window"] += 1
             continue

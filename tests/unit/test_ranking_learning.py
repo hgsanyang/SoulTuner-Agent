@@ -72,6 +72,23 @@ def test_strict_join_never_matches_event_without_exposure_id():
     assert diagnostics["missing_exposure_id"] == 1
 
 
+def test_early_feedback_attributes_to_shown_time_not_final_write():
+    """Regression: the exposure is written twice (provisional when songs stream,
+    final when the graph finishes). The final record's `ts` is LATER than the
+    moment the user saw the cards, so a user who rates immediately has
+    event_ts < final_ts. Attribution anchors on `shown_at_ms` (pinned to the
+    first write); using `ts` would drop this real feedback as out-of-window."""
+    exposure = _exposure("e1", ts=5000, title="A", good=True)
+    exposure["shown_at_ms"] = 1000            # user saw the slate at t=1000
+    exposure["completed_at_ms"] = 5000        # graph finished (and re-stamped ts) at t=5000
+    events = [_event("e1", ts=1200, title="A", positive=True)]  # rated at t=1200
+
+    rows, diagnostics = build_strict_labeled_rows([exposure], events)
+
+    assert diagnostics.get("outside_attribution_window", 0) == 0
+    assert len(rows) == 1
+
+
 def test_unobserved_items_are_not_implicit_negatives():
     exposures = [_exposure("e1", 100, "A", True)]
     events = [_event("e1", 110, "A", True)]

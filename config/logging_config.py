@@ -1,5 +1,24 @@
+import hashlib
 import logging
+import os
 import sys
+
+
+def safe_query(query: str) -> str:
+    """Redact a user query for logs unless raw logging is explicitly opted in.
+
+    A music request is personal — "我今天特别难过，想一个人静静" is exactly the kind
+    of text that should not sit in plaintext logs by default. We log a short hash
+    plus length so a line can still be correlated, and only print the raw text
+    when MUSIC_LOG_RAW_QUERY is set (dev/debug).
+    """
+    text = str(query or "")
+    if os.getenv("MUSIC_LOG_RAW_QUERY", "0").strip().lower() in {"1", "true", "yes", "on"}:
+        return text
+    if not text:
+        return "<empty>"
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    return f"<redacted q#{digest} len={len(text)}>"
 
 
 def setup_logging():

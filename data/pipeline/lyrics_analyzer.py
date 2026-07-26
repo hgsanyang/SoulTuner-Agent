@@ -44,8 +44,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ---- 目录配置（与 prepare_gemini_lrc_prompt.py 保持一致）----
-LYRICS_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\lyrics"
-METADATA_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\metadata"
+_PROCESSED = Path(os.environ.get("MUSIC_PROCESSED_AUDIO_ROOT") or
+                  Path(__file__).resolve().parents[3] / "data" / "processed_audio")
+LYRICS_DIR = str(_PROCESSED / "lyrics")
+METADATA_DIR = str(_PROCESSED / "metadata")
 OUTPUT_DIR = os.path.join(str(PROJECT_ROOT), "data", "pipeline", "gemini_prompts")
 RESULT_JSON_PATH = os.path.join(OUTPUT_DIR, "gemini_result.json")
 

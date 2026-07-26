@@ -189,11 +189,19 @@ def _insert_event(table: str, id_column: str, id_value: str, payload: dict[str, 
         # An empty primary key is silently catastrophic here: INSERT OR REPLACE
         # makes every such row overwrite the previous one, so the table keeps
         # exactly one event and the loss is invisible until you count rows.
-        # Retain the event under a synthetic id and say loudly that a writer is
-        # sending the wrong key name.
+        #
+        # Codex argued for fail-closed (drop it) here. We diverge deliberately:
+        # the mirror into this store is best-effort and the JSONL snapshot always
+        # retains the event, so dropping it would only create SQLite/JSONL drift.
+        # And an empty *own* id does not break attribution — song/slate/user
+        # events join to an exposure via `exposure_id`, not via their own primary
+        # key. So we RETAIN under a synthetic id but log at ERROR: a well-behaved
+        # writer never hits this, and if one does it is a contract bug to fix, not
+        # a row to lose. (Orphan feedback — referencing a missing exposure — is
+        # rejected earlier, at the API service layer.)
         id_value = str(uuid.uuid4())
-        logger.warning("[feedback] %s written without %s; using synthetic id %s",
-                       table, id_column, id_value)
+        logger.error("[feedback] %s written WITHOUT %s (contract bug); retained under synthetic id %s",
+                     table, id_column, id_value)
         payload = {**payload, id_column: id_value}
     cols = [id_column, "ts", *columns.keys(), "payload"]
     values = [id_value, int(payload.get("ts") or _now_ms()), *columns.values(),
@@ -239,6 +247,41 @@ def insert_user_event(payload: dict[str, Any]) -> None:
             "event_type": str(payload.get("event_type") or ""),
         },
     )
+
+
+def _load_table(table: str) -> list[dict[str, Any]]:
+    """Return every row's decoded payload, oldest first.
+
+    The exposures table is keyed on exposure_id, so this is already deduped: the
+    provisional/final pair is one row. Reading from here instead of scanning the
+    append-only JSONL is what stops offline replay and diagnostics from counting
+    the same exposure twice.
+    """
+    try:
+        with closing(get_connection()) as conn:
+            rows = conn.execute(f"SELECT payload FROM {table} ORDER BY ts ASC").fetchall()
+    except Exception as exc:  # pragma: no cover - caller falls back to JSONL
+        logger.debug("[feedback] _load_table(%s) failed: %s", table, exc)
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            out.append(json.loads(row["payload"]))
+        except Exception:
+            continue
+    return out
+
+
+def load_exposures() -> list[dict[str, Any]]:
+    return _load_table("exposures")
+
+
+def load_events() -> list[dict[str, Any]]:
+    return _load_table("user_events")
+
+
+def load_slate_feedback() -> list[dict[str, Any]]:
+    return _load_table("slate_feedback")
 
 
 def export_jsonl(table: str, out_path: Path, *, since_ms: int | None = None) -> int:

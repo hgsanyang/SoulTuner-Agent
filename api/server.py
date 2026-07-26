@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from agent.music_agent import MusicRecommendationAgent
 from api.security import (
     reject_shared_safe_action,
@@ -219,7 +219,11 @@ def _cors_static(directory: str) -> CORSMiddleware:
         allow_headers=["*"],
     )
 
-_DATA_ROOT = Path(os.environ.get("MUSIC_DATA_ROOT", r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data"))
+# Default resolves relative to the repo (…/Muisc-Research/../data) — never a
+# developer's absolute home path, which leaks a username and breaks on every
+# other machine. Override with MUSIC_DATA_ROOT (the Docker image sets /app/data).
+_DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[1].parent / "data"
+_DATA_ROOT = Path(os.environ.get("MUSIC_DATA_ROOT") or _DEFAULT_DATA_ROOT)
 PROCESSED_AUDIO_ROOT = _DATA_ROOT / "processed_audio"
 audio_dir = PROCESSED_AUDIO_ROOT / "audio"
 if audio_dir.exists():
@@ -348,7 +352,7 @@ async def acquire_song_endpoint(
     from tools.acquire_music import OnlineMusicAcquirer
 
     query = f"{request.title} {request.artist}"
-    logger.info(f"[acquire-song] 用户请求保存音源: {query}")
+    logger.info(f"[acquire-song] 用户请求保存音源: {safe_query(query)}")
 
     acquirer = OnlineMusicAcquirer()
     async with aiohttp.ClientSession() as session:
@@ -455,7 +459,7 @@ async def stream_recommendations(
         logger.info(f"联网搜索: {'ON' if web_search_enabled else 'OFF'}")
 
         logger.info("\n" + "🚀" * 30)
-        logger.info(f"🆕 [NEW RECOMMENDATION] User Query: {query}")
+        logger.info(f"🆕 [NEW RECOMMENDATION] User Query: {safe_query(query)}")
         logger.info("-" * 40)
 
         # 发送开始事件
@@ -896,7 +900,10 @@ class SettingsUpdateRequest(BaseModel):
 
 
 @app.post("/api/settings")
-async def update_settings_endpoint(request: SettingsUpdateRequest):
+async def update_settings_endpoint(
+    request: SettingsUpdateRequest,
+    _: None = Depends(require_admin_api_key),
+):
     """
     动态更新运行时设置（不重启服务）。
     前端只发送修改了的字段，未发送的字段保持不变。
@@ -971,7 +978,7 @@ async def update_settings_endpoint(request: SettingsUpdateRequest):
 
 
 @app.post("/api/settings/reset")
-async def reset_settings_endpoint():
+async def reset_settings_endpoint(_: None = Depends(require_admin_api_key)):
     """
     还原所有配置为默认值（从环境变量 + 代码默认值重新加载）。
     """
@@ -1265,7 +1272,9 @@ async def capture_song_feedback(request: SongFeedbackRequest):
                     is_exploration=bool(item.get("is_exploration")),
                     catalog_origin=item.get("catalog_origin"),
                     known_to_user=item.get("known_to_user"),
-                    exposure_count=int(item.get("exposure_count") or 0),
+                    # kept distinct — a decayed float is not a count; None stays unknown
+                    historical_exposure_count=item.get("historical_exposure_count"),
+                    effective_exposure=item.get("effective_exposure"),
                 ),
             )
         except Exception as exc:  # unknown enum value etc.
@@ -1382,7 +1391,11 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 @app.get("/api/ranking-policy/status")
 async def ranking_policy_status():
     """Return non-sensitive A3 policy state for diagnostics and UI tooling."""
-    from services.feedback_logger import load_jsonl
+    from services.feedback_logger import (
+        load_events_canonical,
+        load_exposures_canonical,
+        load_slate_feedback_canonical,
+    )
     from services.feedback_diagnostics import summarize_feedback_quality
     from services.ranking_policy import (
         ACTIVE_FILE,
@@ -1393,9 +1406,10 @@ async def ranking_policy_status():
     )
 
     root = feedback_dir()
-    exposures = load_jsonl(root / "exposures.jsonl")
-    events = load_jsonl(root / "events.jsonl")
-    slate_feedback = load_jsonl(root / "slate_feedback.jsonl")
+    # Canonical (deduped by id) so counts and coverage treat each exposure once.
+    exposures = load_exposures_canonical()
+    events = load_events_canonical()
+    slate_feedback = load_slate_feedback_canonical()
 
     def _summary(path: Path) -> Dict[str, Any] | None:
         if not path.exists():
@@ -1470,7 +1484,10 @@ async def memory_profile_views(user_id: str = "local_admin"):
 
 
 @app.post("/api/memory/preference")
-async def add_memory_preference(request: MemoryPreferenceUpdateRequest):
+async def add_memory_preference(
+    request: MemoryPreferenceUpdateRequest,
+    _: None = Depends(require_admin_api_key),
+):
     """Add structured preferences to the Neo4j hot path."""
     reject_shared_safe_action("update memory preference")
     try:
@@ -1494,6 +1511,7 @@ async def delete_memory_preference(
     field: str,
     value: str,
     user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
 ):
     """Delete one learned preference item from the Neo4j hot path."""
     reject_shared_safe_action("delete memory preference")
@@ -1518,6 +1536,7 @@ async def delete_memory_preference(
 @app.delete("/api/memory/profile")
 async def clear_learned_memory_profile(
     user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
 ):
     """Clear learned hot-path preference fields, keeping manual profile and song relations."""
     reject_shared_safe_action("clear learned memory profile")
@@ -1580,18 +1599,20 @@ async def ranking_policy_replay(
 ):
     """Fit a candidate ranking policy from logged exposures and feedback."""
     reject_shared_safe_action("learn ranking policy")
-    from services.feedback_logger import load_jsonl
+    from services.feedback_logger import (
+        load_events_canonical,
+        load_exposures_canonical,
+        load_slate_feedback_canonical,
+    )
     from services.ranking_learning import learn_ranking_policy
     from services.ranking_policy import feedback_dir, write_candidate
 
     root = feedback_dir()
-    exposures = load_jsonl(root / "exposures.jsonl")
-    events = load_jsonl(root / "events.jsonl")
-    slate_feedback = (
-        load_jsonl(root / "slate_feedback.jsonl")
-        if request.include_slate_feedback
-        else []
-    )
+    # Deduped by id: replaying the append-only log would train on the provisional
+    # AND final copy of every exposure.
+    exposures = load_exposures_canonical()
+    events = load_events_canonical()
+    slate_feedback = load_slate_feedback_canonical() if request.include_slate_feedback else []
     report = learn_ranking_policy(
         exposures,
         events,

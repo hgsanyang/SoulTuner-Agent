@@ -22,7 +22,7 @@ except ImportError:
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from config.settings import settings
 from agent.catalog_gap import CatalogGapDecision, analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
 from agent.explanation import emit_fast_explanation
@@ -1383,7 +1383,7 @@ class MusicRecommendationGraph:
                     )
 
                 if not songs:
-                    logger.warning(f"[web_fallback] 联网搜索无结果: {query}")
+                    logger.warning(f"[web_fallback] 联网搜索无结果: {safe_query(query)}")
                     preserved = _local_preserve_payload("web_search_empty")
                     if preserved:
                         return preserved
