@@ -135,6 +135,27 @@ def test_slate_feedback_creates_low_weight_top_k_rows():
     assert rows[0]["label_source"] == "slate_feedback"
 
 
+def test_new_overall_and_legacy_rating_produce_identical_slate_samples():
+    """The single-contract guarantee: a new record carrying `overall` and a
+    legacy record carrying the equivalent `rating` must yield the same training
+    sample, so consumers can read `overall` only."""
+    exposures = [_exposure("e1", 100, "A", True)]
+
+    def _sample(fb):
+        rows, _ = build_slate_feedback_rows(exposures, [fb], top_k=1)
+        r = rows[0]
+        return (r["label"], r["reward"], r["sample_weight"], r["event_type"])
+
+    legacy_neg = {"feedback_id": "s1", "exposure_id": "e1", "ts": 200, "rating": "too_noisy"}
+    new_neg = {"slate_feedback_id": "s2", "exposure_id": "e1", "ts": 200, "overall": "off"}
+    assert _sample(legacy_neg) == _sample(new_neg)
+
+    legacy_pos = {"feedback_id": "s3", "exposure_id": "e1", "ts": 200, "rating": "great"}
+    new_pos = {"slate_feedback_id": "s4", "exposure_id": "e1", "ts": 200, "overall": "fits"}
+    assert _sample(legacy_pos) == _sample(new_pos)
+    assert _sample(new_pos)[0] == 1 and _sample(new_neg)[0] == 0
+
+
 def test_neutral_slate_feedback_is_not_used_as_item_label():
     exposures = [_exposure("e1", 100, "A", True)]
     slate_feedback = [{

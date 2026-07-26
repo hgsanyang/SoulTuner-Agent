@@ -223,17 +223,27 @@ def _carry_forward_from_provisional(payload: dict[str, Any]) -> None:
             payload[field] = prior[field]
 
 
-def _store(fn_name: str, payload: dict[str, Any]) -> None:
-    """Mirror an event into the canonical SQLite store.
+class FeedbackStoreError(RuntimeError):
+    """The canonical SQLite write failed for a record that must not be lost."""
 
-    Best-effort on purpose: telemetry must never be able to fail a user request.
-    JSONL keeps being written regardless, so nothing is lost if this fails.
+
+def _store(fn_name: str, payload: dict[str, Any], *, required: bool = False) -> None:
+    """Write an event into the canonical SQLite store.
+
+    SQLite is the system of record; JSONL is an audit/export copy. For USER-
+    submitted feedback (song/slate) the store is authoritative: if the write
+    fails we raise, so the API returns an error instead of telling the user
+    "recorded" for something that was not. For passive telemetry (exposure,
+    behaviour events) the write is best-effort — it must never fail a request,
+    and the JSONL copy still retains it.
     """
     try:
         from services import feedback_store
 
         getattr(feedback_store, fn_name)(payload)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:
+        if required:
+            raise FeedbackStoreError(f"{fn_name} failed: {exc}") from exc
         logger.debug("[feedback] store write skipped (%s): %s", fn_name, exc)
 
 
@@ -309,8 +319,8 @@ def log_song_feedback(feedback: Any) -> str:
         "song_feedback_id": feedback_id,
         "ts": int(time.time() * 1000),
     })
-    _append_jsonl(_jsonl_path("song_feedback.jsonl"), payload)  # export snapshot
-    _store("insert_song_feedback", payload)  # canonical
+    _store("insert_song_feedback", payload, required=True)  # authoritative
+    _append_jsonl(_jsonl_path("song_feedback.jsonl"), payload)  # audit copy
     return feedback_id
 
 
@@ -397,8 +407,8 @@ def log_slate_feedback(
         "context": context or {},
         "extra": extra_payload,   # only what is not canonical (e.g. reasons_raw, song_count)
     }
-    _append_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE), payload)  # export snapshot
-    _store("insert_slate_feedback", payload)  # canonical
+    _store("insert_slate_feedback", payload, required=True)  # authoritative
+    _append_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE), payload)  # audit copy
     return feedback_id
 
 
@@ -413,61 +423,100 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _dedupe_by(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
-    """Keep the last row per key, preserving order — the JSONL fallback's dedup.
+# The identity of each record type, most-specific key first. Slate feedback is
+# the load-bearing case: records written before the primary-key fix carry only
+# `feedback_id`, so keying on `slate_feedback_id` alone silently drops all of
+# them (135 of 175 in the real log). The effective id is the first key present.
+ID_KEYS: dict[str, tuple[str, ...]] = {
+    "exposures": ("exposure_id",),
+    "events": ("event_id",),
+    "slate_feedback": ("slate_feedback_id", "feedback_id"),
+    "song_feedback": ("song_feedback_id",),
+}
 
-    The append-only log holds both the provisional and final exposure under one
-    id; scanning it naively double-counts. SQLite already dedupes via upsert, so
-    this only runs when we fall back to JSONL.
+
+def effective_id(row: dict[str, Any], id_keys: tuple[str, ...]) -> str:
+    """First present id among id_keys — the record's stable identity."""
+    for key in id_keys:
+        value = row.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _dedupe_rows(rows: list[dict[str, Any]], id_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    """Keep the last row per effective id (provisional/final collapse to one).
+
+    Rows with no id at all are kept as-is rather than dropped — losing an
+    un-keyed record is exactly the failure this function exists to prevent.
     """
     latest: dict[str, dict[str, Any]] = {}
+    unkeyed: list[dict[str, Any]] = []
     for row in rows:
-        k = str(row.get(key) or "")
+        k = effective_id(row, id_keys)
         if k:
             latest[k] = row
-    return list(latest.values())
+        else:
+            unkeyed.append(row)
+    return list(latest.values()) + unkeyed
+
+
+def _merge_canonical(table: str, sqlite_rows: list[dict[str, Any]],
+                     jsonl_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Union of SQLite and JSONL, deduped by effective id, SQLite winning.
+
+    Not "SQLite if non-empty else JSONL": before the one-shot migration runs, the
+    store holds only NEW events while the JSONL holds the whole history, so an
+    either-or read makes years of feedback vanish the moment one new event lands.
+    Merging keeps every record visible and lets SQLite override once migrated.
+    """
+    id_keys = ID_KEYS[table]
+    merged: dict[str, dict[str, Any]] = {}
+    extras: list[dict[str, Any]] = []
+    # JSONL first (deduped), then SQLite overlays — SQLite wins on conflict.
+    for row in _dedupe_rows(jsonl_rows, id_keys) + _dedupe_rows(sqlite_rows, id_keys):
+        k = effective_id(row, id_keys)
+        if k:
+            merged[k] = row
+        else:
+            extras.append(row)
+    # SQLite rows come last, so re-applying them guarantees precedence.
+    for row in sqlite_rows:
+        k = effective_id(row, id_keys)
+        if k:
+            merged[k] = row
+    return list(merged.values()) + extras
+
+
+def _load_store(fn_name: str) -> list[dict[str, Any]]:
+    try:
+        from services import feedback_store
+
+        return getattr(feedback_store, fn_name)()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("[feedback] store %s skipped: %s", fn_name, exc)
+        return []
 
 
 def load_exposures_canonical() -> list[dict[str, Any]]:
-    """Exposures deduped by id: SQLite first, JSONL (deduped) as fallback.
+    """Exposures deduped by id, merged from SQLite + JSONL.
 
     Every offline consumer — replay, ranking, catalog diagnostics — must go
     through here so one exposure is counted once, regardless of how many times it
-    was written.
+    was written or whether it has been migrated into the store yet.
     """
-    try:
-        from services import feedback_store
-
-        rows = feedback_store.load_exposures()
-        if rows:
-            return rows
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("[feedback] store load_exposures skipped: %s", exc)
-    return _dedupe_by(load_jsonl(_jsonl_path("exposures.jsonl")), "exposure_id")
+    return _merge_canonical("exposures", _load_store("load_exposures"),
+                            load_jsonl(_jsonl_path("exposures.jsonl")))
 
 
 def load_events_canonical() -> list[dict[str, Any]]:
-    try:
-        from services import feedback_store
-
-        rows = feedback_store.load_events()
-        if rows:
-            return rows
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("[feedback] store load_events skipped: %s", exc)
-    return _dedupe_by(load_jsonl(_jsonl_path("events.jsonl")), "event_id")
+    return _merge_canonical("events", _load_store("load_events"),
+                            load_jsonl(_jsonl_path("events.jsonl")))
 
 
 def load_slate_feedback_canonical() -> list[dict[str, Any]]:
-    try:
-        from services import feedback_store
-
-        rows = feedback_store.load_slate_feedback()
-        if rows:
-            return rows
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("[feedback] store load_slate_feedback skipped: %s", exc)
-    return _dedupe_by(load_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE)), "slate_feedback_id")
+    return _merge_canonical("slate_feedback", _load_store("load_slate_feedback"),
+                            load_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE)))
 
 
 def learned_weights_path() -> Path:

@@ -22,7 +22,7 @@ from retrieval.post_recall_adjustments import (
     PostRecallAdjustmentConfig,
     apply_post_recall_adjustments,
 )
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from schemas.music_state import ToolOutput
 
 
@@ -396,7 +396,7 @@ class MusicHybridRetrieval:
         """
         retrieval_started = time.perf_counter()
         timings: Dict[str, float] = {}
-        logger.info(f"[Retrieval] 开始处理请求: {query}")
+        logger.info(f"[Retrieval] 开始处理请求: {safe_query(query)}")
         self._skip_tri_anchor_for_entity_graph = False
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
             from retrieval.mock_retrieval import mock_retrieve

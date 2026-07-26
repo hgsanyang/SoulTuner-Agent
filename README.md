@@ -217,7 +217,7 @@ The initial architecture came from [imagist13/Muisc-Research](https://github.com
 | Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.* (IEEE Access) [arXiv:2503.22104](https://arxiv.org/abs/2503.22104) | Text-to-music fallback + semantic rerank |
 | Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model.* (ACM MM 2025) [arXiv:2507.03482](https://arxiv.org/abs/2507.03482) | Acoustic-similarity auxiliary anchor |
 | Gao, L. et al. (2023). *Precise Zero-Shot Dense Retrieval without Relevance Labels* (HyDE). (ACL 2023) | Turn the user's sentence into a hypothetical music description before retrieving |
-| Xu, W. et al. (2025). *A-MEM: Agentic Memory for LLM Agents.* [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) | Memory interlinking / evolution in the memory layer |
+| Xu, W. et al. (2025). *A-MEM: Agentic Memory for LLM Agents.* [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) | **A-MEM-inspired** memory interlinking/evolution — inspired by, not a full reimplementation |
 
 Classic building blocks — reciprocal rank fusion, MMR diversity, Thompson-sampling exploration, unbiased learning-to-rank, BGE relevance — are used too, but cited where they live (code comments and the Technical Report) rather than headlined here.
 

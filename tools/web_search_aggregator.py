@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 logger = get_logger(__name__)
 
 from config.settings import settings
@@ -42,7 +42,7 @@ async def fetch_zhipu_search(query: str, session: aiohttp.ClientSession) -> List
     }
 
     try:
-        logger.info(f"🚀 发送智谱 search-std 请求... Query: {query}")
+        logger.info(f"🚀 发送智谱 search-std 请求... Query: {safe_query(query)}")
         async with session.post(url, headers=headers, json=payload, timeout=settings.web_search_timeout) as response:
             resp_text = await response.text()
             if response.status != 200:
@@ -97,7 +97,7 @@ async def fetch_searxng_search(query: str, session: aiohttp.ClientSession) -> Li
         "categories": "general,music",
     }
     try:
-        logger.info(f"🚀 发送 SearxNG 请求... Query: {query}")
+        logger.info(f"🚀 发送 SearxNG 请求... Query: {safe_query(query)}")
         async with session.get(url, params=params, timeout=settings.searxng_timeout) as response:
             if response.status != 200:
                 logger.debug(f"⚠️ SearxNG 无法使用 (状态码 {response.status})，正常降级跳过")
@@ -142,7 +142,7 @@ async def fetch_tavily_search(query: str, session: aiohttp.ClientSession) -> Lis
     }
 
     try:
-        logger.info(f"🚀 发送 Tavily Search 请求... Query: {query}")
+        logger.info(f"🚀 发送 Tavily Search 请求... Query: {safe_query(query)}")
         async with session.post(url, headers=headers, json=payload, timeout=settings.web_search_timeout) as response:
             resp_text = await response.text()
             if response.status != 200:
@@ -173,7 +173,7 @@ async def fetch_tavily_search(query: str, session: aiohttp.ClientSession) -> Lis
 
 async def _federated_search_async(query: str) -> str:
     """异步并发请求所有的搜索引擎"""
-    logger.info(f"🌐 Initiating Federated Web Search for: {query}")
+    logger.info(f"🌐 Initiating Federated Web Search for: {safe_query(query)}")
 
     async with aiohttp.ClientSession() as session:
         # 并发派发任务（SearxNG 未启动时自动跳过，不阻塞）

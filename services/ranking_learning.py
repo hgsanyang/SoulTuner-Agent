@@ -35,6 +35,29 @@ SLATE_NEGATIVE_RATINGS = {
     "too_familiar": -0.25,
 }
 SLATE_NEUTRAL_RATINGS = {"partial", "more_discovery", "more_niche", "closer_to_seed"}
+
+# Canonical 3-way slate judgement (same scale as per-song context_fit) and the
+# reward each maps to. Runtime reads `overall`; the legacy `rating` is converted
+# at the read boundary below and appears nowhere else.
+SLATE_OVERALL_REWARD = {"fits": 0.35, "off": -0.40}   # partial -> neutral (no label)
+_LEGACY_RATING_TO_OVERALL = {
+    "great": "fits",
+    **{key: "off" for key in SLATE_NEGATIVE_RATINGS},
+    **{key: "partial" for key in SLATE_NEUTRAL_RATINGS},
+}
+
+
+def slate_overall(feedback: dict[str, Any]) -> str | None:
+    """The canonical judgement for a slate record, new or legacy.
+
+    New records carry `overall` (fits/partial/off). Pre-contract records carry
+    only `rating`, which conflated judgement and reason; map it here — this is the
+    single migration boundary, so downstream code never touches `rating`.
+    """
+    overall = str(feedback.get("overall") or "").strip()
+    if overall in {"fits", "partial", "off"}:
+        return overall
+    return _LEGACY_RATING_TO_OVERALL.get(str(feedback.get("rating") or "").strip())
 BASELINE_COEFFICIENTS = {
     "rrf_graph": 0.30,
     "rrf_dense": 0.35,
@@ -211,10 +234,10 @@ def build_slate_feedback_rows(
     rows: list[dict[str, Any]] = []
 
     for feedback in sorted(slate_feedback, key=lambda row: int(row.get("ts") or 0)):
-        rating = str(feedback.get("rating") or "").strip()
-        reward = _slate_reward(rating)
+        overall = slate_overall(feedback)
+        reward = SLATE_OVERALL_REWARD.get(str(overall or ""))
         if reward is None:
-            if rating in SLATE_NEUTRAL_RATINGS:
+            if overall == "partial":
                 diagnostics["neutral_slate_feedback"] += 1
             else:
                 diagnostics["unsupported_slate_rating"] += 1
@@ -251,7 +274,7 @@ def build_slate_feedback_rows(
             rows.append(
                 {
                     "event_id": f"slate:{feedback.get('feedback_id') or exposure_id}:{item.get('rank')}",
-                    "event_type": f"slate:{rating}",
+                    "event_type": f"slate:{overall}",
                     "exposure_id": exposure_id,
                     "user_id": str(feedback.get("user_id") or exposure.get("user_id") or "local_admin"),
                     "intent_type": str(exposure.get("intent_type") or ""),
@@ -264,7 +287,7 @@ def build_slate_feedback_rows(
                     "sample_weight": abs(reward),
                     "features": feature_vector(item),
                     "label_source": "slate_feedback",
-                    "slate_rating": rating,
+                    "slate_overall": overall,
                 }
             )
         diagnostics["matched_slate_feedback"] += 1

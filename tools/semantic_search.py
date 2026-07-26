@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Optional
 from langchain_core.tools import tool
 
 from retrieval.neo4j_client import get_neo4j_client
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from config.settings import settings
 
 logger = get_logger(__name__)
@@ -411,7 +411,7 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
     """
     if limit <= 0:
         limit = settings.semantic_search_limit
-    logger.info(f"[SemanticSearch] 实际使用 limit={limit} | 查询: '{query}' | 歌手过滤: '{artist_filter}' | 流派过滤: '{genre_filter}' | 语言过滤: '{language_filter}' | 地区过滤: '{region_filter}'")
+    logger.info(f"[SemanticSearch] 实际使用 limit={limit} | 查询: '{safe_query(query)}' | 歌手过滤: '{artist_filter}' | 流派过滤: '{genre_filter}' | 语言过滤: '{language_filter}' | 地区过滤: '{region_filter}'")
 
     try:
         # 1. 文本预处理

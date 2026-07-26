@@ -1816,7 +1816,7 @@ class MusicRecommendationGraph:
                 # 兜底：如果意外没有 input，才从意图回退
                 search_query = intent_type
 
-            logger.info(f"调用检索引擎执行生成推荐: {search_query}")
+            logger.info(f"调用检索引擎执行生成推荐: {safe_query(search_query)}")
 
             # 传递上游统一规划的 retrieval_plan，避免二次 LLM 调用
             retrieval_plan = state.get("retrieval_plan")
@@ -2299,7 +2299,7 @@ class MusicRecommendationGraph:
                 retriever = MusicHybridRetrieval(llm_client=get_llm())
                 query = f"流派:{','.join(seed_genres)} 活动:{activity} 心情:{mood}"
 
-                logger.info(f"调用检索引擎进行增强推荐: {query}")
+                logger.info(f"调用检索引擎进行增强推荐: {safe_query(query)}")
                 raw_hybrid_result = await retriever.retrieve(query, limit=settings.graph_search_limit)
 
                 # 直接扩展到推荐列表

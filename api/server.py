@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from config.logging_config import get_logger, safe_query
 from agent.music_agent import MusicRecommendationAgent
 from api.security import (
+    check_api_request_auth,
     reject_shared_safe_action,
     require_admin_api_key,
     safe_resolve_child,
@@ -36,6 +37,25 @@ from api.security import (
 logger = get_logger(__name__)
 
 app = FastAPI(title="Music Recommendation API", version="1.0.0")
+
+
+@app.middleware("http")
+async def _api_auth_gate(request, call_next):
+    """Blanket auth for /api/* when a key is configured (LAN / shared mode).
+
+    Per-endpoint require_admin_api_key deps still guard the destructive routes as
+    defence in depth, but this gate is what makes coverage total: no /api/ route —
+    including any added later — can be reached without the key when auth is on.
+    Local single-user installs configure no key and pass straight through.
+    """
+    from fastapi.responses import JSONResponse
+
+    verdict = check_api_request_auth(request.url.path, request.method,
+                                     request.headers.get("X-API-Key"))
+    if verdict is not None:
+        code, detail = verdict
+        return JSONResponse(status_code=code, content={"detail": detail})
+    return await call_next(request)
 
 # 注册用户画像路由
 from api.user_profile import router as user_profile_router
@@ -1231,7 +1251,12 @@ async def capture_song_feedback(request: SongFeedbackRequest):
             SongFeedback,
             derive_context,
         )
-        from services.feedback_logger import find_exposure_item, log_song_feedback, lookup_exposure
+        from services.feedback_logger import (
+            FeedbackStoreError,
+            find_exposure_item,
+            log_song_feedback,
+            lookup_exposure,
+        )
 
         if not request.exposure_id.strip():
             raise HTTPException(status_code=422, detail="exposure_id is required")
@@ -1283,7 +1308,12 @@ async def capture_song_feedback(request: SongFeedbackRequest):
         if feedback.is_empty():
             raise HTTPException(status_code=422, detail="feedback carries no signal")
 
-        feedback_id = log_song_feedback(feedback)
+        try:
+            feedback_id = log_song_feedback(feedback)
+        except FeedbackStoreError as exc:
+            # SQLite is authoritative for user feedback: if it did not land, say so
+            # rather than returning success for a judgement we failed to persist.
+            raise HTTPException(status_code=503, detail=f"could not persist feedback: {exc}")
         # No memory / flywheel write here on purpose: long-term taste has exactly
         # one authoritative entry point (/api/user-event).
         return {"success": True, "song_feedback_id": feedback_id}
@@ -1316,7 +1346,7 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
             SlateReason,
             derive_context,
         )
-        from services.feedback_logger import lookup_exposure
+        from services.feedback_logger import FeedbackStoreError, lookup_exposure
         from services.memory_gateway import get_memory_gateway
 
         # Same orphan guard as per-song feedback, and best/worst must name songs
@@ -1367,14 +1397,17 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
         if unknown_reasons:
             slate_extra["reasons_raw"] = unknown_reasons
 
-        result = await get_memory_gateway().remember_slate_feedback(
-            exposure_id=request.exposure_id,
-            rating=request.rating,
-            reasons=strict.reasons,   # validated slugs; raw text kept in extra
-            note=request.note,
-            user_id=request.user_id,
-            extra=slate_extra,
-        )
+        try:
+            result = await get_memory_gateway().remember_slate_feedback(
+                exposure_id=request.exposure_id,
+                rating=request.rating,
+                reasons=strict.reasons,   # validated slugs; raw text kept in extra
+                note=request.note,
+                user_id=request.user_id,
+                extra=slate_extra,
+            )
+        except FeedbackStoreError as exc:
+            raise HTTPException(status_code=503, detail=f"could not persist slate feedback: {exc}")
         return {
             "success": True,
             "feedback_id": result.slate_feedback_id,

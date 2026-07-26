@@ -71,6 +71,40 @@ def test_state_changing_endpoints_require_admin_when_auth_on(monkeypatch):
     assert ok.status_code not in (401, 403), f"valid key rejected: {ok.status_code}"
 
 
+def test_blanket_gate_covers_routes_with_no_explicit_dependency(monkeypatch):
+    """The gap Codex found: state-changing routes with NO require_admin dep
+    (profile edit, memory-record delete) were reachable in LAN mode. The blanket
+    /api/* middleware must catch them, and reads too, while /health stays open."""
+    monkeypatch.setattr(settings, "api_key_required", True)
+    monkeypatch.setattr(settings, "admin_api_key", "secret-key")
+    from fastapi.testclient import TestClient
+
+    from api.server import app
+
+    client = TestClient(app)
+    # routes that carry no explicit auth dependency:
+    for method, url in [
+        ("post", "/api/user-profile"),
+        ("delete", "/api/memory/record/abc"),
+        ("post", "/api/recommendations"),        # a read-ish POST, still /api/*
+        ("get", "/api/library/songs"),           # a plain GET is gated too
+    ]:
+        resp = getattr(client, method)(url)
+        assert resp.status_code in (401, 403), f"{method} {url} bypassed the gate: {resp.status_code}"
+    # liveness must remain open (docker healthcheck, no key)
+    assert client.get("/health").status_code == 200
+
+
+def test_api_request_needs_key_prefix_rule():
+    from api.security import api_request_needs_key
+
+    assert api_request_needs_key("/api/settings", "POST") is True
+    assert api_request_needs_key("/api/library/songs", "GET") is True
+    assert api_request_needs_key("/api/settings", "OPTIONS") is False   # CORS preflight
+    assert api_request_needs_key("/health", "GET") is False
+    assert api_request_needs_key("/audio/x.mp3", "GET") is False        # static, not /api/
+
+
 def test_safe_query_redacts_by_default(monkeypatch):
     from config.logging_config import safe_query
 

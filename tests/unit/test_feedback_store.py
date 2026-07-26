@@ -112,6 +112,69 @@ def test_exposure_captures_the_bookkeeping_it_can_know(store):
     assert items[1]["catalog_origin"] is None
 
 
+def test_legacy_slate_feedback_is_not_dropped_by_effective_id(store, tmp_path):
+    """Regression (the 175->40 bug): records written before the primary-key fix
+    carry only `feedback_id`. Keying dedup/migration on `slate_feedback_id` alone
+    silently collapsed all of them. The effective id must fall back to
+    feedback_id so every record survives."""
+    import json as _json
+    rows = [
+        {"feedback_id": f"legacy-{i}", "rating": "partial", "ts": i}  # old shape
+        for i in range(5)
+    ] + [
+        {"slate_feedback_id": f"new-{i}", "feedback_id": f"new-{i}", "rating": "off", "ts": 100 + i}
+        for i in range(3)
+    ]
+    (tmp_path / fl.SLATE_FEEDBACK_FILE).write_text(
+        "\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    # SQLite still empty -> must read all 8 from JSONL, none dropped
+    assert len(fl.load_slate_feedback_canonical()) == 8
+
+    # migrate a subset into SQLite, then the canonical read must still be 8
+    # (union of store + log), not just what is in the store
+    for r in rows[:4]:
+        fs.insert_slate_feedback(r)
+    got = fl.load_slate_feedback_canonical()
+    assert len(got) == 8, f"union merge lost rows: {len(got)}"
+    assert fs.counts()["slate_feedback"] == 4  # legacy rows keyed on feedback_id
+
+
+def test_user_feedback_fails_loud_when_store_write_fails(store, monkeypatch):
+    """SQLite is authoritative for user-submitted feedback: a failed write must
+    raise, not silently fall back to JSONL and report success. (Exposure
+    telemetry stays fail-soft — covered separately.)"""
+    import schemas.feedback_events as fe
+
+    def _boom(_payload):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(fs, "insert_song_feedback", _boom)
+    fb = fe.SongFeedback(exposure_id="e1", music_id="m1", context_fit="off")
+    with pytest.raises(fl.FeedbackStoreError):
+        fl.log_song_feedback(fb)
+    # the JSONL audit copy must NOT have been written for a failed authoritative write
+    assert not (fl._jsonl_path("song_feedback.jsonl")).exists()
+
+
+def test_exposure_write_stays_fail_soft(store, monkeypatch):
+    """Passive telemetry must never fail a request even if the store errors."""
+    monkeypatch.setattr(fs, "upsert_exposure", lambda _p: (_ for _ in ()).throw(RuntimeError("x")))
+    # must not raise
+    fl.log_exposure(query="q", user_id="u", request_id="soft1",
+                    recommendations=[{"title": "A", "music_id": "m1"}])
+
+
+def test_canonical_merges_store_and_log_not_either_or(store, tmp_path):
+    """A new event in SQLite must not hide the historical JSONL log."""
+    import json as _json
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(_json.dumps({"event_id": f"e{i}", "ts": i}) for i in range(10)) + "\n",
+        encoding="utf-8")
+    fs.insert_user_event({"event_id": "brand-new", "ts": 999})   # only in SQLite
+    ids = {e.get("event_id") for e in fl.load_events_canonical()}
+    assert "brand-new" in ids and "e0" in ids and len(ids) == 11
+
+
 def test_event_without_its_id_is_kept_not_collapsed(store):
     """A writer sending the wrong key name must cost us a warning, not the table."""
     for i in range(3):

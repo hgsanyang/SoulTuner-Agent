@@ -13,9 +13,11 @@ name: soultuner-agent
 services:
   # ---- Neo4j 图数据库 ----
   neo4j:
-    # 默认用固定版本的 Community 镜像（公开开源入口无需接受 Enterprise 许可证）。
-    # 需要 Enterprise 特性时显式覆盖：NEO4J_IMAGE=neo4j:2026-enterprise
-    image: ${NEO4J_IMAGE:-neo4j:5.26-community}
+    # 固定版本的 Community 镜像（公开开源入口无需接受 Enterprise 许可证）。
+    # ★ 必须与已有数据卷同一大版本——Neo4j 存储格式不能跨大版本降级。若你的卷
+    #   是更早/更新的版本，改 NEO4J_IMAGE 到对应的 -community 标签，并先 dump 备份。
+    #   需要 Enterprise 特性时：NEO4J_IMAGE=neo4j:2026.03.1-enterprise + 接受许可证。
+    image: ${NEO4J_IMAGE:-neo4j:2026.03.1-community}
     container_name: soultuner-neo4j
     ports:
       - "${BIND_HOST:-127.0.0.1}:7474:7474"       # Neo4j Browser (http://localhost:7474)

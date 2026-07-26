@@ -217,7 +217,7 @@ tests/       单元测试 + 结果导向评测
 | Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.* (IEEE Access) [arXiv:2503.22104](https://arxiv.org/abs/2503.22104) | 文搜音回退 + 语义精排 |
 | Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model.* (ACM MM 2025) [arXiv:2507.03482](https://arxiv.org/abs/2507.03482) | 声学相似性辅助锚 |
 | Gao, L. et al. (2023). *Precise Zero-Shot Dense Retrieval without Relevance Labels*（HyDE）. (ACL 2023) | 把用户的话先写成假想音乐描述再检索 |
-| Xu, W. et al. (2025). *A-MEM: Agentic Memory for LLM Agents.* [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) | 记忆层的互链与演化 |
+| Xu, W. et al. (2025). *A-MEM: Agentic Memory for LLM Agents.* [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) | **受 A-MEM 启发**的记忆互链/演化——是借鉴思路，非完整复现 |
 
 RRF 融合、MMR 多样性、Thompson Sampling 探索、无偏 LTR、BGE 相关性这些经典构件也在用，但放在**代码注释和技术报告**里就近说明，不在这里作为主参考文献罗列。
 

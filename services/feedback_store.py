@@ -228,8 +228,11 @@ def insert_song_feedback(payload: dict[str, Any]) -> None:
 
 
 def insert_slate_feedback(payload: dict[str, Any]) -> None:
+    # Legacy records carry only `feedback_id`; fall back to it so migrating the
+    # 135 pre-fix rows does not hit the empty-id path and collapse them.
+    slate_id = str(payload.get("slate_feedback_id") or payload.get("feedback_id") or "")
     _insert_event(
-        "slate_feedback", "slate_feedback_id", str(payload.get("slate_feedback_id") or ""), payload,
+        "slate_feedback", "slate_feedback_id", slate_id, payload,
         {
             "exposure_id": str(payload.get("exposure_id") or ""),
             "user_id": str(payload.get("user_id") or ""),

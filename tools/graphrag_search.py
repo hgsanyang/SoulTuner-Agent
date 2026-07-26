@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
+from config.logging_config import safe_query
 from config.settings import settings
 
 # 懒加载 neo4j 客户端：如果 neo4j 包未安装，允许系统降级运行（图谱检索返回空，其他检索正常工作）
@@ -560,7 +561,7 @@ def graphrag_search(query: str, limit: int = 5) -> str:
         query: The natural language question or specific entity to search for.
         limit: Maximum number of paths or relationships to return.
     """
-    logger.info(f"Executing GraphRAG search for: {query}")
+    logger.info(f"Executing GraphRAG search for: {safe_query(query)}")
     client = get_neo4j_client()
     if not client.driver:
         return "Warning: Neo4j database is currently disconnected. Cannot perform GraphRAG search."

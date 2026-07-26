@@ -26,7 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.logging_config import get_logger  # noqa: E402
+from config.logging_config import get_logger, safe_query  # noqa: E402
 from config.settings import settings  # noqa: E402
 from services.catalog_enrichment import (  # noqa: E402
     extract_release_year,
@@ -207,7 +207,7 @@ class OnlineMusicAcquirer:
                 if song:
                     acquired.append(song)
             except Exception as e:
-                logger.warning(f"获取 '{query}' 失败: {e}")
+                logger.warning(f"获取 '{safe_query(query)}' 失败: {e}")
 
         return acquired
 
@@ -224,12 +224,12 @@ class OnlineMusicAcquirer:
         search_url = f"{self.api_base}/search?keywords={clean_query}&limit={settings.netease_search_limit}"
         async with session.get(search_url, timeout=settings.netease_api_timeout) as resp:
             if resp.status != 200:
-                logger.warning(f"搜索失败 status={resp.status}: {query}")
+                logger.warning(f"搜索失败 status={resp.status}: {safe_query(query)}")
                 return None
             data = await resp.json()
             songs = data.get("result", {}).get("songs", [])
             if not songs:
-                logger.warning(f"搜索无结果: {query}")
+                logger.warning(f"搜索无结果: {safe_query(query)}")
                 return None
 
         return await self.acquire_resolved_song(

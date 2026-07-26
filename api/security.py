@@ -76,6 +76,44 @@ async def require_admin_api_key(
         )
 
 
+# Served without a key even in LAN mode: liveness, API docs. Static assets and
+# the SPA live outside /api/ and are exempt by not matching the /api/ prefix.
+_AUTH_EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
+
+
+def api_request_needs_key(path: str, method: str) -> bool:
+    """Whether this HTTP request must carry the key when auth is enabled.
+
+    Blankets ALL of /api/* (reads included) rather than a hand-maintained list of
+    endpoints — the gap Codex found was an unlisted mutating route (profile edit,
+    memory delete) with no dependency. A prefix rule cannot be forgotten when a
+    new route is added. CORS preflight and non-/api paths pass through.
+    """
+    if str(method or "").upper() == "OPTIONS":
+        return False
+    if path in _AUTH_EXEMPT_PATHS:
+        return False
+    return path.startswith("/api/")
+
+
+def check_api_request_auth(path: str, method: str, x_api_key: str | None) -> tuple[int, str] | None:
+    """Return (status, detail) if the request must be rejected, else None.
+
+    Enforced only when a key is configured (LAN / shared mode); a purely local
+    single-user install has no key and stays completely open.
+    """
+    if not admin_key_required():
+        return None
+    if not api_request_needs_key(path, method):
+        return None
+    expected = _admin_api_key()
+    if not expected:
+        return (403, "API key required but none is configured on the server.")
+    if x_api_key != expected:
+        return (401, "Invalid or missing X-API-Key.")
+    return None
+
+
 def reject_shared_safe_action(action: str) -> None:
     """Block filesystem-changing actions in shared safe mode."""
     if shared_safe_mode_enabled():
