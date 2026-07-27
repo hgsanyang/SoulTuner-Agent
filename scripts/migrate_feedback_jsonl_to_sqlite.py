@@ -8,7 +8,8 @@ one row), and events INSERT OR REPLACE by their own id.
 STOP THE BACKEND FIRST. Migration reads the whole JSONL history and asserts the
 store reaches an exact row count; a live backend appending new feedback mid-run
 moves that target and the gate fails on a store that is actually fine. This
-script refuses to run while the API answers on :8501 (override at your own risk
+script refuses to run while the API answers on its port (API_PORT, default 8501;
+BACKEND_PORT is accepted as an alias) - override at your own risk
 with --allow-live-writes).
 
     docker compose stop backend
@@ -22,6 +23,7 @@ Honours MUSIC_FEEDBACK_DIR, same as the rest of the feedback layer.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -59,10 +61,31 @@ TABLE_TO_COUNT = {
 }
 
 
+def _backend_port() -> int:
+    """The port the API actually listens on.
+
+    Hardcoding 8501 meant that moving the API to another port silently disabled
+    the "is anything still writing?" guard - it would probe a dead port, see
+    nothing, and happily migrate underneath a live backend. Read the same env var
+    the server itself reads (api/server.py), with BACKEND_PORT as an alias.
+    """
+    for name in ("API_PORT", "BACKEND_PORT"):
+        raw = str(os.getenv(name, "")).strip()
+        if raw.isdigit():
+            return int(raw)
+    try:
+        from config.settings import settings
+
+        return int(getattr(settings, "api_port", 8501))
+    except Exception:
+        return 8501
+
+
 def _backend_is_live() -> bool:
     """True if the API answers - i.e. something may still be appending events."""
+    url = f"http://127.0.0.1:{_backend_port()}/health"
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8501/health", timeout=2) as response:
+        with urllib.request.urlopen(url, timeout=2) as response:
             return 200 <= response.status < 500
     except (urllib.error.URLError, OSError, ValueError):
         return False
@@ -82,7 +105,7 @@ def main() -> int:
     print(f"mode: {'DRY RUN - no writes' if args.dry_run else 'WRITE'}\n")
 
     if not args.dry_run and not args.allow_live_writes and _backend_is_live():
-        print("REFUSING TO RUN: the backend is answering on :8501, so new feedback\n"
+        print(f"REFUSING TO RUN: the backend is answering on :{_backend_port()}, so new feedback\n"
               "can land while this migrates. The completeness gate compares against a\n"
               "count taken at the start, so a concurrent write makes a correct store\n"
               "look broken - and a torn read look fine.\n"

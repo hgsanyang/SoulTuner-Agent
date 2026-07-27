@@ -100,6 +100,37 @@ def test_migration_refuses_to_write_while_the_backend_is_live(feedback_dir, monk
         sys.argv = argv
 
 
+def test_backend_probe_follows_the_configured_port(monkeypatch):
+    """Hardcoding 8501 silently disabled the guard for anyone who moved the API:
+    it would probe a dead port, see nothing, and migrate under a live backend."""
+    monkeypatch.setenv("API_PORT", "9123")
+    assert mig._backend_port() == 9123
+    monkeypatch.delenv("API_PORT", raising=False)
+    monkeypatch.setenv("BACKEND_PORT", "9124")          # accepted alias
+    assert mig._backend_port() == 9124
+    monkeypatch.delenv("BACKEND_PORT", raising=False)
+    monkeypatch.setenv("API_PORT", "not-a-port")        # junk falls through
+    assert mig._backend_port() == 8501
+
+    probed: list[str] = []
+
+    class _Resp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.delenv("API_PORT", raising=False)
+    monkeypatch.setenv("API_PORT", "9125")
+    monkeypatch.setattr(mig.urllib.request, "urlopen",
+                        lambda url, timeout=0: (probed.append(url), _Resp())[1])
+    assert mig._backend_is_live() is True
+    assert probed == ["http://127.0.0.1:9125/health"]
+
+
 def test_migration_output_is_ascii_only():
     """conda run on Windows re-encodes stdout as GBK and dies on any non-ASCII;
     the whole script must stay ASCII."""

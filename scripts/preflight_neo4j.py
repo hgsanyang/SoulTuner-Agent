@@ -117,6 +117,15 @@ def _volume_exists() -> bool:
     return DATA_VOLUME in {n.strip() for n in names}
 
 
+def _docker_available() -> bool:
+    """Whether we can inspect volumes at all.
+
+    Matters because "docker says there is no volume" and "we could not ask docker"
+    look identical downstream, and only the first one means fresh install.
+    """
+    return bool(_docker("version", "--format", "{{.Client.Version}}"))
+
+
 def check() -> tuple[bool, list[str]]:
     """Return (ok, lines-to-print)."""
     env = _read_env(ROOT / ".env")
@@ -133,9 +142,12 @@ def check() -> tuple[bool, list[str]]:
         out.append(f"  store      : {store}  (live query)")
     elif previous:
         out.append(f"  store      : unknown - Neo4j is down; last container ran {previous}")
+    elif not _docker_available():
+        # Never report "no volume" when we could not ask - that reads as proof.
+        out.append("  store      : unknown - Neo4j is down and docker is unavailable")
     else:
         out.append(f"  store      : unknown - no {CONTAINER} container; volume "
-                   f"{'exists' if volume else 'not created yet'}")
+                   f"{'EXISTS' if volume else 'not created yet'}")
 
     # Enterprise without an explicit licence choice: the container prints the
     # licence and exits, so say it here instead of letting `up` look broken.
@@ -168,22 +180,42 @@ def check() -> tuple[bool, list[str]]:
             "  Never point Community at the live volume to 'see what happens'.",
         ]
 
-    if not store and _edition(previous) == "enterprise":
+    if store:
+        return True, out + ["  verdict    : OK (aligned volume, Community can open it)"]
+
+    # ---- store format unknown from here on: fail CLOSED, not open ----------
+    #
+    # The dangerous case is mundane: `docker compose down` removes the container
+    # but KEEPS the named volume (only `down -v` deletes it). So "no container"
+    # proves nothing about the data, and an earlier version of this check read
+    # that as "no evidence of Enterprise" and let Community through. An existing
+    # volume we cannot read is a reason to stop, whatever the container list says.
+    if not _docker_available():
+        # Distinct from "no volume": we did not get to look. Say so rather than
+        # claiming a clean bill of health nobody verified.
+        return True, out + [
+            "  verdict    : NOT CHECKED - docker is unavailable, so the volume could",
+            "               not be inspected. If Neo4j runs from a volume created by",
+            f"               Enterprise, check {RUNBOOK} before switching editions.",
+        ]
+
+    if volume or previous:
+        why = (f"the existing {CONTAINER} container ran {previous}"
+               if _edition(previous) == "enterprise"
+               else f"the data volume {DATA_VOLUME} already exists")
         return False, out + [
             "",
             "REFUSING TO START: cannot prove this volume is Community-compatible.",
-            f"  Neo4j is not answering, and the existing {CONTAINER} container ran",
-            f"  {previous} - so the volume was almost certainly created by Enterprise",
-            "  and is in `block` format, which Community cannot open.",
-            "  Start Enterprise once and re-run this check, or follow",
-            f"  {RUNBOOK}. Do not just switch the tag.",
+            f"  Neo4j is not answering and {why}.",
+            "  A volume this project has already used was most likely created by",
+            "  Enterprise, which means `block` format - and Community cannot open it.",
+            "  `docker compose down` deletes the container but KEEPS the volume, so a",
+            "  missing container is not evidence that the data is gone.",
+            "  Start Enterprise once and re-run this check to read the real format,",
+            f"  or follow {RUNBOOK}. Do not just switch the tag.",
         ]
 
-    if store:
-        return True, out + ["  verdict    : OK (aligned volume, Community can open it)"]
-    if not volume and not previous:
-        return True, out + ["  verdict    : OK (fresh install, no volume yet)"]
-    return True, out + ["  verdict    : OK (no evidence of an Enterprise volume)"]
+    return True, out + ["  verdict    : OK (fresh install: no volume, no container)"]
 
 
 def main() -> int:

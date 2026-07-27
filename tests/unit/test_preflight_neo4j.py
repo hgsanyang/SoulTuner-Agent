@@ -19,6 +19,7 @@ def env(monkeypatch):
     monkeypatch.setattr(pf, "_store_format_via_http", lambda env: "")
     monkeypatch.setattr(pf, "_previous_container_image", lambda: "")
     monkeypatch.setattr(pf, "_volume_exists", lambda: False)
+    monkeypatch.setattr(pf, "_docker_available", lambda: True)
     monkeypatch.delenv("NEO4J_IMAGE", raising=False)
     monkeypatch.delenv("NEO4J_ACCEPT_LICENSE_AGREEMENT", raising=False)
     return monkeypatch
@@ -53,13 +54,44 @@ def test_community_is_refused_when_the_format_cannot_be_proven(env):
     assert "cannot prove" in "\n".join(lines)
 
 
+def test_orphaned_volume_after_compose_down_is_refused(env):
+    """The fail-open Codex found. `docker compose down` deletes the container but
+    KEEPS the named volume (only `down -v` removes it), so the state is: Neo4j
+    unreachable, NO container, volume still full of block-format data. The old
+    code read "no container" as "no evidence of Enterprise" and let Community
+    through — into a startup crash. A volume we cannot read must stop us."""
+    env.setattr(pf, "_read_env", lambda p: {"NEO4J_IMAGE": "neo4j:2026.03.1-community"})
+    env.setattr(pf, "_previous_container_image", lambda: "")     # container deleted
+    env.setattr(pf, "_volume_exists", lambda: True)              # data still there
+    env.setattr(pf, "_store_format_via_http", lambda e: "")      # Neo4j is down
+    ok, lines = pf.check()
+    assert ok is False
+    body = "\n".join(lines)
+    assert "REFUSING TO START" in body
+    # the message has to explain WHY a missing container proves nothing
+    assert "KEEPS the volume" in body
+
+
 def test_fresh_install_with_no_volume_passes(env):
     """A brand-new clone has no volume and no container: Community is correct and
-    must not be blocked."""
+    must not be blocked. This is the ONLY unknown-format state that may pass."""
     env.setattr(pf, "_read_env", lambda p: {"NEO4J_IMAGE": "neo4j:2026.03.1-community"})
     ok, lines = pf.check()
     assert ok is True
     assert "fresh install" in "\n".join(lines)
+
+
+def test_docker_unavailable_is_reported_as_not_checked_not_as_clean(env):
+    """"docker says there is no volume" and "we could not ask docker" collapse to
+    the same falsy value downstream. Only the first means fresh install; the
+    second must not be reported as a clean bill of health."""
+    env.setattr(pf, "_read_env", lambda p: {"NEO4J_IMAGE": "neo4j:2026.03.1-community"})
+    env.setattr(pf, "_docker_available", lambda: False)
+    ok, lines = pf.check()
+    body = "\n".join(lines)
+    assert "NOT CHECKED" in body
+    assert "fresh install" not in body
+    assert ok is True      # no docker means no `compose up` to protect
 
 
 def test_enterprise_without_a_licence_choice_is_refused(env):
