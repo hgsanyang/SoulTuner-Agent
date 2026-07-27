@@ -64,7 +64,7 @@ export default function WelcomeScreen({
   title = '听懂你的每一刻情绪',
   description = '用一段自然语言描述此刻的心境或场景，即刻生成专属的沉浸式歌单。',
   badgeLabel = 'SoulTuner 引擎已就绪',
-  subtitle = '探索未知的音乐旅程',
+  subtitle = '说一句话，交给它去找歌',
   onPromptClick,
 }: WelcomeScreenProps) {
   const greeting = getGreeting();

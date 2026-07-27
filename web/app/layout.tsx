@@ -5,7 +5,7 @@ import Providers from '@/components/Providers';
 
 export const metadata: Metadata = {
   title: 'Deep Search · 音乐体验工作台',
-  description: '用自然语言规划歌单、检索声音、串联旅程的音乐平台',
+  description: '用自然语言做音乐推荐和歌单生成',
 };
 
 export default function RootLayout({

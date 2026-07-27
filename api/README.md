@@ -31,7 +31,6 @@ python scripts/dev/startup_all.py
 | `/api/user-profile` | GET/POST | 用户画像读写 |
 | `/api/memory/profile` | GET | 可编辑记忆画像与启用的旁路后端 |
 | `/api/memory/preference` | POST/DELETE | 追加或删除一条结构化学习偏好 |
-| `/api/music-journey/stream` | POST | 音乐旅程 SSE |
 | `/api/user-event` | POST | 长期口味事件（like/save/skip/dislike…）——唯一入口 |
 | `/api/song-feedback` | POST | 逐首**语境**反馈（这首适合此刻吗） |
 | `/api/slate-feedback` | POST | 整组反馈 + 最符合/最不符合归因 |

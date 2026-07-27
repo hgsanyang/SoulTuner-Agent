@@ -1,30 +1,3 @@
-export interface JourneySegment {
-    segment_id: number;
-    mood: string;
-    description?: string;
-    duration?: number;
-    start_time?: number;
-    total_songs?: number;
-    songs?: any[];
-}
-
-export interface JourneyRequest {
-    story?: string;
-    mood_transitions?: { time: number; mood: string; intensity: number }[];
-    duration?: number;
-    user_preferences?: Record<string, any>;
-    context?: Record<string, any>;
-    llm_provider?: string;  // 已弃用：模型提供商统一由后端 settings 管理
-}
-
-export type MoodTransitionInput = { time: number; mood: string; intensity: number };
-
-export interface MusicCardResponse {
-    headline?: string;
-    subline?: string;
-    hashtags?: string[];
-}
-
 export interface RefinementOption {
     label: string;
     prompt: string;
@@ -34,9 +7,7 @@ export interface RefinementOption {
 
 export interface SSEEvent {
     type: 'start' | 'thinking' | 'response' | 'recommendations_start' | 'song'
-        | 'recommendations_complete' | 'clarification_required' | 'complete' | 'refinement' | 'error'
-        | 'journey_start' | 'journey_info' | 'journey_complete'
-        | 'segment_start' | 'segment_complete' | 'transition_point';
+        | 'recommendations_complete' | 'clarification_required' | 'complete' | 'refinement' | 'error';
     message?: string;
     text?: string;
     is_complete?: boolean;
@@ -44,18 +15,6 @@ export interface SSEEvent {
     index?: number;
     total?: number;
     error?: string;
-    // Journey-specific fields
-    segment?: JourneySegment;
-    segment_id?: number;
-    to_segment?: number;
-    total_segments?: number;
-    total_duration?: number;
-    total_songs?: number;
-    result?: {
-        segments?: JourneySegment[];
-        total_duration?: number;
-        total_songs?: number;
-    };
     exposure_id?: string;
     dialog_state?: Record<string, any>;
     dialog_delta?: Record<string, any>;
@@ -481,51 +440,6 @@ export async function acquireSong(song: {
     return resp.json();
 }
 
-// ---- Journey 流式接口 ----
-export function streamJourney(
-    params: JourneyRequest,
-    onEvent: (event: SSEEvent) => void,
-): () => void {
-    const controller = new AbortController();
-    const run = async () => {
-        try {
-            // 读取和推荐页同步的持久化模型选择
-            const provider = (typeof window !== 'undefined'
-                ? localStorage.getItem('music_selected_provider')
-                : null) || 'dashscope';
-            const resp = await fetch('http://localhost:8501/api/journey/stream', {
-                method: 'POST',
-                headers: { 'Accept': 'text/event-stream', 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...params, llm_provider: params.llm_provider || provider }),
-                signal: controller.signal,
-            });
-            if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
-            if (!resp.body) throw new Error('No body');
-            const reader = resp.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const dataStr = line.slice(6);
-                        if (dataStr === '[DONE]') { onEvent({ type: 'complete' }); continue; }
-                        try { onEvent(JSON.parse(dataStr)); } catch { /* skip */ }
-                    }
-                }
-            }
-        } catch (err: any) {
-            if (err.name !== 'AbortError') onEvent({ type: 'error', error: err.message });
-        }
-    };
-    run();
-    return () => controller.abort();
-}
-
 // ---- 搜索歌曲 ----
 export async function searchMusic(query: string, genre?: string): Promise<any> {
     const resp = await fetch('http://localhost:8501/api/search', {
@@ -535,21 +449,6 @@ export async function searchMusic(query: string, genre?: string): Promise<any> {
     });
     if (!resp.ok) throw new Error(`搜索失败: ${resp.status}`);
     return resp.json();
-}
-
-// ---- 生成音乐分享卡片 ----
-export async function generateMusicCard(params: {
-    title: string;
-    artist: string;
-    mood?: string;
-    segmentLabel?: string;
-}): Promise<MusicCardResponse> {
-    // 简单的客户端生成（无额外后端端点）
-    return {
-        headline: `${params.mood || '旋律'} · ${params.title}`,
-        subline: `${params.artist} — ${params.segmentLabel || '推荐'}`,
-        hashtags: ['#音乐旅程', `#${params.mood || '推荐'}`, `#${params.artist}`],
-    };
 }
 
 // ==================================================================

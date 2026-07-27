@@ -144,17 +144,6 @@ const navGroups: NavGroup[] = [
           </svg>
         ),
       },
-      {
-        href: '/journey',
-        label: '音乐旅程',
-        description: '听歌轨迹生成',
-        icon: (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M3 17l6-6 4 4 8-8" />
-            <path d="M14 7h7v7" />
-          </svg>
-        ),
-      },
     ],
   },
 ];

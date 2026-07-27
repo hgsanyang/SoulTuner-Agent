@@ -34,8 +34,7 @@ web/
 │   ├── Navigation/         # 侧边栏导航
 │   ├── Player/             # 全局音频播放器
 │   ├── Settings/           # ⚙️ 运行时设置面板
-│   ├── Profile/            # 👤 用户画像面板
-│   └── MusicJourney/       # 🗺️ 音乐旅程组件
+│   └── Profile/            # 👤 用户画像面板
 ├── lib/                    # API 客户端与工具函数
 ├── public/                 # 静态资源
 ├── next.config.js          # Next.js 配置（API 代理等）
