@@ -26,7 +26,6 @@ from pydantic import BaseModel
 from config.logging_config import get_logger, safe_query
 from agent.music_agent import MusicRecommendationAgent
 from api.security import (
-    check_api_request_auth,
     reject_shared_safe_action,
     require_admin_api_key,
     safe_resolve_child,
@@ -37,25 +36,6 @@ from api.security import (
 logger = get_logger(__name__)
 
 app = FastAPI(title="Music Recommendation API", version="1.0.0")
-
-
-@app.middleware("http")
-async def _api_auth_gate(request, call_next):
-    """Blanket auth for /api/* when a key is configured (LAN / shared mode).
-
-    Per-endpoint require_admin_api_key deps still guard the destructive routes as
-    defence in depth, but this gate is what makes coverage total: no /api/ route —
-    including any added later — can be reached without the key when auth is on.
-    Local single-user installs configure no key and pass straight through.
-    """
-    from fastapi.responses import JSONResponse
-
-    verdict = check_api_request_auth(request.url.path, request.method,
-                                     request.headers.get("X-API-Key"))
-    if verdict is not None:
-        code, detail = verdict
-        return JSONResponse(status_code=code, content={"detail": detail})
-    return await call_next(request)
 
 # 注册用户画像路由
 from api.user_profile import router as user_profile_router
@@ -1515,10 +1495,9 @@ async def delete_memory_record(
 ):
     """Tombstone one auditable memory record without rewriting its history.
 
-    Needs the admin key like every other delete. It used to have no dependency and
-    was only covered incidentally by the blanket /api/* gate — so splitting
-    ADMIN_API_KEY from API_ACCESS_KEY (an admin key alone must not 401 the whole
-    UI) silently re-opened it. A destructive route must carry its own gate.
+    Needs the admin key like every other delete. There is no blanket gate to fall
+    back on, so a destructive route must carry its own dependency —
+    test_every_destructive_route_carries_an_admin_dependency enforces it.
     """
     reject_shared_safe_action("delete memory record")
     try:

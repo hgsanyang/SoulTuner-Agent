@@ -36,13 +36,11 @@ def test_reject_shared_safe_action_allows_local_mode(monkeypatch):
     reject_shared_safe_action("delete song")
 
 
-def test_state_changing_endpoints_require_admin_when_auth_on(monkeypatch):
-    """When API_KEY_REQUIRED is on, settings/memory writes must reject a keyless
-    caller. These endpoints used to have no gate at all — a LAN peer could rewrite
-    settings or delete memory."""
+def test_state_changing_endpoints_require_admin_when_key_is_set(monkeypatch):
+    """Setting ADMIN_API_KEY must actually gate the settings/memory writes.
+    These endpoints used to have no gate at all."""
     # admin_key_required() reads the settings singleton, so patch that (env is
     # only read at load time).
-    monkeypatch.setattr(settings, "api_key_required", True)
     monkeypatch.setattr(settings, "admin_api_key", "secret-key")
     from fastapi.testclient import TestClient
 
@@ -71,92 +69,32 @@ def test_state_changing_endpoints_require_admin_when_auth_on(monkeypatch):
     assert ok.status_code not in (401, 403), f"valid key rejected: {ok.status_code}"
 
 
-def test_blanket_gate_covers_routes_with_no_explicit_dependency(monkeypatch):
-    """The gap Codex found: state-changing routes with NO require_admin dep
-    (profile edit, memory-record delete) were reachable in LAN mode. The blanket
-    /api/* middleware must catch them, and reads too, while /health stays open."""
-    monkeypatch.setattr(settings, "api_key_required", True)
-    monkeypatch.setattr(settings, "admin_api_key", "secret-key")
-    from fastapi.testclient import TestClient
-
-    from api.server import app
-
-    client = TestClient(app)
-    # routes that carry no explicit auth dependency:
-    for method, url in [
-        ("post", "/api/user-profile"),
-        ("delete", "/api/memory/record/abc"),
-        ("post", "/api/recommendations"),        # a read-ish POST, still /api/*
-        ("get", "/api/library/songs"),           # a plain GET is gated too
-    ]:
-        resp = getattr(client, method)(url)
-        assert resp.status_code in (401, 403), f"{method} {url} bypassed the gate: {resp.status_code}"
-    # liveness must remain open (docker healthcheck, no key)
-    assert client.get("/health").status_code == 200
-
-
-def test_api_request_needs_key_prefix_rule():
-    from api.security import api_request_needs_key
-
-    assert api_request_needs_key("/api/settings", "POST") is True
-    assert api_request_needs_key("/api/library/songs", "GET") is True
-    assert api_request_needs_key("/api/settings", "OPTIONS") is False   # CORS preflight
-    assert api_request_needs_key("/health", "GET") is False
-    assert api_request_needs_key("/audio/x.mp3", "GET") is False        # static, not /api/
-
-
 def test_admin_key_alone_does_not_lock_the_whole_ui(monkeypatch):
     """Codex R3.5: setting ADMIN_API_KEY must gate destructive ops but must NOT
     401 the recommend/library/feedback pages — the browser sends no key, and
     locking everything the moment you protect a delete button breaks the app."""
     import api.security as sec
 
-    # admin key set, but NO access key and NO API_KEY_REQUIRED
     monkeypatch.setattr(settings, "admin_api_key", "admin-secret")
-    monkeypatch.setattr(settings, "api_access_key", "")
-    monkeypatch.setattr(settings, "api_key_required", False)
-    monkeypatch.delenv("API_ACCESS_KEY", raising=False)
-    monkeypatch.delenv("API_KEY_REQUIRED", raising=False)
-
-    # blanket gate is OFF: normal UI routes are not blocked by the middleware
-    assert sec.access_control_required() is False
-    assert sec.check_api_request_auth("/api/library/songs", "GET", None) is None
-    assert sec.check_api_request_auth("/api/recommendations", "POST", None) is None
-    # but destructive ops still require the admin key (their own dependency)
-    assert sec.admin_key_required() is True
-
-
-def test_access_key_gates_all_api_when_set(monkeypatch):
-    """With API_ACCESS_KEY configured, every /api/* needs it (LAN mode)."""
-    import api.security as sec
-
-    monkeypatch.setattr(settings, "api_access_key", "lan-key")
-    monkeypatch.setattr(settings, "admin_api_key", "")
-    monkeypatch.setattr(settings, "api_key_required", False)
-    monkeypatch.setenv("API_ACCESS_KEY", "lan-key")
-
-    assert sec.access_control_required() is True
-    assert sec.check_api_request_auth("/api/library/songs", "GET", None) is not None
-    assert sec.check_api_request_auth("/api/library/songs", "GET", "lan-key") is None
-    assert sec.check_api_request_auth("/health", "GET", None) is None  # liveness open
-
-
-def test_delete_memory_record_requires_admin_key_without_the_blanket_gate(monkeypatch):
-    """Codex R4.3: this DELETE had no dependency of its own and was only covered
-    incidentally by the blanket /api/* gate. Splitting ADMIN_API_KEY from
-    API_ACCESS_KEY turns that gate off for admin-key-only installs — which
-    silently re-opened the route. Hit the REAL endpoint with the blanket gate
-    off and only an admin key set."""
-    import api.security as sec
-
-    monkeypatch.setattr(settings, "admin_api_key", "admin-secret")
-    monkeypatch.setattr(settings, "api_access_key", "")
-    monkeypatch.setattr(settings, "api_key_required", False)
     monkeypatch.setattr(settings, "public_demo_mode", False)
-    monkeypatch.delenv("API_ACCESS_KEY", raising=False)
-    monkeypatch.delenv("API_KEY_REQUIRED", raising=False)
-    # precondition: the blanket middleware is NOT what protects it here
-    assert sec.access_control_required() is False
+    assert sec.admin_key_required() is True      # destructive ops ARE gated
+
+    from fastapi.testclient import TestClient
+
+    from api.server import app
+
+    client = TestClient(app)
+    # ...but the pages the browser actually loads must not 401
+    for method, url in [("get", "/api/library/songs"), ("get", "/api/user-profile")]:
+        resp = getattr(client, method)(url)
+        assert resp.status_code not in (401, 403), f"{method} {url} locked the UI"
+
+
+def test_delete_memory_record_requires_the_admin_key(monkeypatch):
+    """This DELETE had no dependency of its own for a while, and nothing else
+    covers it — hit the REAL endpoint with only an admin key set."""
+    monkeypatch.setattr(settings, "admin_api_key", "admin-secret")
+    monkeypatch.setattr(settings, "public_demo_mode", False)
 
     from fastapi.testclient import TestClient
 
@@ -174,10 +112,7 @@ def test_delete_memory_record_passes_the_gate_with_a_valid_key(monkeypatch):
     """The gate must not be a brick wall: a valid admin key still reaches the
     handler. The gateway is stubbed so no real memory record is touched."""
     monkeypatch.setattr(settings, "admin_api_key", "admin-secret")
-    monkeypatch.setattr(settings, "api_access_key", "")
-    monkeypatch.setattr(settings, "api_key_required", False)
     monkeypatch.setattr(settings, "public_demo_mode", False)
-    monkeypatch.delenv("API_ACCESS_KEY", raising=False)
 
     import services.memory_gateway as mg
 
@@ -201,22 +136,42 @@ def test_delete_memory_record_passes_the_gate_with_a_valid_key(monkeypatch):
     assert stub.deleted == [("local_admin", "rec-1")]
 
 
-def test_every_delete_route_carries_an_admin_dependency():
-    """The class of bug, not just the one instance: a destructive route must not
-    depend on the blanket gate being on. Any new DELETE without the dependency
-    fails here rather than in someone's LAN."""
+# Destructive routes that are not DELETEs, as (method, path). Method matters:
+# GET /api/settings reads the config and must stay open; POST /api/settings
+# rewrites it and must not.
+_DESTRUCTIVE_NON_DELETE = {
+    ("POST", "/api/settings"),
+    ("POST", "/api/settings/reset"),
+    ("POST", "/api/memory/preference"),
+    ("POST", "/api/memory/consolidate"),
+    ("POST", "/api/ranking-policy/promote"),
+    ("POST", "/api/ranking-policy/rollback"),
+    ("PATCH", "/api/library-songs/tags"),
+}
+
+
+def test_every_destructive_route_carries_an_admin_dependency():
+    """The whole guarantee now rests here. There is no blanket /api/* gate: it
+    could not be used (the browser has no way to send a key), so per-route
+    dependencies are the only protection. Every DELETE, plus the destructive
+    non-DELETEs above, must carry one — a new route that forgets fails here
+    rather than on someone's machine."""
     from api.server import app
 
     ungated = []
     for route in app.routes:
         methods = getattr(route, "methods", set()) or set()
-        if "DELETE" not in methods:
+        path = getattr(route, "path", "")
+        destructive = "DELETE" in methods or any(
+            (m, path) in _DESTRUCTIVE_NON_DELETE for m in methods
+        )
+        if not destructive:
             continue
         deps = getattr(getattr(route, "dependant", None), "dependencies", []) or []
         names = {getattr(d.call, "__name__", "") for d in deps}
         if "require_admin_api_key" not in names:
-            ungated.append(route.path)
-    assert not ungated, f"DELETE routes with no admin gate: {ungated}"
+            ungated.append(f"{sorted(methods)} {path}")
+    assert not ungated, f"destructive routes with no admin gate: {ungated}"
 
 
 def test_safe_query_redacts_by_default(monkeypatch):

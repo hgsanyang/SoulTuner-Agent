@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Music recommendation and playlist generation from plain language</strong>
+  <strong>Music recommendation from plain language</strong>
 </p>
 
 <p align="center">
@@ -27,12 +27,12 @@
 
 ## 🎯 What it is
 
-SoulTuner is a music recommendation agent. Describe what you want to hear in one ordinary sentence; it works out what you meant, then recommends songs and builds the playlist.
+SoulTuner is a music recommendation agent. Describe what you want to hear in one ordinary sentence; it works out what you meant and finds the songs.
 
 - 🗣️ **Just say it** — "I'm feeling really down today, I just want some quiet time alone." No need to pick genres or keywords first.
-- 🧠 **Builds a profile from your feedback** — every like, save, skip and conversation updates a structured taste profile that softly nudges future ranking.
-- 🌐 **Goes online when your library falls short** — a supplement lane finds songs backed by charts, community consensus or curated playlists (one switch turns it off).
-- ♻️ **Discover → preview → ingest** — good songs land in a staging area first; confirm and they are ingested with automatic acoustic analysis.
+- 🧠 **Gets to know you** — every like, save, skip and conversation updates your taste profile, which shapes later ranking.
+- 🌐 **Goes online when your library falls short** — finds songs backed by charts or community consensus (one switch turns it off).
+- ♻️ **Discover → preview → ingest** — good songs land in a staging area first; confirm to add them to your library.
 
 > 📖 Full feature and interaction details: [Feature_Walkthrough.md](Feature_Walkthrough.md)
 
@@ -85,7 +85,7 @@ Then start it and open `http://localhost:3003`:
 .\soultuner.ps1 up gpu
 ```
 
-Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu` — the online experience is complete, it just does not start the ingestion worker.
+Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu`.
 
 To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / VLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
 
@@ -143,10 +143,10 @@ your sentence
 | Backend | FastAPI + SSE streaming |
 | Agent | LangGraph StateGraph |
 | Graph database | Neo4j 5.x (relations + native vector index) |
-| Text-to-music | MuQ-MuLan primary, M2D-CLAP fallback, OMAR-RQ acoustic auxiliary |
+| Text-to-music | MuQ-MuLan (M2D-CLAP fallback) |
 | LLM | `dashscope / qwen3.7-plus` by default, provider swappable |
-| Long-term memory | MemoryGateway: local SQLite ledger + Neo4j hot path, BGE for relevance |
-| Ranking | RRF fusion → coarse rank → exploration slot → dual-anchor rerank → MMR |
+| Long-term memory | Local SQLite ledger + Neo4j hot path |
+| Ranking | Multi-source fusion → rerank → diversity |
 | Deployment | Docker Compose (CPU / GPU entrypoints) |
 
 > 📖 How to run the recommendation-quality and alignment evaluations: [tests/eval/README.md](tests/eval/README.md)
@@ -178,11 +178,11 @@ tests/       unit tests + outcome-oriented evaluation
 | `NEO4J_PASSWORD` | Local Neo4j password |
 | `MUSIC_DATA_PATH` | Where audio, caches, the ingest queue and feedback logs live |
 | `MUSIC_WEB_SEARCH_ENABLED` | Whether web supplementation is allowed |
-| `ADMIN_API_KEY` | Optional. Set it and the destructive endpoints (delete, settings, rebuild) require it |
+| `ADMIN_API_KEY` | Optional. Set it and delete / settings / rebuild require the key |
 
 See `.env.example` for the advanced options; normal use needs none of them.
 
-It listens on `127.0.0.1` only. Leave it that way and reach the machine over a VPN or SSH tunnel if you need it remotely.
+It listens on `127.0.0.1` only. For remote access use a VPN or SSH tunnel.
 
 ---
 

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>用自然语言做音乐推荐和歌单生成</strong>
+  <strong>用自然语言做音乐推荐</strong>
 </p>
 
 <p align="center">
@@ -27,12 +27,12 @@
 
 ## 🎯 这是什么
 
-SoulTuner 是一个音乐推荐智能体。你用一句人话描述想听什么，它负责听懂，然后给你推荐和歌单。
+SoulTuner 是一个音乐推荐智能体。你用一句人话描述想听什么，它负责听懂，然后给你歌。
 
 - 🗣️ **说人话就行** — "今天心情特别差，想一个人静一静"，不需要你先想好流派和关键词
-- 🧠 **反馈会沉淀成画像** — 点赞、收藏、跳过和每次对话都会更新你的结构化偏好画像，对之后的排序做**轻推**
-- 🌐 **库里没有就去网上找** — 联网补充路线找有榜单/口碑/歌单支撑的歌（可一键关闭）
-- ♻️ **发现→试听→入库** — 遇到好歌先下载到暂存区试听，确认后一键入库并自动做声学分析
+- 🧠 **越用越懂你** — 点赞、收藏、跳过和每次对话都会更新你的偏好画像，影响之后的排序
+- 🌐 **库里没有就去网上找** — 找有榜单或口碑支撑的歌（可一键关闭）
+- ♻️ **发现→试听→入库** — 遇到好歌先进暂存区试听，确认后再入库
 
 > 📖 完整功能与交互细节见 [Feature_Walkthrough.md](Feature_Walkthrough.md)
 
@@ -85,7 +85,7 @@ MUSIC_DATA_PATH=../data
 .\soultuner.ps1 up gpu
 ```
 
-没有 NVIDIA 显卡就用 `.\soultuner.ps1 up cpu`（在线体验功能完整，只是不启动入库 Worker）。
+没有 NVIDIA 显卡就用 `.\soultuner.ps1 up cpu`。
 
 想换模型厂商（SiliconFlow / Google / 火山 / 本地 SGLang、VLLM、Ollama），改 `MAIN_LLM_PROVIDER` 和 `MODEL_NAME` 并填对应 Key 即可，也可以启动后在前端「系统设置」里改。
 
@@ -143,10 +143,10 @@ MUSIC_DATA_PATH=../data
 | 后端 | FastAPI + SSE 流式推送 |
 | Agent | LangGraph StateGraph |
 | 图数据库 | Neo4j 5.x（图谱关系 + 原生向量索引） |
-| 文搜音 | MuQ-MuLan 主锚，M2D-CLAP 回退，OMAR-RQ 声学辅助 |
+| 文搜音 | MuQ-MuLan（M2D-CLAP 回退） |
 | 大语言模型 | 默认 `dashscope / qwen3.7-plus`，可换 provider |
-| 长期记忆 | MemoryGateway：本地 SQLite 账本 + Neo4j 热路径，BGE 判相关性 |
-| 排序 | RRF 融合 → 粗排 → 探索槽 → 内容双锚精排 → MMR 多样性 |
+| 长期记忆 | 本地 SQLite 账本 + Neo4j 热路径 |
+| 排序 | 多路召回融合 → 精排 → 多样性 |
 | 部署 | Docker Compose（CPU / GPU 两种入口） |
 
 > 📖 推荐质量与对齐评测怎么跑，见 [tests/eval/README.md](tests/eval/README.md)
@@ -182,7 +182,7 @@ tests/       单元测试 + 结果导向评测
 
 更多高级选项见 `.env.example`，普通使用不需要动。
 
-服务默认只监听 `127.0.0.1`，保持这样就好；要远程访问走 VPN 或 SSH 隧道。
+服务只监听 `127.0.0.1`。要远程访问走 VPN 或 SSH 隧道。
 
 ---
 

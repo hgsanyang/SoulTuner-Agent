@@ -519,18 +519,6 @@ class GlobalSettings(BaseSettings):
         validation_alias="ADMIN_API_KEY",
         description="后台管理接口 X-API-Key；公开部署或配置后会保护删除等操作",
     )
-    api_key_required: bool = Field(
-        default=False,
-        validation_alias="API_KEY_REQUIRED",
-        description="是否强制后台管理接口必须携带 X-API-Key",
-    )
-    api_access_key: str = Field(
-        default="",
-        validation_alias="API_ACCESS_KEY",
-        description="可选的普通访问密钥：设置后所有 /api/* 都需携带；与 admin_api_key 分开，"
-        "仅设 admin_api_key 不会锁住整个 UI。⚠ 仅供 API 客户端（脚本/curl）："
-        "前端还没有登录/会话流程，开启后 Web UI 会全量 401",
-    )
 
     # ================================================================
     # 8. 网络请求超时（秒）
