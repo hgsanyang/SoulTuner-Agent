@@ -26,7 +26,6 @@ from pydantic import BaseModel
 from config.logging_config import get_logger, safe_query
 from agent.music_agent import MusicRecommendationAgent
 from api.security import (
-    check_api_request_auth,
     reject_shared_safe_action,
     require_admin_api_key,
     safe_resolve_child,
@@ -37,25 +36,6 @@ from api.security import (
 logger = get_logger(__name__)
 
 app = FastAPI(title="Music Recommendation API", version="1.0.0")
-
-
-@app.middleware("http")
-async def _api_auth_gate(request, call_next):
-    """Blanket auth for /api/* when a key is configured (LAN / shared mode).
-
-    Per-endpoint require_admin_api_key deps still guard the destructive routes as
-    defence in depth, but this gate is what makes coverage total: no /api/ route —
-    including any added later — can be reached without the key when auth is on.
-    Local single-user installs configure no key and pass straight through.
-    """
-    from fastapi.responses import JSONResponse
-
-    verdict = check_api_request_auth(request.url.path, request.method,
-                                     request.headers.get("X-API-Key"))
-    if verdict is not None:
-        code, detail = verdict
-        return JSONResponse(status_code=code, content={"detail": detail})
-    return await call_next(request)
 
 # 注册用户画像路由
 from api.user_profile import router as user_profile_router
@@ -334,15 +314,6 @@ class PlaylistRequest(BaseModel):
     user_preferences: Optional[Dict[str, Any]] = None
 
 
-class JourneyRequest(BaseModel):
-    story: Optional[str] = None
-    mood_transitions: Optional[List[Dict[str, Any]]] = None  # [{time, mood, intensity}]
-    duration: int = 60  # 总时长(分钟)
-    user_preferences: Optional[Dict[str, Any]] = None
-    context: Optional[Dict[str, Any]] = None  # 天气、地点、时间等
-    llm_provider: str = "dashscope"  # 模型提供商，和推荐页保持一致
-
-
 class SearchRequest(BaseModel):
     """歌曲搜索请求"""
     query: str
@@ -592,43 +563,6 @@ async def stream_playlist(
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
 
 
-async def stream_journey(
-    story: Optional[str] = None,
-    mood_transitions: Optional[List[Dict[str, Any]]] = None,
-    duration: int = 60,
-    user_preferences: Optional[Dict[str, Any]] = None,
-    context: Optional[Dict[str, Any]] = None
-) -> AsyncGenerator[str, None]:
-    """
-    流式生成音乐旅程 - 委托给 music_journey.stream_journey_events()
-    """
-    try:
-        logger.info(f"[Journey SSE] ✅ 开始处理旅程: story={story!r}, "
-                    f"mood_transitions={mood_transitions}, duration={duration}")
-        yield f"data: {json.dumps({'type': 'journey_start', 'message': '正在连接旅程引擎...'}, ensure_ascii=False)}\n\n"
-
-        from retrieval.music_journey import stream_journey_events
-        logger.info("[Journey SSE] ✅ music_journey 模块导入成功")
-
-        event_count = 0
-        async for event in stream_journey_events(
-            story=story,
-            mood_transitions=mood_transitions,
-            duration=duration,
-            context=context,
-        ):
-            event_count += 1
-            logger.info(f"[Journey SSE] 事件 #{event_count}: type={event.get('type')}")
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0.05)
-
-        logger.info(f"[Journey SSE] ✅ 旅程生成完成,共 {event_count} 个事件")
-
-    except Exception as e:
-        logger.error(f"[Journey SSE] ❌ 流式旅程生成失败: {str(e)}", exc_info=True)
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
-
-
 @app.get("/")
 async def root():
     """健康检查"""
@@ -744,60 +678,6 @@ async def generate_playlist(request: PlaylistRequest):
         return {"success": result.get("success", False), **result}
     except Exception as e:
         logger.error(f"生成歌单失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/journey/stream")
-async def stream_journey_endpoint(request: JourneyRequest):
-    """
-    流式生成音乐旅程(SSE)
-    """
-    import datetime
-    print(f"\n🔥🔥🔥 [Journey Endpoint] CALLED at {datetime.datetime.now()} "
-          f"story={request.story!r} duration={request.duration}\n", flush=True)
-
-    # 根据前端传入的 provider 切换 LLM（与推荐页保持一致）
-    try:
-        from llms.multi_llm import get_chat_model
-        from agent.music_graph import set_llm
-        new_llm = get_chat_model(provider=request.llm_provider)
-        set_llm(new_llm)
-        logger.info(f"[Journey] 切换 LLM provider 到 {request.llm_provider}")
-    except Exception as _e:
-        logger.warning(f"[Journey] 切换 LLM 失败，使用默认: {_e}")
-
-    return StreamingResponse(
-        stream_journey(
-            story=request.story,
-            mood_transitions=request.mood_transitions,
-            duration=request.duration,
-            user_preferences=request.user_preferences,
-            context=request.context
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
-
-
-@app.post("/api/journey")
-async def generate_journey(request: JourneyRequest):
-    """
-    生成音乐旅程(简化版,使用推荐引擎)
-    """
-    try:
-        agent = get_agent()
-        query = request.story or "生成一段音乐旅程"
-        result = await agent.get_recommendations(
-            query=query,
-            user_preferences=request.user_preferences or {}
-        )
-        return result
-    except Exception as e:
-        logger.error(f"生成旅程失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1615,10 +1495,9 @@ async def delete_memory_record(
 ):
     """Tombstone one auditable memory record without rewriting its history.
 
-    Needs the admin key like every other delete. It used to have no dependency and
-    was only covered incidentally by the blanket /api/* gate — so splitting
-    ADMIN_API_KEY from API_ACCESS_KEY (an admin key alone must not 401 the whole
-    UI) silently re-opened it. A destructive route must carry its own gate.
+    Needs the admin key like every other delete. There is no blanket gate to fall
+    back on, so a destructive route must carry its own dependency —
+    test_every_destructive_route_carries_an_admin_dependency enforces it.
     """
     reject_shared_safe_action("delete memory record")
     try:

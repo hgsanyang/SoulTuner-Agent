@@ -10,7 +10,6 @@ Pydantic 契约。这一层是"约好的话怎么说"——跨模块传的数据
 | `planner_decision_v3.py` | V3 契约（**RC，尚未冻结**）：把"用户要什么"和"该调哪条检索路"拆开 |
 | `tool_plan.py` | ToolPlan — 决策编译成的可执行调用计划 |
 | `dialog_state.py` | 多轮对话状态与偏好继承 |
-| `journey_plan.py` | `MusicJourneyPlan` — 音乐旅程规划 |
 | `refinement.py` | 出歌之后由 LLM 生成的微调建议 chips |
 | `feedback_events.py` | 反馈与曝光事件契约（口味 / 语境双通道、曝光记账、收听上下文） |
 | `agent_context.py` | 组装给 Agent 的上下文与习惯卡（**已设计、尚未接入运行链路**） |

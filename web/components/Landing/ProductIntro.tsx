@@ -100,7 +100,7 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
         >
           听懂你的每一刻情绪
           <br />
-          <span style={{ color: theme.colors.primary.accent }}>探索未知的音乐旅程</span>
+          <span style={{ color: theme.colors.primary.accent }}>说一句话，交给它去找歌</span>
         </h1>
 
         <p

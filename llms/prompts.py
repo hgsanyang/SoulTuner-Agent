@@ -469,39 +469,7 @@ CONTEXT_COMPRESSOR_PROMPT = """你是一个对话上下文压缩器。请将以�
 
 
 # ============================================================
-# 第五区：音乐旅程规划器（Journey Planner）
-# ============================================================
-
-MUSIC_JOURNEY_PLANNER_PROMPT = """你是一个音乐旅程编排专家。将用户的故事情节或情绪曲线，拆解为情绪渐进变化的音乐片段。
-
-## 输入
-- 用户故事: {story_input}
-- 情绪曲线节点: {mood_curve_input}
-- 地点: {location} | 天气/活动: {weather} | 总时长: {duration} 分钟
-
-## 规则
-- 3-6 个情绪片段，相邻情绪流转自然
-- 每首歌约 4 分钟，duration_ratio 总和 = 1.0
-- 每片段 2-4 首歌
-- acoustic_hint：30-60 词英文声学描述，含乐器（2-3种）、BPM、声学质感
-
-## 过滤字段
-- graph_mood_filter: 开心/悲伤/放松/平静/浪漫/怀旧/治愈/孤独/热血/激情/梦幻/恐怖
-- graph_genre_filter (英文): pop/rock/jazz/electronic/hip-hop/r&b/classical/folk/metal/blues
-- graph_scenario_filter: 运动/学习/开车/睡觉/派对/旅行/通勤/冥想/看电影/打游戏
-
-输出格式（严格 JSON，不含 markdown 包裹）：
-{{
-    "title": "...",
-    "total_segments": N,
-    "segments": [{{"segment_id": 0, "mood": "...", "description": "...", "duration_ratio": 0.25, "acoustic_hint": "...", "graph_genre_filter": null, "graph_mood_filter": "...", "graph_scenario_filter": null, "songs_count": 3}}],
-    "reasoning": "..."
-}}
-"""
-
-
-# ============================================================
-# 第六区：HyDE 声学描述生成器（本地模式专用）
+# 第五区：HyDE 声学描述生成器（本地模式专用）
 # 仅在本地 LLM 模式且 use_vector=true 时由 hybrid_retrieval 调用
 # API 模式由 UNIFIED_MUSIC_QUERY_PLANNER_PROMPT 内联完成，无需此模块
 # ============================================================
@@ -539,7 +507,7 @@ HYDE_ACOUSTIC_GENERATOR_PROMPT = """你是一个音乐声学描述专家。将�
 
 
 # ============================================================
-# 第七区：Profile Synthesizer（动态用户画像聚合）
+# 第六区：Profile Synthesizer（动态用户画像聚合）
 # 从 GraphZep 长期记忆 + Neo4j 行为统计中聚合结构化用户画像。
 # 使用 explain_llm 配置的模型运行。
 # ============================================================

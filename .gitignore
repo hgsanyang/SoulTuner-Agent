@@ -220,3 +220,6 @@ diff.txt
 
 # Phase 4: private full-text teacher episodes (never commit)
 data/teacher/private/
+
+# 从主项目移除但保留在本机的模块（音乐旅程等），不进仓库
+legacy/
