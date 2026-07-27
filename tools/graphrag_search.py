@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
-from config.logging_config import safe_query
+from config.logging_config import safe_labels, safe_query
 from config.settings import settings
 
 # 懒加载 neo4j 客户端：如果 neo4j 包未安装，允许系统降级运行（图谱检索返回空，其他检索正常工作）
@@ -721,7 +721,8 @@ def graphrag_search(query: str, limit: int = 5) -> str:
                 )
             cypher_query += f"WHERE {' OR '.join(tag_conditions)}\n"
             cypher_params_extra = {}
-            logger.info(f"GraphRAG fallback tag 匹配 (OR): {tags}")
+            # tags 是从用户查询里抽出来的，和 query 同源，不能明文入日志。
+            logger.info("GraphRAG fallback tag 匹配 (OR): %s", safe_labels(tags))
         elif not genre_aliases and not scenario_aliases and not mood_aliases and not language_normalized and not region_normalized:
             logger.warning("GraphRAG 参数全空（tags/genre/scenario/mood/language/region），避免盲捞。")
             return json.dumps([])

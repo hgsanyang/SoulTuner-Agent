@@ -1,0 +1,22 @@
+# Override: run Neo4j on the migrated `aligned` clone instead of the original
+# Enterprise `block` volume.
+#
+# Opt-in only — it applies solely when you pass it explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.neo4j-aligned.yml up -d neo4j
+#
+# Prerequisite: the volume `soultuner-neo4j-aligned` already exists and passed the
+# acceptance checks in docs/NEO4J_MIGRATION.md. `external: true` means compose
+# will NOT create it — if it is missing you get a clear error instead of a silent
+# empty database, which is exactly the failure mode we want here.
+
+services:
+  neo4j:
+    volumes:
+      - neo4j_data_aligned:/data
+      - neo4j_logs:/logs
+
+volumes:
+  neo4j_data_aligned:
+    name: soultuner-neo4j-aligned
+    external: true

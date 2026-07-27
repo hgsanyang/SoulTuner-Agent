@@ -188,9 +188,19 @@ tests/       unit tests + outcome-oriented evaluation
 | `NEO4J_PASSWORD` | Local Neo4j password |
 | `MUSIC_DATA_PATH` | Where audio, caches, the ingest queue and feedback logs live |
 | `MUSIC_WEB_SEARCH_ENABLED` | Whether web supplementation is allowed |
-| `ADMIN_API_KEY` | Protects admin endpoints on multi-user or LAN deployments |
+| `ADMIN_API_KEY` | Protects the destructive endpoints (delete, settings, rebuild) |
 
 See `.env.example` for the advanced options; normal use needs none of them.
+
+**Scope of the auth that exists.** `ADMIN_API_KEY` gates destructive endpoints
+only, on purpose — setting it must not lock the recommend/library/feedback pages,
+which the browser calls with no key. There is a second key, `API_ACCESS_KEY`,
+that gates *every* `/api/*` route, but **the Web UI cannot use it**: there is no
+login or session flow yet, and embedding the key in the frontend bundle would
+publish it to anyone who loads the page. So `API_ACCESS_KEY` is for API clients
+(scripts, curl), and **LAN exposure is not a solved problem here** — keep
+`BIND_HOST=127.0.0.1` (the default) and reach the machine over a VPN or SSH
+tunnel instead.
 
 ---
 

@@ -10,7 +10,7 @@ from typing import List
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_labels, safe_query
 
 logger = get_logger(__name__)
 
@@ -56,7 +56,9 @@ async def get_user_profile(user_id: str = "local_admin"):
                u.profile_free_text AS free_text
         """, {"user_id": user_id})
 
-        logger.info(f"[UserProfile] GET 原始查询结果: {result}")
+        # 原来这里整行打印 result —— 里面是这个人全部的流派/情绪/场景/语言偏好
+        # 加自由描述文本，等于把用户画像明文写进日志。只记录"查到没查到"。
+        logger.info("[UserProfile] GET 命中: %s", "yes" if result and result[0] else "no")
 
         if result and result[0]:
             row = result[0]
@@ -68,7 +70,9 @@ async def get_user_profile(user_id: str = "local_admin"):
                 "preferred_languages": json.loads(row.get("preferred_languages") or "[]"),
                 "free_text": row.get("free_text") or "",
             }
-            logger.info(f"[UserProfile] 解析后偏好: genres={profile['preferred_genres']}, moods={profile['preferred_moods']}")
+            logger.info("[UserProfile] 解析后偏好: genres=%s, moods=%s",
+                        safe_labels(profile["preferred_genres"]),
+                        safe_labels(profile["preferred_moods"]))
             return {
                 "success": True,
                 "profile": profile,
@@ -137,9 +141,11 @@ async def save_user_profile(request: UserProfileRequest):
         })
 
         logger.info(
-            f"[UserProfile] Neo4j 偏好已更新: "
-            f"genres={request.preferred_genres}, moods={request.preferred_moods}, "
-            f"scenarios={request.preferred_scenarios}, langs={request.preferred_languages}"
+            "[UserProfile] Neo4j 偏好已更新: genres=%s, moods=%s, scenarios=%s, langs=%s",
+            safe_labels(request.preferred_genres),
+            safe_labels(request.preferred_moods),
+            safe_labels(request.preferred_scenarios),
+            safe_labels(request.preferred_languages),
         )
 
         # ③ 生成自然语言描述 → 投递 MemoryGateway 长期记忆旁路
@@ -167,7 +173,8 @@ async def save_user_profile(request: UserProfileRequest):
                         extra={"source": "user_profile"},
                     )
                 )
-                logger.info(f"[UserProfile] 长期记忆旁路已投递: {description[:80]}...")
+                # description 是由偏好拼出来的自然语言，截断也照样泄露；按 query 脱敏。
+                logger.info("[UserProfile] 长期记忆旁路已投递: %s", safe_query(description))
             except Exception as memory_err:
                 logger.warning(f"[UserProfile] 长期记忆写入失败（不影响主流程）: {memory_err}")
 

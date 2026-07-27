@@ -14,6 +14,10 @@ import services.feedback_store as fs
 @pytest.fixture
 def feedback_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("MUSIC_FEEDBACK_DIR", str(tmp_path))
+    # The write path refuses to run while the API answers on :8501. Tests must not
+    # depend on whether this dev box happens to have the backend up, so pin it
+    # closed by default; the test that asserts the refusal re-opens it.
+    monkeypatch.setattr(mig, "_backend_is_live", lambda: False)
     fs.reset_connection()
     yield tmp_path
     fs.reset_connection()
@@ -54,6 +58,46 @@ def test_migration_fails_when_a_write_is_incomplete(feedback_dir, monkeypatch):
     rc = _run(mig)
     assert rc == 1                       # expected 5, got 1 -> must fail
     assert fs.counts()["slate_feedback"] == 1
+
+
+def test_migration_aborts_before_writing_when_a_row_has_no_id(feedback_dir, capsys):
+    """Codex R4.7: an id-less row used to be handed to the store, which minted a
+    synthetic uuid for it — so the count gate failed AFTER the store was already
+    polluted, and a re-run duplicated the row. Detect it during planning and
+    write nothing."""
+    _write(feedback_dir, "slate_feedback.jsonl",
+           [{"feedback_id": "ok-1", "rating": "fits", "ts": 1},
+            {"rating": "off", "ts": 2},                       # <- no id at all
+            {"feedback_id": "ok-2", "rating": "fits", "ts": 3}])
+    rc = _run(mig)
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "ABORTED BEFORE WRITING" in out
+    assert "record #2" in out                    # points at the offending row
+    # the decisive assertion: NOTHING was written, not even the two valid rows
+    assert fs.counts()["slate_feedback"] == 0
+
+
+def test_migration_refuses_to_write_while_the_backend_is_live(feedback_dir, monkeypatch, capsys):
+    """A live backend appends rows mid-run, so the completeness gate compares
+    against a moving target: a correct store looks broken and a torn one can look
+    fine. Dry-run stays allowed (it writes nothing)."""
+    _write(feedback_dir, "slate_feedback.jsonl",
+           [{"feedback_id": "a", "rating": "fits", "ts": 1}])
+    monkeypatch.setattr(mig, "_backend_is_live", lambda: True)
+
+    assert _run(mig) == 1
+    assert "REFUSING TO RUN" in capsys.readouterr().out
+    assert fs.counts()["slate_feedback"] == 0
+
+    # --dry-run is still allowed while the backend is up
+    import sys
+    argv = sys.argv
+    sys.argv = ["migrate", "--dry-run"]
+    try:
+        assert mig.main() == 0
+    finally:
+        sys.argv = argv
 
 
 def test_migration_output_is_ascii_only():

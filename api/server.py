@@ -1608,8 +1608,18 @@ async def consolidate_memory(
 
 
 @app.delete("/api/memory/record/{record_id}")
-async def delete_memory_record(record_id: str, user_id: str = "local_admin"):
-    """Tombstone one auditable memory record without rewriting its history."""
+async def delete_memory_record(
+    record_id: str,
+    user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
+):
+    """Tombstone one auditable memory record without rewriting its history.
+
+    Needs the admin key like every other delete. It used to have no dependency and
+    was only covered incidentally by the blanket /api/* gate — so splitting
+    ADMIN_API_KEY from API_ACCESS_KEY (an admin key alone must not 401 the whole
+    UI) silently re-opened it. A destructive route must carry its own gate.
+    """
     reject_shared_safe_action("delete memory record")
     try:
         from services.memory_gateway import get_memory_gateway

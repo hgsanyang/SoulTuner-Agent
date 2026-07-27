@@ -527,8 +527,9 @@ class GlobalSettings(BaseSettings):
     api_access_key: str = Field(
         default="",
         validation_alias="API_ACCESS_KEY",
-        description="可选的普通访问密钥：设置后 LAN 下所有 /api/* 都需携带；与 admin_api_key 分开，"
-        "仅设 admin_api_key 不会锁住整个 UI",
+        description="可选的普通访问密钥：设置后所有 /api/* 都需携带；与 admin_api_key 分开，"
+        "仅设 admin_api_key 不会锁住整个 UI。⚠ 仅供 API 客户端（脚本/curl）："
+        "前端还没有登录/会话流程，开启后 Web UI 会全量 401",
     )
 
     # ================================================================

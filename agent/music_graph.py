@@ -22,7 +22,7 @@ except ImportError:
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from config.logging_config import get_logger, safe_query
+from config.logging_config import get_logger, safe_labels, safe_query
 from config.settings import settings
 from agent.catalog_gap import CatalogGapDecision, analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
 from agent.explanation import emit_fast_explanation
@@ -254,7 +254,8 @@ class MusicRecommendationGraph:
             synth = get_profile_synthesizer(user_id)
             portrait_text = synth.get_portrait_for_prompt()
             if portrait_text:
-                logger.info(f"[UserProfile] 动态画像加载成功: {portrait_text[:80]}")
+                # 画像正文就是这个人的听歌人格，截断也照样泄露；按 query 脱敏。
+                logger.info("[UserProfile] 动态画像加载成功: %s", safe_query(portrait_text))
                 return portrait_text
         except Exception as e:
             logger.warning(f"[UserProfile] 动态画像加载失败，退回静态标签: {e}")
@@ -301,7 +302,7 @@ class MusicRecommendationGraph:
 
             profile_text = "；".join(parts) if parts else ""
             if profile_text:
-                logger.info(f"[UserProfile] 静态标签加载成功: {profile_text[:80]}")
+                logger.info("[UserProfile] 静态标签加载成功: %s", safe_query(profile_text))
             return profile_text
         except Exception as e:
             logger.warning(f"[UserProfile] 画像加载失败: {e}")
@@ -1702,7 +1703,7 @@ class MusicRecommendationGraph:
         tags.discard("未知")
 
         result = " ".join(sorted(tags)) if tags else "relaxing chill indie folk"
-        logger.info(f"[Favorites] 偏好标签集合({len(tags)}个): {tags}")
+        logger.info("[Favorites] 偏好标签集合: %s", safe_labels(tags))
         return result
 
     async def generate_recommendations_node(self, state: MusicAgentState) -> Dict[str, Any]:
@@ -2229,7 +2230,8 @@ class MusicRecommendationGraph:
                 "language_preference": "mixed"
             }
 
-            logger.info(f"分析完成: 偏好流派={favorite_genres}, 偏好艺术家={favorite_artists[:3]}")
+            logger.info("分析完成: 偏好流派=%s, 偏好艺术家=%s",
+                        safe_labels(favorite_genres), safe_labels(favorite_artists))
 
             return {
                 "user_preferences": preferences,

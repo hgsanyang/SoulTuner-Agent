@@ -7,19 +7,24 @@ name: soultuner-agent
 
 # ★ 所有对外端口默认只绑定 127.0.0.1（仅本机可访问）。Docker 未指定 host IP 时会
 #   绑定到 0.0.0.0（整个局域网可达），而本项目默认关闭鉴权，两者叠加会把设置修改、
-#   记忆删除等接口暴露给同网段任何人。需要局域网访问时显式设 BIND_HOST=0.0.0.0，
-#   并同时开启 API_KEY_REQUIRED=true。
+#   记忆删除等接口暴露给同网段任何人。
+#   ⚠ 现有的两把 key 还兜不住局域网：唯一能 gate 全部 /api/* 的 API_ACCESS_KEY
+#   前端没有登录流程，一开就把 UI 打成 401。所以请保持 BIND_HOST=127.0.0.1，
+#   要远程访问走 VPN 或 SSH 隧道，别改成 0.0.0.0。
 
 services:
   # ---- Neo4j 图数据库 ----
   neo4j:
-    # 默认 Enterprise：现有数据卷用的是 Enterprise 专有的 `block` 存储格式，
-    # Community 只支持 `aligned`，直接把 block 卷交给 Community 会启动失败——
-    # 这不是版本降级，而是存储格式不兼容，必须离线迁移(见 docs/NEO4J_MIGRATION.md)。
-    # ★ 全新空卷可以改用 Community：NEO4J_IMAGE=neo4j:2026.03.1-community
-    #   （Community 无需接受许可证）。已有 block 卷切 Community 前务必按 runbook
-    #   完成 block→aligned 克隆迁移并核对节点/关系/索引/向量。
-    image: ${NEO4J_IMAGE:-neo4j:2026.03.1-enterprise}
+    # 默认 Community：全新安装拿到的是空卷，Community 足够跑完整功能，且不需要
+    # 接受任何 Enterprise 许可证。本仓库不替使用者接受商业许可证。
+    #
+    # ★ 已有数据卷请在本地 .env 里改回 Enterprise：老卷用的是 Enterprise 专有的
+    #   `block` 存储格式（SHOW DATABASES 里显示 store = block-block-1.1），
+    #   Community 只支持 `aligned`，把 block 卷交给 Community 会直接启动失败——
+    #   这不是版本降级而是存储格式不兼容，必须离线迁移，见 docs/NEO4J_MIGRATION.md。
+    #     NEO4J_IMAGE=neo4j:2026-enterprise
+    #     NEO4J_ACCEPT_LICENSE_AGREEMENT=eval   # 或 yes，取决于你持有哪种许可证
+    image: ${NEO4J_IMAGE:-neo4j:2026.03.1-community}
     container_name: soultuner-neo4j
     ports:
       - "${BIND_HOST:-127.0.0.1}:7474:7474"       # Neo4j Browser (http://localhost:7474)
@@ -27,8 +32,10 @@ services:
     environment:
       # ★ 口令从 .env 读取（NEO4J_PASSWORD）。首次部署请在 .env 设置强口令；下方默认仅为本地开发兜底。
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-changeme_dev_only}
-      # Enterprise 默认镜像需要接受评估许可证（非商业免费）；Community 会忽略该变量。
-      NEO4J_ACCEPT_LICENSE_AGREEMENT: ${NEO4J_ACCEPT_LICENSE_AGREEMENT:-eval}
+      # 故意不给默认值：Community 会忽略它；换成 Enterprise 镜像却没显式设置时，
+      # 容器会打印许可证全文并拒绝启动——由使用者自己选 yes（持有商业许可证）
+      # 还是 eval（Neo4j 评估许可证，非生产、有期限）。
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: ${NEO4J_ACCEPT_LICENSE_AGREEMENT:-}
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1G

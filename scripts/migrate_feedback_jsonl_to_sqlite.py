@@ -5,10 +5,16 @@ install that has been collecting feedback needs its history imported once. This
 is idempotent: exposures upsert by id (the provisional/final pair collapses to
 one row), and events INSERT OR REPLACE by their own id.
 
-Run a dry run first - it reports what WOULD be written without touching the db:
+STOP THE BACKEND FIRST. Migration reads the whole JSONL history and asserts the
+store reaches an exact row count; a live backend appending new feedback mid-run
+moves that target and the gate fails on a store that is actually fine. This
+script refuses to run while the API answers on :8501 (override at your own risk
+with --allow-live-writes).
 
-    python -m scripts.migrate_feedback_jsonl_to_sqlite --dry-run
-    python -m scripts.migrate_feedback_jsonl_to_sqlite            # actually write
+    docker compose stop backend
+    python -m scripts.migrate_feedback_jsonl_to_sqlite --dry-run   # report only
+    python -m scripts.migrate_feedback_jsonl_to_sqlite             # actually write
+    docker compose start backend
 
 Honours MUSIC_FEEDBACK_DIR, same as the rest of the feedback layer.
 """
@@ -17,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,10 +59,21 @@ TABLE_TO_COUNT = {
 }
 
 
+def _backend_is_live() -> bool:
+    """True if the API answers - i.e. something may still be appending events."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8501/health", timeout=2) as response:
+            return 200 <= response.status < 500
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true",
                         help="report counts without writing to SQLite")
+    parser.add_argument("--allow-live-writes", action="store_true",
+                        help="run even though the backend is up (it may append rows mid-run)")
     args = parser.parse_args()
 
     root = _feedback_dir()
@@ -62,12 +81,37 @@ def main() -> int:
     print(f"sqlite store: {fs.store_path()}")
     print(f"mode: {'DRY RUN - no writes' if args.dry_run else 'WRITE'}\n")
 
+    if not args.dry_run and not args.allow_live_writes and _backend_is_live():
+        print("REFUSING TO RUN: the backend is answering on :8501, so new feedback\n"
+              "can land while this migrates. The completeness gate compares against a\n"
+              "count taken at the start, so a concurrent write makes a correct store\n"
+              "look broken - and a torn read look fine.\n"
+              "  docker compose stop backend\n"
+              "  <re-run this script>\n"
+              "  docker compose start backend\n"
+              "Override with --allow-live-writes only if you know nothing is writing.")
+        return 1
+
     before = fs.counts()
     plan: list[tuple[str, str, list[dict], int]] = []
+    unkeyed_report: list[str] = []
     for filename, table, fn_name in SOURCES:
         rows = load_jsonl(root / filename)
         id_keys = ID_KEYS[table]
         deduped = _dedupe_rows(rows, id_keys)
+        # Rows with no id at all cannot be migrated safely: the store would mint a
+        # synthetic uuid for each, so re-running would insert duplicates and the
+        # count gate would fail AFTER the store was already polluted. Catch them
+        # here, before a single write.
+        unkeyed = [i for i, r in enumerate(rows, 1) if not effective_id(r, id_keys)]
+        if unkeyed:
+            preview = ", ".join(str(i) for i in unkeyed[:10])
+            more = f" (+{len(unkeyed) - 10} more)" if len(unkeyed) > 10 else ""
+            # "record #N" not "line N": load_jsonl skips blank lines, so the two
+            # only coincide in a file with no blanks. Say what is actually true.
+            unkeyed_report.append(
+                f"  {filename}: {len(unkeyed)} row(s) with no {'/'.join(id_keys)}"
+                f" - record #{preview}{more} (counting non-empty lines)")
         # Unique records that MUST exist after migrating = (already in SQLite) UNION
         # (in the log). The gate below asserts the store reaches exactly this.
         existing_ids = {effective_id(r, id_keys) for r in _load_existing(table)}
@@ -78,6 +122,16 @@ def main() -> int:
         print(f"{filename:<22} log {len(rows):>5} -> {len(deduped):>5} unique{note}; "
               f"store has {len(existing_ids - {''}):>5}; expect == {expected_unique}")
         plan.append((table, fn_name, deduped, expected_unique))
+
+    if unkeyed_report:
+        print("\nABORTED BEFORE WRITING: some log rows carry no id.")
+        for entry in unkeyed_report:
+            print(entry)
+        print("Nothing was written. Migrating these would mint a fresh uuid per row,\n"
+              "so the store could never be reconciled with the log and a re-run would\n"
+              "duplicate them. Give each row a stable id (or remove it, if it is a\n"
+              "truncated tail line) and run again.")
+        return 1
 
     if args.dry_run:
         print("\nDRY RUN - re-run without --dry-run to write. Migration FAILS unless "

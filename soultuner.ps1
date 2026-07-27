@@ -168,8 +168,20 @@ function Stop-LocalNeteaseApiForDocker {
     Write-Warning "Port 3000 is occupied by $($proc.ProcessName) (pid=$($proc.Id)). Docker Netease proxy may not start."
 }
 
+function Assert-Neo4jEditionMatchesVolume {
+    # Community image + Enterprise `block` volume = Neo4j refuses to start, and the
+    # failure reads like a generic crash. Catch it before `up`, not after.
+    # preflight_neo4j.py is pure stdlib so it runs under whatever Python we find.
+    Invoke-ProjectPython "scripts/preflight_neo4j.py"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Neo4j preflight failed - see docs/NEO4J_MIGRATION.md. Nothing was started."
+        exit 1
+    }
+}
+
 switch ($Action) {
     "up" {
+        Assert-Neo4jEditionMatchesVolume
         Stop-LocalNeteaseApiForDocker
         $ComposeFiles = @("-f", "docker-compose.yml")
         $MemoryBackends = (($env:MEMORY_EPISODIC_BACKENDS -split ",") | ForEach-Object { $_.Trim().ToLowerInvariant() })
