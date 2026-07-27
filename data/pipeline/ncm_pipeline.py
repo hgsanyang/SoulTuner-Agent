@@ -199,8 +199,9 @@ def process_ncm_directory(input_dir: str, output_dir: str):
 
 if __name__ == "__main__":
     # 根目录，rglob 会自动搜索包括 VipSongsDownload 在内的所有子目录
-    INPUT_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\raw_ncm"
-    OUTPUT_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio"
+    _DATA = Path(os.environ.get("MUSIC_DATA_ROOT") or Path(__file__).resolve().parents[3] / "data")
+    INPUT_DIR = str(_DATA / "raw_ncm")
+    OUTPUT_DIR = str(_DATA / "processed_audio")
 
     print("================== 网易云 NCM 自动化处理器 (并行版) ==================")
     print(f"正在扫描: {INPUT_DIR} 及其所有子文件夹")

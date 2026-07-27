@@ -5,6 +5,7 @@ import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { sendUserEvent, acquireSong, deleteSongFromLibrary } from '@/lib/api';
 import { useState } from 'react';
+import SongFeedbackPanel from './SongFeedbackPanel';
 
 interface SongCardProps {
   title: string;
@@ -103,6 +104,8 @@ export default function SongCard({
   const { currentSong, isPlaying, playSong, togglePlay: globalToggle, queue, addToQueue, removeFromQueue } = usePlayer();
   const { isLiked, toggleLike, collections, addToCollection, showToast } = useLibrary();
   const [showFolderPicker, setShowFolderPicker] = useState(false);
+  // context-fit feedback ("这次合不合适") — separate channel from like/collect
+  const [showFeedback, setShowFeedback] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [acquireState, setAcquireState] = useState<'idle' | 'loading' | 'done' | 'error'>(() =>
     audio_retention === 'saved' || acquire_status === 'saved' ? 'done' : acquire_status === 'failed' ? 'error' : 'idle',
@@ -319,6 +322,20 @@ export default function SongCard({
           <button onClick={handleLike} title={liked ? '取消喜欢' : '添加到喜欢'} aria-label={liked ? `取消喜欢 ${title}` : `添加到喜欢 ${title}`} style={actionBtnStyle(liked ? '#e91e63' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill={liked ? '#e91e63' : 'none'} stroke={liked ? '#e91e63' : 'currentColor'} strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>
           </button>
+          {exposure_id && (
+            <button
+              onClick={e => { e.stopPropagation(); setShowFeedback(prev => !prev); }}
+              title="评价这次推荐是否合适（不影响长期喜好）"
+              aria-label={`评价这次推荐是否合适 ${title}`}
+              style={actionBtnStyle(showFeedback ? '#1DB954' : undefined)}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.18)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+          )}
           <button onClick={handleDislike} title="不喜欢这首歌" aria-label={`不喜欢这首歌 ${title}`} style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,120,120,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" /></svg>
           </button>
@@ -420,6 +437,17 @@ export default function SongCard({
           </div>
         </div>
       </div>
+
+      {/* 本次语境反馈（与 like/收藏 的长期品味通道彼此独立） */}
+      {showFeedback && exposure_id && (
+        <SongFeedbackPanel
+          exposureId={exposure_id}
+          musicId={song_id}
+          title={title}
+          artist={artist}
+          onClose={() => setShowFeedback(false)}
+        />
+      )}
 
       {/* 第二行：标签（genre/mood） */}
       {(genre || mood || sourceLabels.length > 0 || onlineAudioStatus || inQueue) && (

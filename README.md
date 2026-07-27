@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Multimodal Music Recommendation Agent — Hybrid RAG × Knowledge Graph × Long-term Memory</strong>
+  <strong>A local AI agent that finds music from plain language</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-520+_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-650+_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -25,23 +25,21 @@
   <a href="README.ch.md">中文</a> | <a href="README.md">English</a>
 </p>
 
-## 🎯 Discover Music with Natural Language, Let AI Truly Understand You
+## 🎯 What it is
 
-SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just a simple "search → play" tool, but a personal DJ that **continuously learns your musical taste**:
+SoulTuner is a music recommendation agent that runs **on your own machine**. Describe what you want to hear in one ordinary sentence; it works out what you meant and finds the music.
 
-- 🗣️ **Describe what you want to hear in natural language** — "I'm feeling really down today, I just want some quiet time alone." The system automatically identifies your emotion and scenario to recommend music that fits your current state.
-- 🧠 **Understands you better the more you use it** — Every like, save, skip, and conversation silently builds your personalized music profile, making the next recommendation more accurate over time.
-- 🌐 **Local library not enough? Evidence-driven web discovery** — An optional supplement lane runs in parallel with local recall, using the planner's native web search to find songs backed by charts, community consensus, or curated playlists; a Catalog Gap fallback also kicks in when local inventory or metadata falls short.
-- 🗺️ **Immersive Music Journey** — Describe a story or scenario, and the AI will orchestrate a complete music journey with emotional arcs.
-- ♻️ **Discover → Stage → Ingest** — Found a good song? It downloads to a "Pending" staging area first. Preview, then confirm ingestion with automatic acoustic analysis.
+- 🗣️ **Just say it** — "I'm feeling really down today, I just want some quiet time alone." No need to pick genres or keywords first.
+- 🧠 **Builds a profile from your feedback** — every like, save, skip and conversation updates a structured taste profile that softly nudges future ranking. (The exposure/feedback ledger also collects the data for an offline-learned ranking policy, which stays opt-in — it is not trained or promoted automatically.)
+- 🌐 **Goes online when your library falls short** — a supplement lane finds songs backed by charts, community consensus or curated playlists (one switch turns it off for fully local operation).
+- 🗺️ **Music Journey** — describe a story or a scene and the agent arranges a set with a real emotional arc.
+- ♻️ **Discover → preview → ingest** — good songs land in a staging area first; confirm and they are ingested with automatic acoustic analysis.
 
-> 📖 For full features and interaction details, please refer to [Feature_Walkthrough.md](Feature_Walkthrough.md)
->
-> Orchestrated via a LangGraph multi-node Agent workflow, integrating Neo4j, a MuQ-MuLan text-to-music anchor, M2D-CLAP / OMAR-RQ auxiliary representations, LLMs, and a MemoryGateway layer for multi-path retrieval, weighted RRF fusion, streaming recommendations, web fallback, music journeys, and a behavior data flywheel.
+> 📖 Full feature and interaction details: [Feature_Walkthrough.md](Feature_Walkthrough.md)
 
 ---
 
-## 🖼️ Feature Preview
+## 🖼️ Preview
 
 <p align="center">
   <a href="https://www.bilibili.com/video/BV11dQLBDEeF/">
@@ -49,7 +47,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
   </a>
 </p>
 
-### 🏠 Home · 💬 Chat · 🎵 Recommend · 🎧 Player · 🗺️ Journey
+### 🏠 Home · 💬 Chat · 🎵 Recommendations · 🎧 Player · 🗺️ Journey
 
 <table>
   <tr>
@@ -57,7 +55,7 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
     <td><img src="assets/对话页面.png" alt="Chat" /></td>
   </tr>
   <tr>
-    <td><img src="assets/音乐推荐.png" alt="Recommendation" /></td>
+    <td><img src="assets/音乐推荐.png" alt="Recommendations" /></td>
     <td><img src="assets/播放页1.png" alt="Player" /></td>
   </tr>
   <tr>
@@ -67,18 +65,15 @@ SoulTuner is a **locally-deployed** AI music recommendation agent. It's not just
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick start
 
 ```powershell
-# First enter the root folder of your cloned repository
-cd <your-project-directory>
+cd <your project directory>
 Copy-Item .env.example .env
 notepad .env
 ```
 
-The default model setup uses DashScope / Qwen. You can switch to another provider by changing `MAIN_LLM_PROVIDER` and `MODEL_NAME`, then filling the matching provider API key or service URL.
-
-For the default setup, fill at least:
+Fill in at least these (the default setup uses DashScope / Qwen):
 
 ```env
 MAIN_LLM_PROVIDER=dashscope
@@ -88,304 +83,169 @@ NEO4J_PASSWORD=your Neo4j password
 MUSIC_DATA_PATH=../data
 ```
 
-For other providers such as SiliconFlow, Google, Volcengine, local SGLang, VLLM, or Ollama, change `MAIN_LLM_PROVIDER` and `MODEL_NAME`, then fill the corresponding key or endpoint in `.env.example`. You can also adjust model settings later from the frontend settings panel.
-
-Then start the default GPU stack:
+Then start it and open `http://localhost:3003`:
 
 ```powershell
 .\soultuner.ps1 up gpu
 ```
 
-Open `http://localhost:3003` after startup. To check service health:
+Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu` — the online experience is complete, it just does not start the ingestion worker.
 
-```powershell
-.\soultuner.ps1 doctor
-```
-
-If you do not have an NVIDIA GPU, or only want the lighter fallback mode, use:
-
-```powershell
-.\soultuner.ps1 up cpu
-```
+To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / VLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
 
 <details>
 <summary>Other common commands</summary>
 
 | Command | Purpose |
 |---|---|
+| `.\soultuner.ps1 doctor` | Check that the services are healthy |
 | `.\soultuner.ps1 down` | Stop all containers |
-| `.\soultuner.ps1 logs` | Show service logs |
-| `.\soultuner.ps1 test` | Run unit tests |
-| `.\soultuner.ps1 ingest gpu` | Process pending songs with the GPU worker |
-| `python scripts/dev/start_backend.py` | Start only the backend for local debugging |
+| `.\soultuner.ps1 logs` | Tail service logs |
+| `.\soultuner.ps1 test` | Run the unit tests |
+| `.\soultuner.ps1 ingest gpu` | Process the pending-ingest queue on the GPU worker |
+| `python scripts/dev/start_backend.py` | Backend only, for local debugging |
 
 </details>
 
 ---
 
-## ✨ Core Features
+## 🏗️ Architecture
 
-| Feature | Description |
-|---|---|
-| 🔀 **Hybrid RAG** | Two content recall paths (graph / dense), weighted RRF fusion; personalization and long-tail exploration are post-recall score adjustments |
-| 🎵 **Multimodal Text-to-Music** | MuQ-MuLan is the Chinese-strong primary recall model, M2D-CLAP is the fallback, and OMAR-RQ adds acoustic similarity |
-| 🧠 **Long-term Memory** | MemoryGateway: an append-only local L0/L1/L2 ledger (evidence-bound, TTL, LLM-named scene scopes) + Neo4j behavior hot path; BGE semantic relevance with fail-closed injection; every preference is viewable / editable / deletable |
-| 📊 **Coarse Rank + Explore** | Graph Affinity coarse ranking cutoff + Thompson Sampling cold-start exploration slots |
-| 🤖 **Smart Intent Recognition** | Layered intent plan: `hard_constraints / soft_intent / hints` + multi-turn inheritance |
-| 👤 **User Profile** | Frontend visual profile panel (Genre/Emotion/Scenario/Language) → Neo4j hot path + local memory ledger |
-| 🌐 **Web Discovery** | Toggle (on by default, fully local when off); an evidence-driven supplement lane runs in parallel with local recall — the planner's native web search finds songs backed by charts / community consensus / playlists — deduped and playability-checked, plus a Catalog Gap fallback when local inventory falls short |
-| 🎼 **Music Journey** | LLM Story → Emotion breakdown → Step-by-step retrieval, real-time SSE streaming |
-| ♻️ **Data Flywheel** | Download → Stage → Preview → Confirm Ingest → Ingest queue → Tag extraction → Vector encoding → Neo4j |
-| 📋 **Library Mgmt** | Pending staging area + queue status/retry + My Library full-graph management (search/play/tag edit/delete) |
-| 📡 **SSE Streaming** | Real-time frontend rendering: thinking process → song cards → recommendation reasons |
-| 🐳 **Docker Deployment** | `docker compose up` one-click full-stack startup |
+One recommendation request travels this path:
 
----
-
-## 🏗️ System Architecture
-
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│  Frontend (Next.js :3003)                                           │
-│  React UI  ·  Global Audio Player  ·  Music Journey  ·  Settings   │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ SSE
-┌──────────────────────────────▼──────────────────────────────────────┐
-│  Backend (FastAPI :8501)                                            │
-│  SSE Streaming API  ·  Settings API  ·  Static Audio Server        │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────────────┐
-│  LangGraph Agent (StateGraph)                                       │
-│                                                                     │
-│  start → MemoryGateway Recall → Planner (LLM) → Intent Router     │
-│                                                                     │
-│     ┌─────────┬─────────┬─────────┬──────────┐                     │
-│     ▼         ▼         ▼         ▼          ▼                     │
-│  search_songs  chat  acquire  gen_reco  journey                    │
-│     │                                                               │
-│     ▼                                                               │
-│  Hybrid Retrieval ──→ LLM Explainer ──→ Pref Extract ──→ MemoryGateway Write → end │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────────────┐
-│  Hybrid Retrieval Engine                                            │
-│                                                                     │
-│  GraphRAG · Dense KNN · Evidence-driven Web Lane · Catalog Gap     │
-│         └──────────────────┬───────────────────┘                   │
-│                            ▼                                        │
-│              Weighted RRF Fusion (keeps per-source ranks)            │
-│                            ▼                                        │
-│              Coarse Rank (Graph Affinity cutoff)                     │
-│                            ▼                                        │
-│              Thompson Sampling (cold-start exploration slots)        │
-│                            ▼                                        │
-│              Content-Anchor Rerank (Semantic+Acoustic normalized)   │
-│                            ▼                                        │
-│              MMR Multi-dim Diversity (λ=0.7)                       │
-└─────────────────────────────────────────────────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────────────────┐
-│  Storage Layer                                                      │
-│  Neo4j (Graph + Vectors + Memory Hot Path) · Local L0/L1/L2 Ledger (SQLite) │
-└─────────────────────────────────────────────────────────────────────┘
+```
+your sentence
+     │
+     ▼
+┌──────────────────────────────────────────────────┐
+│  Agent (LangGraph)                                │
+│  recall memory → LLM plan → route by intent       │
+│  find songs / chat / acquire / journey / clarify  │
+└──────────────────────┬───────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────┐
+│  Hybrid retrieval                                 │
+│  graph ＋ vector ＋ web supplement → fuse → rank  │
+└──────────────────────┬───────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────┐
+│  Storage: Neo4j (graph + vectors + behaviour)     │
+│           SQLite (memory ledger + feedback events)│
+└──────────────────────┬───────────────────────────┘
+                       ▼
+        SSE streaming → frontend (Next.js)
+                       │
+                       ▼
+        your feedback ─┘  recorded, and updates your taste profile
 ```
 
-### Tech Stack
+**Two design choices worth calling out:**
+
+**Retrieval only hard-filters what you actually pinned down.** Artist, language and region go into the WHERE clause; everything else — mood, scene, vibe, and even "instrumental only" — is treated as an acoustic/semantic intent and handled by dense retrieval and ranking, not sparse-label exclusion. That keeps "only Eason Chan" exact while stopping "quiet, rainy, gentle" from filtering itself down to nothing.
+
+**Feedback runs on two channels that never mix.** "I love this song" is long-term taste; "does this suit what I want right now" judges only this set — a track can be a lasting favourite and still wrong for tonight. Merging them poisons both. A song you did not rate stays *unknown*, never a negative sample.
+
+### Stack
 
 | Layer | Technology |
 |---|---|
-| **Frontend** | Next.js 14 + React 18 |
-| **Agent** | LangGraph StateGraph (layered intent planning + multi-recall routing) |
-| **Backend** | FastAPI + SSE Streaming |
-| **Graph Database** | Neo4j 5.x (Native Vector Index + Graph Relations + User Behavior direct-write) |
-| **Audio Embeddings** | MuQ-MuLan (primary text-to-music, 512d) + M2D-CLAP (semantic fallback/rerank, 768d) + OMAR-RQ (acoustic auxiliary, 1024d) |
-| **LLMs** | Default `dashscope / qwen3.7-plus`; other providers are advanced overrides |
-| **Long-term Memory**| MemoryGateway (append-only local L0/L1/L2 SQLite ledger + Neo4j hot path + BGE relevance); GraphZep/Mem0 remain optional, non-default, isolated legacy adapters |
-| **Web Discovery** | Evidence-driven parallel supplement lane (planner-native web search) + Catalog Gap fallback + playable resolution |
-| **Ranking Algorithm**| Content-anchor rerank (Semantic+Acoustic) + bounded post-recall adjustments + Thompson Sampling + MMR |
-| **Context Management**| GSSC Token budget pipeline (Gather/Select/Structure/Compress + async pre-compression) |
-| **Containerization** | Docker Compose CPU/GPU entrypoints; CPU includes the full online stack, GPU adds the ingestion worker |
+| Frontend | Next.js 14 + React 18 |
+| Backend | FastAPI + SSE streaming |
+| Agent | LangGraph StateGraph |
+| Graph database | Neo4j 5.x (relations + native vector index) |
+| Text-to-music | MuQ-MuLan primary, M2D-CLAP fallback, OMAR-RQ acoustic auxiliary |
+| LLM | `dashscope / qwen3.7-plus` by default, provider swappable |
+| Long-term memory | MemoryGateway: local SQLite ledger + Neo4j hot path, BGE for relevance |
+| Ranking | RRF fusion → coarse rank → exploration slot → dual-anchor rerank → MMR |
+| Deployment | Docker Compose (CPU / GPU entrypoints) |
 
-> 📖 See [tests/eval/README.md](tests/eval/README.md) for recommendation-quality and alignment evaluation commands.
+> 📖 How to run the recommendation-quality and alignment evaluations: [tests/eval/README.md](tests/eval/README.md)
 
 ---
 
-## 🔬 Technical Notes
-
-### RAG Hybrid Retrieval Pipeline
-
-```text
-User Query → Planner (LLM) outputs a layered plan
-               ↓  hard_constraints + soft_intent + hints + intent_type
-    ┌──────────┬──────────┐
-    ▼          ▼
- GraphRAG   Dense KNN                    ← Step 1: two content recall paths
- (Neo4j)   (MuQ+OMAR)
-    └──────────┴──────────┘
-               ▼
-   Step 2: Weighted RRF fusion            ← Preserves per-source rank and source metadata
-               ▼
-   Step 3: hard_constraints + DISLIKES    ← Only hard filter; mood/scenario/genre stay soft
-               ▼
-   Step 4: Artist Diversity Filter        ← ≤ N songs per artist (exception for specific queries)
-               ▼
-   Step 5: Post-recall Adjust + Explore  ← Personal/fresh/long-tail boosts, time-decayed exposure penalty
-               ▼
-   Step 6: Content-Anchor Normalized Rerank ← Primary text-to-music anchor(MuQ/M2D fallback) + seed acoustic anchor(OMAR-RQ)
-               ▼
-   Step 7: MMR Multi-dim Diversity + FinalCut
-```
-
-The retrieval layer treats explicit entities, language, and instrumental-only requests as hard constraints. Mood, scenario, vibe, and user preference stay as ranking signals. This keeps precise requests such as “only this artist” stable while avoiding empty results for softer requests such as “quiet, rainy, gentle”.
-
-Recall source and rank metadata are preserved, so recommendation cards can explain whether a song came from graph search, vector search, or online fallback.
-
-### Agent Workflow
-
-```mermaid
-stateDiagram-v2
-    [*] --> recall_memory: Start
-    recall_memory --> plan_query: MemoryGateway Profile/Memory Recall
-    plan_query --> route_intent: LLM Structured Output (layered intent)
-
-    route_intent --> search_songs: graph_search / hybrid_search / vector_search
-    route_intent --> web_fallback: web_search (direct to live search)
-    route_intent --> chat_response: general_chat
-    route_intent --> acquire_music: acquire_music
-    route_intent --> gen_recommendations: recommend_by_favorites
-    route_intent --> clarify: clarification_required
-
-    search_songs --> web_fallback: Catalog Gap fallback / online mix-in
-    search_songs --> explain_results: Push songs first on local hit
-    web_fallback --> explain_results: Online Music API live search
-    acquire_music --> explain_results
-    gen_recommendations --> explain_results
-
-    explain_results --> extract_preferences: Async tuner-style response
-    extract_preferences --> persist_memory: LLM Preference Extraction (Async)
-
-    chat_response --> persist_memory: General chat skips preference extraction
-    clarify --> persist_memory: Persist pending clarification state
-
-    persist_memory --> [*]: MemoryGateway Async Write
-```
-
-### Memory And Feedback
-
-MemoryGateway handles user profile, behavior feedback, and long-term memory. By default it uses a local append-only L0/L1/L2 ledger (raw events → explicit preferences → evidence-bound inferred preferences, with TTL, scene scopes, and per-item edit/delete) plus a Neo4j structured-behavior hot path; relevance is scored by a local BGE model and fails closed when unavailable. GraphZep/Mem0 remain optional, non-default, isolated legacy adapters and never enter the default path.
-
-Frontend profile settings, song feedback, and slate-level feedback can gradually affect ranking, but they do not override the relevance of the current query.
-
----
-
-## 📁 Project Structure
+## 📁 Layout
 
 ```
-.
-├── agent/                      # LangGraph Agent
-│   ├── music_agent.py          # Native agent loop
-│   └── music_graph.py          # StateGraph workflow with layered intent routing
-│
-├── api/                        # FastAPI Interfaces
-│   ├── server.py               # Gateway & Settings API
-│   └── user_profile.py         # User Preferences API (GET/POST /api/user-profile)
-│
-├── config/settings.py          # Global Pydantic configs (Runtime patchable)
-│
-├── retrieval/                  # Engine abstractions
-│   ├── hybrid_retrieval.py     # Multi-path Fusion + bounded adjustment/TS + Content-Anchor Rerank + MMR
-│   ├── gssc_context_builder.py # GSSC pipeline (Budgeting + Abstract Context mapping)
-│   ├── muq_embedder.py         # MuQ-MuLan audio/text encoder
-│   ├── audio_embedder.py       # M2D-CLAP fallback and semantic rerank encoder
-│   ├── neo4j_client.py         # Node connectivity definitions
-│   ├── music_journey.py        # Journey architect algorithms
-│   └── user_memory.py          # Neo4j Preferences & Logs
-│
-├── tools/                      # Tool executions
-│   ├── graphrag_search.py      # Neo4j Cypher definitions
-│   ├── semantic_search.py      # MuQ primary, M2D fallback, OMAR-assisted retrieval
-│   ├── web_search_aggregator.py# optional web discovery adapters
-│   └── acquire_music.py        # Song acquisition and pending-ingest tools
-│
-├── llms/                       # LLMs
-│   ├── prompts.py              # LLM Prompts
-│   ├── registry.py             # Provider registry + env injection
-│   ├── chat_models.py          # LangChain ChatModel factories
-│   ├── native.py               # Native LiteLLM caller
-│   └── multi_llm.py            # Backward-compatible facade
-│
-├── schemas/                    # Pydantic schemas
-├── services/                   # Outer microservice bindings
-├── data/pipeline/              # DB ingest pipelines
-├── web/                        # Next.js Frontend
-│   ├── components/Settings/    # ⚙️ Settings interface
-│   ├── components/Profile/     # 👤 User Profile interface
-│   └── components/Navigation/  # Nav layout views
-│   └── app/library/            # Library pages (Pending / My Library / Likes / Collections)
-│
-├── graphzep_service/           # Legacy GraphZep adapter (optional, non-default)
-├── deploy/legacy/              # Legacy single-service compose files
-├── scripts/dev/                # Local step-by-step debug startup scripts
-├── tests/                      # Testing & Eval
-│   ├── unit/                   # Unit tests
-│   └── eval/                   # Outcome eval harness (evaluate_outcomes.py)
-├── .github/workflows/ci.yml    # GitHub Actions definitions
-├── docker-compose.yml          # Container configuration
-├── Dockerfile                  # API Engine definitions
-├── pyproject.toml              # Ruff + Pytest syntax bounds
-├── .env.example                # Templates
-└── scripts/dev/start_backend.py # Backend local debug entrypoint
+agent/       LangGraph workflow and intent routing
+retrieval/   hybrid retrieval, fusion & ranking, audio encoders, context pipeline
+tools/       graph search / text-to-music / web discovery / song acquisition
+services/    memory gateway, feedback events, ranking policy, service clients
+schemas/     Pydantic contracts (state, query plan, feedback events)
+llms/        provider registry and prompts
+api/         FastAPI layer
+data/        data pipeline and distillation datasets
+web/         Next.js frontend
+tests/       unit tests + outcome-oriented evaluation
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-### Environment Variables
-
-| Variable | Description |
-| --- | --- |
-| `DASHSCOPE_API_KEY` | Default DashScope / Qwen API key; fill the matching provider key if you switch providers |
+| Variable | Purpose |
+|---|---|
+| `DASHSCOPE_API_KEY` | Key for the default model (use your provider's key if you switch) |
 | `NEO4J_PASSWORD` | Local Neo4j password |
-| `MUSIC_DATA_PATH` | Folder for audio, cache, pending-ingest queue, and feedback logs |
-| `MUSIC_WEB_SEARCH_ENABLED` | Whether online candidate fallback is allowed |
-| `ADMIN_API_KEY` | Protects admin endpoints in shared or LAN deployments |
-| `QDRANT_IMAGE` | Optional Qdrant image override for slow networks |
+| `MUSIC_DATA_PATH` | Where audio, caches, the ingest queue and feedback logs live |
+| `MUSIC_WEB_SEARCH_ENABLED` | Whether web supplementation is allowed |
+| `ADMIN_API_KEY` | Protects the destructive endpoints (delete, settings, rebuild) |
 
-More advanced options are available in `.env.example`; normal usage does not require changing them one by one.
+See `.env.example` for the advanced options; normal use needs none of them.
+
+**Scope of the auth that exists.** `ADMIN_API_KEY` gates destructive endpoints
+only, on purpose — setting it must not lock the recommend/library/feedback pages,
+which the browser calls with no key. There is a second key, `API_ACCESS_KEY`,
+that gates *every* `/api/*` route, but **the Web UI cannot use it**: there is no
+login or session flow yet, and embedding the key in the frontend bundle would
+publish it to anyone who loads the page. So `API_ACCESS_KEY` is for API clients
+(scripts, curl), and **LAN exposure is not a solved problem here** — keep
+`BIND_HOST=127.0.0.1` (the default) and reach the machine over a VPN or SSH
+tunnel instead.
 
 ---
 
 ## 🙏 Acknowledgements
 
-Architectural inspiration was expanded heavily upon [imagist13/Muisc-Research](https://github.com/imagist13/Muisc-Research).
+The initial architecture came from [imagist13/Muisc-Research](https://github.com/imagist13/Muisc-Research) and has since been substantially rebuilt and extended.
 
-| Project | Purpose |
+| Project | Used for |
 |---|---|
-| [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | Core graph storage structure representations |
-| [OpenMuQ/MuQ](https://github.com/OpenMuQ/MuQ) | MuQ-MuLan primary text-to-music model (CC-BY-NC 4.0) |
-| [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP fallback and auxiliary semantics |
-| [MTG/omar](https://github.com/MTG/omar) | Raw acoustics implementations |
+| [OpenMuQ/MuQ](https://github.com/OpenMuQ/MuQ) | MuQ-MuLan, the primary text-to-music model (CC-BY-NC 4.0) |
+| [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP fallback and auxiliary semantic model |
+| [MTG/omar-rq](https://github.com/MTG/omar-rq) | OMAR-RQ audio representation model |
+| [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | legacy memory adapter (optional, non-default) |
 
 ---
 
 ## 📚 References
 
-1. Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.*
-2. Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model Trained with Multi-Feature Masked Token Prediction.*
-3. Rasmussen, P. et al. (2025). *Zep: A Temporal Knowledge Graph Architecture for Agent Memory.*
-4. Palumbo, E. et al. (Spotify, 2025). *You Say Search, I Say Recs: A Scalable Agentic Approach to Query Understanding and Exploratory Search.* (RecSys 2025)
-5. D'Amico, E. et al. (Spotify, 2025). *Deploying Semantic ID-based Generative Retrieval for Large-Scale Podcast Discovery at Spotify.*
-6. Penha, G. et al. (2025). *Semantic IDs for Joint Generative Search and Recommendation.* (RecSys 2025 LBR)
-7. Palumbo, E. et al. (2025). *Text2Tracks: Prompt-based Music Recommendation via Generative Retrieval.*
-8. Xu, S. et al. (2025). *Climber: Toward Efficient Scaling Laws for Large Recommendation Models.*
-9. Wang, S. et al. (2025). *Knowledge Graph Retrieval-Augmented Generation for LLM-based Recommendation.* (ACL 2025)
+### Implemented in this system
+
+| Reference | Where it lands |
+|---|---|
+| Zhu, H. et al. (2025). *MuQ / MuQ-MuLan: Self-Supervised Music Representation Learning with Mel Residual Vector Quantization.* [arXiv:2501.01108](https://arxiv.org/abs/2501.01108) | Primary text-to-music anchor |
+| Niizumi, D. et al. (2025). *M2D-CLAP: Exploring General-purpose Audio-Language Representations Beyond CLAP.* (IEEE Access) [arXiv:2503.22104](https://arxiv.org/abs/2503.22104) | Text-to-music fallback + semantic rerank |
+| Alonso-Jiménez, P. et al. (2025). *OMAR-RQ: Open Music Audio Representation Model.* (ACM MM 2025) [arXiv:2507.03482](https://arxiv.org/abs/2507.03482) | Acoustic-similarity auxiliary anchor |
+| Gao, L. et al. (2023). *Precise Zero-Shot Dense Retrieval without Relevance Labels* (HyDE). (ACL 2023) | Turn the user's sentence into a hypothetical music description before retrieving |
+| Xu, W. et al. (2025). *A-MEM: Agentic Memory for LLM Agents.* [arXiv:2502.12110](https://arxiv.org/abs/2502.12110) | **A-MEM-inspired** memory interlinking/evolution — inspired by, not a full reimplementation |
+
+Classic building blocks — reciprocal rank fusion, MMR diversity, Thompson-sampling exploration, unbiased learning-to-rank, BGE relevance — are used too, but cited where they live (code comments and the Technical Report) rather than headlined here.
+
+### Shaped the design, not yet built
+
+Listed to explain *why the design looks like this* — they have no counterpart in the code today.
+
+- Palumbo, E. et al. (Spotify, 2025). *You Say Search, I Say Recs.* (RecSys 2025) — agentic query understanding + parallel-tool exploratory recommendation, the closest analogue to this router
+- Wang, Y. et al. (2023). *RecMind: Large Language Model Powered Agent for Recommendation.* [arXiv:2308.14296](https://arxiv.org/abs/2308.14296) — LLM recommendation agent with tool planning
+- Wu, D. et al. (2025). *LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory.* (ICLR 2025) — target design for the sealed memory eval (extraction / multi-session / temporal / update / abstention)
+- Manco, I. et al. (2023). *The Song Describer Dataset.* [arXiv:2311.10057](https://arxiv.org/abs/2311.10057) — public music-language retrieval/caption eval data
+- Rasmussen, P. et al. (2025). *Zep: A Temporal Knowledge Graph Architecture for Agent Memory.* — origin of the layered-memory idea; the GraphZep adapter is now optional legacy
 
 ---
 
 ## 📄 License
 
-MIT License
+- **SoulTuner source code:** MIT (see [LICENSE](LICENSE)).
+- **MuQ-MuLan model weights:** CC-BY-NC 4.0 — **non-commercial only**. The default setup downloads these weights, so *using the default configuration commercially requires replacing them or obtaining a separate licence for the restricted models.* M2D-CLAP and OMAR-RQ carry their own upstream licences.
 
-⚠️ **Disclaimer**: Produced and maintained solely for machine learning research applications and architectural experimentation limits. **Strictly NO commercial use**. Does not offer indexing mechanisms for commercialized data files.
+⚠️ **Disclaimer**: For study and architecture research. It does not provide, contain or distribute any copyrighted audio or lyrics; obtain audio through lawful channels yourself.

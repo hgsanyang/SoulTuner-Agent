@@ -32,6 +32,9 @@ python scripts/dev/startup_all.py
 | `/api/memory/profile` | GET | 可编辑记忆画像与启用的旁路后端 |
 | `/api/memory/preference` | POST/DELETE | 追加或删除一条结构化学习偏好 |
 | `/api/music-journey/stream` | POST | 音乐旅程 SSE |
+| `/api/user-event` | POST | 长期口味事件（like/save/skip/dislike…）——唯一入口 |
+| `/api/song-feedback` | POST | 逐首**语境**反馈（这首适合此刻吗） |
+| `/api/slate-feedback` | POST | 整组反馈 + 最符合/最不符合归因 |
 | `/api/library/*` | GET/POST/DELETE | 曲库管理（待入库/我的曲库） |
 | `/audio/{filename}` | GET | 静态音频文件服务 |
 
@@ -49,10 +52,26 @@ python scripts/dev/startup_all.py
 **依赖**：`agent/`、`config/`、`retrieval/`
 # Feedback and ranking policy
 
-- `POST /api/user-event` records an attributed behavior event. Recommendation
+Feedback runs on **two channels that are never merged**. `taste` (like / save /
+dislike / block) is a long-term preference; `context_fit` (fits / partial / off)
+judges only the slate that was just shown. A track can be a lasting favourite and
+still wrong for tonight, so conflating them corrupts both signals. A song the user
+did not rate stays **unknown** — never a negative sample.
+
+- `POST /api/user-event` records an attributed behavior event, and is the **only**
+  entry point for the taste channel. Recommendation
   clients should send the `exposure_id` and displayed position returned by the
   SSE stream. `play_start` is neutral; `skip` and `dislike` are explicit
   negatives; `full_play`, `like`, `save`, and `repeat` are positives.
+- `POST /api/song-feedback` records the context channel for one song. Ranking
+  truth (rank, policy_version, catalog_origin) is **not accepted from the
+  client**: the server backfills it from its own exposure record, so the browser
+  cannot restate what our policy did. Feedback referencing an exposure we never
+  persisted is rejected with 409 so the client can retry.
+- `POST /api/slate-feedback` records a judgement on the whole slate, plus up to
+  three best / worst picks. Picks must name songs that were actually in that
+  slate, and a song cannot be both. Reasons are stored as the `SlateReason`
+  slug vocabulary declared in `schemas/feedback_events.py`, never as UI labels.
 - `GET /api/ranking-policy/status` returns non-sensitive exposure/event counts
   and active/candidate policy status.
 - `POST /api/ranking-policy/replay|promote|rollback` provide admin-gated

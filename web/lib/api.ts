@@ -74,6 +74,8 @@ export interface StreamParams {
     userId?: string;
     llmProvider?: string;       // 模型供应商
     webSearchEnabled?: boolean; // 联网搜索开关
+    sessionId?: string;         // 会话边界（用于时序习惯聚合）
+    scene?: string;             // 用户本轮明说的场景
 }
 
 export function streamRecommendations(
@@ -96,6 +98,11 @@ export function streamRecommendations(
                     dialog_state: params.dialogState || {},
                     user_id: params.userId || 'local_admin',
                     web_search_enabled: params.webSearchEnabled !== false,  // 默认 true
+                    // 收听上下文：只有客户端知道用户时区/会话/场景，事后无法回填
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+                    session_id: params.sessionId || '',
+                    scene: params.scene || '',
+                    device: 'web',
                 }),
                 signal: controller.signal,
             });
@@ -224,12 +231,79 @@ export type SlateFeedbackRating =
     | 'closer_to_seed'
     | 'wrong_context';
 
+/** Why a track did not fit THIS context (free text is always allowed too). */
+export type SongOffReason =
+    | 'mood_mismatch' | 'too_loud' | 'too_flat' | 'wrong_language'
+    | 'wrong_era' | 'overplayed' | 'want_unfamiliar' | 'bad_audio';
+
+export const SONG_OFF_REASON_LABELS: Record<SongOffReason, string> = {
+    mood_mismatch: '氛围不对',
+    too_loud: '太吵',
+    too_flat: '太平',
+    wrong_language: '语言不对',
+    wrong_era: '年代不对',
+    overplayed: '已经听腻',
+    want_unfamiliar: '想要更陌生',
+    bad_audio: '音源有问题',
+};
+
+/**
+ * Per-song CONTEXT feedback: did this track suit THIS slate right now.
+ *
+ * Long-term taste (like/save/dislike/block) is deliberately NOT sent here —
+ * `sendUserEvent` (/api/user-event) stays its single authoritative entry point,
+ * so there is exactly one write path into memory and the ingest flywheel.
+ * Ranking/policy fields are not sent either: the server backfills them from its
+ * own exposure record, because the browser must not restate what our policy did.
+ * Leaving a song unrated stays UNKNOWN — it is not a negative sample.
+ */
+export async function sendSongFeedback(params: {
+    exposureId: string;
+    musicId?: string;
+    title?: string;
+    artist?: string;
+    contextFit?: 'fits' | 'partial' | 'off';
+    offReasons?: SongOffReason[];
+    note?: string;
+    sessionId?: string;
+    scene?: string;
+    device?: string;
+    userId?: string;
+}): Promise<{ success: boolean; song_feedback_id?: string; error?: string }> {
+    const resp = await fetch('http://localhost:8501/api/song-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            exposure_id: params.exposureId,
+            music_id: params.musicId || '',
+            title: params.title || '',
+            artist: params.artist || '',
+            context_fit: params.contextFit ?? null,
+            off_reasons: params.offReasons || [],
+            note: params.note || '',
+            session_id: params.sessionId || '',
+            scene: params.scene || '',
+            device: params.device || (typeof navigator !== 'undefined' ? 'web' : ''),
+            // the user's own timezone — the server must never assume its own
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+            user_id: params.userId || 'local_admin',
+        }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: '反馈失败' }));
+        throw new Error(err.detail || `反馈失败: ${resp.status}`);
+    }
+    return resp.json();
+}
+
 export async function sendSlateFeedback(params: {
     exposureId: string;
     rating: SlateFeedbackRating;
     reasons?: string[];
     note?: string;
     userId?: string;
+    bestMusicIds?: string[];
+    worstMusicIds?: string[];
     extra?: Record<string, any>;
 }): Promise<{ success: boolean; feedback_id?: string; error?: string }> {
     const resp = await fetch('http://localhost:8501/api/slate-feedback', {
@@ -241,6 +315,9 @@ export async function sendSlateFeedback(params: {
             reasons: params.reasons || [],
             note: params.note || '',
             user_id: params.userId || 'local_admin',
+            best_music_ids: params.bestMusicIds || [],
+            worst_music_ids: params.worstMusicIds || [],
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
             extra: params.extra || {},
         }),
     });

@@ -9,7 +9,7 @@ import time
 from typing import Dict, Any, Optional, List
 
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from config.settings import settings
 from agent.music_graph import MusicRecommendationGraph
 from schemas.music_state import MusicAgentState
@@ -17,6 +17,31 @@ from services.feedback_logger import log_exposure
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
 logger = get_logger(__name__)
+
+
+def _listening_context(client_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build the exposure's listening context from what the client measured.
+
+    Only the CLIENT knows the user's timezone/session/scene; the server must not
+    substitute its own clock. When the client sends nothing we still write the
+    (empty) context block so the field exists and its absence is visible in
+    audits, rather than looking like it was never part of the schema.
+    """
+    payload = client_context or {}
+    try:
+        import time as _t
+
+        from schemas.feedback_events import derive_context
+
+        return derive_context(
+            int(_t.time() * 1000),
+            str(payload.get("timezone") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            scene=str(payload.get("scene") or ""),
+            device=str(payload.get("device") or ""),
+        ).model_dump(mode="json")
+    except Exception:  # never fail a recommendation over telemetry
+        return {}
 
 
 class MusicRecommendationAgent:
@@ -35,6 +60,10 @@ class MusicRecommendationAgent:
         user_preferences: Optional[Dict[str, Any]] = None,
         dialog_state: Optional[Dict[str, Any]] = None,
         user_id: str = "local_admin",
+        # Listening context measured on the CLIENT (timezone/session/scene/device).
+        # It cannot be reconstructed later — the server does not know what time
+        # it was for the user — so it must ride along with the request.
+        client_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         获取音乐推荐
@@ -49,7 +78,7 @@ class MusicRecommendationAgent:
         """
         request_started = time.perf_counter()
         try:
-            logger.info(f"开始处理音乐推荐请求: {query}")
+            logger.info(f"开始处理音乐推荐请求: {safe_query(query)}")
 
             # 构建初始状态
             # 将历史记录中的字典转换为 BaseMessage 以适配 LangGraph 规范
@@ -162,6 +191,8 @@ class MusicRecommendationAgent:
                         retrieval_meta=result.get("retrieval_meta", {}),
                         dialog_state=result.get("dialog_state", {}),
                         timings=timings,
+                        context=_listening_context(client_context),
+                        policy_version=str((result.get("retrieval_meta") or {}).get("policy_version") or ""),
                     )
                 except Exception as log_error:
                     logger.warning(f"[Feedback] 曝光日志写入失败: {log_error}")
@@ -210,6 +241,10 @@ class MusicRecommendationAgent:
         user_preferences: Optional[Dict[str, Any]] = None,
         dialog_state: Optional[Dict[str, Any]] = None,
         user_id: str = "local_admin",
+        # Listening context measured on the CLIENT (timezone/session/scene/device).
+        # It cannot be reconstructed later — the server does not know what time
+        # it was for the user — so it must ride along with the request.
+        client_context: Optional[Dict[str, Any]] = None,
     ):
         """
         流式获取推荐结果（异步生成器）
@@ -225,9 +260,13 @@ class MusicRecommendationAgent:
 
         # 为本次请求生成唯一 ID，用于隔离并发请求的流式队列
         _request_id = str(_uuid.uuid4())
+        # Derive the listening context ONCE: the provisional and final exposure
+        # writes share an id, so deriving it twice would stamp two different
+        # timestamps on what is one moment of listening.
+        _exposure_context = _listening_context(client_context)
 
         try:
-            logger.info(f"开始处理音乐推荐请求(流式): {query} [req={_request_id[:8]}]")
+            logger.info(f"开始处理音乐推荐请求(流式): {safe_query(query)} [req={_request_id[:8]}]")
             _stream_start = _time.time()
 
             # 构建对话历史
@@ -322,6 +361,23 @@ class MusicRecommendationAgent:
                 # ★ 处理歌曲数据（在解释文本之前到达）
                 if isinstance(chunk, dict) and "__songs__" in chunk:
                     songs_list = chunk["__songs__"]
+                    # ★ 曝光先落盘、再发歌：卡片一旦到达前端用户就能评价，
+                    # 而此前曝光要等整图跑完才写，用户可能"先评价、后有曝光"，
+                    # 反馈就成了无法归因的孤儿（只能靠 409 让客户端重试）。
+                    # 这里用同一个 _request_id 先写一条 provisional 记录；
+                    # 图跑完后的终写会以相同 id 覆盖它（lookup 取最后一条）。
+                    if songs_list and not settings.eval_disable_side_effects:
+                        try:
+                            log_exposure(
+                                query=query,
+                                user_id=user_id,
+                                request_id=_request_id,
+                                recommendations=songs_list,
+                                context=_exposure_context,
+                                provisional=True,
+                            )
+                        except Exception as _pre_log_error:
+                            logger.warning(f"[Feedback] 预写曝光失败: {_pre_log_error}")
                     yield {
                         "type": "recommendations_start",
                         "count": len(songs_list),
@@ -383,6 +439,13 @@ class MusicRecommendationAgent:
                         retrieval_meta=result.get("retrieval_meta", {}),
                         dialog_state=result.get("dialog_state", {}),
                         timings=result.get("timings", {}),
+                        # This write REPLACES the provisional record above, so
+                        # every field the provisional one carried must be
+                        # restated here — omitting the context silently erased
+                        # the listening context on the streaming path, which is
+                        # the one production actually uses.
+                        context=_exposure_context,
+                        policy_version=str((result.get("retrieval_meta") or {}).get("policy_version") or ""),
                     )
                 except Exception as log_error:
                     logger.warning(f"[Feedback] 流式曝光日志写入失败: {log_error}")

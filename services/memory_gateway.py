@@ -330,16 +330,28 @@ _NEGATIVE_RATINGS = {
 }
 
 
-def _feedback_polarity(rating: str, reasons: list[Any] | None) -> str:
+def _slate_overall_value(rating: str, extra: dict[str, Any] | None) -> str | None:
+    """Canonical `overall` for a slate memory record via the shared adapter.
+
+    Prefers the `overall` the API already computed (in `extra`), else derives it
+    from the legacy `rating`. Keeps `rating` out of the stored memory payload.
+    """
+    from schemas.feedback_events import slate_overall
+
+    return slate_overall({"overall": (extra or {}).get("overall"), "rating": rating})
+
+
+def _feedback_polarity(overall: str | None, reasons: list[Any] | None) -> str:
     """Classify slate feedback so the consolidator treats it as signal vs counter-signal.
 
-    Purely mechanical: positive only for explicit positive ratings; negative for
-    known negative ratings or any supplied reason chip; neutral otherwise.
+    Reads the canonical `overall` (fits/partial/off): positive for fits, negative
+    for off or any supplied reason chip, neutral otherwise. `_POSITIVE_RATINGS` /
+    `_NEGATIVE_RATINGS` remain only for legacy strings that predate `overall`.
     """
-    key = str(rating or "").strip().casefold()
-    if key in _POSITIVE_RATINGS:
+    key = str(overall or "").strip().casefold()
+    if key == "fits" or key in _POSITIVE_RATINGS:
         return "positive"
-    if key in _NEGATIVE_RATINGS or _clean_list(reasons):
+    if key == "off" or key in _NEGATIVE_RATINGS or _clean_list(reasons):
         return "negative"
     return "neutral"
 
@@ -565,10 +577,11 @@ class MemoryGateway:
             evidence_id=feedback_id,
             payload={
                 "exposure_id": exposure_id,
-                "rating": rating,
+                # canonical judgement (via the shared adapter); `rating` is not stored
+                "overall": _slate_overall_value(rating, extra),
                 "reasons": _clean_list(reasons),
                 "note": str(note or "")[:500],
-                "polarity": _feedback_polarity(rating, reasons),
+                "polarity": _feedback_polarity(_slate_overall_value(rating, extra), reasons),
                 **(extra or {}),
             },
             memory_key=f"slate:{feedback_id}",

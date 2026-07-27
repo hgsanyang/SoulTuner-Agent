@@ -72,6 +72,23 @@ def test_strict_join_never_matches_event_without_exposure_id():
     assert diagnostics["missing_exposure_id"] == 1
 
 
+def test_early_feedback_attributes_to_shown_time_not_final_write():
+    """Regression: the exposure is written twice (provisional when songs stream,
+    final when the graph finishes). The final record's `ts` is LATER than the
+    moment the user saw the cards, so a user who rates immediately has
+    event_ts < final_ts. Attribution anchors on `shown_at_ms` (pinned to the
+    first write); using `ts` would drop this real feedback as out-of-window."""
+    exposure = _exposure("e1", ts=5000, title="A", good=True)
+    exposure["shown_at_ms"] = 1000            # user saw the slate at t=1000
+    exposure["completed_at_ms"] = 5000        # graph finished (and re-stamped ts) at t=5000
+    events = [_event("e1", ts=1200, title="A", positive=True)]  # rated at t=1200
+
+    rows, diagnostics = build_strict_labeled_rows([exposure], events)
+
+    assert diagnostics.get("outside_attribution_window", 0) == 0
+    assert len(rows) == 1
+
+
 def test_unobserved_items_are_not_implicit_negatives():
     exposures = [_exposure("e1", 100, "A", True)]
     events = [_event("e1", 110, "A", True)]
@@ -116,6 +133,27 @@ def test_slate_feedback_creates_low_weight_top_k_rows():
     assert rows[0]["label"] == 0
     assert rows[0]["sample_weight"] < 1.0
     assert rows[0]["label_source"] == "slate_feedback"
+
+
+def test_new_overall_and_legacy_rating_produce_identical_slate_samples():
+    """The single-contract guarantee: a new record carrying `overall` and a
+    legacy record carrying the equivalent `rating` must yield the same training
+    sample, so consumers can read `overall` only."""
+    exposures = [_exposure("e1", 100, "A", True)]
+
+    def _sample(fb):
+        rows, _ = build_slate_feedback_rows(exposures, [fb], top_k=1)
+        r = rows[0]
+        return (r["label"], r["reward"], r["sample_weight"], r["event_type"])
+
+    legacy_neg = {"feedback_id": "s1", "exposure_id": "e1", "ts": 200, "rating": "too_noisy"}
+    new_neg = {"slate_feedback_id": "s2", "exposure_id": "e1", "ts": 200, "overall": "off"}
+    assert _sample(legacy_neg) == _sample(new_neg)
+
+    legacy_pos = {"feedback_id": "s3", "exposure_id": "e1", "ts": 200, "rating": "great"}
+    new_pos = {"slate_feedback_id": "s4", "exposure_id": "e1", "ts": 200, "overall": "fits"}
+    assert _sample(legacy_pos) == _sample(new_pos)
+    assert _sample(new_pos)[0] == 1 and _sample(new_neg)[0] == 0
 
 
 def test_neutral_slate_feedback_is_not_used_as_item_label():

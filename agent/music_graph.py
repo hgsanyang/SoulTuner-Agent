@@ -22,7 +22,7 @@ except ImportError:
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_labels, safe_query
 from config.settings import settings
 from agent.catalog_gap import CatalogGapDecision, analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
 from agent.explanation import emit_fast_explanation
@@ -254,7 +254,8 @@ class MusicRecommendationGraph:
             synth = get_profile_synthesizer(user_id)
             portrait_text = synth.get_portrait_for_prompt()
             if portrait_text:
-                logger.info(f"[UserProfile] 动态画像加载成功: {portrait_text[:80]}")
+                # 画像正文就是这个人的听歌人格，截断也照样泄露；按 query 脱敏。
+                logger.info("[UserProfile] 动态画像加载成功: %s", safe_query(portrait_text))
                 return portrait_text
         except Exception as e:
             logger.warning(f"[UserProfile] 动态画像加载失败，退回静态标签: {e}")
@@ -301,7 +302,7 @@ class MusicRecommendationGraph:
 
             profile_text = "；".join(parts) if parts else ""
             if profile_text:
-                logger.info(f"[UserProfile] 静态标签加载成功: {profile_text[:80]}")
+                logger.info("[UserProfile] 静态标签加载成功: %s", safe_query(profile_text))
             return profile_text
         except Exception as e:
             logger.warning(f"[UserProfile] 画像加载失败: {e}")
@@ -1188,7 +1189,7 @@ class MusicRecommendationGraph:
                             retrieval_plan,
                             catalog_gap,
                         )
-                        logger.info("[web_fallback] 外部候选发现: %s", discovery_query)
+                        logger.info("[web_fallback] 外部候选发现: %s", safe_query(discovery_query))
                         discovery_docs = await _federated_search_async(discovery_query)
                         candidates = extract_song_candidates(
                             discovery_docs,
@@ -1279,10 +1280,10 @@ class MusicRecommendationGraph:
                             ]
                         if candidate_songs:
                             if clean_query != query:
-                                logger.info("[web_fallback] 查询候选命中: %s", clean_query)
+                                logger.info("[web_fallback] 查询候选命中: %s", safe_query(clean_query))
                             songs = candidate_songs
                             break
-                        logger.info("[web_fallback] 查询候选无结果: %s", clean_query)
+                        logger.info("[web_fallback] 查询候选无结果: %s", safe_query(clean_query))
 
                     if not songs and netease_plan.artist_terms and not netease_plan.song_terms:
                         artist_search_limit = max(search_limit, 20)
@@ -1383,7 +1384,7 @@ class MusicRecommendationGraph:
                     )
 
                 if not songs:
-                    logger.warning(f"[web_fallback] 联网搜索无结果: {query}")
+                    logger.warning(f"[web_fallback] 联网搜索无结果: {safe_query(query)}")
                     preserved = _local_preserve_payload("web_search_empty")
                     if preserved:
                         return preserved
@@ -1589,7 +1590,7 @@ class MusicRecommendationGraph:
                     ).strip()
                     clean = re.sub(r'(这首歌|这首歌曲|歌曲|这首)[\s。.]*$', '', clean).strip()
                     song_queries = [clean] if clean else [raw_query]
-                    logger.info(f"[acquire] 清洗后搜索词: {raw_query!r} → {song_queries}")
+                    logger.info(f"[acquire] 清洗后搜索词: {safe_query(raw_query)} → {len(song_queries)} 个")
 
         if not song_queries:
             return {
@@ -1702,7 +1703,7 @@ class MusicRecommendationGraph:
         tags.discard("未知")
 
         result = " ".join(sorted(tags)) if tags else "relaxing chill indie folk"
-        logger.info(f"[Favorites] 偏好标签集合({len(tags)}个): {tags}")
+        logger.info("[Favorites] 偏好标签集合: %s", safe_labels(tags))
         return result
 
     async def generate_recommendations_node(self, state: MusicAgentState) -> Dict[str, Any]:
@@ -1745,7 +1746,7 @@ class MusicRecommendationGraph:
                         graphzep_facts=state.get("graphzep_facts", ""),
                         user_id=user_id,
                     )
-                    logger.info(f"[Favorites] 偏好查询文本: {preference_query}")
+                    logger.info(f"[Favorites] 偏好查询文本: {safe_query(preference_query)}")
 
                     # ── Tier 2: Discoveries（向量检索发现新歌）──
                     retriever = MusicHybridRetrieval(llm_client=get_llm())
@@ -1816,7 +1817,7 @@ class MusicRecommendationGraph:
                 # 兜底：如果意外没有 input，才从意图回退
                 search_query = intent_type
 
-            logger.info(f"调用检索引擎执行生成推荐: {search_query}")
+            logger.info(f"调用检索引擎执行生成推荐: {safe_query(search_query)}")
 
             # 传递上游统一规划的 retrieval_plan，避免二次 LLM 调用
             retrieval_plan = state.get("retrieval_plan")
@@ -2067,9 +2068,31 @@ class MusicRecommendationGraph:
                     logger.warning(f"[Explanation] 未知模式 {explanation_mode!r}，降级为 tuner_async")
                 retrieval_plan = state.get("retrieval_plan", {}) or {}
                 refinement_options = state.get("refinement_options", []) or []
+                # INFORMATION 请求（"他获奖了吗""最新专辑是什么"）此前只由调音师凭
+                # 训练截止前的记忆作答 —— 联网只用于找歌，不用于答事实，于是把
+                # 检索失败包装成"暂无消息"。这里按 planner 自己的 request_mode
+                # 先联网取带证据的事实，再交给调音师如实转述（无关键词规则）。
+                web_facts = ""
+                if str((state.get("tool_plan") or {}).get("request_mode") or "") == "information" and _web_search_enabled():
+                    try:
+                        from services.music_information_answer import answer_music_information
+
+                        _info = await answer_music_information(user_query, state.get("chat_history", "") or "")
+                        if _info.searched and str(_info.answer or "").strip():
+                            _lines = [_info.answer.strip()]
+                            for _ev in _info.evidence:
+                                if _ev.claim:
+                                    _lines.append(f"- 依据：{_ev.claim}（{_ev.source or '来源未标注'}）")
+                            web_facts = "\n".join(_lines)[:2400]
+                            logger.info("[Explanation] 注入联网资讯事实 %d 字", len(web_facts))
+                        else:
+                            logger.info("[Explanation] 资讯检索未命中，保持空 web_facts（不编造）")
+                    except Exception as _e:
+                        logger.warning(f"[Explanation] 资讯检索失败: {type(_e).__name__}: {_e}")
                 prompt_template = MUSIC_TUNER_RESPONSE_PROMPT
                 prompt_payload = {
                     "user_query": user_query,
+                    "web_facts": web_facts,
                     "intent_context": state.get("intent_context", ""),
                     "retrieval_plan": json.dumps(retrieval_plan, ensure_ascii=False, default=str)[:2400],
                     "recommendation_overview": _build_tuner_recommendation_overview(recommendations),
@@ -2207,7 +2230,8 @@ class MusicRecommendationGraph:
                 "language_preference": "mixed"
             }
 
-            logger.info(f"分析完成: 偏好流派={favorite_genres}, 偏好艺术家={favorite_artists[:3]}")
+            logger.info("分析完成: 偏好流派=%s, 偏好艺术家=%s",
+                        safe_labels(favorite_genres), safe_labels(favorite_artists))
 
             return {
                 "user_preferences": preferences,
@@ -2277,7 +2301,7 @@ class MusicRecommendationGraph:
                 retriever = MusicHybridRetrieval(llm_client=get_llm())
                 query = f"流派:{','.join(seed_genres)} 活动:{activity} 心情:{mood}"
 
-                logger.info(f"调用检索引擎进行增强推荐: {query}")
+                logger.info(f"调用检索引擎进行增强推荐: {safe_query(query)}")
                 raw_hybrid_result = await retriever.retrieve(query, limit=settings.graph_search_limit)
 
                 # 直接扩展到推荐列表
@@ -2286,7 +2310,7 @@ class MusicRecommendationGraph:
                 # 其他推荐类型，走统一检索管线
                 retriever = MusicHybridRetrieval(llm_client=get_llm())
                 fallback_query = state.get("input", intent_type)
-                logger.info(f"调用检索引擎进行增强推荐(fallback): {fallback_query}")
+                logger.info(f"调用检索引擎进行增强推荐(fallback): {safe_query(fallback_query)}")
                 raw_hybrid_result = retriever.retrieve(fallback_query, limit=settings.graph_search_limit)
                 if raw_hybrid_result and hasattr(raw_hybrid_result, 'data'):
                     recommendations = raw_hybrid_result.data if raw_hybrid_result.data else []

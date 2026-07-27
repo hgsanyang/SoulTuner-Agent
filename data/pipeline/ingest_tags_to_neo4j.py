@@ -14,7 +14,10 @@
 import sys
 import json
 import time
-sys.path.insert(0, r"c:\Users\sanyang\sanyangworkspace\music_recommendation\Muisc-Research")
+from pathlib import Path
+
+# repo root = …/Muisc-Research (this file is at Muisc-Research/data/pipeline/)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from retrieval.neo4j_client import get_neo4j_client
 

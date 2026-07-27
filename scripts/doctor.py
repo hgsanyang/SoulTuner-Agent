@@ -202,6 +202,29 @@ def check_effective_models():
     line(True, f"llm_timeout: {timeout}", str(timeout_src))
 
 
+def check_neo4j_edition() -> bool:
+    """Community 镜像 + Enterprise `block` 卷 = 起不来。返回 False 表示致命。
+
+    仓库默认已改成 Community（新用户拿到的是空卷）；这一关就是防止那个默认值
+    指向一个已存在的 Enterprise 卷。详细判定在 scripts/preflight_neo4j.py，
+    doctor 只负责把结论显示出来。
+    """
+    section("Neo4j 版本 / 存储格式匹配")
+    try:
+        sys.path.insert(0, str(ROOT))
+        from scripts.preflight_neo4j import check as _preflight_check
+
+        ok, detail = _preflight_check()
+    except Exception as e:
+        line(True, "跳过（无法执行 preflight 检查）", str(e))
+        return True
+    for text in detail:
+        print(f"  {DIM}{text}{RST}" if text else "")
+    line(ok, "镜像版本与数据卷存储格式匹配",
+         fix="按上面的提示改本地 .env，或按 docs/NEO4J_MIGRATION.md 在克隆卷上做 block->aligned 迁移")
+    return ok
+
+
 def check_services():
     section("服务端口 & 健康检查")
     # Neo4j —— 用 .env 里 NEO4J_URI 的真实端口探测（Neo4j Desktop 常是 4xxxx 随机端口，而非 7687）
@@ -258,10 +281,14 @@ def check_models():
 def main():
     print(f"\n{'='*60}\n  🩺 SoulTuner-Agent 环境体检\n{'='*60}")
     print(f"  项目根: {ROOT}")
+    fatal = False
     try:
         check_python()
         check_env_file()
         check_effective_models()
+        # 唯一会让 doctor 返回非 0 的检查：这一项不匹配时启动必然失败，
+        # 而失败信息看起来像普通崩溃，所以必须在启动前拦下来。
+        fatal = not check_neo4j_edition()
         check_services()
         check_models()
     except Exception as e:
@@ -273,7 +300,10 @@ def main():
     print("        docker exec -it soultuner-neo4j cypher-shell -u neo4j -p <口令> \"MATCH (s:Song) RETURN count(s);\"")
     print("     3) Neo4j Desktop 白屏：重启 Desktop / 清 %APPDATA%\\Neo4j Desktop 缓存 / 看 Desktop 日志")
     print(f"{DIM}{'─'*60}{RST}\n")
+    if fatal:
+        print(f"  {RED}存在会导致启动失败的配置问题（见上方 Neo4j 版本/存储格式）。{RST}\n")
+    return 1 if fatal else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

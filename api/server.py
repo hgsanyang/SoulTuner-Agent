@@ -10,7 +10,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import AsyncGenerator, Dict, Any, Optional, List
+from typing import AsyncGenerator, Dict, Any, Optional, List, get_args
 
 # 添加项目根目录到Python路径(如果还没有)
 project_root = Path(__file__).parent.parent
@@ -23,9 +23,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from agent.music_agent import MusicRecommendationAgent
 from api.security import (
+    check_api_request_auth,
     reject_shared_safe_action,
     require_admin_api_key,
     safe_resolve_child,
@@ -36,6 +37,25 @@ from api.security import (
 logger = get_logger(__name__)
 
 app = FastAPI(title="Music Recommendation API", version="1.0.0")
+
+
+@app.middleware("http")
+async def _api_auth_gate(request, call_next):
+    """Blanket auth for /api/* when a key is configured (LAN / shared mode).
+
+    Per-endpoint require_admin_api_key deps still guard the destructive routes as
+    defence in depth, but this gate is what makes coverage total: no /api/ route —
+    including any added later — can be reached without the key when auth is on.
+    Local single-user installs configure no key and pass straight through.
+    """
+    from fastapi.responses import JSONResponse
+
+    verdict = check_api_request_auth(request.url.path, request.method,
+                                     request.headers.get("X-API-Key"))
+    if verdict is not None:
+        code, detail = verdict
+        return JSONResponse(status_code=code, content={"detail": detail})
+    return await call_next(request)
 
 # 注册用户画像路由
 from api.user_profile import router as user_profile_router
@@ -219,7 +239,11 @@ def _cors_static(directory: str) -> CORSMiddleware:
         allow_headers=["*"],
     )
 
-_DATA_ROOT = Path(os.environ.get("MUSIC_DATA_ROOT", r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data"))
+# Default resolves relative to the repo (…/Muisc-Research/../data) — never a
+# developer's absolute home path, which leaks a username and breaks on every
+# other machine. Override with MUSIC_DATA_ROOT (the Docker image sets /app/data).
+_DEFAULT_DATA_ROOT = Path(__file__).resolve().parents[1].parent / "data"
+_DATA_ROOT = Path(os.environ.get("MUSIC_DATA_ROOT") or _DEFAULT_DATA_ROOT)
 PROCESSED_AUDIO_ROOT = _DATA_ROOT / "processed_audio"
 audio_dir = PROCESSED_AUDIO_ROOT / "audio"
 if audio_dir.exists():
@@ -295,6 +319,12 @@ class RecommendationRequest(BaseModel):
     user_id: str = "local_admin"
     llm_provider: str = "dashscope"            # 模型供应商: dashscope / siliconflow / google / ...
     web_search_enabled: bool = True           # 是否开启联网搜索
+    # 客户端测得的收听上下文（只有客户端知道用户时区/会话/场景），随请求带上，
+    # 事后无法回填；服务端不得用自己的时钟顶替。
+    timezone: str = ""
+    session_id: str = ""
+    scene: str = ""
+    device: str = ""
 
 
 class PlaylistRequest(BaseModel):
@@ -342,7 +372,7 @@ async def acquire_song_endpoint(
     from tools.acquire_music import OnlineMusicAcquirer
 
     query = f"{request.title} {request.artist}"
-    logger.info(f"[acquire-song] 用户请求保存音源: {query}")
+    logger.info(f"[acquire-song] 用户请求保存音源: {safe_query(query)}")
 
     acquirer = OnlineMusicAcquirer()
     async with aiohttp.ClientSession() as session:
@@ -403,6 +433,7 @@ async def stream_recommendations(
     dialog_state: Optional[Dict[str, Any]] = None,
     user_id: str = "local_admin",
     web_search_enabled: bool = True,
+    client_context: Optional[Dict[str, Any]] = None,
     is_disconnected=None,
 ) -> AsyncGenerator[str, None]:
     """
@@ -448,7 +479,7 @@ async def stream_recommendations(
         logger.info(f"联网搜索: {'ON' if web_search_enabled else 'OFF'}")
 
         logger.info("\n" + "🚀" * 30)
-        logger.info(f"🆕 [NEW RECOMMENDATION] User Query: {query}")
+        logger.info(f"🆕 [NEW RECOMMENDATION] User Query: {safe_query(query)}")
         logger.info("-" * 40)
 
         # 发送开始事件
@@ -462,6 +493,7 @@ async def stream_recommendations(
             user_preferences=user_preferences,
             dialog_state=dialog_state,
             user_id=user_id,
+            client_context=client_context,
         ):
             # ★ 检测客户端是否已断开（用户点击了"停止生成"）
             if is_disconnected:
@@ -625,6 +657,12 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
             user_preferences=request.user_preferences,
             chat_history=request.chat_history,
             dialog_state=request.dialog_state,
+            client_context={
+                "timezone": request.timezone,
+                "session_id": request.session_id,
+                "scene": request.scene,
+                "device": request.device,
+            },
             user_id=request.user_id,
             web_search_enabled=request.web_search_enabled,
             is_disconnected=raw_request.is_disconnected,
@@ -882,7 +920,10 @@ class SettingsUpdateRequest(BaseModel):
 
 
 @app.post("/api/settings")
-async def update_settings_endpoint(request: SettingsUpdateRequest):
+async def update_settings_endpoint(
+    request: SettingsUpdateRequest,
+    _: None = Depends(require_admin_api_key),
+):
     """
     动态更新运行时设置（不重启服务）。
     前端只发送修改了的字段，未发送的字段保持不变。
@@ -957,7 +998,7 @@ async def update_settings_endpoint(request: SettingsUpdateRequest):
 
 
 @app.post("/api/settings/reset")
-async def reset_settings_endpoint():
+async def reset_settings_endpoint(_: None = Depends(require_admin_api_key)):
     """
     还原所有配置为默认值（从环境变量 + 代码默认值重新加载）。
     """
@@ -1031,12 +1072,21 @@ class UserEventRequest(BaseModel):
 
 
 class SlateFeedbackRequest(BaseModel):
-    """一整组推荐结果的反馈。"""
+    """一整组推荐结果的反馈。
+
+    best/worst 让用户不必逐首听完也能给出归因：指出最符合与最不符合的 1-3 首，
+    就够把"整组一般"拆成可用的正负信号。未被选中的歌保持"未知"，不算负样本。
+    """
     exposure_id: str
     rating: str
     reasons: List[str] = []
     note: str = ""
     user_id: str = "local_admin"
+    best_music_ids: List[str] = []
+    worst_music_ids: List[str] = []
+    timezone: str = ""
+    session_id: str = ""
+    scene: str = ""
     extra: Optional[Dict[str, Any]] = None
 
 
@@ -1158,6 +1208,122 @@ async def capture_user_event(request: UserEventRequest):
         return {"success": False, "error": str(e)}
 
 
+class SongFeedbackRequest(BaseModel):
+    """Per-song CONTEXT feedback (see schemas/feedback_events).
+
+    Long-term taste (like/save/dislike/block) is NOT accepted here — /api/user-event
+    stays its single authoritative entry point, so there is exactly one write path
+    into memory and the ingest flywheel.
+
+    Ranking/policy truth (rank, propensity, policy_version, catalog_origin) is NOT
+    accepted from the client either: the server backfills it from its own exposure
+    record. The browser must not be able to rewrite what our policy did.
+    """
+
+    exposure_id: str = ""
+    music_id: str = ""
+    title: str = ""
+    artist: str = ""
+    user_id: str = "local_admin"
+    context_fit: Optional[str] = None    # fits | partial | off
+    off_reasons: List[str] = []
+    note: str = ""
+    timezone: str = ""
+    session_id: str = ""
+    scene: str = ""
+    device: str = ""
+
+
+@app.post("/api/song-feedback")
+async def capture_song_feedback(request: SongFeedbackRequest):
+    """Record per-song feedback.
+
+    Two channels are stored separately and never merged: `taste` is a long-term
+    preference signal, `context_fit` judges THIS slate in THIS context. A track
+    can be a favourite and still wrong for tonight. Free-text `note` is always
+    accepted. Not rating a song stays UNKNOWN — never a negative sample.
+    """
+    try:
+        import time as _t
+
+        from schemas.feedback_events import (
+            ExposureBookkeeping,
+            SongFeedback,
+            derive_context,
+        )
+        from services.feedback_logger import (
+            FeedbackStoreError,
+            find_exposure_item,
+            log_song_feedback,
+            lookup_exposure,
+        )
+
+        if not request.exposure_id.strip():
+            raise HTTPException(status_code=422, detail="exposure_id is required")
+
+        # Orphan guard: feedback must reference an exposure we actually recorded,
+        # and a song that was actually in it. Songs stream to the UI over SSE
+        # before the graph finishes, so a user CAN rate before the exposure is
+        # persisted — we reject with 409 so the client can retry rather than
+        # silently storing a judgement we can never attribute.
+        exposure = lookup_exposure(request.exposure_id)
+        if exposure is None:
+            raise HTTPException(status_code=409, detail="exposure not persisted yet; retry shortly")
+        item = find_exposure_item(exposure, music_id=request.music_id,
+                                  title=request.title, artist=request.artist)
+        if item is None:
+            raise HTTPException(status_code=422, detail="song was not part of this exposure")
+
+        try:
+            feedback = SongFeedback(
+                exposure_id=request.exposure_id,
+                music_id=str(item.get("music_id") or request.music_id or ""),
+                title=str(item.get("title") or request.title or ""),
+                artist=str(item.get("artist") or request.artist or ""),
+                user_id=request.user_id,
+                context_fit=request.context_fit,
+                off_reasons=request.off_reasons,
+                note=request.note,
+                context=derive_context(
+                    int(_t.time() * 1000), request.timezone,
+                    session_id=request.session_id, scene=request.scene,
+                    device=request.device,
+                ),
+                # Policy truth comes from OUR exposure record, not the browser.
+                exposure=ExposureBookkeeping(
+                    rank=item.get("rank"),
+                    propensity=item.get("propensity"),
+                    policy_version=str(exposure.get("policy_version") or ""),
+                    is_exploration=bool(item.get("is_exploration")),
+                    catalog_origin=item.get("catalog_origin"),
+                    known_to_user=item.get("known_to_user"),
+                    # kept distinct — a decayed float is not a count; None stays unknown
+                    historical_exposure_count=item.get("historical_exposure_count"),
+                    effective_exposure=item.get("effective_exposure"),
+                ),
+            )
+        except Exception as exc:  # unknown enum value etc.
+            raise HTTPException(status_code=422, detail=f"invalid feedback: {exc}")
+
+        if feedback.is_empty():
+            raise HTTPException(status_code=422, detail="feedback carries no signal")
+
+        try:
+            feedback_id = log_song_feedback(feedback)
+        except FeedbackStoreError as exc:
+            # SQLite is authoritative for user feedback: if it did not land, say so
+            # rather than returning success for a judgement we failed to persist.
+            raise HTTPException(status_code=503, detail=f"could not persist feedback: {exc}")
+        # No memory / flywheel write here on purpose: long-term taste has exactly
+        # one authoritative entry point (/api/user-event).
+        return {"success": True, "song_feedback_id": feedback_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"逐首反馈记录失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/slate-feedback")
 async def capture_slate_feedback(request: SlateFeedbackRequest):
     """Record feedback for an entire recommendation slate.
@@ -1172,16 +1338,76 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
         if request.rating not in SUPPORTED_SLATE_RATINGS:
             raise HTTPException(status_code=422, detail="Unsupported slate rating")
 
+        import time as _t
+
+        from schemas.feedback_events import (
+            SLATE_RATING_TO_OVERALL,
+            SlateFeedback,
+            SlateReason,
+            derive_context,
+        )
+        from services.feedback_logger import FeedbackStoreError, lookup_exposure
         from services.memory_gateway import get_memory_gateway
 
-        result = await get_memory_gateway().remember_slate_feedback(
-            exposure_id=request.exposure_id,
-            rating=request.rating,
-            reasons=request.reasons,
-            note=request.note,
-            user_id=request.user_id,
-            extra=request.extra or {},
+        # Same orphan guard as per-song feedback, and best/worst must name songs
+        # that were actually in this slate (a client cannot invent them).
+        exposure = lookup_exposure(request.exposure_id)
+        if exposure is None:
+            raise HTTPException(status_code=409, detail="exposure not persisted yet; retry shortly")
+        exposed_ids = {str(i.get("music_id")) for i in (exposure.get("items") or []) if i.get("music_id")}
+        best = [m for m in request.best_music_ids if m in exposed_ids][:3]
+        worst = [m for m in request.worst_music_ids if m in exposed_ids][:3]
+        if set(best) & set(worst):
+            raise HTTPException(status_code=422, detail="a song cannot be both best and worst")
+
+        context = derive_context(
+            int(_t.time() * 1000), request.timezone,
+            session_id=request.session_id, scene=request.scene,
         )
+        # Reasons are stored as slugs, not display labels. Older clients (and the
+        # pre-slug UI) send Chinese button text; keep those verbatim in
+        # `reasons_raw` rather than dropping them, so a vocabulary change is
+        # visible in the data instead of silently splitting one category in two.
+        known_reasons = set(get_args(SlateReason))
+        reasons = [r for r in request.reasons if r in known_reasons]
+        unknown_reasons = [r for r in request.reasons if r not in known_reasons]
+
+        try:
+            # Validate through the strict contract so the written record and the
+            # declared schema cannot drift apart.
+            strict = SlateFeedback(
+                exposure_id=request.exposure_id, user_id=request.user_id,
+                overall=SLATE_RATING_TO_OVERALL.get(request.rating),
+                best_music_ids=best, worst_music_ids=worst,
+                reasons=reasons, note=request.note, context=context,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"invalid slate feedback: {exc}")
+
+        # best/worst + listening context ride along in `extra` so ranking replay
+        # can attribute the slate without changing the gateway contract.
+        slate_extra = dict(request.extra or {})
+        slate_extra.update({
+            "schema_version": strict.schema_version,
+            "overall": strict.overall,
+            "best_music_ids": strict.best_music_ids,
+            "worst_music_ids": strict.worst_music_ids,
+            "context": context.model_dump(mode="json"),
+        })
+        if unknown_reasons:
+            slate_extra["reasons_raw"] = unknown_reasons
+
+        try:
+            result = await get_memory_gateway().remember_slate_feedback(
+                exposure_id=request.exposure_id,
+                rating=request.rating,
+                reasons=strict.reasons,   # validated slugs; raw text kept in extra
+                note=request.note,
+                user_id=request.user_id,
+                extra=slate_extra,
+            )
+        except FeedbackStoreError as exc:
+            raise HTTPException(status_code=503, detail=f"could not persist slate feedback: {exc}")
         return {
             "success": True,
             "feedback_id": result.slate_feedback_id,
@@ -1198,7 +1424,11 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 @app.get("/api/ranking-policy/status")
 async def ranking_policy_status():
     """Return non-sensitive A3 policy state for diagnostics and UI tooling."""
-    from services.feedback_logger import load_jsonl
+    from services.feedback_logger import (
+        load_events_canonical,
+        load_exposures_canonical,
+        load_slate_feedback_canonical,
+    )
     from services.feedback_diagnostics import summarize_feedback_quality
     from services.ranking_policy import (
         ACTIVE_FILE,
@@ -1209,9 +1439,10 @@ async def ranking_policy_status():
     )
 
     root = feedback_dir()
-    exposures = load_jsonl(root / "exposures.jsonl")
-    events = load_jsonl(root / "events.jsonl")
-    slate_feedback = load_jsonl(root / "slate_feedback.jsonl")
+    # Canonical (deduped by id) so counts and coverage treat each exposure once.
+    exposures = load_exposures_canonical()
+    events = load_events_canonical()
+    slate_feedback = load_slate_feedback_canonical()
 
     def _summary(path: Path) -> Dict[str, Any] | None:
         if not path.exists():
@@ -1286,7 +1517,10 @@ async def memory_profile_views(user_id: str = "local_admin"):
 
 
 @app.post("/api/memory/preference")
-async def add_memory_preference(request: MemoryPreferenceUpdateRequest):
+async def add_memory_preference(
+    request: MemoryPreferenceUpdateRequest,
+    _: None = Depends(require_admin_api_key),
+):
     """Add structured preferences to the Neo4j hot path."""
     reject_shared_safe_action("update memory preference")
     try:
@@ -1310,6 +1544,7 @@ async def delete_memory_preference(
     field: str,
     value: str,
     user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
 ):
     """Delete one learned preference item from the Neo4j hot path."""
     reject_shared_safe_action("delete memory preference")
@@ -1334,6 +1569,7 @@ async def delete_memory_preference(
 @app.delete("/api/memory/profile")
 async def clear_learned_memory_profile(
     user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
 ):
     """Clear learned hot-path preference fields, keeping manual profile and song relations."""
     reject_shared_safe_action("clear learned memory profile")
@@ -1372,8 +1608,18 @@ async def consolidate_memory(
 
 
 @app.delete("/api/memory/record/{record_id}")
-async def delete_memory_record(record_id: str, user_id: str = "local_admin"):
-    """Tombstone one auditable memory record without rewriting its history."""
+async def delete_memory_record(
+    record_id: str,
+    user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
+):
+    """Tombstone one auditable memory record without rewriting its history.
+
+    Needs the admin key like every other delete. It used to have no dependency and
+    was only covered incidentally by the blanket /api/* gate — so splitting
+    ADMIN_API_KEY from API_ACCESS_KEY (an admin key alone must not 401 the whole
+    UI) silently re-opened it. A destructive route must carry its own gate.
+    """
     reject_shared_safe_action("delete memory record")
     try:
         from services.memory_gateway import get_memory_gateway
@@ -1396,18 +1642,20 @@ async def ranking_policy_replay(
 ):
     """Fit a candidate ranking policy from logged exposures and feedback."""
     reject_shared_safe_action("learn ranking policy")
-    from services.feedback_logger import load_jsonl
+    from services.feedback_logger import (
+        load_events_canonical,
+        load_exposures_canonical,
+        load_slate_feedback_canonical,
+    )
     from services.ranking_learning import learn_ranking_policy
     from services.ranking_policy import feedback_dir, write_candidate
 
     root = feedback_dir()
-    exposures = load_jsonl(root / "exposures.jsonl")
-    events = load_jsonl(root / "events.jsonl")
-    slate_feedback = (
-        load_jsonl(root / "slate_feedback.jsonl")
-        if request.include_slate_feedback
-        else []
-    )
+    # Deduped by id: replaying the append-only log would train on the provisional
+    # AND final copy of every exposure.
+    exposures = load_exposures_canonical()
+    events = load_events_canonical()
+    slate_feedback = load_slate_feedback_canonical() if request.include_slate_feedback else []
     report = learn_ranking_policy(
         exposures,
         events,

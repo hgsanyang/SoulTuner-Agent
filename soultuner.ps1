@@ -69,11 +69,14 @@ function Get-ProjectEnvValue {
 }
 
 function Get-NeteaseApiDir {
+    # NETEASE_API_DIR env wins; otherwise look next to the repo, then in $HOME.
+    # No hardcoded developer paths.
     $candidates = @(
+        $env:NETEASE_API_DIR,
         (Join-Path $ProjectRoot "NeteaseCloudMusicApi"),
-        "C:\Users\sanyang\sanyangworkspace\tools\NeteaseCloudMusicApi",
+        (Join-Path (Split-Path $ProjectRoot -Parent) "tools\NeteaseCloudMusicApi"),
         (Join-Path $HOME "NeteaseCloudMusicApi")
-    )
+    ) | Where-Object { $_ }
     foreach ($candidate in $candidates) {
         if (Test-Path (Join-Path $candidate "app.js")) {
             return $candidate
@@ -108,7 +111,7 @@ function Start-NeteaseApi {
     }
     $dir = Get-NeteaseApiDir
     if (-not $dir) {
-        throw "NeteaseCloudMusicApi not found. Expected app.js under project root, C:\Users\sanyang\sanyangworkspace\tools\NeteaseCloudMusicApi, or $HOME\NeteaseCloudMusicApi."
+        throw "NeteaseCloudMusicApi not found. Set NETEASE_API_DIR, or place app.js under the project root, a sibling tools\NeteaseCloudMusicApi, or $HOME\NeteaseCloudMusicApi."
     }
     $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
     if (-not $npm) {
@@ -165,8 +168,20 @@ function Stop-LocalNeteaseApiForDocker {
     Write-Warning "Port 3000 is occupied by $($proc.ProcessName) (pid=$($proc.Id)). Docker Netease proxy may not start."
 }
 
+function Assert-Neo4jEditionMatchesVolume {
+    # Community image + Enterprise `block` volume = Neo4j refuses to start, and the
+    # failure reads like a generic crash. Catch it before `up`, not after.
+    # preflight_neo4j.py is pure stdlib so it runs under whatever Python we find.
+    Invoke-ProjectPython "scripts/preflight_neo4j.py"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Neo4j preflight failed - see docs/NEO4J_MIGRATION.md. Nothing was started."
+        exit 1
+    }
+}
+
 switch ($Action) {
     "up" {
+        Assert-Neo4jEditionMatchesVolume
         Stop-LocalNeteaseApiForDocker
         $ComposeFiles = @("-f", "docker-compose.yml")
         $MemoryBackends = (($env:MEMORY_EPISODIC_BACKENDS -split ",") | ForEach-Object { $_.Trim().ToLowerInvariant() })

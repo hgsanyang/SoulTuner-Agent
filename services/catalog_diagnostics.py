@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from services.feedback_logger import SLATE_FEEDBACK_FILE, load_jsonl
+from services.feedback_logger import load_exposures_canonical, load_slate_feedback_canonical
 
 
 UNKNOWN_VALUES = {"", "unknown", "none", "null", "na", "n/a", "未知", "未标注"}
@@ -127,7 +127,12 @@ def summarize_catalog_bias(
             for value in _iter_values(item.get("artist")):
                 exposed_artists[value] += 1
 
-    feedback_ratings = Counter(str(row.get("rating") or "").strip() for row in slate_feedback if row.get("rating"))
+    # Count the canonical `overall` (via the shared adapter), never raw `rating`.
+    from schemas.feedback_events import slate_overall
+
+    feedback_ratings = Counter(
+        slate_overall(row) for row in slate_feedback if slate_overall(row)
+    )
     feedback_reasons = Counter()
     for row in slate_feedback:
         for reason in _iter_values(row.get("reasons")):
@@ -211,7 +216,6 @@ def summarize_catalog_bias(
 
 
 def load_feedback_diagnostics(feedback_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    return (
-        load_jsonl(feedback_dir / "exposures.jsonl"),
-        load_jsonl(feedback_dir / SLATE_FEEDBACK_FILE),
-    )
+    # Deduped by id from the canonical store; `feedback_dir` is accepted for a
+    # stable signature but the store already knows where it lives.
+    return (load_exposures_canonical(), load_slate_feedback_canonical())

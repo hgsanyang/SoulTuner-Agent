@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Optional
 from langchain_core.tools import tool
 
 from retrieval.neo4j_client import get_neo4j_client
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_filters, safe_query
 from config.settings import settings
 
 logger = get_logger(__name__)
@@ -384,7 +384,7 @@ def _translate_query(query: str) -> str:
     query_stripped = query.strip()
     if query_stripped in _TRANSLATION_CACHE:
         translated = _TRANSLATION_CACHE[query_stripped]
-        logger.info(f"[SemanticSearch] 命中翻译缓存: '{query_stripped}' → '{translated}'")
+        logger.info(f"[SemanticSearch] 命中翻译缓存: '{safe_query(query_stripped)}' → '{safe_query(translated)}'")
         return translated
     return query
 
@@ -411,7 +411,12 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
     """
     if limit <= 0:
         limit = settings.semantic_search_limit
-    logger.info(f"[SemanticSearch] 实际使用 limit={limit} | 查询: '{query}' | 歌手过滤: '{artist_filter}' | 流派过滤: '{genre_filter}' | 语言过滤: '{language_filter}' | 地区过滤: '{region_filter}'")
+    # 过滤条件同样来自用户请求（"只要周杰伦的粤语歌"），和 query 一样要脱敏：
+    # 只记录哪几个过滤位被填了，不记录填的是什么。
+    logger.info("[SemanticSearch] 实际使用 limit=%d | 查询: %s | 硬过滤: %s",
+                limit, safe_query(query),
+                safe_filters(artist=artist_filter, genre=genre_filter,
+                             language=language_filter, region=region_filter))
 
     try:
         # 1. 文本预处理

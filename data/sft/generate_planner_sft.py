@@ -14863,8 +14863,9 @@ data = [
     }
 ]
 
-# Write to jsonl format
-out_path = "C:\\Users\\sanyang\\sanyangworkspace\\music_recommendation\\Muisc-Research\\data\\sft\\planner_sft_data.jsonl"
+# Write to jsonl format (next to this script, whatever machine it runs on)
+from pathlib import Path  # noqa: E402
+out_path = str(Path(__file__).resolve().parent / "planner_sft_data.jsonl")
 with open(out_path, 'w', encoding='utf-8') as f:
     for item in data:
         f.write(json.dumps(item, ensure_ascii=False) + "\n")

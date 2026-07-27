@@ -30,7 +30,10 @@ def summarize_feedback_quality(
     rows = explicit_rows + slate_rows
     label_counts = Counter(int(row["label"]) for row in rows)
     event_types = Counter(str(row.get("event_type") or "") for row in events)
-    slate_ratings = Counter(str(row.get("rating") or "") for row in slate_feedback)
+    # Canonical `overall` via the shared adapter; `rating` is legacy-only.
+    from schemas.feedback_events import slate_overall
+
+    slate_ratings = Counter(str(slate_overall(row) or "unknown") for row in slate_feedback)
     exposure_items = sum(len(row.get("items") or []) for row in exposures)
     pair_count = len(build_preference_pairs(rows))
     blockers: list[str] = []

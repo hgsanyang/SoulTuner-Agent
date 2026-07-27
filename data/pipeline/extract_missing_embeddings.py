@@ -24,8 +24,10 @@ from retrieval.neo4j_client import get_neo4j_client
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-DEFAULT_AUDIO_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\audio"
-DEFAULT_METADATA_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\metadata"
+_PROCESSED = Path(os.environ.get("MUSIC_PROCESSED_AUDIO_ROOT") or
+                  Path(__file__).resolve().parents[3] / "data" / "processed_audio")
+DEFAULT_AUDIO_DIR = str(_PROCESSED / "audio")
+DEFAULT_METADATA_DIR = str(_PROCESSED / "metadata")
 MAX_AUDIO_SECONDS = 180  # 只取前 3 分钟防 OOM
 
 

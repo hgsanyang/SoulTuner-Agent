@@ -6,7 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from retrieval.neo4j_client import get_neo4j_client
 
-AUDIO_DIR = r"C:\Users\sanyang\sanyangworkspace\music_recommendation\data\processed_audio\audio"
+AUDIO_DIR = os.environ.get("MUSIC_AUDIO_DATA_DIR") or str(
+    Path(__file__).resolve().parents[3] / "data" / "processed_audio" / "audio"
+)
 
 # 1. Count audio files on disk
 audio_files = []

@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from pydantic import BaseModel, Field
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 
 logger = get_logger(__name__)
 
@@ -248,7 +248,9 @@ class ProfileSynthesizer:
 
         self._cached_portrait = portrait
         _elapsed = _time.time() - _t0
-        logger.info(f"[ProfileSynth] ✅ 画像聚合完成 ({_elapsed:.1f}s) | confidence={portrait.confidence} | summary={portrait.one_line_summary[:60]}")
+        # one_line_summary 是"这个人是谁"的一句话总结，属于画像正文，脱敏后再记。
+        logger.info("[ProfileSynth] ✅ 画像聚合完成 (%.1fs) | confidence=%s | summary=%s",
+                    _elapsed, portrait.confidence, safe_query(portrait.one_line_summary))
         return portrait
 
     def _format_declared_preferences(self, neo4j_stats: Dict[str, Any]) -> str:
@@ -342,7 +344,8 @@ class ProfileSynthesizer:
                 lines = lines[:-1]
             raw_output = "\n".join(lines).strip()
 
-        logger.info(f"[ProfileSynth] LLM 原始输出 (前200字): {raw_output[:200]}")
+        # LLM 原始输出就是画像 JSON 本身，截断 200 字仍然是完整的偏好描述。
+        logger.info("[ProfileSynth] LLM 原始输出: %s", safe_query(raw_output))
 
         # 解析 JSON（带字段名容错）
         try:

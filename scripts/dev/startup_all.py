@@ -38,10 +38,11 @@ def _resolve_netease_dir() -> Path:
     local = PROJECT_ROOT / "NeteaseCloudMusicApi"
     if local.exists():
         return local
-    # 用户自定义工具目录
-    tools_dir = Path(r"C:\Users\sanyang\sanyangworkspace\tools\NeteaseCloudMusicApi")
-    if tools_dir.exists():
-        return tools_dir
+    # 常见的同级 tools 目录（相对仓库，不写死任何人的主目录）；
+    # 自定义位置请用 NETEASE_API_DIR 环境变量。
+    sibling = PROJECT_ROOT.parent / "tools" / "NeteaseCloudMusicApi"
+    if sibling.exists():
+        return sibling
     return Path.home() / "NeteaseCloudMusicApi"
 
 NETEASE_API_DIR = _resolve_netease_dir()

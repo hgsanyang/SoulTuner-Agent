@@ -2,7 +2,7 @@ import aiohttp
 from typing import List, Optional
 from pydantic import BaseModel
 from langchain_core.tools import tool
-from config.logging_config import get_logger
+from config.logging_config import get_logger, safe_query
 from config.settings import settings
 from schemas.music_state import ToolOutput
 
@@ -78,7 +78,7 @@ class MusicFetcher:
 
     async def fetch(self, query: str) -> List[OnlineSong]:
         """执行降级检索策略"""
-        logger.info(f"开启互联网寻歌: {query}")
+        logger.info(f"开启互联网寻歌: {safe_query(query)}")
         # 1. 尝试网易云
         songs = await self.search_netease(query)
         if songs:
@@ -86,7 +86,7 @@ class MusicFetcher:
             return songs
 
         # 2. 如果网易云失败，日志提醒回退
-        logger.warning(f"网易云未找到《{query}》的可用播放源，或者版权受限。")
+        logger.warning(f"网易云未找到《{safe_query(query)}》的可用播放源，或者版权受限。")
         return []
 
 # 全局单例
