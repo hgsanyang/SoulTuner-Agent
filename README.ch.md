@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>用自然语言做音乐推荐</strong>
+  <strong>基于自然语言的音乐推荐智能体</strong>
 </p>
 
 <p align="center">

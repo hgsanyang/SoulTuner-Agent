@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Music recommendation from plain language</strong>
+  <strong>A natural-language music recommendation agent</strong>
 </p>
 
 <p align="center">
