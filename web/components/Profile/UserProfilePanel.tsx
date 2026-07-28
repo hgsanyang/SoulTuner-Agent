@@ -298,10 +298,10 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
         }}>
           <div>
             <h3 style={{ margin: 0, color: theme.colors.text.primary, fontSize: '1.1rem' }}>
-              🎭 我的音乐画像
+              {t('🎭 我的音乐画像')}
             </h3>
             <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>
-              设置偏好后，推荐系统会更懂你的口味
+              {t('设置偏好后，推荐系统会更懂你的口味')}
             </span>
           </div>
           <button onClick={onClose} style={{
@@ -314,7 +314,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
         <div style={{ flex: 1, overflowY: 'auto', padding: '1.2rem 1.5rem' }}>
           {loading ? (
             <div style={{ textAlign: 'center', color: theme.colors.text.muted, padding: '3rem' }}>
-              加载中...
+              {t('加载中...')}
             </div>
           ) : (
             <>
@@ -393,7 +393,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                         cursor: 'pointer',
                       }}
                     >
-                      清空学习记忆
+                      {t('清空学习记忆')}
                     </button>
                   )}
                 </div>
@@ -453,7 +453,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   })}
                   {!hasLearnedPrefs && (
                     <span style={{ color: theme.colors.text.muted, fontSize: '0.76rem' }}>
-                      暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。
+                      {t('暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。')}
                     </span>
                   )}
                 </div>
@@ -489,7 +489,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
               borderRadius: theme.borderRadius.sm, color: '#f06060',
               cursor: 'pointer', fontSize: '0.78rem',
             }}>
-              ↩ 清空
+              {t('↩ 清空')}
             </button>
             <button onClick={onClose} style={{
               padding: '0.5rem 1.2rem', background: 'transparent',
@@ -497,7 +497,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
               borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary,
               cursor: 'pointer', fontSize: '0.82rem',
             }}>
-              关闭
+              {t('关闭')}
             </button>
             <button
               onClick={saveProfile}

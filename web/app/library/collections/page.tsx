@@ -1,6 +1,7 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLibrary } from '@/context/LibraryContext';
@@ -8,6 +9,7 @@ import { useLibrary } from '@/context/LibraryContext';
 const COVER_COLORS = ['#5B8DEF', '#EF5B9C', '#EFA65B', '#5BEFA6', '#A65BEF', '#EF5B5B'];
 
 export default function CollectionsPage() {
+  const { t } = useLang();
     const { collections, addCollection } = useLibrary();
     const [isCreating, setIsCreating] = useState(false);
     const [newTitle, setNewTitle] = useState('');
@@ -48,16 +50,16 @@ export default function CollectionsPage() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="15 18 9 12 15 6" />
                 </svg>
-                返回
+                {t('返回')}
             </button>
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
                     <h1 style={{ margin: '0', fontSize: '2.4rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
-                        我的收藏夹
+                        {t('我的收藏夹')}
                     </h1>
                     <p style={{ margin: '0.5rem 0 0', fontSize: '0.95rem', color: theme.colors.text.secondary }}>
-                        管理并沉淀你的专属听歌体验
+                        {t('管理并沉淀你的专属听歌体验')}
                     </p>
                 </div>
                 <button
@@ -77,7 +79,7 @@ export default function CollectionsPage() {
                         <line x1="12" y1="5" x2="12" y2="19" />
                         <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
-                    新建歌单
+                    {t('新建歌单')}
                 </button>
             </div>
 
@@ -100,11 +102,11 @@ export default function CollectionsPage() {
                     />
                     <button onClick={handleCreate}
                         style={{ padding: '0.8rem 1.5rem', borderRadius: theme.borderRadius.md, backgroundColor: theme.colors.primary.accent, color: '#000', border: 'none', fontWeight: 600, cursor: 'pointer' }}>
-                        保存
+                        {t('保存')}
                     </button>
                     <button onClick={() => { setIsCreating(false); setNewTitle(''); }}
                         style={{ padding: '0.8rem 1.5rem', borderRadius: theme.borderRadius.md, backgroundColor: 'transparent', color: theme.colors.text.secondary, border: 'none', fontWeight: 600, cursor: 'pointer' }}>
-                        取消
+                        {t('取消')}
                     </button>
                 </div>
             )}

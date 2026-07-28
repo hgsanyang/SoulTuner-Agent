@@ -10,11 +10,13 @@
  */
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { usePlayer } from '@/context/PlayerContext';
 import { useRouter } from 'next/navigation';
 
 export default function LikesPage() {
+  const { t } = useLang();
     const { likedSongs, toggleLike } = useLibrary();
     const { playSong } = usePlayer();
     const router = useRouter();
@@ -45,7 +47,7 @@ export default function LikesPage() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="15 18 9 12 15 6" />
                 </svg>
-                返回
+                {t('返回')}
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1rem' }}>
                 <div
@@ -66,10 +68,10 @@ export default function LikesPage() {
                 </div>
                 <div>
                     <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>
-                        歌曲夹
+                        {t('歌曲夹')}
                     </p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '3rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
-                        我的喜欢
+                        {t('我的喜欢')}
                     </h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
                         当前共有 {likedSongs.length} 首已赞歌曲
@@ -113,7 +115,7 @@ export default function LikesPage() {
                     </div>
                     <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>暂无喜欢的歌曲</h3>
                     <p style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        在音乐推荐与发现流程中，点击爱心即可将喜欢的歌曲收藏到这里。
+                        {t('在音乐推荐与发现流程中，点击爱心即可将喜欢的歌曲收藏到这里。')}
                     </p>
                 </div>
             ) : (

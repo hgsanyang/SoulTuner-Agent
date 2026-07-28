@@ -1,6 +1,7 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import { useState, useEffect } from 'react';
 
 function useCurrentTime() {
@@ -67,6 +68,7 @@ export default function WelcomeScreen({
   subtitle = '说一句话，交给它去找歌',
   onPromptClick,
 }: WelcomeScreenProps) {
+  const { t } = useLang();
   const greeting = getGreeting();
   const currentTime = useCurrentTime();
   const [hoveredCard, setHoveredCard] = useState<number | null>(null);
@@ -171,7 +173,7 @@ export default function WelcomeScreen({
             display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center',
           }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(29,185,84,0.5)" strokeWidth="2" strokeLinecap="round"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" /></svg>
-            选择一个场景，快速开始
+            {t('选择一个场景，快速开始')}
           </div>
 
           <div style={{

@@ -397,7 +397,7 @@ export default function SongCard({
                 }}
               >
                 <p style={{ margin: '0 0 0.6rem', fontSize: '0.82rem', color: '#ff8888', fontWeight: 600 }}>
-                  ⚠️ 彻底删除这首歌？
+                  {t('⚠️ 彻底删除这首歌？')}
                 </p>
                 <p style={{ margin: '0 0 0.75rem', fontSize: '0.75rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.5 }}>
                   将从图谱、音频、封面、歌词中<br/>完全移除，此操作不可逆！
@@ -415,7 +415,7 @@ export default function SongCard({
                     onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)')}
                     onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)')}
                   >
-                    取消
+                    {t('取消')}
                   </button>
                   <button
                     onClick={handleDeleteFromLibrary}
@@ -476,7 +476,7 @@ export default function SongCard({
           )}
           {inQueue && (
             <span style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', backgroundColor: 'rgba(29,185,84,0.12)', color: theme.colors.primary.accent, borderRadius: theme.borderRadius.full, border: '1px solid rgba(29,185,84,0.2)' }}>
-              ▶ 播放列表
+              {t('▶ 播放列表')}
             </span>
           )}
         </div>

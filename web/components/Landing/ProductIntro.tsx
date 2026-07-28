@@ -1,6 +1,7 @@
 'use client';
 // 首页的页面设计
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 
 interface ProductIntroProps {
   onPrimaryAction?: () => void;
@@ -16,6 +17,7 @@ const quickExamples = [
 ];
 
 export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQuickExampleSelect }: ProductIntroProps) {
+  const { t } = useLang();
   return (
     <section
       style={{
@@ -85,7 +87,7 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
               boxShadow: `0 0 10px ${theme.colors.primary.accent}`,
             }}
           />
-          AI Soul Tuner 已就绪
+          {t('AI Soul Tuner 已就绪')}
         </span>
 
         <h1
@@ -98,7 +100,7 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
             zIndex: 1,
           }}
         >
-          听懂你的每一刻情绪
+          {t('听懂你的每一刻情绪')}
           <br />
           <span style={{ color: theme.colors.primary.accent }}>说一句话，交给它去找歌</span>
         </h1>
@@ -113,9 +115,9 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
             zIndex: 1,
           }}
         >
-          更懂你的私人灵魂调音师
+          {t('更懂你的私人灵魂调音师')}
           <br />
-          用自然语言描述心情或场景，即刻生成专属你的沉浸式歌单。
+          {t('用自然语言描述心情或场景，即刻生成专属你的沉浸式歌单。')}
         </p>
 
         <div
@@ -153,14 +155,14 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
               e.currentTarget.style.backgroundColor = theme.colors.primary.accent;
             }}
           >
-            开启智能推荐
+            {t('开启智能推荐')}
           </button>
         </div>
 
         {/* Quick Inspiration Pills Integrated */}
         <div style={{ marginTop: '4rem', zIndex: 1, width: '100%', maxWidth: '48rem' }}>
           <p style={{ fontSize: '0.9rem', color: theme.colors.text.muted, marginBottom: '1rem', fontWeight: 600 }}>
-            快速灵感注入
+            {t('快速灵感注入')}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem', alignItems: 'center' }}>
             {quickExamples.map((example) => (

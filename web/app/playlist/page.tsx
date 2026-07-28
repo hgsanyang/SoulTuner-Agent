@@ -13,6 +13,7 @@ import { getMockRecommendations, mockDelay } from '@/lib/mockData';
 import { theme } from '@/styles/theme';
 
 function PlaylistWelcome({ onPromptClick }: { onPromptClick: (prompt: string) => void }) {
+  const { t } = useLang();
   const prompts = [
     '创建一个适合夜跑的电子歌单',
     '做一张周末做饭听的轻快中文歌单',
@@ -27,10 +28,10 @@ function PlaylistWelcome({ onPromptClick }: { onPromptClick: (prompt: string) =>
           PLAYLIST BUILDER
         </p>
         <h1 style={{ margin: 0, fontSize: 'clamp(2rem, 7vw, 4.5rem)', lineHeight: 1, fontWeight: 800 }}>
-          风格编排器
+          {t('风格编排器')}
         </h1>
         <p style={{ margin: 0, maxWidth: '38rem', color: theme.colors.text.secondary, fontSize: '1rem', lineHeight: 1.7 }}>
-          用一句话定制你的私人歌单，SoulTuner 会按场景、语言、情绪走向和避雷偏好组织曲目。
+          {t('用一句话定制你的私人歌单，SoulTuner 会按场景、语言、情绪走向和避雷偏好组织曲目。')}
         </p>
       </div>
 

@@ -244,13 +244,13 @@ export default function MemoryPage() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="m15 18-6-6 6-6" />
           </svg>
-          返回
+          {t('返回')}
         </button>
         <div style={{ flex: 1, minWidth: '18rem' }}>
           <p style={{ margin: 0, color: theme.colors.text.muted, fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.08em' }}>MEMORY</p>
           <h1 style={{ margin: '0.15rem 0', fontSize: '2rem', letterSpacing: '-0.03em' }}>我的记忆 / 我的偏好</h1>
           <p style={{ margin: 0, color: theme.colors.text.secondary, fontSize: '0.9rem' }}>
-            管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。
+            {t('管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。')}
           </p>
         </div>
         <button onClick={loadMemory} style={smallButtonStyle()}>刷新</button>
@@ -281,7 +281,7 @@ export default function MemoryPage() {
         </div>
         {ratings.length === 0 ? (
           <p style={{ margin: 0, fontSize: '0.78rem', color: theme.colors.text.muted }}>
-            还没有逐首评价。推荐结果里点歌曲卡片上的 💬 就能评价这首歌此刻合不合。
+            {t('还没有逐首评价。推荐结果里点歌曲卡片上的 💬 就能评价这首歌此刻合不合。')}
           </p>
         ) : (
           <div style={{ display: 'grid', gap: '0.35rem', maxHeight: '22rem', overflowY: 'auto' }}>
@@ -362,7 +362,7 @@ export default function MemoryPage() {
         <section style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
           <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>场景画像视图</div>
           <div style={{ fontSize: '0.76rem', color: theme.colors.text.muted, marginBottom: '0.8rem' }}>
-            偏好按适用场景分组：场景绑定的偏好只在对应场景生效，不会带进其他场景。每条都可删除。
+            {t('偏好按适用场景分组：场景绑定的偏好只在对应场景生效，不会带进其他场景。每条都可删除。')}
           </div>
           <div style={{ display: 'grid', gap: '0.8rem' }}>
             {(memory?.profile_views?.views || []).map(view => (
@@ -411,7 +411,7 @@ export default function MemoryPage() {
         <section style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
           <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>记忆来源与有效期</div>
           <div style={{ fontSize: '0.76rem', color: theme.colors.text.muted, marginBottom: '0.8rem' }}>
-            L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。
+            {t('L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。')}
           </div>
           <div style={{ display: 'grid', gap: '0.55rem' }}>
             {(memory?.records || []).slice(0, 40).map(record => {

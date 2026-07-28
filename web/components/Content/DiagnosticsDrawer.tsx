@@ -65,7 +65,7 @@ export default function DiagnosticsDrawer({
               padding: '0.25rem 0.6rem', fontSize: '0.76rem', cursor: 'pointer',
             }}
           >
-            关闭
+            {t('关闭')}
           </button>
         </div>
 
@@ -79,7 +79,7 @@ export default function DiagnosticsDrawer({
               color: 'rgba(238,255,248,0.9)', fontSize: '0.8rem', cursor: 'pointer',
             }}
           >
-            读取曲库分布
+            {t('读取曲库分布')}
           </button>
         )}
 
@@ -108,7 +108,7 @@ export default function DiagnosticsDrawer({
                     color: 'rgba(255,255,255,0.7)', fontSize: '0.74rem', cursor: 'pointer',
                   }}
                 >
-                  刷新
+                  {t('刷新')}
                 </button>
               </>
             ) : (

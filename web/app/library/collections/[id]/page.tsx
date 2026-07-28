@@ -1,11 +1,13 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import { useRouter, useParams } from 'next/navigation';
 import { useLibrary } from '@/context/LibraryContext';
 import { usePlayer } from '@/context/PlayerContext';
 
 export default function CollectionDetailPage() {
+  const { t } = useLang();
     const router = useRouter();
     const params = useParams();
     const collectionId = Number(params?.id);
@@ -40,7 +42,7 @@ export default function CollectionDetailPage() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="15 18 9 12 15 6" />
                 </svg>
-                返回收藏夹
+                {t('返回收藏夹')}
             </button>
 
             {/* 歌单头部 */}
@@ -74,7 +76,7 @@ export default function CollectionDetailPage() {
                 }}>
                     <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>歌单还是空的</h3>
                     <p style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        在音乐推荐页面点击歌曲卡片上的收藏图标，选择这个歌单即可添加歌曲。
+                        {t('在音乐推荐页面点击歌曲卡片上的收藏图标，选择这个歌单即可添加歌曲。')}
                     </p>
                 </div>
             ) : (

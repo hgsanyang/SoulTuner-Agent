@@ -168,7 +168,7 @@ export default function SongFeedbackPanel({
                     onClick={onClose}
                     style={{ background: 'none', border: 'none', color: theme.colors.text.secondary, fontSize: '0.8rem', cursor: 'pointer' }}
                 >
-                    取消
+                    {t('取消')}
                 </button>
                 {state === 'error' && <span style={{ color: '#ff6b6b', fontSize: '0.78rem' }}>{error}</span>}
             </div>

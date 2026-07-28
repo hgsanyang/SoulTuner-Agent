@@ -402,10 +402,10 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center' }}>
             <div>
               <div style={{ color: theme.colors.text.primary, fontWeight: 700, fontSize: '0.9rem' }}>
-                DashScope API 部署
+                {t('DashScope API 部署')}
               </div>
               <div style={{ color: theme.colors.text.muted, fontSize: '0.74rem', lineHeight: 1.5, marginTop: '0.25rem' }}>
-                默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。
+                {t('默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。')}
               </div>
             </div>
             <span style={{
@@ -458,7 +458,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           { value: 'song_detail', label: t('旧版逐首推荐解释') },
         ])}
         <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.7rem', marginBottom: '1rem', lineHeight: 1.5 }}>
-          默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。
+          {t('默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。')}
         </div>
 
         <button
@@ -536,7 +536,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           </div>
           {renderSlider('exploration_ratio', t('小众歌曲曝光度'), 0, 0.5, 0.05)}
           <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-            从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）
+            {t('从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）')}
           </div>
           {renderSlider('graph_affinity_max_hops', t('最大跳数'), 2, 8, 1)}
         </>
@@ -549,7 +549,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       {renderSlider('tri_anchor_w_semantic', t('语义相关性（M2D-CLAP）'), 0, 1, 0.05)}
       {renderSlider('tri_anchor_w_acoustic', t('声学风格（OMAR-RQ）'), 0, 1, 0.05)}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分
+        {t('权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分')}
       </div>
 
       {/* ═══ 多样性 ═══ */}
@@ -559,7 +559,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       {renderSlider('max_songs_per_artist', t('每歌手最多曲数'), 1, 5, 1)}
       {renderSlider('mmr_lambda', t('MMR 相关性偏好'), 0.3, 1, 0.05)}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        越高越偏向相关性，越低越偏向多样性
+        {t('越高越偏向相关性，越低越偏向多样性')}
       </div>
     </>
   );
@@ -580,7 +580,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       {renderSlider('memory_retain_rounds', t('上下文保留轮数'), 1, 20, 1, t('轮'))}
       {renderSlider('context_total_budget', t('上下文窗口预算'), 2000, 16000, 500, ' tokens')}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        越大保留越多历史对话，但增加 LLM 调用成本和延迟
+        {t('越大保留越多历史对话，但增加 LLM 调用成本和延迟')}
       </div>
     </>
   );
@@ -655,7 +655,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           }}>
             {loading ? (
               <div style={{ textAlign: 'center', color: theme.colors.text.muted, padding: '2rem' }}>
-                加载中...
+                {t('加载中...')}
               </div>
             ) : tabContent[activeTab]()}
           </div>
@@ -676,7 +676,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               borderRadius: theme.borderRadius.sm, color: '#f06060',
               cursor: 'pointer', fontSize: '0.78rem',
             }}>
-              ↩ 还原默认
+              {t('↩ 还原默认')}
             </button>
             <button onClick={handleClose} style={{
               padding: '0.5rem 1.2rem', background: 'transparent',
@@ -684,7 +684,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary,
               cursor: 'pointer', fontSize: '0.82rem',
             }}>
-              关闭
+              {t('关闭')}
             </button>
             <button onClick={saveSettings} disabled={dirty.size === 0 || saving} style={{
               padding: '0.5rem 1.5rem',

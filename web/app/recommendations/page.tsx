@@ -460,7 +460,7 @@ export default function RecommendationsPage() {
             <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
           </svg>
-          联网搜索
+          {t('联网搜索')}
           <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: webSearchEnabled ? theme.colors.primary.accent : 'rgba(255,255,255,0.25)', transition: 'background-color 0.2s', display: 'inline-block' }} />
         </button>
       </div>
@@ -485,7 +485,7 @@ export default function RecommendationsPage() {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
           </svg>
-          诊断
+          {t('诊断')}
         </button>
         {/* 返回推荐卡片按钮（仅在对话视图时显示） */}
         {hasMessages && !showWelcome && (
@@ -507,7 +507,7 @@ export default function RecommendationsPage() {
               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
-            推荐卡片
+            {t('推荐卡片')}
           </button>
         )}
         {/* 返回对话按钮（在卡片视图且有历史消息时显示） */}
@@ -529,7 +529,7 @@ export default function RecommendationsPage() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
-            返回对话
+            {t('返回对话')}
           </button>
         )}
         {/* 新建聊天按钮 */}
@@ -551,7 +551,7 @@ export default function RecommendationsPage() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            新建聊天
+            {t('新建聊天')}
           </button>
         )}
       </div>
@@ -603,7 +603,7 @@ export default function RecommendationsPage() {
               }}>
                 <h2 style={{ fontSize: '1rem', fontWeight: 600, color: theme.colors.text.primary, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(29,185,84,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-                  对话记录
+                  {t('对话记录')}
                 </h2>
               </div>
               {/* 对话滚动区 */}
@@ -753,7 +753,7 @@ export default function RecommendationsPage() {
                   onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.18)')}
                   onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(20,20,20,0.86)')}
                 >
-                  跳到最新
+                  {t('跳到最新')}
                 </button>
               )}
             </div>
@@ -807,7 +807,7 @@ export default function RecommendationsPage() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <polygon points="5 3 19 12 5 21 5 3" />
                     </svg>
-                    全部播放
+                    {t('全部播放')}
                   </button>
                 </div>
 

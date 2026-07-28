@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -31,6 +32,7 @@ const JOB_STATUS_LABELS: Record<string, string> = {
 };
 
 export default function PendingPage() {
+  const { t } = useLang();
     const [songs, setSongs] = useState<PendingSong[]>([]);
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(true);
@@ -192,7 +194,7 @@ export default function PendingPage() {
                 onMouseLeave={e => (e.currentTarget.style.color = theme.colors.text.secondary)}
             >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
-                返回
+                {t('返回')}
             </button>
 
             {/* Header */}
@@ -246,7 +248,7 @@ export default function PendingPage() {
                         <option value="invalid">缺音频</option>
                     </select>
                     <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
-                        状态：获取音源 → 元数据入库 → 标签/向量分析
+                        {t('状态：获取音源 → 元数据入库 → 标签/向量分析')}
                     </span>
                     {invalidPendingCount > 0 && (
                         <span style={{ fontSize: '0.78rem', color: '#fca5a5' }}>
@@ -271,12 +273,12 @@ export default function PendingPage() {
                             </span>
                         )}
                         <button onClick={loadJobs} style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.28rem 0.65rem', fontSize: '0.74rem' }}>
-                            刷新
+                            {t('刷新')}
                         </button>
                     </div>
                     <p style={{ margin: 0, fontSize: '0.72rem', color: theme.colors.text.muted, lineHeight: 1.5 }}>
-                        新歌确认入库后不会立刻可用：这里的后台任务要先给它们提取音频特征、补齐标签，
-                        之后「用一句话描述就能找到这首歌」才对它们生效。一批歌是一个任务。
+                        {t('新歌确认入库后不会立刻可用：这里的后台任务要先给它们提取音频特征、补齐标签，')}
+                        {t('之后「用一句话描述就能找到这首歌」才对它们生效。一批歌是一个任务。')}
                     </p>
                     <div style={{ display: 'grid', gap: '0.35rem' }}>
                         {jobs.slice(0, 5).map(job => {
@@ -384,7 +386,7 @@ export default function PendingPage() {
                                         )}
                                         {song.is_trial && (
                                             <div style={{ marginTop: '0.2rem', fontSize: '0.7rem', color: '#fbbf24' }}>
-                                                当前来源仅提供试听片段，不标记为完整音源
+                                                {t('当前来源仅提供试听片段，不标记为完整音源')}
                                             </div>
                                         )}
                                     </div>
@@ -464,7 +466,7 @@ export default function PendingPage() {
                                     onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.2)')}
                                     onMouseLeave={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.1)')}
                                 >
-                                    🗑️ 删除选中
+                                    {t('🗑️ 删除选中')}
                                 </button>
                             )}
 

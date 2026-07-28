@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -14,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import { fetchLibrarySongs, deleteSongFromLibrary, retainOnlineAudio, updateLibrarySongTags, LibrarySong } from '@/lib/api';
 
 export default function MyLibraryPage() {
+  const { t } = useLang();
     const [songs, setSongs] = useState<LibrarySong[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -281,7 +283,7 @@ export default function MyLibraryPage() {
                 onMouseLeave={e => (e.currentTarget.style.color = theme.colors.text.secondary)}
             >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
-                返回
+                {t('返回')}
             </button>
 
             {/* Header */}
@@ -347,10 +349,10 @@ export default function MyLibraryPage() {
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', minHeight: '2rem' }}>
                 <button onClick={selectFiltered} disabled={filtered.length === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.04)', color: theme.colors.text.secondary, cursor: filtered.length ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
-                    全选当前结果
+                    {t('全选当前结果')}
                 </button>
                 <button onClick={clearSelected} disabled={selectedKeys.size === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.04)', color: selectedKeys.size ? theme.colors.text.secondary : theme.colors.text.muted, cursor: selectedKeys.size ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
-                    清空选择
+                    {t('清空选择')}
                 </button>
                 <button onClick={handleBulkDelete} disabled={selectedKeys.size === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: '1px solid rgba(248,113,113,0.28)', background: selectedKeys.size ? 'rgba(248,113,113,0.12)' : 'rgba(255,255,255,0.03)', color: selectedKeys.size ? '#fca5a5' : theme.colors.text.muted, cursor: selectedKeys.size ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
                     批量移除{selectedKeys.size ? ` (${selectedKeys.size})` : ''}
@@ -451,7 +453,7 @@ export default function MyLibraryPage() {
 
                                 <button title="详情" aria-label={`查看 ${song.title} 详情`} onClick={e => { e.stopPropagation(); setSelectedSong(song); }}
                                     style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.35rem 0.6rem', borderRadius: theme.borderRadius.sm, fontSize: '0.76rem' }}>
-                                    详情
+                                    {t('详情')}
                                 </button>
 
                                 {/* Play */}
@@ -522,7 +524,7 @@ export default function MyLibraryPage() {
                     {selectedSong.source === 'online' && selectedSong.audio_retention !== 'saved' && selectedSong.audio_url && (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.75rem', border: '1px solid rgba(251,191,36,0.22)', borderRadius: theme.borderRadius.sm, background: 'rgba(251,191,36,0.08)' }}>
                             <div style={{ fontSize: '0.78rem', color: '#fde68a', lineHeight: 1.5 }}>
-                                这首来自联网临时入库。长期保存后，退出应用或清理临时缓存时不会释放 MP3 文件。
+                                {t('这首来自联网临时入库。长期保存后，退出应用或清理临时缓存时不会释放 MP3 文件。')}
                             </div>
                             <button
                                 onClick={retainSelectedAudio}

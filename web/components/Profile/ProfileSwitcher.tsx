@@ -80,7 +80,7 @@ export default function ProfileSwitcher() {
       </div>
 
       {/* 档案是「日常模式」的概念：它决定这次交互算在谁头上、参与谁的个性化学习。
-          开发模式本来就把数据隔离出去、不参与学习，再让人选档案只会让人以为
+          {t('开发模式本来就把数据隔离出去、不参与学习，再让人选档案只会让人以为')}
           「选错了会污染数据」。所以开发模式下不显示选择器，只说明当前状态。 */}
       {interactionMode === 'developer' ? (
         <div
@@ -98,7 +98,7 @@ export default function ProfileSwitcher() {
             lineHeight: 1.45,
           }}
         >
-          开发模式不使用用户档案，本次交互的数据独立存放、不参与个性化学习。
+          {t('开发模式不使用用户档案，本次交互的数据独立存放、不参与个性化学习。')}
         </div>
       ) : (
       <div style={{ position: 'relative' }}>
@@ -154,7 +154,7 @@ export default function ProfileSwitcher() {
               {activeProfile.display_name}
             </span>
             <span style={{ display: 'block', color: theme.colors.text.muted, fontSize: '0.66rem' }}>
-              参与个性化学习
+              {t('参与个性化学习')}
             </span>
           </span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -265,7 +265,7 @@ export default function ProfileSwitcher() {
                     fontWeight: 700,
                   }}
                 >
-                  ＋ 新建档案
+                  {t('＋ 新建档案')}
                 </button>
               )}
             </div>

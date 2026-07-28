@@ -110,7 +110,7 @@ export default function GlobalPlayer() {
     return (
         <>
             {/* ════════════════════════════════
-                全屏播放器
+                {t('全屏播放器')}
             ════════════════════════════════ */}
             <AnimatePresence>
                 {isExpanded && (
@@ -190,7 +190,7 @@ export default function GlobalPlayer() {
                                             {lrcLoading && <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: '1rem', paddingTop: '2rem' }}>加载歌词中...</div>}
                                             {!lrcLoading && lrcLines.length === 0 && (
                                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.28)', fontSize: '1.1rem', letterSpacing: '0.05em' }}>
-                                                    暂无歌词
+                                                    {t('暂无歌词')}
                                                 </div>
                                             )}
                                             {lrcLines.map((line, i) => (
@@ -244,7 +244,7 @@ export default function GlobalPlayer() {
             </AnimatePresence>
 
             {/* ════════════════════════════════
-                播放队列浮窗
+                {t('播放队列浮窗')}
             ════════════════════════════════ */}
             <AnimatePresence>
                 {showQueue && (
@@ -335,7 +335,7 @@ export default function GlobalPlayer() {
             </AnimatePresence>
 
             {/* ════════════════════════════════
-                常驻底部控制栏
+                {t('常驻底部控制栏')}
             ════════════════════════════════ */}
             <div style={{
                 position: 'fixed', bottom: 0, left: 0, right: 0, height: '90px',
