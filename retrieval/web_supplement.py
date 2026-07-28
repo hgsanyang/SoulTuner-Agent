@@ -8,6 +8,11 @@ name its evidence per song. Deterministic code only handles playability
 resolution, candidate/hit consistency checks, dedup and bounded scoring;
 it never picks songs by keyword rules.
 
+**Native search is a hard prerequisite, not an optimisation.** The lane refuses
+to run on a provider that cannot search — see ``_native_search_available``.
+Without it the model answers from memory and invents the evidence, which the UI
+then presents as an online finding.
+
 Toggles: requires the per-request web switch (MUSIC_WEB_SEARCH_ENABLED) and
 the lane switch MUSIC_WEB_SUPPLEMENT_ENABLED (default on). Fully local
 deployments simply keep the web switch off.
@@ -172,14 +177,53 @@ class WebSongSupplement:
         limit: int = MAX_RESOLVED,
     ) -> list[dict[str, Any]]:
         """Return playable supplement items shaped like existing web_playable."""
+        if not self._native_search_available():
+            return []
         try:
             return await asyncio.wait_for(
                 self._discover(query=query, plan_summary=plan_summary, avoid=avoid, limit=limit),
                 timeout=self.timeout_seconds,
             )
         except Exception as exc:
-            logger.warning("[WebSupplement] 联网补充失败（fail-soft 跳过）: %s", exc)
+            # Log the TYPE too: asyncio.TimeoutError stringifies to "", which
+            # produced log lines ending in a bare colon and hid a systematic
+            # timeout for days.
+            logger.warning("[WebSupplement] 联网补充失败（fail-soft 跳过）: %s: %s",
+                           type(exc).__name__, exc)
             return []
+
+    def _native_search_available(self) -> bool:
+        """Refuse to run this lane on a provider that cannot search.
+
+        This lane's entire premise is "the model looked it up and can cite what
+        it found". On a provider without search the model still answers — from
+        training memory, with fabricated-but-plausible evidence — and the result
+        is then shown to the user under a 🌐 label. Producing nothing is correct;
+        producing unsourced songs that claim a source is not.
+
+        Injected generators (tests, and any future non-LLM discovery source) are
+        exempt: the check is about the default LLM path only.
+        """
+        if self.generator is not None:
+            return True
+        try:
+            from config.settings import settings
+            from llms.chat_models import provider_supports_web_search
+
+            provider = settings.intent_llm_provider or settings.llm_default_provider
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("[WebSupplement] 无法确定 provider 是否支持联网，跳过: %s: %s",
+                           type(exc).__name__, exc)
+            return False
+        if provider_supports_web_search(provider):
+            return True
+        logger.warning(
+            "[WebSupplement] 跳过证据驱动联网补充：provider=%s 没有原生联网搜索能力。"
+            "继续调用只会让模型凭记忆编出看似真实的证据，并被标成联网结果。"
+            "要启用请把 MAIN_LLM_PROVIDER / INTENT_LLM_PROVIDER 换成 dashscope。",
+            provider,
+        )
+        return False
 
     async def _discover(
         self,

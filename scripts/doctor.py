@@ -197,6 +197,21 @@ def check_effective_models():
          f"{explain_provider_src}, {explain_model_src}")
     line(True, f"压缩模型: {effective_compress_provider} / {effective_compress_model}",
          f"{compress_provider_src}, {compress_model_src}")
+    # 联网能力必须显式体现：证据驱动联网补充只在支持原生搜索的 provider 上才跑，
+    # 否则模型会凭记忆编出"证据"。这一行就是让你一眼看到它到底开没开。
+    try:
+        sys.path.insert(0, str(ROOT))
+        from llms.chat_models import provider_supports_web_search
+
+        planner_provider = str(effective_intent_provider or main_provider or "")
+        can_search = provider_supports_web_search(planner_provider)
+        line(can_search, f"联网搜索能力: {planner_provider}",
+             "支持原生联网（证据驱动补歌可用）" if can_search
+             else "不支持原生联网 —— 联网补歌整条路线会被跳过",
+             "把 INTENT_LLM_PROVIDER / MAIN_LLM_PROVIDER 改成 dashscope 才有联网搜索")
+    except Exception as e:
+        line(True, "联网搜索能力: 未检测", str(e))
+
     line(True, f"Planner temperature: {intent_temp}", str(intent_temp_src))
     line(True, f"intent_max_tokens: {intent_tokens}", str(intent_tokens_src))
     line(True, f"llm_timeout: {timeout}", str(timeout_src))

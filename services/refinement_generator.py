@@ -244,7 +244,11 @@ class RefinementChipGenerator:
                 proposal.options, avoid_texts=avoid_texts, previous=previous
             )
         except Exception as exc:
-            logger.warning("[Refinement] LLM 方向生成失败，使用中性 fallback: %s", exc)
+            # Log the TYPE too: asyncio.TimeoutError stringifies to "", so this
+            # line used to end in a bare colon and a systematic 12s timeout was
+            # invisible — it just looked like the chips were "always like that".
+            logger.warning("[Refinement] LLM 方向生成失败，使用中性 fallback: %s: %s",
+                           type(exc).__name__, exc)
             options = []
 
         if not options:
