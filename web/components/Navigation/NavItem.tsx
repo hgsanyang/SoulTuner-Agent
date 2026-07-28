@@ -4,6 +4,7 @@ import { ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 
 interface NavItemProps {
   href: string;
@@ -13,6 +14,9 @@ interface NavItemProps {
 }
 
 export default function NavItem({ href, label, description, icon }: NavItemProps) {
+  // 导航文案定义在 Sidebar 的模块常量里（组件外，调不了 hook），
+  // 所以在渲染处翻译——字典的 key 就是那份常量里的中文原文。
+  const { t } = useLang();
   const pathname = usePathname();
   const isActive = pathname === href;
 
@@ -48,14 +52,14 @@ export default function NavItem({ href, label, description, icon }: NavItemProps
           {icon}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
-          <span style={{ fontSize: '0.95rem' }}>{label}</span>
+          <span style={{ fontSize: '0.95rem' }}>{t(label)}</span>
           <span
             style={{
               fontSize: '0.78rem',
               color: isActive ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.6)',
             }}
           >
-            {description}
+            {t(description)}
           </span>
         </div>
       </div>

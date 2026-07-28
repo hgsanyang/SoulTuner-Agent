@@ -2,6 +2,7 @@
 
 import { ReactNode, useState } from 'react';
 import NavItem from './NavItem';
+import { useLang } from '@/context/LanguageContext';
 import SettingsPanel from '@/components/Settings/SettingsPanel';
 import UserProfilePanel from '@/components/Profile/UserProfilePanel';
 import ProfileSwitcher from '@/components/Profile/ProfileSwitcher';
@@ -150,6 +151,7 @@ const navGroups: NavGroup[] = [
 ];
 
 export default function Sidebar({ isMobile = false, isOpen = true, onClose }: SidebarProps) {
+  const { t } = useLang();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -269,7 +271,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
           <div key={group.title} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <div style={{ paddingLeft: '0.5rem', marginBottom: '0.2rem' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>
-                {group.title}
+                {t(group.title)}
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
