@@ -28,6 +28,7 @@ from services.feedback_logger import (  # noqa: E402
     load_training_events,
     load_training_exposures,
     load_training_slate_feedback,
+    load_training_song_feedback,
 )
 from services.ranking_learning import learn_ranking_policy  # noqa: E402
 from services.ranking_policy import (  # noqa: E402
@@ -103,6 +104,8 @@ def main() -> int:
         events = load_jsonl(feedback_dir / "events.jsonl")
         slate_feedback = [] if args.no_slate_feedback else load_jsonl(
             feedback_dir / "slate_feedback.jsonl")
+        song_feedback = [] if args.no_slate_feedback else load_jsonl(
+            feedback_dir / "song_feedback.jsonl")
         print("WARNING: including records that are NOT training-eligible "
               "(developer mode / pre-governance). Numbers below are diagnostic only.\n")
     else:
@@ -112,6 +115,7 @@ def main() -> int:
         exposures = load_training_exposures()
         events = load_training_events()
         slate_feedback = [] if args.no_slate_feedback else load_training_slate_feedback()
+        song_feedback = [] if args.no_slate_feedback else load_training_song_feedback()
     if args.method == "heuristic":
         report = estimate_tri_anchor_weights(exposures, events)
     elif args.method == "legacy":
@@ -121,6 +125,7 @@ def main() -> int:
             exposures,
             events,
             slate_feedback=slate_feedback,
+            song_feedback=song_feedback,
             min_events=args.min_events,
             per_user_min_events=args.per_user_min_events,
             validation_ratio=args.validation_ratio,
@@ -129,6 +134,7 @@ def main() -> int:
     report["num_exposures"] = len(exposures)
     report["num_events"] = len(events)
     report["num_slate_feedback"] = len(slate_feedback)
+    report["num_song_feedback"] = len(song_feedback)
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if args.method == "v2" and (args.write_candidate or args.write):

@@ -1800,6 +1800,7 @@ async def ranking_policy_replay(
         load_training_events,
         load_training_exposures,
         load_training_slate_feedback,
+        load_training_song_feedback,
     )
     from services.ranking_learning import learn_ranking_policy
     from services.ranking_policy import feedback_dir, write_candidate
@@ -1810,10 +1811,15 @@ async def ranking_policy_replay(
     exposures = load_training_exposures()
     events = load_training_events()
     slate_feedback = load_training_slate_feedback() if request.include_slate_feedback else []
+    # Per-song context_fit joins the learner. It rides the same include flag as
+    # slate feedback: both are "the user told us in words", as opposed to the
+    # behavioural events above.
+    song_feedback = load_training_song_feedback() if request.include_slate_feedback else []
     report = learn_ranking_policy(
         exposures,
         events,
         slate_feedback=slate_feedback,
+        song_feedback=song_feedback,
         min_events=max(1, int(request.min_events)),
         per_user_min_events=max(1, int(request.per_user_min_events)),
         validation_ratio=max(0.05, min(float(request.validation_ratio), 0.5)),
@@ -1822,6 +1828,7 @@ async def ranking_policy_replay(
     report["num_exposures"] = len(exposures)
     report["num_events"] = len(events)
     report["num_slate_feedback"] = len(slate_feedback)
+    report["num_song_feedback"] = len(song_feedback)
     candidate_path = None
     if request.write_candidate:
         candidate_path = str(write_candidate(report, root))

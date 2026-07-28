@@ -1433,6 +1433,22 @@ class MusicHybridRetrieval:
             len(final_list),
         )
 
+        # 你刚说过"不符合"的歌，短期内不再端上来。只对**这一首**生效，不推断
+        # "所以你不喜欢钢琴/慢歌/中文"——一条负反馈只够支撑这一个结论。
+        # 保底：如果抑制会让结果太少，宁可重复也不给你一个空结果。
+        try:
+            from services.negative_feedback import recent_context_rejections, suppress_rejected
+
+            rejected = recent_context_rejections(user_id)
+            if rejected:
+                final_list, dropped = suppress_rejected(final_list, rejected)
+                if dropped:
+                    logger.info("[NegativeFeedback] 最近「不符合」抑制: %d → %d",
+                                dropped + len(final_list), len(final_list))
+        except Exception as exc:
+            # 抑制是加分项，不能拖垮推荐。
+            logger.warning("[NegativeFeedback] 抑制跳过: %s: %s", type(exc).__name__, exc)
+
         # 联网歌曲也遵守同一硬过滤，再进入后续统一排序。
         if web_playable:
             from retrieval.web_supplement import is_duplicate_song

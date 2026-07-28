@@ -591,6 +591,10 @@ def load_training_slate_feedback() -> list[dict[str, Any]]:
     return _eligible(load_slate_feedback_canonical())
 
 
+def load_training_song_feedback() -> list[dict[str, Any]]:
+    return _eligible(load_song_feedback_canonical())
+
+
 def learned_weights_path() -> Path:
     return _feedback_dir() / WEIGHTS_FILE
 

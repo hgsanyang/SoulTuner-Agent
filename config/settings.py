@@ -326,7 +326,7 @@ class GlobalSettings(BaseSettings):
         description="混合检索时每个引擎各返回的条数（双引擎时，各自返回此数量）",
     )
     hybrid_retrieval_limit: int = Field(
-        default=15,
+        default=20,
         description="FinalCut 最终输出条数（传给 LLM 推荐解释）",
     )
     web_search_max_results: int = Field(
