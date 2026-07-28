@@ -33,6 +33,7 @@ SoulTuner is a music recommendation agent. Describe what you want to hear in one
 - 🧠 **Gets to know you** — every like, save, skip and conversation updates your taste profile, which shapes later ranking.
 - 🌐 **Goes online when your library falls short** — finds songs backed by charts or community consensus (one switch turns it off).
 - ♻️ **Discover → preview → ingest** — good songs land in a staging area first; confirm to add them to your library.
+- 🧪 **Daily and developer modes** — anything you do in developer mode is stored separately: it never feeds personalisation and never reaches the training set.
 
 > 📖 Full feature and interaction details: [Feature_Walkthrough.md](Feature_Walkthrough.md)
 

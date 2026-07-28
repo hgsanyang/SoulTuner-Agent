@@ -555,6 +555,24 @@ def load_slate_feedback_canonical() -> list[dict[str, Any]]:
     ]
 
 
+def load_song_feedback_canonical() -> list[dict[str, Any]]:
+    """Per-song feedback, merged the same way as every other canonical read.
+
+    Added for the history view: this table had a write path and no read path, so
+    a rating you gave was invisible the moment the panel closed.
+    """
+    from services.runtime_context import normalize_provenance
+
+    return [
+        normalize_provenance(row)
+        for row in _merge_canonical(
+            "song_feedback",
+            _load_store("load_song_feedback"),
+            load_jsonl(_jsonl_path("song_feedback.jsonl")),
+        )
+    ]
+
+
 def _eligible(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from services.runtime_context import is_training_eligible
 

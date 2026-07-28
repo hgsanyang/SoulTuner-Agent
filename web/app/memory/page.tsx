@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { theme } from '@/styles/theme';
 import { apiFetch } from '@/lib/app-session';
 import { useAppSession } from '@/context/AppSessionContext';
@@ -33,6 +34,24 @@ type ProfileView = {
   scope: string;
   title: string;
   items: ProfileViewItem[];
+};
+
+/** 逐首评价历史。后端只回 slug，中文标签在前端映射（唯一真值在 lib/api.ts）。 */
+type SongRating = {
+  song_feedback_id: string;
+  music_id: string;
+  title: string;
+  artist: string;
+  context_fit: string;
+  off_reasons: string[];
+  note: string;
+  ts: number;
+};
+
+const CONTEXT_FIT_LABELS: Record<string, { label: string; color: string }> = {
+  fits: { label: '很符合', color: '#86efac' },
+  partial: { label: '一般', color: '#fcd34d' },
+  off: { label: '不符合', color: '#fca5a5' },
 };
 
 type ProfileViews = {
@@ -86,6 +105,7 @@ function toneStyle(tone?: string): { color: string; background: string; border: 
 }
 
 export default function MemoryPage() {
+  const router = useRouter();
   const { activeProfile } = useAppSession();
   const [memory, setMemory] = useState<MemoryProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,6 +113,7 @@ export default function MemoryPage() {
   const [field, setField] = useState(FIELD_OPTIONS[0].value);
   const [value, setValue] = useState('');
   const [editing, setEditing] = useState<{ field: string; oldValue: string; nextValue: string } | null>(null);
+  const [ratings, setRatings] = useState<SongRating[]>([]);
 
   const loadMemory = useCallback(async () => {
     setLoading(true);
@@ -108,7 +129,18 @@ export default function MemoryPage() {
     }
   }, []);
 
-  useEffect(() => { loadMemory(); }, [activeProfile.profile_id, loadMemory]);
+  const loadRatings = useCallback(async () => {
+    try {
+      const resp = await apiFetch(`${API_URL}/api/song-feedback/history?limit=100`);
+      const data = await resp.json();
+      setRatings(data.success ? (data.items || []) : []);
+    } catch {
+      setRatings([]);   // 历史读不到不该影响记忆页其余部分
+    }
+  }, []);
+
+  useEffect(() => { loadMemory(); loadRatings(); },
+    [activeProfile.profile_id, loadMemory, loadRatings]);
 
   const sections = useMemo<MemorySection[]>(() => {
     const existing = memory?.editable_sections || [];
@@ -185,6 +217,30 @@ export default function MemoryPage() {
   return (
     <div style={{ padding: '1.25rem', color: theme.colors.text.primary, display: 'grid', gap: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', flexWrap: 'wrap' }}>
+        {/* 这页原来只能靠浏览器后退退出。 */}
+        <button
+          onClick={() => router.back()}
+          aria-label="返回"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.35rem',
+            alignSelf: 'flex-start',
+            marginTop: '0.35rem',
+            background: 'rgba(255,255,255,0.05)',
+            border: `1px solid ${theme.colors.border.default}`,
+            borderRadius: theme.borderRadius.sm,
+            color: theme.colors.text.secondary,
+            cursor: 'pointer',
+            padding: '0.4rem 0.7rem',
+            fontSize: '0.78rem',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+          返回
+        </button>
         <div style={{ flex: 1, minWidth: '18rem' }}>
           <p style={{ margin: 0, color: theme.colors.text.muted, fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.08em' }}>MEMORY</p>
           <h1 style={{ margin: '0.15rem 0', fontSize: '2rem', letterSpacing: '-0.03em' }}>我的记忆 / 我的偏好</h1>
@@ -208,6 +264,41 @@ export default function MemoryPage() {
           {message}
         </div>
       )}
+
+      {/* 我的评价：以前评完就看不见了，连"这首评没评过"都不知道。 */}
+      <div style={{ display: 'grid', gap: '0.6rem', padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 700 }}>我的评价</span>
+          <span style={{ fontSize: '0.72rem', color: theme.colors.text.muted }}>
+            逐首「此刻合不合」的记录 · 共 {ratings.length} 条
+          </span>
+          <button onClick={loadRatings} style={{ ...smallButtonStyle(), marginLeft: 'auto' }}>刷新</button>
+        </div>
+        {ratings.length === 0 ? (
+          <p style={{ margin: 0, fontSize: '0.78rem', color: theme.colors.text.muted }}>
+            还没有逐首评价。推荐结果里点歌曲卡片上的 💬 就能评价这首歌此刻合不合。
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gap: '0.35rem', maxHeight: '22rem', overflowY: 'auto' }}>
+            {ratings.map(item => {
+              const fit = CONTEXT_FIT_LABELS[item.context_fit] || { label: item.context_fit || '—', color: theme.colors.text.muted };
+              return (
+                <div key={item.song_feedback_id} style={{ display: 'flex', gap: '0.6rem', alignItems: 'baseline', fontSize: '0.78rem', padding: '0.35rem 0', borderBottom: `1px solid ${theme.colors.border.default}` }}>
+                  <span style={{ color: fit.color, width: '3.5rem', flexShrink: 0 }}>{fit.label}</span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {item.title || item.music_id}
+                    {item.artist && <span style={{ color: theme.colors.text.muted }}> · {item.artist}</span>}
+                    {item.note && <span style={{ color: theme.colors.text.secondary }}> —「{item.note}」</span>}
+                  </span>
+                  <span style={{ color: theme.colors.text.muted, fontSize: '0.7rem', flexShrink: 0 }}>
+                    {item.ts ? new Date(item.ts).toLocaleDateString() : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'minmax(0, 1fr)', padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
         <div style={{ fontWeight: 700 }}>新增或修正偏好</div>

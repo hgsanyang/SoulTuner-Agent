@@ -1364,6 +1364,57 @@ async def capture_song_feedback(request: SongFeedbackRequest, raw_request: Reque
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/song-feedback/history")
+async def song_feedback_history(raw_request: Request, limit: int = 100):
+    """Everything you have said about individual songs, newest first.
+
+    Feedback was write-only until now: you could rate a track and then had no way
+    to see what you said, or even whether you had already rated it. The data was
+    always in SQLite — only the read path was missing.
+
+    Scoped by the same runtime context as the write path, so a developer-mode
+    rating never shows up in your personal history and vice versa.
+    """
+    try:
+        from api.runtime_context import runtime_context_from_request
+        from services.feedback_logger import load_song_feedback_canonical
+
+        context = runtime_context_from_request(raw_request)
+        rows = [
+            row for row in load_song_feedback_canonical()
+            if str(row.get("user_id") or "") == context.effective_user_id
+        ]
+        rows.sort(key=lambda row: int(row.get("ts") or 0), reverse=True)
+
+        items = []
+        for row in rows[: max(1, min(int(limit or 100), 500))]:
+            items.append({
+                "song_feedback_id": row.get("song_feedback_id") or "",
+                "music_id": str(row.get("music_id") or ""),
+                "title": row.get("title") or "",
+                "artist": row.get("artist") or "",
+                "context_fit": row.get("context_fit") or "",
+                # Slugs only. The Chinese labels live in the frontend
+                # (SONG_OFF_REASON_LABELS); duplicating them here would create a
+                # second source of truth that silently drifts.
+                "off_reasons": list(row.get("off_reasons") or []),
+                "note": row.get("note") or "",
+                "ts": int(row.get("ts") or 0),
+                "exposure_id": str(row.get("exposure_id") or ""),
+            })
+        # rated_music_ids lets the song cards mark "you already rated this"
+        # without the client refetching the whole history per card.
+        return {
+            "success": True,
+            "count": len(items),
+            "items": items,
+            "rated_music_ids": sorted({i["music_id"] for i in items if i["music_id"]}),
+        }
+    except Exception as e:
+        logger.error(f"读取逐首反馈历史失败: {e}")
+        return {"success": False, "error": str(e), "items": [], "rated_music_ids": []}
+
+
 @app.post("/api/slate-feedback")
 async def capture_slate_feedback(request: SlateFeedbackRequest, raw_request: Request):
     """Record feedback for an entire recommendation slate.

@@ -22,6 +22,14 @@ import {
     IngestJob,
 } from '@/lib/api';
 
+/** 后端状态值 → 中文。原来直接显示 pending/processing/done，没人看得懂这是在处理什么。 */
+const JOB_STATUS_LABELS: Record<string, string> = {
+    pending: '等待中',
+    processing: '处理中',
+    failed: '失败',
+    done: '已完成',
+};
+
 export default function PendingPage() {
     const [songs, setSongs] = useState<PendingSong[]>([]);
     const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -251,10 +259,10 @@ export default function PendingPage() {
             {jobs.length > 0 && (
                 <div style={{ display: 'grid', gap: '0.65rem', padding: '0.85rem 1rem', borderRadius: theme.borderRadius.md, background: 'rgba(255,255,255,0.025)', border: `1px solid ${theme.colors.border.default}` }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>入库增强队列</span>
-                        {['pending', 'processing', 'failed', 'done'].map(status => (
+                        <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>入库处理进度</span>
+                        {(Object.entries(JOB_STATUS_LABELS) as [string, string][]).map(([status, label]) => (
                             <span key={status} style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: 'rgba(255,255,255,0.05)', color: theme.colors.text.secondary }}>
-                                {status}: {jobCounts[status] || 0}
+                                {label}: {jobCounts[status] || 0}
                             </span>
                         ))}
                         {invalidJobCount > 0 && (
@@ -266,6 +274,10 @@ export default function PendingPage() {
                             刷新
                         </button>
                     </div>
+                    <p style={{ margin: 0, fontSize: '0.72rem', color: theme.colors.text.muted, lineHeight: 1.5 }}>
+                        新歌确认入库后不会立刻可用：这里的后台任务要先给它们提取音频特征、补齐标签，
+                        之后「用一句话描述就能找到这首歌」才对它们生效。一批歌是一个任务。
+                    </p>
                     <div style={{ display: 'grid', gap: '0.35rem' }}>
                         {jobs.slice(0, 5).map(job => {
                             const isRetrying = retryingJob === job.job_id;
@@ -274,7 +286,9 @@ export default function PendingPage() {
                             const detail = job.validation_error || job.error || '';
                             return (
                                 <div key={job.job_id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.76rem', color: theme.colors.text.secondary }}>
-                                    <span style={{ color: statusColor, width: '5.8rem' }}>{isInvalid ? 'invalid' : job.status}</span>
+                                    <span style={{ color: statusColor, width: '5.8rem' }}>
+                                        {isInvalid ? '无效' : (JOB_STATUS_LABELS[job.status] || job.status)}
+                                    </span>
                                     <span title={detail} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.job_id} · {job.song_count} 首{detail ? ` · ${detail}` : ''}</span>
                                     {job.status === 'failed' && !isInvalid && (
                                         <button disabled={isRetrying} onClick={() => handleRetryJob(job)} style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: theme.borderRadius.sm, color: '#fca5a5', cursor: isRetrying ? 'wait' : 'pointer', padding: '0.22rem 0.55rem', fontSize: '0.72rem' }}>
