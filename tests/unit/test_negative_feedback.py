@@ -100,3 +100,87 @@ def test_penalty_decays_over_time():
 def test_caller_cannot_raise_the_cap():
     """max_ratio is a ceiling, not a suggestion."""
     assert negative_anchor_penalty(1.0, max_ratio=0.95) <= MAX_PENALTY_RATIO
+
+
+# ---- review round 2: the four things that were claimed but not wired ----
+
+def test_session_scope_beats_the_time_window():
+    """Rejecting under "quiet, before sleep" must not follow you into a
+    road-trip request an hour later — the whole point of session scoping."""
+    rows = [
+        {"music_id": "m-sleep", "context_fit": "off", "ts": NOW,
+         "user_id": "local_admin", "context": {"session_id": "s-sleep"}},
+        {"music_id": "m-road", "context_fit": "off", "ts": NOW,
+         "user_id": "local_admin", "context": {"session_id": "s-road"}},
+    ]
+    got = recent_context_rejections("local_admin", session_id="s-road",
+                                    now_ms=NOW, feedback_rows=rows)
+    assert got == {"m-road"}, "a rejection from another session leaked in"
+
+
+def test_latest_rating_wins_so_a_correction_lifts_suppression():
+    rows = [
+        {"music_id": "m-1", "exposure_id": "e1", "context_fit": "off",
+         "ts": NOW - 5000, "user_id": "local_admin"},
+        {"music_id": "m-1", "exposure_id": "e1", "context_fit": "fits",
+         "ts": NOW, "user_id": "local_admin"},
+    ]
+    assert recent_context_rejections("local_admin", now_ms=NOW,
+                                     feedback_rows=rows) == set()
+
+
+def test_web_candidate_without_music_id_is_still_suppressed():
+    """Online candidates usually have no music_id; id-only matching let a
+    rejected song return through the web lane."""
+    items = [{"song": {"title": "Summer", "artist": "Calvin Harris"}},
+             {"song": {"music_id": "m-2", "title": "B"}},
+             {"song": {"music_id": "m-3", "title": "C"}},
+             {"song": {"music_id": "m-4", "title": "D"}},
+             {"song": {"music_id": "m-5", "title": "E"}},
+             {"song": {"music_id": "m-6", "title": "F"}}]
+    from services.negative_feedback import song_key
+    kept, dropped = suppress_rejected(
+        items, set(), rejected_names={song_key("Summer", "Calvin Harris")})
+    assert dropped == 1
+    assert all(i["song"].get("title") != "Summer" for i in kept)
+
+
+def test_penalty_has_a_production_call_site():
+    """It was a tested function nobody called: the flag changed nothing, which
+    made "implemented, off by default" untrue."""
+    from pathlib import Path
+    src = Path(__file__).resolve().parents[2] / "retrieval" / "hybrid_retrieval.py"
+    assert "apply_negative_anchor_penalty(" in src.read_text(encoding="utf-8")
+
+
+def test_penalty_can_load_anchors_from_the_catalogue():
+    """Feedback rows carry no vectors, so anchors must come from the catalogue —
+    otherwise the penalty compares nothing and silently scores 0."""
+    from services.negative_feedback import load_rejection_anchors
+
+    rows = {"m-1": {"music_id": "m-1", "muq_embedding": [1.0, 0.0]}}
+    assert load_rejection_anchors(["m-1"], rows_by_id=rows) == [rows["m-1"]]
+    assert load_rejection_anchors([], rows_by_id=rows) == []
+
+
+def test_penalty_actually_lowers_a_similar_candidate(monkeypatch):
+    from services.negative_feedback import apply_negative_anchor_penalty
+
+    monkeypatch.setenv("MUSIC_NEGATIVE_ANCHOR_PENALTY", "1")
+    near = {"song": {"muq_embedding": [1.0, 0.0]}, "similarity_score": 1.0}
+    far = {"song": {"muq_embedding": [0.0, 1.0]}, "similarity_score": 1.0}
+    anchors = [{"muq_embedding": [1.0, 0.0], "ts": NOW}]
+    apply_negative_anchor_penalty([near, far], anchors, now_ms=NOW)
+    assert near["similarity_score"] < 1.0
+    assert near["similarity_score"] >= 1.0 - MAX_PENALTY_RATIO
+    assert far["similarity_score"] == 1.0        # orthogonal: untouched
+
+
+def test_penalty_does_nothing_while_disabled(monkeypatch):
+    from services.negative_feedback import apply_negative_anchor_penalty
+
+    monkeypatch.delenv("MUSIC_NEGATIVE_ANCHOR_PENALTY", raising=False)
+    item = {"song": {"muq_embedding": [1.0, 0.0]}, "similarity_score": 1.0}
+    assert apply_negative_anchor_penalty(
+        [item], [{"muq_embedding": [1.0, 0.0], "ts": NOW}]) == 0
+    assert item["similarity_score"] == 1.0

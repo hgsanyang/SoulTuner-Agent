@@ -1084,6 +1084,7 @@ class RankingPolicyReplayRequest(BaseModel):
     validation_ratio: float = 0.2
     slate_top_k: int = 5
     include_slate_feedback: bool = True
+    include_song_feedback: bool = True
     write_candidate: bool = True
 
 
@@ -1811,10 +1812,10 @@ async def ranking_policy_replay(
     exposures = load_training_exposures()
     events = load_training_events()
     slate_feedback = load_training_slate_feedback() if request.include_slate_feedback else []
-    # Per-song context_fit joins the learner. It rides the same include flag as
-    # slate feedback: both are "the user told us in words", as opposed to the
-    # behavioural events above.
-    song_feedback = load_training_song_feedback() if request.include_slate_feedback else []
+    # Per-song context_fit has its OWN flag. Sharing slate feedback's switch
+    # meant turning off one silenced the other, which is not a thing a caller
+    # can discover from the request shape.
+    song_feedback = load_training_song_feedback() if request.include_song_feedback else []
     report = learn_ranking_policy(
         exposures,
         events,

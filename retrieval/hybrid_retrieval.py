@@ -1502,6 +1502,24 @@ class MusicHybridRetrieval:
             # 抑制是加分项，不能拖垮推荐。
             logger.warning("[NegativeFeedback] 抑制跳过: %s: %s", type(exc).__name__, exc)
 
+        # 有界负例惩罚：默认关闭（MUSIC_NEGATIVE_ANCHOR_PENALTY）。
+        # 必须真的有调用点——只定义函数、设了开关却没人调，等于"看起来开着
+        # 其实什么都没变"，比明说没做更糟。
+        try:
+            from services.negative_feedback import (
+                apply_negative_anchor_penalty,
+                load_rejection_anchors,
+                similarity_penalty_enabled,
+            )
+
+            if similarity_penalty_enabled() and rejected:
+                anchors = load_rejection_anchors(rejected)
+                if anchors:
+                    apply_negative_anchor_penalty(final_list, anchors)
+        except Exception as exc:
+            logger.warning("[NegativeFeedback] 负例惩罚跳过: %s: %s",
+                           type(exc).__name__, exc)
+
         timings["fusion_filter_ms"] = round(
             (time.perf_counter() - fusion_started) * 1000,
             3,

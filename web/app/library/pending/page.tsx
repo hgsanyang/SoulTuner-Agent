@@ -128,7 +128,7 @@ export default function PendingPage() {
             loadSongs();
             loadJobs();
         } else {
-            showToast('❌ 入库失败，请重试');
+            showToast(t('❌ 入库失败，请重试'));
         }
     };
 
@@ -137,10 +137,10 @@ export default function PendingPage() {
         const result = await retryIngestJob(job.job_id);
         setRetryingJob(null);
         if (result.success) {
-            showToast('✅ 已重新加入入库队列');
+            showToast(t('✅ 已重新加入入库队列'));
             loadJobs();
         } else {
-            showToast('❌ 重试失败，请查看后端日志');
+            showToast(t('❌ 重试失败，请查看后端日志'));
         }
     };
 
@@ -172,7 +172,7 @@ export default function PendingPage() {
             showToast(t('✅ 「{v0}」音源已长期保存', { v0: song.title }));
             setSongs(prev => prev.map(item => item.file_basename === song.file_basename ? { ...item, audio_retention: 'saved' } : item));
         } else {
-            showToast(t('❌ 保存音源失败: {v0}', { v0: result.error || result.message || '未知错误' }));
+            showToast(t('❌ 保存音源失败: {v0}', { v0: result.error || result.message || t('未知错误') }));
         }
     };
 
@@ -294,7 +294,7 @@ export default function PendingPage() {
                                     <span title={detail} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('{v0} · {v1} 首{v2}', { v0: job.job_id, v1: job.song_count, v2: detail ? ` · ${detail}` : '' })}</span>
                                     {job.status === 'failed' && !isInvalid && (
                                         <button disabled={isRetrying} onClick={() => handleRetryJob(job)} style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: theme.borderRadius.sm, color: '#fca5a5', cursor: isRetrying ? 'wait' : 'pointer', padding: '0.22rem 0.55rem', fontSize: '0.72rem' }}>
-                                            {isRetrying ? '重试中' : '重试'}
+                                            {isRetrying ? '重试中' : t('重试')}
                                         </button>
                                     )}
                                 </div>
@@ -312,9 +312,9 @@ export default function PendingPage() {
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
                         </svg>
                     </div>
-                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>{songs.length === 0 ? '暂无待入库歌曲' : '没有匹配的待入库歌曲'}</h3>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>{songs.length === 0 ? '暂无待入库歌曲' : t('没有匹配的待入库歌曲')}</h3>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        {songs.length === 0 ? '通过 AI 对话获取新歌后，歌曲会先下载到这里等待你确认入库。' : '调整搜索关键词或格式筛选后再试。'}
+                        {songs.length === 0 ? '通过 AI 对话获取新歌后，歌曲会先下载到这里等待你确认入库。' : t('调整搜索关键词或格式筛选后再试。')}
                     </p>
                 </div>
             ) : (
@@ -381,7 +381,7 @@ export default function PendingPage() {
                                         )}
                                         {song.audio_retention && song.acquire_status !== 'failed' && (
                                             <div style={{ marginTop: '0.2rem', fontSize: '0.7rem', color: theme.colors.text.muted }}>
-                                                {song.audio_retention === 'saved' ? '音源：长期保存' : '音源：临时缓存（点赞、收藏或保存音源后长期保留）'}
+                                                {song.audio_retention === 'saved' ? '音源：长期保存' : t('音源：临时缓存（点赞、收藏或保存音源后长期保留）')}
                                             </div>
                                         )}
                                         {song.is_trial && (
@@ -397,11 +397,11 @@ export default function PendingPage() {
                                     </div>
 
                                     <span style={{ fontSize: '0.72rem', padding: '0.16rem 0.5rem', borderRadius: '9999px', color: isInvalid ? '#fca5a5' : ingesting && isSelected ? '#60a5fa' : '#f59e0b', border: `1px solid ${isInvalid ? 'rgba(248,113,113,0.35)' : ingesting && isSelected ? 'rgba(96,165,250,0.35)' : 'rgba(245,158,11,0.35)'}`, whiteSpace: 'nowrap' }}>
-                                        {isInvalid ? '缺音频' : ingesting && isSelected ? '分析中' : '待入库'}
+                                        {isInvalid ? '缺音频' : ingesting && isSelected ? '分析中' : t('待入库')}
                                     </span>
 
                                     {/* Play */}
-                                    <button title={isInvalid ? '缺音频，无法试听' : '试听'} aria-label={isInvalid ? t('{v0} 缺音频', { v0: song.title }) : t('试听 {v0}', { v0: song.title })} disabled={isInvalid} onClick={e => { e.stopPropagation(); if (!isInvalid) playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
+                                    <button title={isInvalid ? '缺音频，无法试听' : t('试听')} aria-label={isInvalid ? t('{v0} 缺音频', { v0: song.title }) : t('试听 {v0}', { v0: song.title })} disabled={isInvalid} onClick={e => { e.stopPropagation(); if (!isInvalid) playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
                                         style={{ background: 'none', border: 'none', color: isInvalid ? theme.colors.text.muted : theme.colors.primary.accent, cursor: isInvalid ? 'not-allowed' : 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'transform 0.2s', opacity: isInvalid ? 0.4 : 1 }}
                                         onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
@@ -409,7 +409,7 @@ export default function PendingPage() {
                                         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
                                     </button>
 
-                                    <button title={song.audio_retention === 'saved' ? '音源已长期保存' : isInvalid ? '缺音频，无法保存' : '长期保存音源'} aria-label={`${song.audio_retention === 'saved' ? '音源已长期保存' : '长期保存音源'} ${song.title}`} disabled={isInvalid || song.audio_retention === 'saved' || retainingSong === song.file_basename} onClick={e => { e.stopPropagation(); handleRetainAudio(song); }}
+                                    <button title={song.audio_retention === 'saved' ? '音源已长期保存' : isInvalid ? '缺音频，无法保存' : t('长期保存音源')} aria-label={`${song.audio_retention === 'saved' ? '音源已长期保存' : t('长期保存音源')} ${song.title}`} disabled={isInvalid || song.audio_retention === 'saved' || retainingSong === song.file_basename} onClick={e => { e.stopPropagation(); handleRetainAudio(song); }}
                                         style={{ background: 'none', border: 'none', color: song.audio_retention === 'saved' ? theme.colors.primary.accent : isInvalid ? theme.colors.text.muted : '#fbbf24', cursor: isInvalid || song.audio_retention === 'saved' ? 'not-allowed' : 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'color 0.2s', opacity: isInvalid ? 0.4 : 1 }}
                                         onMouseEnter={e => { if (!isInvalid && song.audio_retention !== 'saved') e.currentTarget.style.color = '#fde68a'; }}
                                         onMouseLeave={e => { e.currentTarget.style.color = song.audio_retention === 'saved' ? theme.colors.primary.accent : isInvalid ? theme.colors.text.muted : '#fbbf24'; }}
@@ -450,7 +450,7 @@ export default function PendingPage() {
                                 onMouseEnter={e => { e.currentTarget.style.borderColor = theme.colors.primary.accent; e.currentTarget.style.color = theme.colors.text.primary; }}
                                 onMouseLeave={e => { e.currentTarget.style.borderColor = theme.colors.border.focus; e.currentTarget.style.color = theme.colors.text.secondary; }}
                             >
-                                {allFilteredSelected ? '取消全选' : '全选当前'}
+                                {allFilteredSelected ? '取消全选' : t('全选当前')}
                             </button>
 
                             <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted }}>

@@ -98,9 +98,9 @@ export default function MyLibraryPage() {
                 (selectedSong.music_id && song.music_id === selectedSong.music_id)
                 || (!selectedSong.music_id && song.title === selectedSong.title && song.artist === selectedSong.artist)
             ) ? updatedSong : song));
-            showToast('✅ 标签已更新');
+            showToast(t('✅ 标签已更新'));
         } else {
-            showToast(t('❌ 标签更新失败: {v0}', { v0: result.error || '未知错误' }));
+            showToast(t('❌ 标签更新失败: {v0}', { v0: result.error || t('未知错误') }));
         }
     };
 
@@ -120,7 +120,7 @@ export default function MyLibraryPage() {
             setSongs(prev => prev.map(song => songKey(song) === songKey(selectedSong) ? updatedSong : song));
             showToast(t('✅ 「{v0}」音源已长期保存', { v0: selectedSong.title }));
         } else {
-            showToast(t('❌ 保存音源失败: {v0}', { v0: result.error || result.message || '未知错误' }));
+            showToast(t('❌ 保存音源失败: {v0}', { v0: result.error || result.message || t('未知错误') }));
         }
     };
 
@@ -208,19 +208,19 @@ export default function MyLibraryPage() {
 
     const sourceLabel = (src: string) => {
         switch (src) {
-            case 'online': return { text: '联网', color: '#3b82f6' };
+            case 'online': return { text: t('联网'), color: '#3b82f6' };
             case 'mtg': return { text: 'MTG', color: '#8b5cf6' };
-            default: return { text: '本地', color: theme.colors.primary.accent };
+            default: return { text: t('本地'), color: theme.colors.primary.accent };
         }
     };
 
     const missingLabel = (field: string) => {
         const labels: Record<string, string> = {
-            audio: '音频',
-            cover: '封面',
-            lyrics: '歌词',
-            language: '语言',
-            release_year: '发行年',
+            audio: t('音频'),
+            cover: t('封面'),
+            lyrics: t('歌词'),
+            language: t('语言'),
+            release_year: t('发行年'),
             muq_embedding: 'MuQ',
             m2d_embedding: 'M2D',
             omar_embedding: 'OMAR',
@@ -249,7 +249,7 @@ export default function MyLibraryPage() {
             background: ok ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)',
             color: ok ? '#86efac' : '#fca5a5',
             border: `1px solid ${ok ? 'rgba(34,197,94,0.24)' : 'rgba(239,68,68,0.2)'}`,
-        }}>{label} {ok ? '✓' : '缺'}</span>
+        }}>{label} {ok ? '✓' : t('缺')}</span>
     );
 
     const tagInputStyle = {
@@ -368,10 +368,10 @@ export default function MyLibraryPage() {
                         </svg>
                     </div>
                     <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>
-                        {searchQuery ? '没有匹配的歌曲' : '曲库为空'}
+                        {searchQuery ? '没有匹配的歌曲' : t('曲库为空')}
                     </h3>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        {searchQuery ? '试试其他关键词' : '通过 AI 对话获取新歌后，在待入库页面确认入库即可添加到这里。'}
+                        {searchQuery ? '试试其他关键词' : t('通过 AI 对话获取新歌后，在待入库页面确认入库即可添加到这里。')}
                     </p>
                 </div>
             ) : (
@@ -457,7 +457,7 @@ export default function MyLibraryPage() {
                                 </button>
 
                                 {/* Play */}
-                                <button title={song.audio_url ? '播放' : '暂无音源'} aria-label={song.audio_url ? t('播放 {v0}', { v0: song.title }) : t('{v0} 暂无音源', { v0: song.title })}
+                                <button title={song.audio_url ? '播放' : t('暂无音源')} aria-label={song.audio_url ? t('播放 {v0}', { v0: song.title }) : t('{v0} 暂无音源', { v0: song.title })}
                                     onClick={e => {
                                         e.stopPropagation();
                                         if (song.audio_url) {
@@ -501,15 +501,15 @@ export default function MyLibraryPage() {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.65rem', fontSize: '0.82rem', color: theme.colors.text.secondary }}>
                         <div>{t('来源：')}{sourceLabel(selectedSong.source).text}</div>
-                        <div>{t('语言：')}{selectedSong.language || '未标注'}</div>
-                        <div>{t('发行年：')}{selectedSong.release_year || '未补全'}</div>
-                        <div>{t('格式：')}{selectedSong.format || '未知'}</div>
-                        <div>{t('时长：')}{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : '未知'}</div>
-                        <div>{t('标签来源：')}{selectedSong.tag_source || '未记录'}</div>
-                        <div>{t('音源保留：')}{selectedSong.audio_retention === 'saved' ? '长期保存' : selectedSong.audio_retention === 'temporary' ? '临时缓存' : '未记录'}</div>
-                        <div>{t('入库状态：')}{selectedSong.acquire_status || selectedSong.audio_status || '正常'}</div>
+                        <div>{t('语言：')}{selectedSong.language || t('未标注')}</div>
+                        <div>{t('发行年：')}{selectedSong.release_year || t('未补全')}</div>
+                        <div>{t('格式：')}{selectedSong.format || t('未知')}</div>
+                        <div>{t('时长：')}{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : t('未知')}</div>
+                        <div>{t('标签来源：')}{selectedSong.tag_source || t('未记录')}</div>
+                        <div>{t('音源保留：')}{selectedSong.audio_retention === 'saved' ? '长期保存' : selectedSong.audio_retention === 'temporary' ? '临时缓存' : t('未记录')}</div>
+                        <div>{t('入库状态：')}{selectedSong.acquire_status || selectedSong.audio_status || t('正常')}</div>
                         <div>{t('质量分：')}{Math.round((selectedSong.quality_score ?? 0) * 100)}%</div>
-                        <div>{t('去重键：')}{selectedSong.duplicate_key || '未生成'}</div>
+                        <div>{t('去重键：')}{selectedSong.duplicate_key || t('未生成')}</div>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                         {vectorBadge('MuQ', selectedSong.vector_coverage?.muq)}
@@ -531,7 +531,7 @@ export default function MyLibraryPage() {
                                 disabled={retainingAudio}
                                 style={{ background: retainingAudio ? 'rgba(255,255,255,0.08)' : 'rgba(251,191,36,0.18)', border: '1px solid rgba(251,191,36,0.35)', borderRadius: theme.borderRadius.sm, color: '#fde68a', cursor: retainingAudio ? 'wait' : 'pointer', padding: '0.45rem 0.75rem', fontWeight: 700, fontSize: '0.76rem', whiteSpace: 'nowrap' }}
                             >
-                                {retainingAudio ? '保存中...' : '长期保存音源'}
+                                {retainingAudio ? '保存中...' : t('长期保存音源')}
                             </button>
                         </div>
                     )}
@@ -557,18 +557,18 @@ export default function MyLibraryPage() {
                         </div>
                     )}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.6rem', padding: '0.75rem', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, background: 'rgba(255,255,255,0.025)' }}>
-                        {renderTagInput('流派，最多 5 个', 'genres', 'Indie, Folk')}
-                        {renderTagInput('情绪，最多 5 个', 'moods', 'Peaceful, Dreamy')}
-                        {renderTagInput('主题，最多 5 个', 'themes', 'Healing, Rainy')}
-                        {renderTagInput('场景，最多 5 个', 'scenarios', 'Late Night, Study')}
-                        {renderTagInput('语言', 'language', 'Chinese')}
+                        {renderTagInput(t('流派，最多 5 个'), 'genres', 'Indie, Folk')}
+                        {renderTagInput(t('情绪，最多 5 个'), 'moods', 'Peaceful, Dreamy')}
+                        {renderTagInput(t('主题，最多 5 个'), 'themes', 'Healing, Rainy')}
+                        {renderTagInput(t('场景，最多 5 个'), 'scenarios', 'Late Night, Study')}
+                        {renderTagInput(t('语言'), 'language', 'Chinese')}
                         <div style={{ display: 'flex', alignItems: 'end' }}>
                             <button
                                 onClick={saveSelectedTags}
                                 disabled={savingTags}
                                 style={{ width: '100%', background: savingTags ? 'rgba(255,255,255,0.08)' : theme.colors.primary.accent, border: 'none', borderRadius: theme.borderRadius.sm, color: savingTags ? theme.colors.text.muted : '#000', cursor: savingTags ? 'wait' : 'pointer', padding: '0.5rem 0.75rem', fontWeight: 700, fontSize: '0.78rem' }}
                             >
-                                {savingTags ? '保存中...' : '保存标签'}
+                                {savingTags ? '保存中...' : t('保存标签')}
                             </button>
                         </div>
                     </div>
@@ -578,9 +578,9 @@ export default function MyLibraryPage() {
                         ))}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.35rem', fontSize: '0.76rem', color: theme.colors.text.muted }}>
-                        <div>{t('音频：')}{selectedSong.audio_url || '无'}</div>
-                        <div>{t('歌词：')}{selectedSong.lrc_url || '无'}</div>
-                        <div>ID：{selectedSong.music_id || '无'}</div>
+                        <div>{t('音频：')}{selectedSong.audio_url || t('无')}</div>
+                        <div>{t('歌词：')}{selectedSong.lrc_url || t('无')}</div>
+                        <div>ID：{selectedSong.music_id || t('无')}</div>
                     </div>
                 </div>
             )}

@@ -94,6 +94,8 @@ class MusicRecommendationAgent:
 
             initial_state: MusicAgentState = {
                 "user_id": user_id,
+                # 抑制按会话作用域；没有会话时检索层退回时间窗。
+                "session_id": str((client_context or {}).get("session_id") or ""),
                 "input": query,
                 "chat_history": formatted_history,
                 "user_preferences": user_preferences or {},

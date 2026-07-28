@@ -265,6 +265,43 @@ def apply_negative_anchor_penalty(
     return touched
 
 
+def load_rejection_anchors(
+    music_ids: Iterable[str],
+    *,
+    rows_by_id: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch embeddings for the rejected songs.
+
+    Feedback records store no vectors -- only ids, titles and the judgement --
+    so the anchors have to be read from the catalogue. Without this the penalty
+    compared nothing against nothing and silently scored 0, which is worse than
+    being off: it looks enabled.
+    """
+    ids = [str(m).strip() for m in music_ids if str(m).strip()]
+    if not ids:
+        return []
+    if rows_by_id is not None:              # injected in tests
+        return [rows_by_id[i] for i in ids if i in rows_by_id]
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+
+        rows = get_neo4j_client().execute_query(
+            """
+            MATCH (s:Song) WHERE s.music_id IN $ids
+            RETURN s.music_id AS music_id,
+                   s.muq_embedding AS muq_embedding,
+                   s.m2d2_embedding AS m2d2_embedding,
+                   s.omar_embedding AS omar_embedding
+            """,
+            {"ids": ids},
+        )
+        return [dict(row) for row in (rows or [])]
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("[NegativeFeedback] 取负例向量失败，跳过惩罚: %s: %s",
+                       type(exc).__name__, exc)
+        return []
+
+
 def _embedding_similarity(song: dict[str, Any], rejected: dict[str, Any]) -> float:
     """Cosine over a shared embedding field, or 0.0 when there is none."""
     for field in ("muq_embedding", "m2d2_embedding", "omar_embedding"):

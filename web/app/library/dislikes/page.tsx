@@ -91,7 +91,7 @@ export default function DislikesPage() {
                                 opacity: isSyncing ? 0.5 : 1,
                             }}
                         >
-                            {isSyncing ? '同步中...' : '🔄 从后端同步'}
+                            {isSyncing ? '同步中...' : t('🔄 从后端同步')}
                         </button>
                     </div>
                     <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: theme.colors.text.muted }}>
