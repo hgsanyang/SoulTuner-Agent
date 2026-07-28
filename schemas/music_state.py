@@ -29,6 +29,7 @@ class MusicAgentState(TypedDict, total=False):
 
     # 用户输入
     user_id: str  # 当前用户身份；业务节点必须从状态读取，不能硬编码默认用户
+    session_id: str  # 当前会话身份；用于会话内反馈抑制与归因
     input: str  # 用户查询/请求
     chat_history: Annotated[list[BaseMessage], add_messages]  # 对话历史
 

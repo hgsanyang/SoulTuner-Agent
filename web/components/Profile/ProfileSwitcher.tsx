@@ -20,6 +20,13 @@ export default function ProfileSwitcher() {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [displayName, setDisplayName] = useState('');
+  const profileReadFailure = profileError.match(/^档案读取失败:\s*(.+)$/);
+  const profileCreateFailure = profileError.match(/^创建失败:\s*(.+)$/);
+  const translatedProfileError = profileReadFailure
+    ? t('档案读取失败: {v0}', { v0: profileReadFailure[1] })
+    : profileCreateFailure
+      ? t('创建失败: {v0}', { v0: profileCreateFailure[1] })
+      : t(profileError);
 
   const submitProfile = async () => {
     try {
@@ -138,7 +145,7 @@ export default function ProfileSwitcher() {
               fontWeight: 800,
             }}
           >
-            {activeProfile.display_name.trim().slice(0, 1).toUpperCase() || 'U'}
+            {t(activeProfile.display_name).trim().slice(0, 1).toUpperCase() || 'U'}
           </span>
           <span style={{ minWidth: 0 }}>
             <span
@@ -151,7 +158,7 @@ export default function ProfileSwitcher() {
                 fontWeight: 700,
               }}
             >
-              {activeProfile.display_name}
+              {t(activeProfile.display_name)}
             </span>
             <span style={{ display: 'block', color: theme.colors.text.muted, fontSize: '0.66rem' }}>
               {t('参与个性化学习')}
@@ -200,7 +207,7 @@ export default function ProfileSwitcher() {
                     fontSize: '0.76rem',
                   }}
                 >
-                  {profile.display_name}
+                  {t(profile.display_name)}
                 </button>
               ))}
             </div>
@@ -271,7 +278,7 @@ export default function ProfileSwitcher() {
             </div>
             {profileError && (
               <div style={{ padding: '0.4rem 0.5rem 0.15rem', color: '#fca5a5', fontSize: '0.66rem', lineHeight: 1.4 }}>
-                {profileError}
+                {translatedProfileError}
               </div>
             )}
           </div>

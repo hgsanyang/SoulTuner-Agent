@@ -289,6 +289,7 @@ class MusicRecommendationAgent:
 
             initial_state: MusicAgentState = {
                 "user_id": user_id,
+                "session_id": str((client_context or {}).get("session_id") or ""),
                 "input": query,
                 "chat_history": formatted_history,
                 "user_preferences": user_preferences or {},

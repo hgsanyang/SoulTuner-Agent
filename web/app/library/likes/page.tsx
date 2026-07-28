@@ -157,7 +157,7 @@ export default function LikesPage() {
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                 }}
-                                title="移除喜欢"
+                                title={t('移除喜欢')}
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     toggleLike(song);

@@ -1486,11 +1486,30 @@ class MusicHybridRetrieval:
         # 你刚标「不符合」的那首歌会从联网通道原路返回。
         # 只对**这一首**生效，不推断"所以你不喜欢钢琴/慢歌/中文"——
         # 一条负反馈只够支撑这一个结论。
+        rejection_rows: list[dict[str, Any]] = []
+        rejected: set[str] = set()
+        rejected_names: set[str] = set()
         try:
-            from services.negative_feedback import recent_context_rejections, suppress_rejected
+            from services.negative_feedback import (
+                recent_context_rejection_rows,
+                song_key,
+                suppress_rejected,
+            )
 
-            rejected, rejected_names = recent_context_rejections(
-                user_id, session_id=session_id, with_names=True)
+            rejection_rows = recent_context_rejection_rows(
+                user_id,
+                session_id=session_id,
+            )
+            rejected = {
+                str(row.get("music_id") or "").strip()
+                for row in rejection_rows
+                if str(row.get("music_id") or "").strip()
+            }
+            rejected_names = {
+                song_key(row.get("title"), row.get("artist"))
+                for row in rejection_rows
+                if song_key(row.get("title"), row.get("artist"))
+            }
             if rejected or rejected_names:
                 before_suppress = len(final_list)
                 final_list, dropped = suppress_rejected(
@@ -1501,24 +1520,6 @@ class MusicHybridRetrieval:
         except Exception as exc:
             # 抑制是加分项，不能拖垮推荐。
             logger.warning("[NegativeFeedback] 抑制跳过: %s: %s", type(exc).__name__, exc)
-
-        # 有界负例惩罚：默认关闭（MUSIC_NEGATIVE_ANCHOR_PENALTY）。
-        # 必须真的有调用点——只定义函数、设了开关却没人调，等于"看起来开着
-        # 其实什么都没变"，比明说没做更糟。
-        try:
-            from services.negative_feedback import (
-                apply_negative_anchor_penalty,
-                load_rejection_anchors,
-                similarity_penalty_enabled,
-            )
-
-            if similarity_penalty_enabled() and rejected:
-                anchors = load_rejection_anchors(rejected)
-                if anchors:
-                    apply_negative_anchor_penalty(final_list, anchors)
-        except Exception as exc:
-            logger.warning("[NegativeFeedback] 负例惩罚跳过: %s: %s",
-                           type(exc).__name__, exc)
 
         timings["fusion_filter_ms"] = round(
             (time.perf_counter() - fusion_started) * 1000,
@@ -1749,6 +1750,38 @@ class MusicHybridRetrieval:
                     )
                     for item in final_list[:3]
                 ],
+            )
+
+        # 有界负例惩罚只能放在最终内容/偏好打分之后，否则 tri-anchor 和
+        # post-recall 会覆盖 similarity_score。候选向量按批从 Neo4j 取回；
+        # 联网候选尚未入库、没有可比向量时保持原分，不做猜测。
+        try:
+            from services.negative_feedback import (
+                apply_negative_anchor_penalty,
+                load_candidate_vectors,
+                load_rejection_anchors,
+                similarity_penalty_enabled,
+            )
+
+            if similarity_penalty_enabled() and rejection_rows and final_list:
+                anchors = load_rejection_anchors(rejection_rows)
+                candidate_vectors = load_candidate_vectors(final_list)
+                if anchors and candidate_vectors:
+                    touched = apply_negative_anchor_penalty(
+                        final_list,
+                        anchors,
+                        candidate_vectors=candidate_vectors,
+                    )
+                    if touched:
+                        final_list.sort(
+                            key=lambda item: float(item.get("similarity_score") or 0.0),
+                            reverse=True,
+                        )
+        except Exception as exc:
+            logger.warning(
+                "[NegativeFeedback] 负例惩罚跳过: %s: %s",
+                type(exc).__name__,
+                exc,
             )
 
         # ---- Step 6: MMR 多维多样性重排（genre + mood + theme + scenario）----

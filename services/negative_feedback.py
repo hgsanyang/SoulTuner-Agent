@@ -72,6 +72,68 @@ def similarity_penalty_enabled() -> bool:
     return _truthy(os.getenv("MUSIC_NEGATIVE_ANCHOR_PENALTY"))
 
 
+def recent_context_rejection_rows(
+    user_id: str,
+    *,
+    session_id: str = "",
+    now_ms: int | None = None,
+    window_ms: int = DEFAULT_SUPPRESSION_WINDOW_MS,
+    feedback_rows: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the canonical rejection snapshot used by suppression and ranking."""
+    now = int(now_ms if now_ms is not None else _now_ms())
+    cutoff = now - max(0, int(window_ms))
+    rows = feedback_rows
+    if rows is None:
+        try:
+            from services.feedback_logger import load_song_feedback_canonical
+
+            rows = load_song_feedback_canonical()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(
+                "[NegativeFeedback] 读取逐首反馈失败，跳过抑制: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return []
+
+    target_user = str(user_id or "").strip()
+    target_session = str(session_id or "").strip()
+
+    # Collapse to the latest judgement per (exposure, song).
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        if target_user and str(row.get("user_id") or "").strip() != target_user:
+            continue
+        identity = (
+            str(row.get("exposure_id") or ""),
+            str(row.get("music_id") or "")
+            or song_key(row.get("title"), row.get("artist")),
+        )
+        current = latest.get(identity)
+        if current is None or int(row.get("ts") or 0) >= int(current.get("ts") or 0):
+            latest[identity] = row
+
+    selected: list[dict[str, Any]] = []
+    for row in latest.values():
+        if str(row.get("context_fit") or "").strip() != "off":
+            continue
+        if target_session:
+            row_session = str(
+                (row.get("context") or {}).get("session_id")
+                or row.get("session_id")
+                or ""
+            ).strip()
+            if row_session and row_session != target_session:
+                continue
+            if not row_session and int(row.get("ts") or 0) < cutoff:
+                continue
+        elif int(row.get("ts") or 0) and int(row.get("ts") or 0) < cutoff:
+            continue
+        selected.append(dict(row))
+    return selected
+
+
 def recent_context_rejections(
     user_id: str,
     *,
@@ -94,54 +156,15 @@ def recent_context_rejections(
     most recent judgement counts. Rating "off" then correcting to "fits" must
     lift the suppression, not leave both records fighting.
     """
-    now = int(now_ms if now_ms is not None else _now_ms())
-    cutoff = now - max(0, int(window_ms))
-    rows = feedback_rows
-    if rows is None:
-        try:
-            from services.feedback_logger import load_song_feedback_canonical
-
-            rows = load_song_feedback_canonical()
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("[NegativeFeedback] 读取逐首反馈失败，跳过抑制: %s: %s",
-                         type(exc).__name__, exc)
-            return (set(), set()) if with_names else set()
-
-    target_user = str(user_id or "").strip()
-    target_session = str(session_id or "").strip()
-
-    # Collapse to the latest judgement per (exposure, song).
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
-    for row in rows:
-        if target_user and str(row.get("user_id") or "").strip() != target_user:
-            continue
-        identity = (
-            str(row.get("exposure_id") or ""),
-            str(row.get("music_id") or "") or song_key(row.get("title"), row.get("artist")),
-        )
-        current = latest.get(identity)
-        if current is None or int(row.get("ts") or 0) >= int(current.get("ts") or 0):
-            latest[identity] = row
-
     ids: set[str] = set()
     names: set[str] = set()
-    for row in latest.values():
-        if str(row.get("context_fit") or "").strip() != "off":
-            continue
-        if target_session:
-            row_session = str(
-                (row.get("context") or {}).get("session_id")
-                or row.get("session_id") or ""
-            ).strip()
-            # An in-session rejection always applies. A rejection with no session
-            # recorded falls back to the time window rather than being ignored.
-            if row_session and row_session != target_session:
-                continue
-            if not row_session and int(row.get("ts") or 0) < cutoff:
-                continue
-        elif int(row.get("ts") or 0) and int(row.get("ts") or 0) < cutoff:
-            continue
-
+    for row in recent_context_rejection_rows(
+        user_id,
+        session_id=session_id,
+        now_ms=now_ms,
+        window_ms=window_ms,
+        feedback_rows=feedback_rows,
+    ):
         music_id = str(row.get("music_id") or "").strip()
         if music_id:
             ids.add(music_id)
@@ -226,6 +249,7 @@ def apply_negative_anchor_penalty(
     *,
     now_ms: int | None = None,
     score_field: str = "similarity_score",
+    candidate_vectors: dict[str, dict[str, Any]] | None = None,
 ) -> int:
     """Apply the bounded penalty to a candidate list, in place. Returns count.
 
@@ -244,9 +268,17 @@ def apply_negative_anchor_penalty(
     touched = 0
     for item in items:
         song = item.get("song") or item
+        candidate = song
+        if candidate_vectors:
+            music_id = str(song.get("music_id") or "").strip()
+            candidate = (
+                candidate_vectors.get(f"id:{music_id}") if music_id else None
+            ) or candidate_vectors.get(
+                f"song:{song_key(song.get('title'), song.get('artist'))}"
+            ) or song
         best_sim, best_age = 0.0, 0
         for rejected in rejected_rows:
-            sim = _embedding_similarity(song, rejected)
+            sim = _embedding_similarity(candidate, rejected)
             if sim > best_sim:
                 best_sim = sim
                 best_age = max(0, now - int(rejected.get("ts") or now))
@@ -266,7 +298,7 @@ def apply_negative_anchor_penalty(
 
 
 def load_rejection_anchors(
-    music_ids: Iterable[str],
+    rejections: Iterable[Any],
     *,
     rows_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
@@ -277,11 +309,32 @@ def load_rejection_anchors(
     compared nothing against nothing and silently scored 0, which is worse than
     being off: it looks enabled.
     """
-    ids = [str(m).strip() for m in music_ids if str(m).strip()]
+    ids: list[str] = []
+    ts_by_id: dict[str, int] = {}
+    for rejection in rejections:
+        if isinstance(rejection, dict):
+            music_id = str(rejection.get("music_id") or "").strip()
+            ts = int(rejection.get("ts") or 0)
+        else:
+            music_id = str(rejection or "").strip()
+            ts = 0
+        if not music_id:
+            continue
+        if music_id not in ids:
+            ids.append(music_id)
+        ts_by_id[music_id] = max(ts_by_id.get(music_id, 0), ts)
     if not ids:
         return []
     if rows_by_id is not None:              # injected in tests
-        return [rows_by_id[i] for i in ids if i in rows_by_id]
+        result = []
+        for music_id in ids:
+            if music_id not in rows_by_id:
+                continue
+            row = dict(rows_by_id[music_id])
+            if ts_by_id.get(music_id):
+                row["ts"] = ts_by_id[music_id]
+            result.append(row)
+        return result
     try:
         from retrieval.neo4j_client import get_neo4j_client
 
@@ -295,11 +348,88 @@ def load_rejection_anchors(
             """,
             {"ids": ids},
         )
-        return [dict(row) for row in (rows or [])]
+        result = []
+        for raw in rows or []:
+            row = dict(raw)
+            music_id = str(row.get("music_id") or "").strip()
+            if ts_by_id.get(music_id):
+                row["ts"] = ts_by_id[music_id]
+            result.append(row)
+        return result
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("[NegativeFeedback] 取负例向量失败，跳过惩罚: %s: %s",
                        type(exc).__name__, exc)
         return []
+
+
+def load_candidate_vectors(
+    items: list[dict[str, Any]],
+    *,
+    rows: list[dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Load candidate embeddings once and index them by id and title+artist."""
+    candidates = []
+    for item in items:
+        song = item.get("song") or item
+        candidates.append(
+            {
+                "music_id": str(song.get("music_id") or "").strip(),
+                "title": str(song.get("title") or "").strip(),
+                "artist": str(song.get("artist") or "").strip(),
+            }
+        )
+    if not candidates:
+        return {}
+
+    result_rows = rows
+    if result_rows is None:
+        try:
+            from retrieval.neo4j_client import get_neo4j_client
+
+            result_rows = get_neo4j_client().execute_query(
+                """
+                UNWIND $candidates AS candidate
+                MATCH (s:Song)
+                WHERE (
+                    candidate.music_id <> ''
+                    AND s.music_id = candidate.music_id
+                ) OR (
+                    candidate.title <> ''
+                    AND toLower(trim(coalesce(s.title, ''))) =
+                        toLower(trim(candidate.title))
+                    AND (
+                        candidate.artist = ''
+                        OR toLower(trim(coalesce(s.artist, ''))) =
+                            toLower(trim(candidate.artist))
+                    )
+                )
+                RETURN DISTINCT s.music_id AS music_id,
+                       s.title AS title,
+                       s.artist AS artist,
+                       s.muq_embedding AS muq_embedding,
+                       s.m2d2_embedding AS m2d2_embedding,
+                       s.omar_embedding AS omar_embedding
+                """,
+                {"candidates": candidates},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "[NegativeFeedback] 取候选向量失败，跳过惩罚: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            return {}
+
+    indexed: dict[str, dict[str, Any]] = {}
+    for raw in result_rows or []:
+        row = dict(raw)
+        music_id = str(row.get("music_id") or "").strip()
+        if music_id:
+            indexed[f"id:{music_id}"] = row
+        key = song_key(row.get("title"), row.get("artist"))
+        if key:
+            indexed[f"song:{key}"] = row
+    return indexed
 
 
 def _embedding_similarity(song: dict[str, Any], rejected: dict[str, Any]) -> float:

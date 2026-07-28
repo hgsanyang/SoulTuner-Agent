@@ -645,6 +645,7 @@ class MusicRecommendationGraph:
             retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
             retrieval_plan_dict["_user_profile"] = _profile_text  # 画像文本供 HyDE 参考
             retrieval_plan_dict["_user_id"] = user_id
+            retrieval_plan_dict["_session_id"] = str(state.get("session_id") or "")
 
             try:
                 log_planning_feedback(

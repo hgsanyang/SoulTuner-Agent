@@ -18,9 +18,15 @@ import pytest
 WEB = Path(__file__).resolve().parents[2] / "web"
 HAN = re.compile("[一-鿿]")
 TCALL = re.compile(r"\bt\(\s*(['\"])(?:(?!\1)[^\\]|\\.)*\1(?:\s*,\s*\{[^}]*\})?\s*\)")
+TKEY = re.compile(r"\bt\(\s*(['\"])(?:(?!\1)[^\\]|\\.)*\1")
 # `{item.label}` etc: a bare member expression rendered straight into JSX
 BARE_RENDER = re.compile(r"\{\s*(\w+)\.(label|title|desc|meta|text|subtitle|name)\s*\}")
 COMMENT = re.compile(r"^\s*(//|\*|/\*)")
+RAW_ATTRIBUTE = re.compile(
+    r"\b(?:title|placeholder|aria-label|alt)\s*=\s*"
+    r"(?P<quote>['\"])(?P<text>.*?)(?P=quote)"
+)
+RAW_JSX_TEXT = re.compile(r"(?<!=)>\s*(?P<text>[^<{]*[一-鿿][^<{]*)\s*<")
 
 
 def _tsx_files():
@@ -101,6 +107,36 @@ def test_html_lang_and_metadata_are_not_hardcoded_chinese():
     assert 'lang="zh-CN"' not in layout, "<html lang> is pinned to Chinese"
     meta = re.search(r"export const metadata[^}]*\}", layout, re.S)
     assert meta and not HAN.search(meta.group(0)), "page metadata is still Chinese"
+
+
+def test_no_raw_chinese_in_visible_jsx_attributes_or_text():
+    """Catch strings that bypass t() entirely, including title/placeholder leaks."""
+    offenders = []
+    for path in _tsx_files():
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if COMMENT.match(line):
+                continue
+            if "<" in line:
+                for match in RAW_ATTRIBUTE.finditer(line):
+                    if HAN.search(match.group("text")):
+                        offenders.append(f"{path.relative_to(WEB)}:{i}  {match.group(0)}")
+            for match in RAW_JSX_TEXT.finditer(line):
+                if not line.lstrip().startswith(("//", "/*", "*")):
+                    offenders.append(f"{path.relative_to(WEB)}:{i}  {match.group('text').strip()}")
+    assert not offenders, "raw Chinese bypasses i18n:\n" + "\n".join(offenders)
+
+
+def test_no_raw_chinese_in_jsx_ternary_branches():
+    """Regression for `{loading ? '加载中...' : ...}` style leaks."""
+    offenders = []
+    for path in _tsx_files():
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "?" not in line or COMMENT.match(line):
+                continue
+            masked = TKEY.sub("", line)
+            if re.search(r"['\"][^'\"]*[一-鿿][^'\"]*['\"]", masked):
+                offenders.append(f"{path.relative_to(WEB)}:{i}  {line.strip()}")
+    assert not offenders, "raw Chinese in JSX ternary:\n" + "\n".join(offenders)
 
 
 @pytest.mark.parametrize("path,needle", [

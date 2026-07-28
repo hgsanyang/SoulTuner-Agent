@@ -11,7 +11,11 @@ import pytest
 
 from services.negative_feedback import (
     MAX_PENALTY_RATIO,
+    apply_negative_anchor_penalty,
+    load_candidate_vectors,
+    load_rejection_anchors,
     negative_anchor_penalty,
+    recent_context_rejection_rows,
     recent_context_rejections,
     similarity_penalty_enabled,
     suppress_rejected,
@@ -118,6 +122,33 @@ def test_session_scope_beats_the_time_window():
     assert got == {"m-road"}, "a rejection from another session leaked in"
 
 
+def test_session_id_reaches_streaming_and_both_planner_paths():
+    """The UI uses SSE; covering only the non-stream entry point is insufficient."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    agent = (root / "agent" / "music_agent.py").read_text(encoding="utf-8")
+    graph = (root / "agent" / "music_graph.py").read_text(encoding="utf-8")
+    assert agent.count('"session_id": str((client_context or {}).get("session_id") or "")') >= 2
+    assert graph.count('retrieval_plan_dict["_session_id"] = str(state.get("session_id") or "")') >= 2
+
+
+def test_rejection_snapshot_is_shared_by_suppression_and_ranking():
+    rows = [
+        {"music_id": "m-sleep", "context_fit": "off", "ts": NOW,
+         "user_id": "local_admin", "context": {"session_id": "s-sleep"}},
+        {"music_id": "m-road", "context_fit": "off", "ts": NOW,
+         "user_id": "local_admin", "context": {"session_id": "s-road"}},
+    ]
+    got = recent_context_rejection_rows(
+        "local_admin",
+        session_id="s-road",
+        now_ms=NOW,
+        feedback_rows=rows,
+    )
+    assert [row["music_id"] for row in got] == ["m-road"]
+
+
 def test_latest_rating_wins_so_a_correction_lifts_suppression():
     rows = [
         {"music_id": "m-1", "exposure_id": "e1", "context_fit": "off",
@@ -150,22 +181,74 @@ def test_penalty_has_a_production_call_site():
     made "implemented, off by default" untrue."""
     from pathlib import Path
     src = Path(__file__).resolve().parents[2] / "retrieval" / "hybrid_retrieval.py"
-    assert "apply_negative_anchor_penalty(" in src.read_text(encoding="utf-8")
+    code = src.read_text(encoding="utf-8")
+    assert code.rfind("apply_negative_anchor_penalty(") > code.rfind(
+        "apply_post_recall_adjustments("
+    ), "penalty must run after the final score is written"
 
 
 def test_penalty_can_load_anchors_from_the_catalogue():
     """Feedback rows carry no vectors, so anchors must come from the catalogue —
     otherwise the penalty compares nothing and silently scores 0."""
-    from services.negative_feedback import load_rejection_anchors
-
     rows = {"m-1": {"music_id": "m-1", "muq_embedding": [1.0, 0.0]}}
     assert load_rejection_anchors(["m-1"], rows_by_id=rows) == [rows["m-1"]]
     assert load_rejection_anchors([], rows_by_id=rows) == []
 
 
-def test_penalty_actually_lowers_a_similar_candidate(monkeypatch):
-    from services.negative_feedback import apply_negative_anchor_penalty
+def test_anchor_loader_preserves_feedback_age():
+    rows = {"m-1": {"music_id": "m-1", "muq_embedding": [1.0, 0.0]}}
+    anchors = load_rejection_anchors(
+        [{"music_id": "m-1", "ts": NOW - 1234}],
+        rows_by_id=rows,
+    )
+    assert anchors[0]["ts"] == NOW - 1234
 
+
+def test_candidate_vectors_are_indexed_by_id_and_title_artist():
+    items = [{"song": {"title": "Summer", "artist": "Calvin Harris"}}]
+    rows = [{
+        "music_id": "m-1",
+        "title": "Summer",
+        "artist": "Calvin Harris",
+        "muq_embedding": [1.0, 0.0],
+    }]
+    indexed = load_candidate_vectors(items, rows=rows)
+    assert indexed["id:m-1"]["muq_embedding"] == [1.0, 0.0]
+    assert indexed["song:summer|calvinharris"]["music_id"] == "m-1"
+
+
+def test_real_recall_shape_can_be_penalised_via_catalog_vectors(monkeypatch):
+    """Recall intentionally strips heavy vectors; the ranking bridge restores them."""
+    from retrieval.recall_sources import _record_to_song
+
+    monkeypatch.setenv("MUSIC_NEGATIVE_ANCHOR_PENALTY", "1")
+    song = _record_to_song({
+        "title": "Summer",
+        "artist": "Calvin Harris",
+        "muq_embedding": [1.0, 0.0],
+    })
+    assert "muq_embedding" not in song
+    item = {"song": song, "similarity_score": 1.0}
+    candidates = load_candidate_vectors(
+        [item],
+        rows=[{
+            "music_id": "m-1",
+            "title": "Summer",
+            "artist": "Calvin Harris",
+            "muq_embedding": [1.0, 0.0],
+        }],
+    )
+    touched = apply_negative_anchor_penalty(
+        [item],
+        [{"muq_embedding": [1.0, 0.0], "ts": NOW}],
+        now_ms=NOW,
+        candidate_vectors=candidates,
+    )
+    assert touched == 1
+    assert item["similarity_score"] < 1.0
+
+
+def test_penalty_actually_lowers_a_similar_candidate(monkeypatch):
     monkeypatch.setenv("MUSIC_NEGATIVE_ANCHOR_PENALTY", "1")
     near = {"song": {"muq_embedding": [1.0, 0.0]}, "similarity_score": 1.0}
     far = {"song": {"muq_embedding": [0.0, 1.0]}, "similarity_score": 1.0}
@@ -177,8 +260,6 @@ def test_penalty_actually_lowers_a_similar_candidate(monkeypatch):
 
 
 def test_penalty_does_nothing_while_disabled(monkeypatch):
-    from services.negative_feedback import apply_negative_anchor_penalty
-
     monkeypatch.delenv("MUSIC_NEGATIVE_ANCHOR_PENALTY", raising=False)
     item = {"song": {"muq_embedding": [1.0, 0.0]}, "similarity_score": 1.0}
     assert apply_negative_anchor_penalty(

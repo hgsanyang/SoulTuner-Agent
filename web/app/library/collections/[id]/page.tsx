@@ -61,7 +61,7 @@ export default function CollectionDetailPage() {
                 </div>
                 <div>
                     <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('歌单')}</p>
-                    <h1 style={{ margin: '0.2rem 0', fontSize: '2.4rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{collection.name}</h1>
+                    <h1 style={{ margin: '0.2rem 0', fontSize: '2.4rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{t(collection.name)}</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>{t('共 {v0} 首歌曲', { v0: collection.songs.length })}</p>
                 </div>
             </div>
@@ -103,7 +103,7 @@ export default function CollectionDetailPage() {
                             )}
                             <div
                                 style={{ padding: '0.5rem', color: theme.colors.text.muted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                                title="从歌单中移除"
+                                title={t('从歌单中移除')}
                                 onClick={e => { e.stopPropagation(); removeFromCollection(collectionId, song.id); }}
                             >
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

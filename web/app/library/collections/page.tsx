@@ -91,7 +91,7 @@ export default function CollectionsPage() {
                 }}>
                     <input
                         type="text" autoFocus
-                        placeholder="为你的新歌单起个名字..."
+                        placeholder={t('为你的新歌单起个名字...')}
                         value={newTitle} onChange={e => setNewTitle(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && handleCreate()}
                         style={{
@@ -147,7 +147,7 @@ export default function CollectionsPage() {
                                 <circle cx="18" cy="16" r="3" />
                             </svg>
                         </div>
-                        <p style={{ margin: 0, fontWeight: 600, fontSize: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</p>
+                        <p style={{ margin: 0, fontWeight: 600, fontSize: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t(p.name)}</p>
                         <span style={{ fontSize: '0.85rem', color: theme.colors.text.muted }}>{t('{v0} 首歌曲', { v0: p.songs.length })}</span>
                     </div>
                 ))}

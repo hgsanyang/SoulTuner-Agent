@@ -91,7 +91,7 @@ export default function DislikesPage() {
                                 opacity: isSyncing ? 0.5 : 1,
                             }}
                         >
-                            {isSyncing ? '同步中...' : t('🔄 从后端同步')}
+                            {isSyncing ? t('同步中...') : t('🔄 从后端同步')}
                         </button>
                     </div>
                     <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: theme.colors.text.muted }}>
@@ -176,7 +176,7 @@ export default function DislikesPage() {
                                     fontWeight: 500,
                                     transition: 'all 0.2s',
                                 }}
-                                title="撤销不喜欢"
+                                title={t('撤销不喜欢')}
                                 onClick={() => undoDislike(song.title, song.artist)}
                                 onMouseEnter={(e) => {
                                     e.currentTarget.style.borderColor = '#1db954';

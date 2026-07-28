@@ -297,7 +297,7 @@ export default function MyLibraryPage() {
                     <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('知识图谱')}</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{t('我的曲库')}</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                        {loading ? '加载中...' : t('图谱中共有 {v0} 首歌曲', { v0: total })}
+                        {loading ? t('加载中...') : t('图谱中共有 {v0} 首歌曲', { v0: total })}
                     </p>
                 </div>
             </div>
@@ -310,7 +310,7 @@ export default function MyLibraryPage() {
                     </svg>
                     <input
                         type="text"
-                        placeholder="搜索歌名、歌手、专辑、标签"
+                        placeholder={t('搜索歌名、歌手、专辑、标签')}
                         value={searchQuery}
                         onChange={e => setSearchQuery(e.target.value)}
                         style={{
@@ -368,10 +368,10 @@ export default function MyLibraryPage() {
                         </svg>
                     </div>
                     <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>
-                        {searchQuery ? '没有匹配的歌曲' : t('曲库为空')}
+                        {searchQuery ? t('没有匹配的歌曲') : t('曲库为空')}
                     </h3>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        {searchQuery ? '试试其他关键词' : t('通过 AI 对话获取新歌后，在待入库页面确认入库即可添加到这里。')}
+                        {searchQuery ? t('试试其他关键词') : t('通过 AI 对话获取新歌后，在待入库页面确认入库即可添加到这里。')}
                     </p>
                 </div>
             ) : (
@@ -451,13 +451,13 @@ export default function MyLibraryPage() {
                                 </span>
                                 {qualityBadge(song)}
 
-                                <button title="详情" aria-label={t('查看 {v0} 详情', { v0: song.title })} onClick={e => { e.stopPropagation(); setSelectedSong(song); }}
+                                <button title={t('详情')} aria-label={t('查看 {v0} 详情', { v0: song.title })} onClick={e => { e.stopPropagation(); setSelectedSong(song); }}
                                     style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.35rem 0.6rem', borderRadius: theme.borderRadius.sm, fontSize: '0.76rem' }}>
                                     {t('详情')}
                                 </button>
 
                                 {/* Play */}
-                                <button title={song.audio_url ? '播放' : t('暂无音源')} aria-label={song.audio_url ? t('播放 {v0}', { v0: song.title }) : t('{v0} 暂无音源', { v0: song.title })}
+                                <button title={song.audio_url ? t('播放') : t('暂无音源')} aria-label={song.audio_url ? t('播放 {v0}', { v0: song.title }) : t('{v0} 暂无音源', { v0: song.title })}
                                     onClick={e => {
                                         e.stopPropagation();
                                         if (song.audio_url) {
@@ -476,7 +476,7 @@ export default function MyLibraryPage() {
                                 </button>
 
                                 {/* Delete */}
-                                <button title="从曲库移除" aria-label={t('从曲库移除 {v0}', { v0: song.title })} onClick={e => { e.stopPropagation(); handleDelete(song); }}
+                                <button title={t('从曲库移除')} aria-label={t('从曲库移除 {v0}', { v0: song.title })} onClick={e => { e.stopPropagation(); handleDelete(song); }}
                                     disabled={isDeleting}
                                     style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: isDeleting ? 'wait' : 'pointer', padding: '0.4rem', display: 'flex', transition: 'color 0.2s' }}
                                     onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
@@ -506,7 +506,7 @@ export default function MyLibraryPage() {
                         <div>{t('格式：')}{selectedSong.format || t('未知')}</div>
                         <div>{t('时长：')}{selectedSong.duration ? `${Math.round(selectedSong.duration / 1000)}s` : t('未知')}</div>
                         <div>{t('标签来源：')}{selectedSong.tag_source || t('未记录')}</div>
-                        <div>{t('音源保留：')}{selectedSong.audio_retention === 'saved' ? '长期保存' : selectedSong.audio_retention === 'temporary' ? '临时缓存' : t('未记录')}</div>
+                        <div>{t('音源保留：')}{selectedSong.audio_retention === 'saved' ? t('长期保存') : selectedSong.audio_retention === 'temporary' ? t('临时缓存') : t('未记录')}</div>
                         <div>{t('入库状态：')}{selectedSong.acquire_status || selectedSong.audio_status || t('正常')}</div>
                         <div>{t('质量分：')}{Math.round((selectedSong.quality_score ?? 0) * 100)}%</div>
                         <div>{t('去重键：')}{selectedSong.duplicate_key || t('未生成')}</div>
@@ -531,7 +531,7 @@ export default function MyLibraryPage() {
                                 disabled={retainingAudio}
                                 style={{ background: retainingAudio ? 'rgba(255,255,255,0.08)' : 'rgba(251,191,36,0.18)', border: '1px solid rgba(251,191,36,0.35)', borderRadius: theme.borderRadius.sm, color: '#fde68a', cursor: retainingAudio ? 'wait' : 'pointer', padding: '0.45rem 0.75rem', fontWeight: 700, fontSize: '0.76rem', whiteSpace: 'nowrap' }}
                             >
-                                {retainingAudio ? '保存中...' : t('长期保存音源')}
+                                {retainingAudio ? t('保存中...') : t('长期保存音源')}
                             </button>
                         </div>
                     )}
@@ -568,7 +568,7 @@ export default function MyLibraryPage() {
                                 disabled={savingTags}
                                 style={{ width: '100%', background: savingTags ? 'rgba(255,255,255,0.08)' : theme.colors.primary.accent, border: 'none', borderRadius: theme.borderRadius.sm, color: savingTags ? theme.colors.text.muted : '#000', cursor: savingTags ? 'wait' : 'pointer', padding: '0.5rem 0.75rem', fontWeight: 700, fontSize: '0.78rem' }}
                             >
-                                {savingTags ? '保存中...' : t('保存标签')}
+                                {savingTags ? t('保存中...') : t('保存标签')}
                             </button>
                         </div>
                     </div>

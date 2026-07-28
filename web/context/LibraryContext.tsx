@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { sendUserEvent, fetchLikedSongs, fetchDislikedSongs, removeDislike as apiRemoveDislike } from '@/lib/api';
 import { useAppSession } from '@/context/AppSessionContext';
+import { useLang } from '@/context/LanguageContext';
 
 export interface LikedSong {
     id: string;
@@ -67,6 +68,7 @@ const INITIAL_COLLECTIONS: Collection[] = [
 const LibraryContext = createContext<LibraryContextType | undefined>(undefined);
 
 export function LibraryProvider({ children }: { children: React.ReactNode }) {
+    const { t } = useLang();
     const {
         activeProfile,
         interactionMode,
@@ -218,7 +220,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
                 });
                 return prev.filter(s => s.id !== id);
             }
-            showToast(`♥ 已添加到「我的喜欢」`);
+            showToast(t('♥ 已添加到「我的喜欢」'));
             sendUserEvent('like', song.title, song.artist, {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,
@@ -237,12 +239,12 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             if (existing) {
                 // 已经是不喜欢 → 撤销
                 apiRemoveDislike(song.title, song.artist);
-                showToast(`已撤销「不喜欢」`);
+                showToast(t('已撤销「不喜欢」'));
                 return prev.filter(s => s.id !== id);
             }
             // 标记为不喜欢
             sendUserEvent('dislike', song.title, song.artist);
-            showToast(`👎 已标记为「不喜欢」，后续推荐将过滤此歌曲`);
+            showToast(t('👎 已标记为「不喜欢」，后续推荐将过滤此歌曲'));
             // 同时从 likes 中移除
             setLikedSongs(lp => lp.filter(s => s.id !== id));
             return [{ ...song, id, coverUrl: song.coverUrl, dislikedAt: Date.now() }, ...prev];
@@ -254,7 +256,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         const ok = await apiRemoveDislike(title, artist);
         if (ok) {
             setDislikedSongs(prev => prev.filter(s => s.id !== id));
-            showToast(`✓ 已从「不喜欢」列表中移除`);
+            showToast(t('✓ 已从「不喜欢」列表中移除'));
         }
     };
 
@@ -269,7 +271,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         setCollections(prev => prev.map(c => {
             if (c.id !== collectionId) return c;
             if (c.songs.some(s => s.id === id)) return c; // already in
-            showToast(`✓ 已添加到「${c.name}」`);
+            showToast(t('✓ 已添加到「{v0}」', { v0: t(c.name) }));
             sendUserEvent('save', song.title, song.artist, {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,
