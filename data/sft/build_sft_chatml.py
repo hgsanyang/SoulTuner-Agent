@@ -1,4 +1,4 @@
-"""Build ChatML SFT data from collected episodes (Phase B).
+"""Build ChatML SFT data from collected Planner V2 or V3 episodes.
 
 Turns verified teacher episodes into the exact (system, user, assistant) triples
 the student model is fine-tuned on. The target is the compact PlannerDecisionV2
@@ -59,6 +59,24 @@ graph_search（实体/硬属性精确查找）| hybrid_search（有标签又有�
 6. 指代（那首/上一首/这个歌手）能从历史或上轮解析就解析并继承，解析不了才 clarification。
 7. 严重矛盾（如"纯音乐但突出人声"）用 clarification 反问，不要硬猜。"""
 
+STUDENT_SYSTEM_PROMPT_V3 = """你是音乐智能体的决策器。读用户上下文，输出严格的 PlannerDecisionV3 JSON，不要任何多余文字。
+
+## 核心字段
+- request_kind: recommendation | information | acquisition | library | conversation
+- response_mode: answer | clarify
+- tool_names: graph | dense | web | library | ingest
+- hard / soft / hints / metadata / acoustic_queries 与音乐约束对应
+- clarification 仅在 response_mode=clarify 时填写
+
+## 决策原则
+1. 推荐请求至少使用 graph 或 dense；需要外部新歌/资料时可同时使用 web。
+2. 事实查询使用 graph 或 web；已有本地资料时不要无条件联网。
+3. 用户曲库查看/筛选使用 library；发现或暂存外部歌曲使用 web+ingest。
+4. conversation 不调用工具。指代能从历史、上轮计划或记忆解析时直接继承，只有严重歧义或矛盾才 clarify。
+5. 当前请求优先于长期画像；画像是排序偏好，不得擅自变成硬约束。
+6. 情绪、氛围、纯音乐等听感需求生成 1-4 条英文声学描述供 dense 使用。
+7. ingest 只表示受控暂存计划，不代表模型已获准执行不可逆副作用。"""
+
 
 def _load_clean(path: Path) -> list[dict]:
     records: list[dict] = []
@@ -88,18 +106,34 @@ def build_user_message(rec: dict) -> str:
     return "\n".join(parts)
 
 
+def _decision(rec: dict) -> tuple[str, dict]:
+    if rec.get("teacher_decision_v3") is not None:
+        return "v3", rec["teacher_decision_v3"]
+    return "v2", rec["teacher_decision"]
+
+
 def to_chatml(rec: dict) -> dict:
-    target = json.dumps(rec["teacher_decision"], ensure_ascii=False, separators=(",", ":"))
+    version, decision = _decision(rec)
+    target = json.dumps(decision, ensure_ascii=False, separators=(",", ":"))
     return {
         "messages": [
-            {"role": "system", "content": STUDENT_SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": (
+                    STUDENT_SYSTEM_PROMPT_V3
+                    if version == "v3"
+                    else STUDENT_SYSTEM_PROMPT
+                ),
+            },
             {"role": "user", "content": build_user_message(rec)},
             {"role": "assistant", "content": target},
         ],
         "meta": {
             "episode_id": rec.get("episode_id"),
             "turn_id": rec.get("turn_id"),
-            "intent": (rec.get("teacher_decision") or {}).get("intent"),
+            "decision_schema": f"planner_decision_{version}",
+            "intent": decision.get("intent"),
+            "request_kind": decision.get("request_kind"),
             "source_type": (rec.get("provenance") or {}).get("source_type"),
         },
     }
@@ -117,8 +151,9 @@ def stratified_split(records: list[dict], eval_frac: float, seed: int) -> tuple[
         recs.sort(key=lambda r: (str(r.get("episode_id")), r.get("turn_id", 0)))
     strata: dict[str, list[list[dict]]] = defaultdict(list)
     for recs in by_family.values():
-        intent = (recs[-1].get("teacher_decision") or {}).get("intent") or "unknown"
-        strata[intent].append(recs)
+        _, decision = _decision(recs[-1])
+        stratum = decision.get("request_kind") or decision.get("intent") or "unknown"
+        strata[stratum].append(recs)
     train: list[dict] = []
     eval_: list[dict] = []
     for intent, episodes in sorted(strata.items()):
@@ -191,7 +226,13 @@ def main() -> int:
                 sink.write(json.dumps(to_chatml(rec), ensure_ascii=False) + "\n")
 
     def dist(recs: list[dict]) -> dict:
-        return dict(Counter((r.get("teacher_decision") or {}).get("intent") for r in recs))
+        return dict(
+            Counter(
+                (_decision(r)[1].get("request_kind")
+                 or _decision(r)[1].get("intent"))
+                for r in recs
+            )
+        )
 
     summary = {
         "input": str(args.inp),

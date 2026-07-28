@@ -103,6 +103,42 @@ def test_scorer_detects_duplicate_gold(tmp_path):
     assert report["coverage"]["complete"] is False
 
 
+def test_scorer_accepts_complete_v3_predictions(tmp_path):
+    from data.sft.score_student import score
+
+    decision = {
+        "request_kind": "library",
+        "response_mode": "answer",
+        "tool_names": ["library"],
+    }
+    row = {
+        "messages": [
+            {"role": "user", "content": "查看我的收藏"},
+            {"role": "assistant", "content": json.dumps(decision)},
+        ],
+        "meta": {"episode_id": "v3-library", "turn_id": 0},
+    }
+    ev = tmp_path / "eval-v3.jsonl"
+    pred = tmp_path / "pred-v3.jsonl"
+    ev.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    pred.write_text(
+        json.dumps(
+            {**row, "prediction": json.dumps(decision, ensure_ascii=False)},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = score(ev, pred)
+
+    assert report["coverage"]["complete"] is True
+    assert report["schema_valid"] == 1.0
+    assert report["compilable"] == 1.0
+    assert report["request_kind_acc"] == 1.0
+    assert report["lane_f1"] == 1.0
+
+
 def test_scorer_cli_nonzero_exit_on_incomplete(tmp_path):
     import subprocess
     import sys

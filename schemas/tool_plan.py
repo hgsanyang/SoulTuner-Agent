@@ -9,7 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TOOL_PLAN_VERSION = "1.0"
+TOOL_PLAN_VERSION = "1.1"
 
 
 class StrictToolModel(BaseModel):
@@ -26,6 +26,8 @@ class ToolName(str, Enum):
     SEARCH_EXTERNAL_MUSIC = "search_external_music"
     RESOLVE_PLAYABLE_TRACKS = "resolve_playable_tracks"
     COMMIT_MEMORY_DELTA = "commit_memory_delta"
+    READ_LIBRARY = "read_library"
+    STAGE_INGEST = "stage_ingest"
 
 
 class RetrieveMemoryArguments(StrictToolModel):
@@ -105,6 +107,21 @@ class CommitMemoryArguments(StrictToolModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
+class ReadLibraryArguments(StrictToolModel):
+    collection: Literal["liked", "saved", "disliked", "recent"] = "liked"
+    query: str = Field(default="", max_length=300)
+    limit: int = Field(default=30, ge=1, le=100)
+
+
+class StageIngestArguments(StrictToolModel):
+    """Describe an ingest proposal without authorizing a side effect."""
+
+    candidate_source_ids: list[str] = Field(default_factory=list, max_length=100)
+    preserve_audio: bool = False
+    reason: str = Field(default="", max_length=300)
+    mode: Literal["preview"] = "preview"
+
+
 TOOL_ARGUMENT_MODELS: dict[ToolName, type[BaseModel]] = {
     ToolName.RETRIEVE_MEMORY: RetrieveMemoryArguments,
     ToolName.SEARCH_GRAPH: SearchGraphArguments,
@@ -113,6 +130,8 @@ TOOL_ARGUMENT_MODELS: dict[ToolName, type[BaseModel]] = {
     ToolName.SEARCH_EXTERNAL_MUSIC: ExternalMusicArguments,
     ToolName.RESOLVE_PLAYABLE_TRACKS: ResolvePlayableArguments,
     ToolName.COMMIT_MEMORY_DELTA: CommitMemoryArguments,
+    ToolName.READ_LIBRARY: ReadLibraryArguments,
+    ToolName.STAGE_INGEST: StageIngestArguments,
 }
 
 
@@ -135,9 +154,9 @@ class ToolCall(StrictToolModel):
 
 
 class ToolPlan(StrictToolModel):
-    version: Literal["1.0"] = TOOL_PLAN_VERSION
+    version: Literal["1.0", "1.1"] = TOOL_PLAN_VERSION
     origin: Literal["planner", "legacy_compiler", "replanner"] = "planner"
-    request_mode: Literal["recommendation", "information", "conversation", "acquisition"]
+    request_mode: Literal["recommendation", "information", "conversation", "acquisition", "library"]
     tool_calls: list[ToolCall] = Field(default_factory=list, max_length=8)
     needs_clarification: bool = False
     clarification_question: str = Field(default="", max_length=500)
@@ -147,6 +166,10 @@ class ToolPlan(StrictToolModel):
 
     @model_validator(mode="after")
     def validate_graph(self) -> "ToolPlan":
+        v11_tools = {ToolName.READ_LIBRARY, ToolName.STAGE_INGEST}
+        if self.version == "1.0" and any(call.name in v11_tools for call in self.tool_calls):
+            raise ValueError("read_library and stage_ingest require ToolPlan version 1.1")
+
         if self.needs_clarification:
             if not self.clarification_question.strip():
                 raise ValueError("clarification requires a question")

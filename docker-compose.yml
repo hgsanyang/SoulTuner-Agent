@@ -118,6 +118,7 @@ services:
       MUSIC_AUDIO_DATA_DIR: /app/data/processed_audio/audio
       MUSIC_DATA_ROOT: /app/data
       MUSIC_FEEDBACK_DIR: /app/data/feedback
+      MUSIC_USER_SETTINGS_PATH: /app/data/config/user_settings.json
       MUSIC_KNOWLEDGE_STORE_PATH: /app/data/knowledge_cache/music_knowledge.sqlite
       MUSIC_KNOWLEDGE_CACHE_PATH: /app/data/knowledge_cache/music_knowledge.jsonl
       MUSIC_KNOWLEDGE_VECTOR_BACKEND: ${MUSIC_KNOWLEDGE_VECTOR_BACKEND:-qdrant}

@@ -40,6 +40,8 @@ app = FastAPI(title="Music Recommendation API", version="1.0.0")
 # 注册用户画像路由
 from api.user_profile import router as user_profile_router
 app.include_router(user_profile_router)
+from api.profiles import router as profiles_router
+app.include_router(profiles_router)
 
 # 注册动态用户画像路由（Profile Synthesizer）
 from api.user_portrait import router as user_portrait_router
@@ -129,6 +131,18 @@ async def startup_event():
         if neo4j and neo4j.driver:
             await loop.run_in_executor(None, lambda: neo4j.execute_query("RETURN 1 AS warmup", {}))
             logger.info(f"  ✅ Neo4j 连接预热完成 ({_t.time()-_t0:.1f}s)")
+            try:
+                from services.user_profiles import UserProfileService
+
+                await loop.run_in_executor(
+                    None,
+                    lambda: UserProfileService(client=neo4j).register_default_profile(
+                        display_name="默认档案"
+                    ),
+                )
+                logger.info("  ✅ 本地默认档案已注册")
+            except Exception as profile_error:
+                logger.warning("  ⚠️ 默认档案注册失败（不影响推荐）: %s", profile_error)
 
             # ★ Thompson Sampling 时间衰减：每次重启服务，ts_beta 衰减 20%
             # 这样长时间没被推荐的歌自然"恢复"，避免被永久封杀
@@ -297,6 +311,8 @@ class RecommendationRequest(BaseModel):
     chat_history: Optional[List[Dict[str, str]]] = None
     dialog_state: Optional[Dict[str, Any]] = None
     user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
     llm_provider: str = "dashscope"            # 模型供应商: dashscope / siliconflow / google / ...
     web_search_enabled: bool = True           # 是否开启联网搜索
     # 客户端测得的收听上下文（只有客户端知道用户时区/会话/场景），随请求带上，
@@ -312,6 +328,10 @@ class PlaylistRequest(BaseModel):
     target_size: int = 30
     public: bool = False
     user_preferences: Optional[Dict[str, Any]] = None
+    user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
+    session_id: str = ""
 
 
 class SearchRequest(BaseModel):
@@ -332,6 +352,7 @@ class AcquireSongRequest(BaseModel):
 @app.post("/api/acquire-song")
 async def acquire_song_endpoint(
     request: AcquireSongRequest,
+    raw_request: Request,
     _: None = Depends(require_admin_api_key),
 ):
     """
@@ -339,6 +360,9 @@ async def acquire_song_endpoint(
     不再自动入库 Neo4j，需要用户在待入库页面确认后才入库。
     """
     reject_shared_safe_action("acquire song")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
     import aiohttp
     from tools.acquire_music import OnlineMusicAcquirer
 
@@ -406,6 +430,7 @@ async def stream_recommendations(
     web_search_enabled: bool = True,
     client_context: Optional[Dict[str, Any]] = None,
     is_disconnected=None,
+    runtime_context=None,
 ) -> AsyncGenerator[str, None]:
     """
     流式生成推荐结果 (真流式：推荐解释逐 chunk 推送)
@@ -416,6 +441,12 @@ async def stream_recommendations(
     Yields:
         SSE格式的数据块
     """
+    _runtime_token = None
+    if runtime_context is not None:
+        from services.runtime_context import set_runtime_context
+
+        _runtime_token = set_runtime_context(runtime_context)
+        user_id = runtime_context.effective_user_id
     try:
         agent = get_agent()
 
@@ -519,18 +550,30 @@ async def stream_recommendations(
     except Exception as e:
         logger.error(f"流式推荐失败: {str(e)}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+    finally:
+        if _runtime_token is not None:
+            from services.runtime_context import reset_runtime_context
+
+            reset_runtime_context(_runtime_token)
 
 
 async def stream_playlist(
     query: str,
     target_size: int = 30,
     public: bool = False,
-    user_preferences: Optional[Dict[str, Any]] = None
+    user_preferences: Optional[Dict[str, Any]] = None,
+    user_id: str = "local_admin",
+    runtime_context=None,
 ) -> AsyncGenerator[str, None]:
     """
     流式生成歌单(已降级为基于推荐引擎的本地歌单)
     """
+    _runtime_token = None
     try:
+        if runtime_context is not None:
+            from services.runtime_context import set_runtime_context
+
+            _runtime_token = set_runtime_context(runtime_context)
         agent = get_agent()
 
         yield f"data: {json.dumps({'type': 'start', 'message': '开始生成你的专属歌单...'}, ensure_ascii=False)}\n\n"
@@ -541,7 +584,11 @@ async def stream_playlist(
         # 使用推荐引擎生成歌单(替代已废弃的 Spotify 服务)
         result = await agent.get_recommendations(
             query=query,
-            user_preferences=user_preferences or {}
+            user_preferences=user_preferences or {},
+            user_id=user_id,
+            client_context={
+                "session_id": getattr(runtime_context, "session_id", ""),
+            },
         )
 
         if result.get("success") and result.get("recommendations"):
@@ -561,6 +608,11 @@ async def stream_playlist(
     except Exception as e:
         logger.error(f"流式歌单生成失败: {str(e)}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+    finally:
+        if _runtime_token is not None:
+            from services.runtime_context import reset_runtime_context
+
+            reset_runtime_context(_runtime_token)
 
 
 @app.get("/")
@@ -583,6 +635,15 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
     SSE流式接口,会逐步发送分析进度和结果。
     注入 raw_request.is_disconnected 以支持客户端断开时取消后台任务。
     """
+    from api.runtime_context import runtime_context_from_request
+
+    runtime_context = runtime_context_from_request(
+        raw_request,
+        profile_id=request.profile_id,
+        user_id=request.user_id,
+        interaction_mode=request.interaction_mode,
+        session_id=request.session_id,
+    )
     return StreamingResponse(
         stream_recommendations(
             query=request.query,
@@ -597,9 +658,10 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
                 "scene": request.scene,
                 "device": request.device,
             },
-            user_id=request.user_id,
+            user_id=runtime_context.effective_user_id,
             web_search_enabled=request.web_search_enabled,
             is_disconnected=raw_request.is_disconnected,
+            runtime_context=runtime_context,
         ),
         media_type="text/event-stream",
         headers={
@@ -611,16 +673,27 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
 
 
 @app.post("/api/playlist/stream")
-async def stream_playlist_endpoint(request: PlaylistRequest):
+async def stream_playlist_endpoint(request: PlaylistRequest, raw_request: Request):
     """
     流式生成歌单(SSE)
     """
+    from api.runtime_context import runtime_context_from_request
+
+    runtime_context = runtime_context_from_request(
+        raw_request,
+        profile_id=request.profile_id,
+        user_id=request.user_id,
+        interaction_mode=request.interaction_mode,
+        session_id=request.session_id,
+    )
     return StreamingResponse(
         stream_playlist(
             query=request.query,
             target_size=request.target_size,
             public=request.public,
-            user_preferences=request.user_preferences
+            user_preferences=request.user_preferences,
+            user_id=runtime_context.effective_user_id,
+            runtime_context=runtime_context,
         ),
         media_type="text/event-stream",
         headers={
@@ -632,7 +705,7 @@ async def stream_playlist_endpoint(request: PlaylistRequest):
 
 
 @app.post("/api/recommendations")
-async def get_recommendations(request: RecommendationRequest):
+async def get_recommendations(request: RecommendationRequest, raw_request: Request):
     """
     获取音乐推荐(非流式,兼容旧接口)
     """
@@ -650,14 +723,31 @@ async def get_recommendations(request: RecommendationRequest):
         # 通过环境变量传递联网搜索开关
         os.environ["MUSIC_WEB_SEARCH_ENABLED"] = "1" if request.web_search_enabled else "0"
 
-        agent = get_agent()
-        result = await agent.get_recommendations(
-            query=request.query,
-            user_preferences=request.user_preferences,
-            chat_history=request.chat_history,
-            dialog_state=request.dialog_state,
+        from api.runtime_context import runtime_context_from_request
+        from services.runtime_context import runtime_context_scope
+
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
             user_id=request.user_id,
+            interaction_mode=request.interaction_mode,
+            session_id=request.session_id,
         )
+        agent = get_agent()
+        with runtime_context_scope(runtime_context):
+            result = await agent.get_recommendations(
+                query=request.query,
+                user_preferences=request.user_preferences,
+                chat_history=request.chat_history,
+                dialog_state=request.dialog_state,
+                user_id=runtime_context.effective_user_id,
+                client_context={
+                    "timezone": request.timezone,
+                    "session_id": runtime_context.session_id,
+                    "scene": request.scene,
+                    "device": request.device,
+                },
+            )
         return result
     except Exception as e:
         logger.error(f"获取推荐失败: {str(e)}", exc_info=True)
@@ -665,16 +755,29 @@ async def get_recommendations(request: RecommendationRequest):
 
 
 @app.post("/api/playlist")
-async def generate_playlist(request: PlaylistRequest):
+async def generate_playlist(request: PlaylistRequest, raw_request: Request):
     """
     生成歌单(使用推荐引擎,替代废弃的 Spotify 服务)
     """
     try:
-        agent = get_agent()
-        result = await agent.get_recommendations(
-            query=request.query,
-            user_preferences=request.user_preferences or {}
+        from api.runtime_context import runtime_context_from_request
+        from services.runtime_context import runtime_context_scope
+
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
+            user_id=request.user_id,
+            interaction_mode=request.interaction_mode,
+            session_id=request.session_id,
         )
+        agent = get_agent()
+        with runtime_context_scope(runtime_context):
+            result = await agent.get_recommendations(
+                query=request.query,
+                user_preferences=request.user_preferences or {},
+                user_id=runtime_context.effective_user_id,
+                client_context={"session_id": runtime_context.session_id},
+            )
         return {"success": result.get("success", False), **result}
     except Exception as e:
         logger.error(f"生成歌单失败: {str(e)}", exc_info=True)
@@ -947,6 +1050,8 @@ class UserEventRequest(BaseModel):
     song_title: str           # 歌曲名
     artist: str = "未知"      # 歌手
     user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
     exposure_id: Optional[str] = None
     extra: Optional[Any] = None  # position/play_duration_ms/progress_ratio/session_id
 
@@ -962,6 +1067,8 @@ class SlateFeedbackRequest(BaseModel):
     reasons: List[str] = []
     note: str = ""
     user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
     best_music_ids: List[str] = []
     worst_music_ids: List[str] = []
     timezone: str = ""
@@ -983,12 +1090,16 @@ class RankingPolicyReplayRequest(BaseModel):
 class MemoryPreferenceUpdateRequest(BaseModel):
     """Editable memory update from the user profile panel."""
     user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
     preferences: Dict[str, Any]
 
 
 class MemoryConsolidationRequest(BaseModel):
     """Run a bounded, auditable L0-to-L2 consolidation for one user."""
     user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
     force: bool = True
 
 
@@ -1024,7 +1135,7 @@ SUPPORTED_SLATE_RATINGS = {
 
 
 @app.post("/api/user-event")
-async def capture_user_event(request: UserEventRequest):
+async def capture_user_event(request: UserEventRequest, raw_request: Request):
     """
     接收前端行为事件，直写 Neo4j 用户关系 + 异步送 GraphZep 补充上下文。
 
@@ -1045,33 +1156,57 @@ async def capture_user_event(request: UserEventRequest):
         title = request.song_title
         artist = request.artist
 
-        # MemoryGateway 统一写入 Neo4j 热路径、JSONL 反馈日志和可选 GraphZep 旁路。
+        from api.runtime_context import (
+            assert_exposure_owner,
+            runtime_context_from_request,
+        )
+        from services.feedback_logger import lookup_exposure
+        from services.runtime_context import runtime_context_scope
+
+        session_id = str((request.extra or {}).get("session_id") or "") if isinstance(request.extra, dict) else ""
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
+            user_id=request.user_id,
+            interaction_mode=request.interaction_mode,
+            session_id=session_id,
+        )
+        if request.exposure_id:
+            exposure = lookup_exposure(request.exposure_id)
+            if exposure is None:
+                raise HTTPException(status_code=409, detail="exposure not persisted yet; retry shortly")
+            assert_exposure_owner(exposure, runtime_context)
+
+        # MemoryGateway writes to the effective user. Developer mode therefore
+        # exercises the same path in an isolated sandbox.
         from services.memory_gateway import get_memory_gateway
 
-        result = await get_memory_gateway().remember_event(
-            event_type=event,
-            title=title,
-            artist=artist,
-            user_id=request.user_id,
-            exposure_id=request.exposure_id,
-            extra=request.extra if isinstance(request.extra, dict) else {"value": request.extra} if request.extra is not None else {},
-        )
+        with runtime_context_scope(runtime_context):
+            result = await get_memory_gateway().remember_event(
+                event_type=event,
+                title=title,
+                artist=artist,
+                user_id=runtime_context.effective_user_id,
+                exposure_id=request.exposure_id,
+                extra=request.extra if isinstance(request.extra, dict) else {"value": request.extra} if request.extra is not None else {},
+            )
         if not result.success:
             raise HTTPException(status_code=422, detail=result.error or "user event failed")
 
         online_flywheel_scheduled = False
-        try:
-            from services.online_audio_flywheel import schedule_online_feedback_flywheel
+        if runtime_context.interaction_mode == "personal":
+            try:
+                from services.online_audio_flywheel import schedule_online_feedback_flywheel
 
-            extra_payload = request.extra if isinstance(request.extra, dict) else {}
-            online_flywheel_scheduled = schedule_online_feedback_flywheel(
-                event_type=event,
-                title=title,
-                artist=artist,
-                extra=extra_payload,
-            )
-        except Exception as exc:
-            logger.debug("[user-event] online feedback flywheel scheduling skipped: %s", exc)
+                extra_payload = request.extra if isinstance(request.extra, dict) else {}
+                online_flywheel_scheduled = schedule_online_feedback_flywheel(
+                    event_type=event,
+                    title=title,
+                    artist=artist,
+                    extra=extra_payload,
+                )
+            except Exception as exc:
+                logger.debug("[user-event] online feedback flywheel scheduling skipped: %s", exc)
 
         return {
             "success": True,
@@ -1105,6 +1240,8 @@ class SongFeedbackRequest(BaseModel):
     title: str = ""
     artist: str = ""
     user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
     context_fit: Optional[str] = None    # fits | partial | off
     off_reasons: List[str] = []
     note: str = ""
@@ -1115,7 +1252,7 @@ class SongFeedbackRequest(BaseModel):
 
 
 @app.post("/api/song-feedback")
-async def capture_song_feedback(request: SongFeedbackRequest):
+async def capture_song_feedback(request: SongFeedbackRequest, raw_request: Request):
     """Record per-song feedback.
 
     Two channels are stored separately and never merged: `taste` is a long-term
@@ -1126,6 +1263,10 @@ async def capture_song_feedback(request: SongFeedbackRequest):
     try:
         import time as _t
 
+        from api.runtime_context import (
+            assert_exposure_owner,
+            runtime_context_from_request,
+        )
         from schemas.feedback_events import (
             ExposureBookkeeping,
             SongFeedback,
@@ -1149,6 +1290,22 @@ async def capture_song_feedback(request: SongFeedbackRequest):
         exposure = lookup_exposure(request.exposure_id)
         if exposure is None:
             raise HTTPException(status_code=409, detail="exposure not persisted yet; retry shortly")
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
+            user_id=request.user_id,
+            interaction_mode=request.interaction_mode,
+            session_id=request.session_id,
+        )
+        assert_exposure_owner(exposure, runtime_context)
+        exposure_session_id = str(
+            exposure.get("session_id")
+            or (exposure.get("context") or {}).get("session_id")
+            or runtime_context.session_id
+        )
+        runtime_context = runtime_context.model_copy(
+            update={"session_id": exposure_session_id}
+        )
         item = find_exposure_item(exposure, music_id=request.music_id,
                                   title=request.title, artist=request.artist)
         if item is None:
@@ -1160,13 +1317,13 @@ async def capture_song_feedback(request: SongFeedbackRequest):
                 music_id=str(item.get("music_id") or request.music_id or ""),
                 title=str(item.get("title") or request.title or ""),
                 artist=str(item.get("artist") or request.artist or ""),
-                user_id=request.user_id,
+                user_id=runtime_context.effective_user_id,
                 context_fit=request.context_fit,
                 off_reasons=request.off_reasons,
                 note=request.note,
                 context=derive_context(
                     int(_t.time() * 1000), request.timezone,
-                    session_id=request.session_id, scene=request.scene,
+                    session_id=exposure_session_id, scene=request.scene,
                     device=request.device,
                 ),
                 # Policy truth comes from OUR exposure record, not the browser.
@@ -1189,7 +1346,10 @@ async def capture_song_feedback(request: SongFeedbackRequest):
             raise HTTPException(status_code=422, detail="feedback carries no signal")
 
         try:
-            feedback_id = log_song_feedback(feedback)
+            from services.runtime_context import runtime_context_scope
+
+            with runtime_context_scope(runtime_context):
+                feedback_id = log_song_feedback(feedback)
         except FeedbackStoreError as exc:
             # SQLite is authoritative for user feedback: if it did not land, say so
             # rather than returning success for a judgement we failed to persist.
@@ -1205,7 +1365,7 @@ async def capture_song_feedback(request: SongFeedbackRequest):
 
 
 @app.post("/api/slate-feedback")
-async def capture_slate_feedback(request: SlateFeedbackRequest):
+async def capture_slate_feedback(request: SlateFeedbackRequest, raw_request: Request):
     """Record feedback for an entire recommendation slate.
 
     This is the A3-lite bridge between user-facing evaluation buttons and
@@ -1220,6 +1380,10 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 
         import time as _t
 
+        from api.runtime_context import (
+            assert_exposure_owner,
+            runtime_context_from_request,
+        )
         from schemas.feedback_events import (
             SLATE_RATING_TO_OVERALL,
             SlateFeedback,
@@ -1234,6 +1398,22 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
         exposure = lookup_exposure(request.exposure_id)
         if exposure is None:
             raise HTTPException(status_code=409, detail="exposure not persisted yet; retry shortly")
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
+            user_id=request.user_id,
+            interaction_mode=request.interaction_mode,
+            session_id=request.session_id,
+        )
+        assert_exposure_owner(exposure, runtime_context)
+        exposure_session_id = str(
+            exposure.get("session_id")
+            or (exposure.get("context") or {}).get("session_id")
+            or runtime_context.session_id
+        )
+        runtime_context = runtime_context.model_copy(
+            update={"session_id": exposure_session_id}
+        )
         exposed_ids = {str(i.get("music_id")) for i in (exposure.get("items") or []) if i.get("music_id")}
         best = [m for m in request.best_music_ids if m in exposed_ids][:3]
         worst = [m for m in request.worst_music_ids if m in exposed_ids][:3]
@@ -1242,7 +1422,7 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
 
         context = derive_context(
             int(_t.time() * 1000), request.timezone,
-            session_id=request.session_id, scene=request.scene,
+            session_id=exposure_session_id, scene=request.scene,
         )
         # Reasons are stored as slugs, not display labels. Older clients (and the
         # pre-slug UI) send Chinese button text; keep those verbatim in
@@ -1256,7 +1436,7 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
             # Validate through the strict contract so the written record and the
             # declared schema cannot drift apart.
             strict = SlateFeedback(
-                exposure_id=request.exposure_id, user_id=request.user_id,
+                exposure_id=request.exposure_id, user_id=runtime_context.effective_user_id,
                 overall=SLATE_RATING_TO_OVERALL.get(request.rating),
                 best_music_ids=best, worst_music_ids=worst,
                 reasons=reasons, note=request.note, context=context,
@@ -1278,14 +1458,17 @@ async def capture_slate_feedback(request: SlateFeedbackRequest):
             slate_extra["reasons_raw"] = unknown_reasons
 
         try:
-            result = await get_memory_gateway().remember_slate_feedback(
-                exposure_id=request.exposure_id,
-                rating=request.rating,
-                reasons=strict.reasons,   # validated slugs; raw text kept in extra
-                note=request.note,
-                user_id=request.user_id,
-                extra=slate_extra,
-            )
+            from services.runtime_context import runtime_context_scope
+
+            with runtime_context_scope(runtime_context):
+                result = await get_memory_gateway().remember_slate_feedback(
+                    exposure_id=request.exposure_id,
+                    rating=request.rating,
+                    reasons=strict.reasons,
+                    note=request.note,
+                    user_id=runtime_context.effective_user_id,
+                    extra=slate_extra,
+                )
         except FeedbackStoreError as exc:
             raise HTTPException(status_code=503, detail=f"could not persist slate feedback: {exc}")
         return {
@@ -1370,14 +1553,18 @@ async def ranking_policy_status():
 
 
 @app.get("/api/memory/profile")
-async def memory_profile(user_id: str = "local_admin"):
+async def memory_profile(raw_request: Request, user_id: str = "local_admin"):
     """Return editable hot-path memory and configured episodic sidecars."""
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.memory_gateway import get_memory_gateway
 
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
         return {
             "success": True,
-            "memory": get_memory_gateway().explain_memory(user_id=user_id),
+            "memory": get_memory_gateway().explain_memory(
+                user_id=runtime_context.effective_user_id
+            ),
         }
     except Exception as e:
         logger.error(f"[MemoryAPI] 读取记忆画像失败: {e}")
@@ -1385,12 +1572,17 @@ async def memory_profile(user_id: str = "local_admin"):
 
 
 @app.get("/api/memory/profile-views")
-async def memory_profile_views(user_id: str = "local_admin"):
+async def memory_profile_views(raw_request: Request, user_id: str = "local_admin"):
     """Scope-grouped editable views over effective L1/L2 preferences."""
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.memory_gateway import get_memory_gateway
 
-        return {"success": True, **get_memory_gateway().profile_views(user_id=user_id)}
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
+        return {
+            "success": True,
+            **get_memory_gateway().profile_views(user_id=runtime_context.effective_user_id),
+        }
     except Exception as e:
         logger.error(f"[MemoryAPI] 读取场景化画像失败: {e}")
         return {"success": False, "error": str(e)}
@@ -1399,17 +1591,27 @@ async def memory_profile_views(user_id: str = "local_admin"):
 @app.post("/api/memory/preference")
 async def add_memory_preference(
     request: MemoryPreferenceUpdateRequest,
+    raw_request: Request,
     _: None = Depends(require_admin_api_key),
 ):
     """Add structured preferences to the Neo4j hot path."""
     reject_shared_safe_action("update memory preference")
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.memory_gateway import get_memory_gateway
+        from services.runtime_context import runtime_context_scope
 
-        result = get_memory_gateway().remember_preference(
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
             user_id=request.user_id,
-            preferences=request.preferences,
+            interaction_mode=request.interaction_mode,
         )
+        with runtime_context_scope(runtime_context):
+            result = get_memory_gateway().remember_preference(
+                user_id=runtime_context.effective_user_id,
+                preferences=request.preferences,
+            )
         return {
             "success": result.success,
             "preference_update": result.preference_update,
@@ -1421,6 +1623,7 @@ async def add_memory_preference(
 
 @app.delete("/api/memory/preference")
 async def delete_memory_preference(
+    raw_request: Request,
     field: str,
     value: str,
     user_id: str = "local_admin",
@@ -1429,10 +1632,12 @@ async def delete_memory_preference(
     """Delete one learned preference item from the Neo4j hot path."""
     reject_shared_safe_action("delete memory preference")
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.memory_gateway import get_memory_gateway
 
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
         ok = get_memory_gateway().forget_preference_item(
-            user_id=user_id,
+            user_id=runtime_context.effective_user_id,
             field=field,
             value=value,
         )
@@ -1448,15 +1653,20 @@ async def delete_memory_preference(
 
 @app.delete("/api/memory/profile")
 async def clear_learned_memory_profile(
+    raw_request: Request,
     user_id: str = "local_admin",
     _: None = Depends(require_admin_api_key),
 ):
     """Clear learned hot-path preference fields, keeping manual profile and song relations."""
     reject_shared_safe_action("clear learned memory profile")
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.memory_gateway import get_memory_gateway
 
-        ok = get_memory_gateway().clear_learned_preferences(user_id=user_id)
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
+        ok = get_memory_gateway().clear_learned_preferences(
+            user_id=runtime_context.effective_user_id
+        )
         if not ok:
             raise HTTPException(status_code=422, detail="Unable to clear learned preferences")
         return {"success": True}
@@ -1470,15 +1680,23 @@ async def clear_learned_memory_profile(
 @app.post("/api/memory/consolidate")
 async def consolidate_memory(
     request: MemoryConsolidationRequest,
+    raw_request: Request,
     _: None = Depends(require_admin_api_key),
 ):
     """Explicitly run the strong-model consolidator; never exposed as a public side effect."""
     reject_shared_safe_action("consolidate memory")
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.memory_gateway import get_memory_gateway
 
-        report = await get_memory_gateway().consolidate_user(
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
             user_id=request.user_id,
+            interaction_mode=request.interaction_mode,
+        )
+        report = await get_memory_gateway().consolidate_user(
+            user_id=runtime_context.effective_user_id,
             force=request.force,
         )
         return {"success": not report.get("reason"), "report": report}
@@ -1490,6 +1708,7 @@ async def consolidate_memory(
 @app.delete("/api/memory/record/{record_id}")
 async def delete_memory_record(
     record_id: str,
+    raw_request: Request,
     user_id: str = "local_admin",
     _: None = Depends(require_admin_api_key),
 ):
@@ -1501,9 +1720,14 @@ async def delete_memory_record(
     """
     reject_shared_safe_action("delete memory record")
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.memory_gateway import get_memory_gateway
 
-        ok = get_memory_gateway().delete_memory_record(user_id=user_id, record_id=record_id)
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
+        ok = get_memory_gateway().delete_memory_record(
+            user_id=runtime_context.effective_user_id,
+            record_id=record_id,
+        )
         if not ok:
             raise HTTPException(status_code=404, detail="Memory record not found")
         return {"success": True}
@@ -1522,9 +1746,9 @@ async def ranking_policy_replay(
     """Fit a candidate ranking policy from logged exposures and feedback."""
     reject_shared_safe_action("learn ranking policy")
     from services.feedback_logger import (
-        load_events_canonical,
-        load_exposures_canonical,
-        load_slate_feedback_canonical,
+        load_training_events,
+        load_training_exposures,
+        load_training_slate_feedback,
     )
     from services.ranking_learning import learn_ranking_policy
     from services.ranking_policy import feedback_dir, write_candidate
@@ -1532,9 +1756,9 @@ async def ranking_policy_replay(
     root = feedback_dir()
     # Deduped by id: replaying the append-only log would train on the provisional
     # AND final copy of every exposure.
-    exposures = load_exposures_canonical()
-    events = load_events_canonical()
-    slate_feedback = load_slate_feedback_canonical() if request.include_slate_feedback else []
+    exposures = load_training_exposures()
+    events = load_training_events()
+    slate_feedback = load_training_slate_feedback() if request.include_slate_feedback else []
     report = learn_ranking_policy(
         exposures,
         events,
@@ -1622,15 +1846,21 @@ async def catalog_diagnostics(limit: int = 50):
 # ================================================================
 
 @app.get("/api/liked-songs")
-async def get_liked_songs(user_id: str = "local_admin", limit: int = 50):
+async def get_liked_songs(raw_request: Request, user_id: str = "local_admin", limit: int = 50):
     """
     查询用户点赞+收藏的歌曲列表（从 Neo4j 读取）。
     前端启动时调用此接口同步 liked songs 状态。
     """
     try:
+        from api.runtime_context import runtime_context_from_request
         from retrieval.user_memory import UserMemoryManager
+
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
         memory = UserMemoryManager()
-        songs = memory.get_liked_songs(user_id=user_id, limit=limit)
+        songs = memory.get_liked_songs(
+            user_id=runtime_context.effective_user_id,
+            limit=limit,
+        )
         return {"success": True, "songs": songs, "total": len(songs)}
     except Exception as e:
         logger.error(f"查询 liked songs 失败: {e}")
@@ -1638,13 +1868,16 @@ async def get_liked_songs(user_id: str = "local_admin", limit: int = 50):
 
 
 @app.get("/api/disliked-songs")
-async def get_disliked_songs(user_id: str = "local_admin", limit: int = 50):
+async def get_disliked_songs(raw_request: Request, user_id: str = "local_admin", limit: int = 50):
     """
     查询用户标记为「不喜欢」的歌曲列表（从 Neo4j 读取）。
     供前端展示「不喜欢」管理页面。
     """
     try:
+        from api.runtime_context import runtime_context_from_request
         from retrieval.neo4j_client import get_neo4j_client
+
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
         client = get_neo4j_client()
         query = """
         MATCH (u:User {id: $user_id})-[r:DISLIKES]->(s:Song)
@@ -1656,7 +1889,10 @@ async def get_disliked_songs(user_id: str = "local_admin", limit: int = 50):
         ORDER BY r.created_at DESC
         LIMIT $limit
         """
-        results = client.execute_query(query, {"user_id": user_id, "limit": limit})
+        results = client.execute_query(
+            query,
+            {"user_id": runtime_context.effective_user_id, "limit": limit},
+        )
         songs = [
             {
                 "title": r.get("title", ""),
@@ -1676,6 +1912,7 @@ async def get_disliked_songs(user_id: str = "local_admin", limit: int = 50):
 
 @app.delete("/api/disliked-songs")
 async def remove_dislike(
+    raw_request: Request,
     song_title: str,
     artist: str,
     user_id: str = "local_admin",
@@ -1684,7 +1921,10 @@ async def remove_dislike(
     """从「不喜欢」列表中移除一首歌"""
     reject_shared_safe_action("remove disliked song")
     try:
+        from api.runtime_context import runtime_context_from_request
         from retrieval.neo4j_client import get_neo4j_client
+
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
         client = get_neo4j_client()
         query = """
         MATCH (u:User {id: $user_id})-[r:DISLIKES]->(s:Song {title: $title})
@@ -1692,8 +1932,15 @@ async def remove_dislike(
               OR EXISTS((s)-[:PERFORMED_BY]->(:Artist {name: $artist}))
         DELETE r
         """
-        client.execute_query(query, {"user_id": user_id, "title": song_title, "artist": artist})
-        logger.info(f"用户 {user_id} 撤销不喜欢: {song_title}")
+        client.execute_query(
+            query,
+            {
+                "user_id": runtime_context.effective_user_id,
+                "title": song_title,
+                "artist": artist,
+            },
+        )
+        logger.info("用户档案撤销不喜欢: %s", song_title)
         return {"success": True}
     except Exception as e:
         logger.error(f"撤销不喜欢失败: {e}")
@@ -1706,6 +1953,7 @@ async def remove_dislike(
 
 @app.delete("/api/songs")
 async def delete_song_completely(
+    raw_request: Request,
     song_title: str,
     artist: str,
     _: None = Depends(require_admin_api_key),
@@ -1720,6 +1968,9 @@ async def delete_song_completely(
     deleted_files = []
     errors = []
     reject_shared_safe_action("delete song")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
 
     try:
         from retrieval.neo4j_client import get_neo4j_client
@@ -1976,12 +2227,16 @@ class LibraryTagUpdateRequest(BaseModel):
 @app.post("/api/pending-songs/ingest")
 async def ingest_pending_songs(
     request: PendingIngestRequest,
+    raw_request: Request,
     _: None = Depends(require_admin_api_key),
 ):
     """
     秒级写入歌曲元数据，并将耗时的歌词/向量增强交给独立 Worker。
     """
     reject_shared_safe_action("ingest pending songs")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
     from tools.acquire_music import _quick_ingest_to_neo4j, _background_flywheel
     from services.ingest_queue import IngestQueueValidationError, enqueue_songs
 
@@ -2053,11 +2308,15 @@ class OnlineAudioRetentionRequest(BaseModel):
 @app.post("/api/online-audio/retain")
 async def retain_online_audio_endpoint(
     request: OnlineAudioRetentionRequest,
+    raw_request: Request,
     _: None = Depends(require_admin_api_key),
 ):
     """Promote a temporary online audio file to long-term retention."""
 
     reject_shared_safe_action("retain online audio")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
     try:
         from services.online_audio_retention import retain_online_audio
 
@@ -2113,6 +2372,7 @@ async def retain_online_audio_endpoint(
 
 @app.delete("/api/pending-songs")
 async def delete_pending_song(
+    raw_request: Request,
     file_basename: str,
     ext: str = "mp3",
     _: None = Depends(require_admin_api_key),
@@ -2121,6 +2381,9 @@ async def delete_pending_song(
     删除待入库歌曲的所有本地文件（音频、封面、歌词、元数据）。
     """
     reject_shared_safe_action("delete pending song")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
     deleted = []
     errors = []
 
@@ -2173,10 +2436,14 @@ async def get_ingest_jobs(limit: int = 30):
 @app.post("/api/ingest-jobs/{job_id}/retry")
 async def retry_ingest_job(
     job_id: str,
+    raw_request: Request,
     _: None = Depends(require_admin_api_key),
 ):
     """Retry a failed enrichment job by moving it back to the pending queue."""
     reject_shared_safe_action("retry ingest job")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
     try:
         from services.ingest_queue import retry_failed_job
 
@@ -2338,10 +2605,14 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
 @app.patch("/api/library-songs/tags")
 async def update_library_song_tags(
     request: LibraryTagUpdateRequest,
+    raw_request: Request,
     _: None = Depends(require_admin_api_key),
 ):
     """Update curated tags on one Song node and its tag relationships."""
     reject_shared_safe_action("update library song tags")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
     if not request.music_id and not (request.title and request.artist):
         raise HTTPException(status_code=400, detail="music_id or title+artist is required")
 

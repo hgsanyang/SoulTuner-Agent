@@ -146,9 +146,11 @@ def log_exposure(
         for i, song in enumerate(recommendations or [])
     ]
     now_ms = int(time.time() * 1000)
+    from services.runtime_context import provenance_fields
+
     payload = {
         "type": "exposure",
-        "schema_version": "feedback_events_v1",
+        "schema_version": "feedback_events_v2",
         "exposure_id": exposure_id,
         # `ts` is kept for backward compatibility but is now the time of THIS
         # write. Attribution must not use it: the provisional and final records
@@ -175,6 +177,7 @@ def log_exposure(
         "retrieval_meta": retrieval_meta or {},
         "dialog_state": dialog_state or {},
         "timings": timings or {},
+        **provenance_fields("ranking"),
     }
     if os.getenv("FEEDBACK_LOG_RAW_QUERY", "0").lower() in {"1", "true", "yes"}:
         payload["query"] = query
@@ -314,10 +317,13 @@ def log_song_feedback(feedback: Any) -> str:
     """
     payload = feedback.model_dump(mode="json") if hasattr(feedback, "model_dump") else dict(feedback)
     feedback_id = str(uuid.uuid4())
+    from services.runtime_context import provenance_fields
+
     payload.update({
         "type": "song_feedback",
         "song_feedback_id": feedback_id,
         "ts": int(time.time() * 1000),
+        **provenance_fields("ranking"),
     })
     _store("insert_song_feedback", payload, required=True)  # authoritative
     _append_jsonl(_jsonl_path("song_feedback.jsonl"), payload)  # audit copy
@@ -335,6 +341,8 @@ def log_user_event(
 ) -> str:
     extra_payload = extra if isinstance(extra, dict) else {"value": extra} if extra is not None else {}
     event_id = str(uuid.uuid4())
+    from services.runtime_context import provenance_fields
+
     payload = {
         "type": "event",
         "event_id": event_id,
@@ -349,6 +357,7 @@ def log_user_event(
         "play_duration_ms": extra_payload.get("play_duration_ms"),
         "progress_ratio": extra_payload.get("progress_ratio"),
         "session_id": extra_payload.get("session_id"),
+        **provenance_fields("preference_and_ranking"),
     }
     _append_jsonl(_jsonl_path("events.jsonl"), payload)  # export snapshot
     _store("insert_user_event", payload)  # canonical
@@ -385,9 +394,11 @@ def log_slate_feedback(
     best_music_ids = extra_payload.pop("best_music_ids", [])
     worst_music_ids = extra_payload.pop("worst_music_ids", [])
     context = extra_payload.pop("context", {})
+    from services.runtime_context import provenance_fields
+
     payload = {
         "type": "slate_feedback",
-        "schema_version": extra_payload.pop("schema_version", "feedback_events_v1"),
+        "schema_version": extra_payload.pop("schema_version", "feedback_events_v2"),
         # `slate_feedback_id` is the canonical key (it is the store's primary key
         # and matches song_feedback_id / event_id). `feedback_id` is kept as a
         # legacy alias because existing JSONL logs and replay code read it.
@@ -406,6 +417,7 @@ def log_slate_feedback(
         "note": str(note or "").strip()[:1000],
         "context": context or {},
         "extra": extra_payload,   # only what is not canonical (e.g. reasons_raw, song_count)
+        **provenance_fields("ranking"),
     }
     _store("insert_slate_feedback", payload, required=True)  # authoritative
     _append_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE), payload)  # audit copy
@@ -505,18 +517,60 @@ def load_exposures_canonical() -> list[dict[str, Any]]:
     through here so one exposure is counted once, regardless of how many times it
     was written or whether it has been migrated into the store yet.
     """
-    return _merge_canonical("exposures", _load_store("load_exposures"),
-                            load_jsonl(_jsonl_path("exposures.jsonl")))
+    from services.runtime_context import normalize_provenance
+
+    return [
+        normalize_provenance(row)
+        for row in _merge_canonical(
+            "exposures",
+            _load_store("load_exposures"),
+            load_jsonl(_jsonl_path("exposures.jsonl")),
+        )
+    ]
 
 
 def load_events_canonical() -> list[dict[str, Any]]:
-    return _merge_canonical("events", _load_store("load_events"),
-                            load_jsonl(_jsonl_path("events.jsonl")))
+    from services.runtime_context import normalize_provenance
+
+    return [
+        normalize_provenance(row)
+        for row in _merge_canonical(
+            "events",
+            _load_store("load_events"),
+            load_jsonl(_jsonl_path("events.jsonl")),
+        )
+    ]
 
 
 def load_slate_feedback_canonical() -> list[dict[str, Any]]:
-    return _merge_canonical("slate_feedback", _load_store("load_slate_feedback"),
-                            load_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE)))
+    from services.runtime_context import normalize_provenance
+
+    return [
+        normalize_provenance(row)
+        for row in _merge_canonical(
+            "slate_feedback",
+            _load_store("load_slate_feedback"),
+            load_jsonl(_jsonl_path(SLATE_FEEDBACK_FILE)),
+        )
+    ]
+
+
+def _eligible(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from services.runtime_context import is_training_eligible
+
+    return [row for row in rows if is_training_eligible(row)]
+
+
+def load_training_exposures() -> list[dict[str, Any]]:
+    return _eligible(load_exposures_canonical())
+
+
+def load_training_events() -> list[dict[str, Any]]:
+    return _eligible(load_events_canonical())
+
+
+def load_training_slate_feedback() -> list[dict[str, Any]]:
+    return _eligible(load_slate_feedback_canonical())
 
 
 def learned_weights_path() -> Path:

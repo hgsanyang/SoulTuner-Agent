@@ -15,6 +15,8 @@ import asyncio
 import pytest
 
 import services.online_audio_flywheel as flywheel
+from schemas.runtime_context import build_runtime_context
+from services.runtime_context import runtime_context_scope
 
 
 @pytest.fixture
@@ -39,7 +41,12 @@ def _run(coro_fn, *args, **kwargs):
         await asyncio.sleep(0)  # let the scheduled task start
         return result
 
-    return asyncio.run(_main())
+    # Production scheduling is intentionally fail-closed outside an explicit
+    # personal runtime context. Model an authenticated normal-use request here.
+    with runtime_context_scope(
+        build_runtime_context(profile_id="local_admin", profile_type="personal", interaction_mode="personal")
+    ):
+        return asyncio.run(_main())
 
 
 ONLINE_EXTRA = {"source": "online_search", "song_id": "1901371647", "platform": "netease",
@@ -84,4 +91,26 @@ def test_side_effect_guard_blocks_ingest(captured, monkeypatch):
     monkeypatch.setattr(flywheel.settings, "eval_disable_side_effects", True, raising=False)
     assert _run(flywheel.schedule_online_feedback_flywheel,
                 event_type="like", title="再见", artist="张震岳", extra=dict(ONLINE_EXTRA)) is False
+    assert captured == []
+
+
+def test_developer_mode_cannot_ingest_shared_online_audio(captured):
+    async def _main():
+        scheduled = flywheel.schedule_online_feedback_flywheel(
+            event_type="like",
+            title="再见",
+            artist="张震岳",
+            extra=dict(ONLINE_EXTRA),
+        )
+        await asyncio.sleep(0)
+        return scheduled
+
+    developer = build_runtime_context(
+        profile_id="local_admin",
+        profile_type="personal",
+        interaction_mode="developer",
+    )
+    with runtime_context_scope(developer):
+        scheduled = asyncio.run(_main())
+    assert scheduled is False
     assert captured == []

@@ -161,7 +161,11 @@ async def acquire_and_ingest_online_candidates(
 
 def schedule_online_recommendation_flywheel(items: list[dict[str, Any]] | Any) -> int:
     """Schedule background ingestion for online recommendations and return candidate count."""
+    from services.runtime_context import shared_catalog_side_effects_allowed
+
     if settings.eval_disable_side_effects:
+        return 0
+    if not shared_catalog_side_effects_allowed():
         return 0
     if not getattr(settings, "online_auto_flywheel_enabled", True):
         return 0
@@ -186,7 +190,11 @@ def schedule_online_feedback_flywheel(
     extra: dict[str, Any] | None,
 ) -> bool:
     """Schedule acquisition/retention upgrade for explicit positive feedback."""
+    from services.runtime_context import shared_catalog_side_effects_allowed
+
     if settings.eval_disable_side_effects or not getattr(settings, "online_auto_flywheel_enabled", True):
+        return False
+    if not shared_catalog_side_effects_allowed():
         return False
     payload = extra or {}
     if not should_auto_acquire_feedback(event_type, payload):

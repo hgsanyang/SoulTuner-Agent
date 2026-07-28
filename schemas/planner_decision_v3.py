@@ -48,16 +48,10 @@ PLANNER_DECISION_V3_VERSION = "planner_decision_v3"
 RequestKind = Literal["recommendation", "information", "acquisition", "library", "conversation"]
 ResponseMode = Literal["answer", "clarify"]
 
-# ONLY lanes that a registered ToolPlan tool can actually execute today
-# (schemas/tool_plan.py::ToolName has no library/ingest tool). Declaring
-# library/ingest here would claim an authority we cannot execute, so those
-# request kinds carry no lane until the ToolPlan work lands.
-ToolLane = Literal["graph", "dense", "web"]
+# High-level lanes backed by registered ToolPlan tools. ``ingest`` remains a
+# shadow preview: selecting the lane does not authorize a catalog mutation.
+ToolLane = Literal["graph", "dense", "web", "library", "ingest"]
 _V2_LANES = ("graph", "dense", "web")
-
-# Request kinds whose executor does not exist yet: they may be produced, but
-# must NOT enter a training set until real tools back them.
-NOT_YET_EXECUTABLE_KINDS = frozenset({"acquisition", "library"})
 
 # A kind may be served by any of these lanes. `information` is deliberately not
 # web-only: "这首歌哪年发行" is often already in the graph/knowledge cards, and
@@ -65,10 +59,14 @@ NOT_YET_EXECUTABLE_KINDS = frozenset({"acquisition", "library"})
 KIND_LANES: dict[str, set[str]] = {
     "recommendation": {"graph", "dense", "web"},
     "information": {"graph", "web"},
+    "acquisition": {"web", "ingest"},
+    "library": {"library"},
 }
 KIND_REQUIRED_ANY: dict[str, set[str]] = {
     "recommendation": {"graph", "dense"},
     "information": {"graph", "web"},
+    "acquisition": {"ingest"},
+    "library": {"library"},
 }
 
 
@@ -104,13 +102,6 @@ class PlannerDecisionV3(_Strict):
         if self.request_kind == "conversation":
             if lanes:
                 raise ValueError("conversation must carry no tool lanes")
-            return self
-        if self.request_kind in NOT_YET_EXECUTABLE_KINDS:
-            # No registered tool can execute these yet; they must not pretend to.
-            if lanes:
-                raise ValueError(
-                    f"request_kind={self.request_kind} has no executable tool yet; leave tool_names empty"
-                )
             return self
         # answer-mode retrieval kinds must name a lane that can serve them.
         if not lanes:
@@ -199,8 +190,12 @@ def migrate_v2_to_v3(decision: PlannerDecisionV2) -> PlannerDecisionV3:
     """
     kind, mode = _legacy_intent_to_kind(decision.intent)
     lanes = sorted(_normalized_tool_lanes(decision.tool_names))
-    if mode == "clarify" or kind == "conversation" or kind in NOT_YET_EXECUTABLE_KINDS:
+    if mode == "clarify" or kind == "conversation":
         lanes = []
+    elif kind == "acquisition":
+        lanes = ["web", "ingest"]
+    elif kind == "library":
+        lanes = ["library"]
     elif not lanes:
         # V2 allowed empty lanes (compiler fallback); V3 requires an explicit
         # lane, so materialise the fallback the compiler would have used.

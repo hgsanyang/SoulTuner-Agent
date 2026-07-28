@@ -15,8 +15,8 @@ from schemas.tool_plan import (
 
 
 def test_tool_plan_version_is_frozen():
-    assert TOOL_PLAN_VERSION == "1.0"
-    assert ToolPlan.model_fields["version"].default == "1.0"
+    assert TOOL_PLAN_VERSION == "1.1"
+    assert ToolPlan.model_fields["version"].default == "1.1"
 
 
 def test_tool_whitelist_is_frozen():
@@ -30,6 +30,8 @@ def test_tool_whitelist_is_frozen():
         "search_external_music",
         "resolve_playable_tracks",
         "commit_memory_delta",
+        "read_library",
+        "stage_ingest",
     }
 
 

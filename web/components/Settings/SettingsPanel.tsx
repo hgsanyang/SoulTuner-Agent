@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { theme } from '@/styles/theme';
+import { apiFetch } from '@/lib/app-session';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 
@@ -69,7 +70,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const loadSettings = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/settings`);
+      const res = await apiFetch(`${API_URL}/api/settings`);
       if (res.ok) {
         const data = await res.json();
         snapshotRef.current = { ...data };   // 保存快照
@@ -112,7 +113,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       const payload: Record<string, unknown> = {};
       dirty.forEach(key => { payload[key] = settings[key]; });
 
-      const res = await fetch(`${API_URL}/api/settings`, {
+      const res = await apiFetch(`${API_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -136,7 +137,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const resetToDefaults = async () => {
     try {
       setSaving(true);
-      const res = await fetch(`${API_URL}/api/settings/reset`, { method: 'POST' });
+      const res = await apiFetch(`${API_URL}/api/settings/reset`, { method: 'POST' });
       if (res.ok) {
         const result = await res.json();
         snapshotRef.current = { ...result.settings };
@@ -543,7 +544,6 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
         越大保留越多历史对话，但增加 LLM 调用成本和延迟
       </div>
-      {renderInput('default_user_id', '用户 ID', 'local_admin')}
     </>
   );
 

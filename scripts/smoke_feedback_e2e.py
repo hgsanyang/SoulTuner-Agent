@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -30,24 +31,61 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _default_feedback_dir() -> str:
+    configured = os.getenv("MUSIC_FEEDBACK_DIR")
+    if configured:
+        return configured
+    data_path = os.getenv("MUSIC_DATA_PATH")
+    env_path = PROJECT_ROOT / ".env"
+    if not data_path and env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("MUSIC_DATA_PATH="):
+                data_path = line.split("=", 1)[1].strip().strip("\"'")
+                break
+    return str(Path(data_path) / "feedback") if data_path else str(PROJECT_ROOT / "data" / "feedback")
+
+
 def _fail(step: str, detail: str) -> None:
     print(f"[FAIL] {step}: {detail}")
     raise SystemExit(1)
 
 
-def stream_recommendation(base: str, query: str, timeout: float) -> tuple[str, list[dict]]:
+def _headers(profile_id: str, mode: str, session_id: str) -> dict[str, str]:
+    return {
+        "X-SoulTuner-Profile": profile_id,
+        "X-SoulTuner-Mode": mode,
+        "X-SoulTuner-Session": session_id,
+    }
+
+
+def stream_recommendation(
+    base: str,
+    query: str,
+    timeout: float,
+    *,
+    profile_id: str,
+    mode: str,
+    session_id: str,
+) -> tuple[str, list[dict]]:
     """Drive the SSE endpoint and collect exposure_id + songs."""
     exposure_id, songs = "", []
     payload = {
         "query": query,
-        "user_id": "smoke_admin",
+        "user_id": profile_id,
+        "profile_id": profile_id,
+        "interaction_mode": mode,
         "timezone": "Asia/Shanghai",
-        "session_id": "smoke-session",
+        "session_id": session_id,
         "scene": "端到端冒烟",
         "device": "smoke",
     }
     with httpx.Client(timeout=timeout, trust_env=False) as client:
-        with client.stream("POST", f"{base}/api/recommendations/stream", json=payload) as resp:
+        with client.stream(
+            "POST",
+            f"{base}/api/recommendations/stream",
+            headers=_headers(profile_id, mode, session_id),
+            json=payload,
+        ) as resp:
             if resp.status_code != 200:
                 _fail("stream", f"HTTP {resp.status_code}")
             for line in resp.iter_lines():
@@ -67,14 +105,30 @@ def stream_recommendation(base: str, query: str, timeout: float) -> tuple[str, l
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="http://localhost:8501")
     parser.add_argument("--query", default="深夜写代码，想要安静一点的")
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--profile-id", default="local_admin")
+    parser.add_argument("--profile-type", choices=("personal", "test"), default="personal")
+    parser.add_argument("--mode", choices=("personal", "developer"), default="developer")
+    parser.add_argument("--feedback-dir", default=_default_feedback_dir())
     args = parser.parse_args()
+    os.environ["MUSIC_FEEDBACK_DIR"] = str(Path(args.feedback_dir).resolve())
+    session_id = f"smoke-{int(time.time())}"
 
     print(f"== 1. 流式推荐 ({args.query!r}) ==")
-    exposure_id, songs = stream_recommendation(args.base, args.query, args.timeout)
+    exposure_id, songs = stream_recommendation(
+        args.base,
+        args.query,
+        args.timeout,
+        profile_id=args.profile_id,
+        mode=args.mode,
+        session_id=session_id,
+    )
     if not exposure_id:
         _fail("exposure_id", "SSE 未返回 exposure_id")
     if not songs:
@@ -97,6 +151,14 @@ def main() -> int:
           f"local_hour={ctx.get('local_hour')} day_type={ctx.get('day_type')} scene={ctx.get('scene')!r}")
     if ctx.get("local_hour") is None:
         _fail("context", "曝光缺少收听上下文（#2 透传未生效？）")
+    expected_user = args.profile_id if args.mode == "personal" else f"__dev__:{args.profile_id}"
+    if exposure.get("user_id") != expected_user:
+        _fail("runtime-context", f"expected user {expected_user}, got {exposure.get('user_id')}")
+    expected_training_eligible = (
+        args.mode == "personal" and args.profile_type == "personal"
+    )
+    if bool(exposure.get("training_eligible")) != expected_training_eligible:
+        _fail("training-eligibility", f"unexpected value {exposure.get('training_eligible')}")
 
     first = (exposure.get("items") or [])[0]
     music_id = str(first.get("music_id") or "")
@@ -110,11 +172,13 @@ def main() -> int:
 
     print("== 3. 逐首语境反馈（策略字段必须由服务端回填） ==")
     with httpx.Client(timeout=30, trust_env=False) as client:
-        resp = client.post(f"{args.base}/api/song-feedback", json={
+        resp = client.post(f"{args.base}/api/song-feedback", headers=_headers(
+            args.profile_id, args.mode, session_id,
+        ), json={
             "exposure_id": exposure_id, "music_id": music_id,
             "title": first.get("title", ""), "artist": first.get("artist", ""),
             "context_fit": "off", "off_reasons": ["too_loud"], "note": "端到端冒烟",
-            "timezone": "Asia/Shanghai", "session_id": "smoke-session", "scene": "端到端冒烟",
+            "timezone": "Asia/Shanghai", "session_id": session_id, "scene": "端到端冒烟",
         })
     if resp.status_code != 200:
         _fail("song-feedback", f"HTTP {resp.status_code}: {resp.text[:200]}")
@@ -123,10 +187,13 @@ def main() -> int:
     print("== 4. 歌单反馈（best/worst 必须属于本组） ==")
     ids = [str(i.get("music_id")) for i in (exposure.get("items") or []) if i.get("music_id")]
     with httpx.Client(timeout=30, trust_env=False) as client:
-        resp = client.post(f"{args.base}/api/slate-feedback", json={
+        resp = client.post(f"{args.base}/api/slate-feedback", headers=_headers(
+            args.profile_id, args.mode, session_id,
+        ), json={
             "exposure_id": exposure_id, "rating": "partial",
             "best_music_ids": ids[1:2], "worst_music_ids": ids[:1],
             "note": "端到端冒烟", "timezone": "Asia/Shanghai",
+            "session_id": session_id,
         })
     if resp.status_code != 200:
         _fail("slate-feedback", f"HTTP {resp.status_code}: {resp.text[:200]}")

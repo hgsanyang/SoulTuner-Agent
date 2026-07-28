@@ -4,6 +4,7 @@ import { ReactNode, useState } from 'react';
 import NavItem from './NavItem';
 import SettingsPanel from '@/components/Settings/SettingsPanel';
 import UserProfilePanel from '@/components/Profile/UserProfilePanel';
+import ProfileSwitcher from '@/components/Profile/ProfileSwitcher';
 import { theme } from '@/styles/theme';
 
 interface NavItemConfig {
@@ -215,7 +216,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
           display: 'flex',
           flexDirection: 'column',
           gap: '1rem',
-          marginBottom: '2rem',
+          marginBottom: '1rem',
           flexShrink: 0,
         }}
       >
@@ -249,6 +250,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
             <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>AI Powered Studio</span>
           </div>
         </div>
+        <ProfileSwitcher />
       </div>
 
       <nav

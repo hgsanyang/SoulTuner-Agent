@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { theme } from '@/styles/theme';
+import { apiFetch } from '@/lib/app-session';
+import { useAppSession } from '@/context/AppSessionContext';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 
@@ -49,6 +51,7 @@ interface MemoryProfile {
 }
 
 export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelProps) {
+  const { activeProfile } = useAppSession();
   const [genres, setGenres] = useState<string[]>([]);
   const [moods, setMoods] = useState<string[]>([]);
   const [scenarios, setScenarios] = useState<string[]>([]);
@@ -64,7 +67,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/user-profile`);
+      const res = await apiFetch(`${API_URL}/api/user-profile`);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.profile) {
@@ -75,7 +78,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
           setFreeText(data.profile.free_text || '');
         }
       }
-      const memoryRes = await fetch(`${API_URL}/api/memory/profile`);
+      const memoryRes = await apiFetch(`${API_URL}/api/memory/profile`);
       if (memoryRes.ok) {
         const memoryData = await memoryRes.json();
         if (memoryData.success && memoryData.memory) {
@@ -95,7 +98,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
       setMessage('');
       loadProfile();
     }
-  }, [isOpen, loadProfile]);
+  }, [activeProfile.profile_id, isOpen, loadProfile]);
 
   // ---- 标签切换 ----
   const toggleTag = (
@@ -111,7 +114,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
   const saveProfile = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/user-profile`, {
+      const res = await apiFetch(`${API_URL}/api/user-profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -151,7 +154,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
 
   const removeLearnedPreference = async (field: string, value: string) => {
     try {
-      const resp = await fetch(
+      const resp = await apiFetch(
         `${API_URL}/api/memory/preference?field=${encodeURIComponent(field)}&value=${encodeURIComponent(value)}`,
         { method: 'DELETE' },
       );
@@ -170,7 +173,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
     const ok = window.confirm('只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？');
     if (!ok) return;
     try {
-      const resp = await fetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
+      const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
       if (!resp.ok) throw new Error(`清空失败: ${resp.status}`);
       setMessage('✅ 已清空系统学习偏好');
       await loadProfile();

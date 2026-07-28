@@ -10,6 +10,8 @@
  */
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 import { sendUserEvent } from '@/lib/api';
+import { useAppSession } from '@/context/AppSessionContext';
+import { SessionRequestContext } from '@/lib/app-session';
 
 export interface Song {
     title: string;
@@ -58,6 +60,7 @@ const MAX_SKIP_LISTEN_MS = 30_000;
 const MAX_SKIP_PROGRESS_RATIO = 0.5;
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
+    const { activeProfile, interactionMode, sessionId } = useAppSession();
     const [currentSong, setCurrentSong] = useState<Song | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [volume, setVolumeState] = useState(0.8);
@@ -68,11 +71,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const [isExpanded, setExpanded] = useState(false);
 
     const audioRef = useRef<HTMLAudioElement | null>(null);
-    const sessionIdRef = useRef(
-        typeof crypto !== 'undefined' && crypto.randomUUID
-            ? crypto.randomUUID()
-            : `session-${Date.now()}`
-    );
+    const playbackContextRef = useRef<SessionRequestContext>({
+        profileId: activeProfile.profile_id,
+        interactionMode,
+        sessionId,
+    });
 
     const playbackMetrics = (audio: HTMLAudioElement | null) => {
         const playedSeconds = Math.max(0, Number(audio?.currentTime || 0));
@@ -83,7 +86,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         return {
             playDurationMs: Math.round(playedSeconds * 1000),
             progressRatio,
-            sessionId: sessionIdRef.current,
+            sessionId: playbackContextRef.current.sessionId,
         };
     };
 
@@ -97,6 +100,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             exposureId: song.exposure_id,
             position: song.exposure_rank,
             ...metrics,
+            requestContext: playbackContextRef.current,
         });
     };
 
@@ -126,6 +130,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             audio.pause();
         };
     }, []); // Only init once
+
+    // Playback events belong to the profile/mode that started the queue. Stop
+    // and clear on a context switch so a late "ended" event cannot be written
+    // into the newly selected profile.
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (audio) {
+            audio.pause();
+            audio.removeAttribute('src');
+            audio.load();
+        }
+        setCurrentSong(null);
+        setQueue([]);
+        setIsPlaying(false);
+        setCurrentTime(0);
+        setDuration(0);
+        playbackContextRef.current = {
+            profileId: activeProfile.profile_id,
+            interactionMode,
+            sessionId,
+        };
+    }, [activeProfile.profile_id, interactionMode, sessionId]);
 
     // Reattach ended handler to capture latest playMode state closure
     const handlePlayNext = (isAuto: boolean = false) => {
@@ -188,6 +214,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
 
         setCurrentSong(song);
+        playbackContextRef.current = {
+            profileId: activeProfile.profile_id,
+            interactionMode,
+            sessionId,
+        };
         setIsPlaying(true);
 
         if (newQueue) {

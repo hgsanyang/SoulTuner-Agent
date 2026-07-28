@@ -22,6 +22,7 @@ import {
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
+import { useAppSession } from '@/context/AppSessionContext';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 export interface ChatMessage {
@@ -40,9 +41,6 @@ export interface ChatMessage {
 // 可选模型配置
 // 模型选择已统一由设置面板（SettingsPanel）管理，不再在聊天页快捷切换
 
-const STORAGE_KEY = 'music_chat_history';
-const DIALOG_STATE_KEY = 'music_dialog_state';
-
 export default function RecommendationsPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [dialogState, setDialogState] = useState<Record<string, any>>({});
@@ -50,6 +48,13 @@ export default function RecommendationsPage() {
   const cancelRef = useRef<(() => void) | null>(null);
   const { playSong } = usePlayer();
   const { showToast } = useLibrary();
+  const {
+    activeProfile,
+    interactionMode,
+    sessionId,
+    hydrated,
+    storageKey,
+  } = useAppSession();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -61,54 +66,61 @@ export default function RecommendationsPage() {
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [slateFeedbackStatus, setSlateFeedbackStatus] = useState<Record<string, string>>({});
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [storageScope, setStorageScope] = useState('');
+  const currentScope = `${activeProfile.profile_id}:${interactionMode}`;
 
   // 窄屏（移动端）时左右两栏改为上下堆叠，避免推荐列表被压缩遮挡
   const isNarrow = useMediaQuery('(max-width: 900px)');
 
   // 联网搜索开关状态（持久化到 localStorage）
-  const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('music_web_search_enabled');
-      return saved !== null ? saved === 'true' : true;
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+
+  // Switching profile/mode ends the old stream and hydrates an isolated cache.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (cancelRef.current) {
+      cancelRef.current();
+      cancelRef.current = null;
     }
-    return true;
-  });
-
-
-
-  // 持久化联网搜索开关
-  useEffect(() => {
-    localStorage.setItem('music_web_search_enabled', String(webSearchEnabled));
-  }, [webSearchEnabled]);
-
-
-
-  // ── 持久化：从 localStorage 加载聊天记录 ──
-  useEffect(() => {
+    setLoading(false);
+    setSlateFeedbackStatus({});
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(storageKey('chat-history'));
       if (saved) {
         const parsed: ChatMessage[] = JSON.parse(saved);
-        // 清除 thinkingMessage（上次可能是加载中态），保留 error
         const cleaned = parsed.map(m => ({ ...m, thinkingMessage: undefined }));
         setMessages(cleaned);
+      } else {
+        setMessages([]);
       }
-      const savedState = localStorage.getItem(DIALOG_STATE_KEY);
-      if (savedState) setDialogState(JSON.parse(savedState));
-    } catch { /* 忽略解析错误 */ }
-  }, []);
+      const savedState = localStorage.getItem(storageKey('dialog-state'));
+      setDialogState(savedState ? JSON.parse(savedState) : {});
+      const savedWebSearch = localStorage.getItem(storageKey('web-search'));
+      setWebSearchEnabled(savedWebSearch === null ? true : savedWebSearch === 'true');
+    } catch {
+      setMessages([]);
+      setDialogState({});
+      setWebSearchEnabled(true);
+    }
+    setStorageScope(currentScope);
+  }, [currentScope, hydrated, storageKey]);
 
-  // ── 持久化：保存聊天记录到 localStorage（排除正在思考的消息）──
+  // Persist only after the new namespace has been hydrated.
   useEffect(() => {
+    if (storageScope !== currentScope) return;
     if (messages.length === 0) return;
     try {
-      // 只保存已完成的消息（thinkingMessage 已清除）
       const toSave = messages.filter(m => !m.thinkingMessage || m.error);
       if (toSave.length > 0) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+        localStorage.setItem(storageKey('chat-history'), JSON.stringify(toSave));
       }
     } catch { /* 忽略 */ }
-  }, [messages]);
+  }, [currentScope, messages, storageKey, storageScope]);
+
+  useEffect(() => {
+    if (storageScope !== currentScope) return;
+    localStorage.setItem(storageKey('web-search'), String(webSearchEnabled));
+  }, [currentScope, storageKey, storageScope, webSearchEnabled]);
 
   const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
@@ -200,6 +212,8 @@ export default function RecommendationsPage() {
         chatHistory: chatHistorySnapshot,
         dialogState,
         webSearchEnabled,
+        userId: activeProfile.profile_id,
+        sessionId,
       },
       (event: SSEEvent) => {
         setMessages((prev) => {
@@ -253,7 +267,7 @@ export default function RecommendationsPage() {
               if (event.type === 'complete') {
                 if (event.dialog_state) {
                   setDialogState(event.dialog_state);
-                  try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
+                  try { localStorage.setItem(storageKey('dialog-state'), JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
                 }
                 if (event.exposure_id) currentMsg.exposureId = event.exposure_id;
                 if (typeof event.intent_confidence === 'number') {
@@ -289,7 +303,7 @@ export default function RecommendationsPage() {
 
     cancelRef.current = cancel;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, webSearchEnabled, dialogState]);
+  }, [activeProfile.profile_id, dialogState, messages, sessionId, storageKey, webSearchEnabled]);
 
   /** 中止当前搜索，立即允许新搜索 */
   const handleAbort = useCallback(() => {
@@ -321,10 +335,10 @@ export default function RecommendationsPage() {
     }
     setLoading(false);
     setMessages([]);
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(storageKey('chat-history')); } catch { /* ignore */ }
     setDialogState({});
-    try { localStorage.removeItem(DIALOG_STATE_KEY); } catch { /* ignore */ }
-  }, []);
+    try { localStorage.removeItem(storageKey('dialog-state')); } catch { /* ignore */ }
+  }, [storageKey]);
 
   /** 从某条 assistant 消息中删除指定索引的歌曲 */
   const handleRemoveSong = useCallback((msgId: string, songIndex: number) => {

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { theme } from '@/styles/theme';
+import { apiFetch } from '@/lib/app-session';
+import { useAppSession } from '@/context/AppSessionContext';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 
@@ -84,6 +86,7 @@ function toneStyle(tone?: string): { color: string; background: string; border: 
 }
 
 export default function MemoryPage() {
+  const { activeProfile } = useAppSession();
   const [memory, setMemory] = useState<MemoryProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -94,7 +97,7 @@ export default function MemoryPage() {
   const loadMemory = useCallback(async () => {
     setLoading(true);
     try {
-      const resp = await fetch(`${API_URL}/api/memory/profile`);
+      const resp = await apiFetch(`${API_URL}/api/memory/profile`);
       const data = await resp.json();
       if (!resp.ok || !data.success) throw new Error(data.error || `读取失败: ${resp.status}`);
       setMemory(data.memory);
@@ -105,7 +108,7 @@ export default function MemoryPage() {
     }
   }, []);
 
-  useEffect(() => { loadMemory(); }, [loadMemory]);
+  useEffect(() => { loadMemory(); }, [activeProfile.profile_id, loadMemory]);
 
   const sections = useMemo<MemorySection[]>(() => {
     const existing = memory?.editable_sections || [];
@@ -125,10 +128,10 @@ export default function MemoryPage() {
   const addPreference = async (targetField = field, targetValue = value) => {
     const cleaned = targetValue.trim();
     if (!cleaned) return;
-    const resp = await fetch(`${API_URL}/api/memory/preference`, {
+    const resp = await apiFetch(`${API_URL}/api/memory/preference`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: 'local_admin', preferences: { [targetField]: [cleaned] } }),
+      body: JSON.stringify({ user_id: activeProfile.profile_id, preferences: { [targetField]: [cleaned] } }),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.success) throw new Error(data.error || `保存失败: ${resp.status}`);
@@ -138,7 +141,7 @@ export default function MemoryPage() {
   };
 
   const deletePreference = async (targetField: string, targetValue: string) => {
-    const resp = await fetch(
+    const resp = await apiFetch(
       `${API_URL}/api/memory/preference?field=${encodeURIComponent(targetField)}&value=${encodeURIComponent(targetValue)}`,
       { method: 'DELETE' },
     );
@@ -161,7 +164,7 @@ export default function MemoryPage() {
 
   const clearLearnedMemory = async () => {
     if (!window.confirm('清空所有系统学习到的偏好？手动画像、喜欢和收藏不会被删除。')) return;
-    const resp = await fetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
+    const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
     if (!resp.ok) {
       setMessage(`清空失败：${resp.status}`);
       return;
@@ -171,7 +174,7 @@ export default function MemoryPage() {
   };
 
   const deleteRecord = async (recordId: string) => {
-    const resp = await fetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
+    const resp = await apiFetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
     if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
     setMessage('已删除该条记忆；审计历史保留为删除标记');
     await loadMemory();

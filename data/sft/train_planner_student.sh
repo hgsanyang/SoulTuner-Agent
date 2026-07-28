@@ -3,7 +3,7 @@
 # SoulTuner Planner 蒸馏 — 学生 LoRA 微调 (Phase B, GPT-review-hardened)
 #
 # 学生: Qwen3.6-35B-A3B (MoE 3B active + 视觉编码器) — ModelScope, Apache 2.0
-# 老师: qwen3.7-plus (API) 生成的 compact PlannerDecisionV2 决策
+# 老师: qwen3.7-plus (API) 生成并审计的 compact PlannerDecisionV3 决策
 # 平台: AMD MI300X 192GB (ModelScope ROCm 镜像) | 框架: ms-swift
 #
 # 流程 (硬门): ①锁版本 → ②50-step PREFLIGHT (查 loss>0, 防 MoE loss=0 坑) →
@@ -17,37 +17,139 @@ set -euo pipefail
 
 # ---- 路径 (按你机器改) ------------------------------------------------------
 DATA_DIR="${DATA_DIR:-./data/sft}"
-TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/train_v2_chatml.jsonl}"
-VAL_FILE="${VAL_FILE:-$DATA_DIR/eval_v2_chatml.jsonl}"
+TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/train_v3_chatml.jsonl}"
+VAL_FILE="${VAL_FILE:-$DATA_DIR/eval_v3_chatml.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-./output/planner-student-35b-lora}"
 PREFLIGHT_DIR="${PREFLIGHT_DIR:-./output/planner-preflight}"
 MODEL="${MODEL:-Qwen/Qwen3.6-35B-A3B}"
 
 export USE_MODELSCOPE_HUB=1
 export NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
+export HSA_NO_SCRATCH_RECLAIM="${HSA_NO_SCRATCH_RECLAIM:-1}"
+export NVTE_USE_GROUPED_GEMM_TRITON="${NVTE_USE_GROUPED_GEMM_TRITON:-1}"
+export USE_MCORE_GDN="${USE_MCORE_GDN:-1}"
 # export HIP_VISIBLE_DEVICES=0
 
 # ---- ①锁版本 (未锁易踩 MoE 模板/loss=0), 硬拒过旧 ms-swift --------------------
-: "${MIN_MS_SWIFT:=3.4.0}"
-echo "== 版本锁定 (ms-swift >= $MIN_MS_SWIFT) =="
-python - "$MIN_MS_SWIFT" <<'PY'
+: "${MIN_MS_SWIFT:=4.2.0}"
+: "${MIN_TRANSFORMERS:=5.2.0}"
+echo "== 版本锁定 (ms-swift >= $MIN_MS_SWIFT, transformers >= $MIN_TRANSFORMERS) =="
+for required in "$TRAIN_FILE" "$VAL_FILE"; do
+  if [ ! -s "$required" ]; then
+    echo "FAIL: 训练数据不存在或为空: $required"
+    exit 4
+  fi
+done
+python - "$MIN_MS_SWIFT" "$MIN_TRANSFORMERS" <<'PY'
 import importlib.metadata as m, sys
 try:
     from packaging.version import Version
 except Exception:
     print("FAIL: 缺 packaging"); sys.exit(4)
-minv = sys.argv[1]; snap = {}
-for p in ("ms-swift", "transformers", "peft", "torch", "trl", "accelerate"):
+min_swift, min_transformers = sys.argv[1:3]
+snap = {}
+for p in (
+    "ms-swift",
+    "transformers",
+    "peft",
+    "torch",
+    "trl",
+    "accelerate",
+    "qwen-vl-utils",
+    "decord",
+):
     try: snap[p] = m.version(p)
     except Exception: snap[p] = None
 for p, v in snap.items(): print(f"  {p} == {v}")
 if not snap.get("ms-swift"):
     print("FAIL: ms-swift 未安装"); sys.exit(4)
-if Version(snap["ms-swift"]) < Version(minv):
-    print(f"FAIL: ms-swift {snap['ms-swift']} < {minv} (MoE LoRA 已知坑)"); sys.exit(4)
+if Version(snap["ms-swift"]) < Version(min_swift):
+    print(
+        f"FAIL: ms-swift {snap['ms-swift']} < {min_swift} "
+        "(Qwen3.6 需要 ms-swift 4.2+)"
+    )
+    sys.exit(4)
+if not snap.get("transformers") or Version(snap["transformers"]) < Version(min_transformers):
+    print(
+        f"FAIL: transformers {snap.get('transformers')} < {min_transformers} "
+        "(Qwen3.6-35B-A3B 的模型加载要求)"
+    )
+    sys.exit(4)
+for required in ("qwen-vl-utils", "decord"):
+    if not snap.get(required):
+        print(f"FAIL: 缺 Qwen3.6 模型依赖: {required}")
+        sys.exit(4)
 PY
 mkdir -p "$PREFLIGHT_DIR" "$OUTPUT_DIR"
-# 复现: pip freeze > requirements-train.lock 并纳入版本管理。
+
+# 只允许在 AMD ROCm 训练实例运行，并落盘设备/依赖/数据指纹。
+python - "$TRAIN_FILE" "$VAL_FILE" "$MODEL" "$PREFLIGHT_DIR/environment.json" <<'PY'
+import hashlib
+import json
+import os
+import platform
+import sys
+
+import torch
+
+train_file, val_file, model, output_file = sys.argv[1:5]
+hip = getattr(torch.version, "hip", None)
+if not torch.cuda.is_available() or not hip:
+    print(
+        "FAIL: 50-step preflight 只允许在 AMD ROCm 实例运行；"
+        f"cuda_available={torch.cuda.is_available()} hip={hip!r} "
+        f"cuda={getattr(torch.version, 'cuda', None)!r}"
+    )
+    sys.exit(5)
+
+def sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+manifest = {
+    "python": sys.version,
+    "platform": platform.platform(),
+    "torch": torch.__version__,
+    "torch_hip": hip,
+    "torch_cuda": getattr(torch.version, "cuda", None),
+    "device_count": torch.cuda.device_count(),
+    "devices": [
+        {
+            "index": index,
+            "name": torch.cuda.get_device_name(index),
+            "total_memory_bytes": torch.cuda.get_device_properties(index).total_memory,
+        }
+        for index in range(torch.cuda.device_count())
+    ],
+    "model": model,
+    "train_file": os.path.abspath(train_file),
+    "train_sha256": sha256(train_file),
+    "val_file": os.path.abspath(val_file),
+    "val_sha256": sha256(val_file),
+    "runtime_env": {
+        key: os.environ.get(key)
+        for key in (
+            "HIP_VISIBLE_DEVICES",
+            "NPROC_PER_NODE",
+            "HSA_NO_SCRATCH_RECLAIM",
+            "NVTE_USE_GROUPED_GEMM_TRITON",
+            "USE_MCORE_GDN",
+        )
+    },
+}
+with open(output_file, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, ensure_ascii=False, indent=2)
+print(
+    "AMD ROCm 环境通过: "
+    f"hip={hip} devices={[item['name'] for item in manifest['devices']]}"
+)
+print(f"环境与数据指纹: {output_file}")
+PY
+python -m pip freeze > "$PREFLIGHT_DIR/pip-freeze.txt"
+
 # ⚠Qwen3.6 默认可能带 thinking: 训练目标无 <think>, 但推理需关闭 thinking
 #   (按你安装的 ms-swift 版本设置 template 的 enable_thinking=false, 并抽查
 #    一条 swift infer 输出确认无 <think> 块)。
@@ -157,7 +259,7 @@ swift infer \
   --max_new_tokens 512 \
   --result_path "$OUTPUT_DIR/eval_predictions.jsonl"
 
-echo "== 打分 (schema/意图/通道F1/澄清精确率/过度澄清/字段匹配, 强制100%覆盖) =="
+echo "== 打分 (V3 schema/request kind/通道F1/澄清精确率/字段匹配, 强制100%覆盖) =="
 python -m data.sft.score_student \
   --eval "$VAL_FILE" \
   --pred "$OUTPUT_DIR/eval_predictions.jsonl"

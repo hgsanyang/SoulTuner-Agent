@@ -536,10 +536,23 @@ class GlobalSettings(BaseSettings):
 
 # ---- 用户设置持久化（JSON 文件） ----
 
-_USER_SETTINGS_FILE = Path(__file__).parent / "user_settings.json"
+_USER_SETTINGS_FILE = Path(
+    os.getenv("MUSIC_USER_SETTINGS_PATH")
+    or (Path(__file__).parent / "user_settings.json")
+)
+
+
+def _environment_controls_field(s: GlobalSettings, key: str) -> bool:
+    """True when deployment configuration explicitly owns this setting."""
+
+    field = type(s).model_fields.get(key)
+    aliases = {key.upper()}
+    if field is not None and isinstance(field.validation_alias, str):
+        aliases.add(field.validation_alias)
+    return any(alias in os.environ for alias in aliases)
 
 def _load_user_overrides(s: GlobalSettings) -> list[str]:
-    """启动时从 user_settings.json 加载用户上次保存的设置覆盖"""
+    """Load persisted UI settings without overriding deployment env vars."""
     if not _USER_SETTINGS_FILE.exists():
         return []
     try:
@@ -547,7 +560,7 @@ def _load_user_overrides(s: GlobalSettings) -> list[str]:
             overrides = _json.load(f)
         applied = []
         for key, val in overrides.items():
-            if hasattr(s, key):
+            if hasattr(s, key) and not _environment_controls_field(s, key):
                 setattr(s, key, val)
                 applied.append(key)
         return applied
@@ -592,6 +605,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
         if key in _PERSISTABLE and hasattr(s, key):
             existing[key] = getattr(s, key)
     # 写入
+    _USER_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(_USER_SETTINGS_FILE, "w", encoding="utf-8") as f:
         _json.dump(existing, f, indent=2, ensure_ascii=False)
 

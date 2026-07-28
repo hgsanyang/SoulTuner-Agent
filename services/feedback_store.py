@@ -33,7 +33,15 @@ logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+_PROVENANCE_COLUMNS = {
+    "profile_id": "TEXT",
+    "interaction_mode": "TEXT",
+    "training_eligible": "INTEGER NOT NULL DEFAULT 0",
+    "data_purpose": "TEXT",
+    "session_id": "TEXT",
+}
 
 
 def store_path() -> Path:
@@ -62,6 +70,11 @@ def _connect(path: Path) -> sqlite3.Connection:
             exposure_id TEXT PRIMARY KEY,
             ts INTEGER NOT NULL,
             user_id TEXT,
+            profile_id TEXT,
+            interaction_mode TEXT,
+            training_eligible INTEGER NOT NULL DEFAULT 0,
+            data_purpose TEXT,
+            session_id TEXT,
             intent_type TEXT,
             policy_version TEXT,
             provisional INTEGER NOT NULL DEFAULT 0,
@@ -76,6 +89,11 @@ def _connect(path: Path) -> sqlite3.Connection:
             exposure_id TEXT,
             music_id TEXT,
             user_id TEXT,
+            profile_id TEXT,
+            interaction_mode TEXT,
+            training_eligible INTEGER NOT NULL DEFAULT 0,
+            data_purpose TEXT,
+            session_id TEXT,
             context_fit TEXT,
             payload TEXT NOT NULL
         );
@@ -86,6 +104,11 @@ def _connect(path: Path) -> sqlite3.Connection:
             ts INTEGER NOT NULL,
             exposure_id TEXT,
             user_id TEXT,
+            profile_id TEXT,
+            interaction_mode TEXT,
+            training_eligible INTEGER NOT NULL DEFAULT 0,
+            data_purpose TEXT,
+            session_id TEXT,
             rating TEXT,
             payload TEXT NOT NULL
         );
@@ -96,12 +119,32 @@ def _connect(path: Path) -> sqlite3.Connection:
             ts INTEGER NOT NULL,
             exposure_id TEXT,
             user_id TEXT,
+            profile_id TEXT,
+            interaction_mode TEXT,
+            training_eligible INTEGER NOT NULL DEFAULT 0,
+            data_purpose TEXT,
+            session_id TEXT,
             event_type TEXT,
             payload TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_user_events_exposure ON user_events(exposure_id);
         """
     )
+    # Existing installs already have these tables. SQLite's CREATE TABLE IF NOT
+    # EXISTS does not add new columns, so evolve them in place without touching
+    # rows or volumes.
+    for table in ("exposures", "song_feedback", "slate_feedback", "user_events"):
+        existing = {
+            str(row["name"])
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        for column, declaration in _PROVENANCE_COLUMNS.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{table}_training "
+            f"ON {table}(training_eligible, interaction_mode, profile_id)"
+        )
     conn.commit()
     return conn
 
@@ -140,14 +183,23 @@ def upsert_exposure(payload: dict[str, Any]) -> None:
     """
     if _writes_disabled():
         return
+    from services.runtime_context import normalize_provenance
+
+    payload = normalize_provenance(payload)
     with _LOCK, closing(get_connection()) as conn:
         conn.execute(
             """
-            INSERT INTO exposures (exposure_id, ts, user_id, intent_type, policy_version,
-                                   provisional, item_count, payload)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO exposures (
+                exposure_id, ts, user_id, profile_id, interaction_mode,
+                training_eligible, data_purpose, session_id, intent_type,
+                policy_version, provisional, item_count, payload
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(exposure_id) DO UPDATE SET
                 ts=excluded.ts, user_id=excluded.user_id, intent_type=excluded.intent_type,
+                profile_id=excluded.profile_id, interaction_mode=excluded.interaction_mode,
+                training_eligible=excluded.training_eligible,
+                data_purpose=excluded.data_purpose, session_id=excluded.session_id,
                 policy_version=excluded.policy_version, provisional=excluded.provisional,
                 item_count=excluded.item_count, payload=excluded.payload
             """,
@@ -155,6 +207,11 @@ def upsert_exposure(payload: dict[str, Any]) -> None:
                 str(payload.get("exposure_id") or ""),
                 int(payload.get("ts") or _now_ms()),
                 str(payload.get("user_id") or ""),
+                str(payload.get("profile_id") or ""),
+                str(payload.get("interaction_mode") or ""),
+                1 if payload.get("training_eligible") else 0,
+                str(payload.get("data_purpose") or ""),
+                str(payload.get("session_id") or ""),
                 str(payload.get("intent_type") or ""),
                 str(payload.get("policy_version") or ""),
                 1 if payload.get("provisional") else 0,
@@ -185,6 +242,17 @@ def _insert_event(table: str, id_column: str, id_value: str, payload: dict[str, 
                   columns: dict[str, Any]) -> None:
     if _writes_disabled():
         return
+    from services.runtime_context import normalize_provenance
+
+    payload = normalize_provenance(payload)
+    columns = {
+        **columns,
+        "profile_id": str(payload.get("profile_id") or ""),
+        "interaction_mode": str(payload.get("interaction_mode") or ""),
+        "training_eligible": 1 if payload.get("training_eligible") else 0,
+        "data_purpose": str(payload.get("data_purpose") or ""),
+        "session_id": str(payload.get("session_id") or ""),
+    }
     if not id_value:
         # An empty primary key is silently catastrophic here: INSERT OR REPLACE
         # makes every such row overwrite the previous one, so the table keeps
@@ -267,9 +335,11 @@ def _load_table(table: str) -> list[dict[str, Any]]:
         logger.debug("[feedback] _load_table(%s) failed: %s", table, exc)
         return []
     out: list[dict[str, Any]] = []
+    from services.runtime_context import normalize_provenance
+
     for row in rows:
         try:
-            out.append(json.loads(row["payload"]))
+            out.append(normalize_provenance(json.loads(row["payload"])))
         except Exception:
             continue
     return out
@@ -289,6 +359,50 @@ def load_slate_feedback() -> list[dict[str, Any]]:
 
 def load_song_feedback() -> list[dict[str, Any]]:
     return _load_table("song_feedback")
+
+
+def _load_training_eligible(table: str) -> list[dict[str, Any]]:
+    """Read only explicitly personal, training-approved records.
+
+    Missing provenance never qualifies. This fail-closed query is the only
+    supported input for offline ranking or distillation.
+    """
+
+    try:
+        with closing(get_connection()) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT payload FROM {table}
+                WHERE training_eligible = 1 AND interaction_mode = 'personal'
+                ORDER BY ts ASC
+                """
+            ).fetchall()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("[feedback] eligible load %s failed: %s", table, exc)
+        return []
+    from services.runtime_context import normalize_provenance
+
+    return [
+        normalize_provenance(json.loads(row["payload"]))
+        for row in rows
+        if row["payload"]
+    ]
+
+
+def load_training_exposures() -> list[dict[str, Any]]:
+    return _load_training_eligible("exposures")
+
+
+def load_training_events() -> list[dict[str, Any]]:
+    return _load_training_eligible("user_events")
+
+
+def load_training_slate_feedback() -> list[dict[str, Any]]:
+    return _load_training_eligible("slate_feedback")
+
+
+def load_training_song_feedback() -> list[dict[str, Any]]:
+    return _load_training_eligible("song_feedback")
 
 
 def export_jsonl(table: str, out_path: Path, *, since_ms: int | None = None) -> int:

@@ -5,6 +5,11 @@ install that has been collecting feedback needs its history imported once. This
 is idempotent: exposures upsert by id (the provisional/final pair collapses to
 one row), and events INSERT OR REPLACE by their own id.
 
+Rows that predate the runtime-context contract are quarantined as
+``legacy_unclassified`` and ``training_eligible=false``. Migration preserves
+them for audit; it never guesses whether an old interaction was real use or a
+test.
+
 STOP THE BACKEND FIRST. Migration reads the whole JSONL history and asserts the
 store reaches an exact row count; a live backend appending new feedback mid-run
 moves that target and the gate fails on a store that is actually fine. This
@@ -42,6 +47,7 @@ from services.feedback_logger import (  # noqa: E402
     effective_id,
     load_jsonl,
 )
+from services.runtime_context import normalize_provenance  # noqa: E402
 
 # (jsonl file, table, store insert fn) - exposures first so anything keyed to
 # them exists before the events land. `table` selects the effective-id keys, so
@@ -121,7 +127,10 @@ def main() -> int:
     for filename, table, fn_name in SOURCES:
         rows = load_jsonl(root / filename)
         id_keys = ID_KEYS[table]
-        deduped = _dedupe_rows(rows, id_keys)
+        deduped = [
+            normalize_provenance(row)
+            for row in _dedupe_rows(rows, id_keys)
+        ]
         # Rows with no id at all cannot be migrated safely: the store would mint a
         # synthetic uuid for each, so re-running would insert duplicates and the
         # count gate would fail AFTER the store was already polluted. Catch them
@@ -157,6 +166,8 @@ def main() -> int:
         return 1
 
     if args.dry_run:
+        print("\nLegacy rows without explicit runtime provenance remain quarantined "
+              "(training_eligible=false).")
         print("\nDRY RUN - re-run without --dry-run to write. Migration FAILS unless "
               "each table reaches exactly its expected unique count.")
         return 0
