@@ -264,7 +264,7 @@ export default function GlobalPlayer() {
                         {/* Queue header */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.85rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 }}>
                             <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#fff' }}>
-                                播放列表 <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.38)', fontWeight: 400 }}>({queue.length})</span>
+                                {t('播放列表')} <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.38)', fontWeight: 400 }}>({queue.length})</span>
                             </span>
                             <button onClick={() => setShowQueue(false)} aria-label={t("关闭播放列表")} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.45)', cursor: 'pointer', padding: '0.2rem' }}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -310,13 +310,13 @@ export default function GlobalPlayer() {
                                             {/* hover actions */}
                                             {isHov && (
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                                                    <button onClick={e => { e.stopPropagation(); toggleLike(song); }} title={songLiked ? t('取消喜欢') : t('喜欢')} aria-label={songLiked ? `取消喜欢 ${song.title}` : `喜欢 ${song.title}`}
+                                                    <button onClick={e => { e.stopPropagation(); toggleLike(song); }} title={songLiked ? t('取消喜欢') : t('喜欢')} aria-label={songLiked ? t('取消喜欢 {v0}', { v0: song.title }) : t('喜欢 {v0}', { v0: song.title })}
                                                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.28rem', display: 'flex', color: songLiked ? '#e91e63' : 'rgba(255,255,255,0.45)' }}>
                                                         <svg width="15" height="15" viewBox="0 0 24 24" fill={songLiked ? '#e91e63' : 'none'} stroke="currentColor" strokeWidth="2">
                                                             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                                                         </svg>
                                                     </button>
-                                                    <button onClick={e => { e.stopPropagation(); removeFromQueue(song.title, song.artist); }} title={t("从列表移除")} aria-label={`从播放列表移除 ${song.title}`}
+                                                    <button onClick={e => { e.stopPropagation(); removeFromQueue(song.title, song.artist); }} title={t("从列表移除")} aria-label={t('从播放列表移除 {v0}', { v0: song.title })}
                                                         style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.28rem', display: 'flex', color: 'rgba(255,100,100,0.65)' }}>
                                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                                                             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
@@ -379,14 +379,14 @@ export default function GlobalPlayer() {
                     </div>
 
                     {/* ❤ Like - 红色 */}
-                    <button onClick={() => toggleLike(currentSong)} aria-label={isLiked ? `取消喜欢 ${currentSong.title}` : `喜欢 ${currentSong.title}`} style={{ background: 'none', border: 'none', color: isLiked ? '#e91e63' : theme.colors.text.muted, cursor: 'pointer', marginLeft: '0.4rem', padding: '0.25rem', transition: 'color 0.2s' }}>
+                    <button onClick={() => toggleLike(currentSong)} aria-label={isLiked ? t('取消喜欢 {v0}', { v0: currentSong.title }) : t('喜欢 {v0}', { v0: currentSong.title })} style={{ background: 'none', border: 'none', color: isLiked ? '#e91e63' : theme.colors.text.muted, cursor: 'pointer', marginLeft: '0.4rem', padding: '0.25rem', transition: 'color 0.2s' }}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill={isLiked ? '#e91e63' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                         </svg>
                     </button>
 
                     {/* 收藏到歌单 */}
-                    <button onClick={() => setShowFolderPicker(p => !p)} aria-label={`收藏到歌单 ${currentSong.title}`} style={{ background: 'none', border: 'none', color: showFolderPicker ? '#fff' : theme.colors.text.muted, cursor: 'pointer', padding: '0.25rem', transition: 'color 0.2s' }}>
+                    <button onClick={() => setShowFolderPicker(p => !p)} aria-label={t('收藏到歌单 {v0}', { v0: currentSong.title })} style={{ background: 'none', border: 'none', color: showFolderPicker ? '#fff' : theme.colors.text.muted, cursor: 'pointer', padding: '0.25rem', transition: 'color 0.2s' }}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill={showFolderPicker ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
                         </svg>

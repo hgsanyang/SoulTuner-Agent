@@ -148,7 +148,7 @@ export default function CollectionsPage() {
                             </svg>
                         </div>
                         <p style={{ margin: 0, fontWeight: 600, fontSize: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</p>
-                        <span style={{ fontSize: '0.85rem', color: theme.colors.text.muted }}>{p.songs.length} 首歌曲</span>
+                        <span style={{ fontSize: '0.85rem', color: theme.colors.text.muted }}>{t('{v0} 首歌曲', { v0: p.songs.length })}</span>
                     </div>
                 ))}
             </div>

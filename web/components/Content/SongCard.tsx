@@ -199,15 +199,15 @@ export default function SongCard({
     try {
       const result = await deleteSongFromLibrary(title, artist);
       if (result.success) {
-        showToast(`🗑️ 《${title}》已从本地曲库彻底删除`);
+        showToast(t('🗑️ 《{v0}》已从本地曲库彻底删除', { v0: title }));
         setShowDeleteConfirm(false);
         // 从当前列表中移除
         onRemove?.();
       } else {
-        showToast(`❌ 删除失败: ${result.message}`);
+        showToast(t('❌ 删除失败: {v0}', { v0: result.message }));
       }
     } catch (err: any) {
-      showToast(`❌ 删除失败: ${err.message || t('未知错误')}`);
+      showToast(t('❌ 删除失败: {v0}', { v0: err.message || t('未知错误') }));
     } finally {
       setDeleteState('idle');
     }
@@ -309,7 +309,7 @@ export default function SongCard({
 
         {/* 操作按钮（同行右侧） */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.15rem', flexShrink: 0 }}>
-          <button onClick={handleQueueToggle} title={inQueue ? t('从播放列表移除') : t('加入播放列表')} aria-label={inQueue ? `从播放列表移除 ${title}` : `加入播放列表 ${title}`} style={actionBtnStyle(inQueue ? '#1DB954' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleQueueToggle} title={inQueue ? t('从播放列表移除') : t('加入播放列表')} aria-label={inQueue ? t('从播放列表移除 {v0}', { v0: title }) : t('加入播放列表 {v0}', { v0: title })} style={actionBtnStyle(inQueue ? '#1DB954' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             {inQueue ? (
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.2" strokeLinecap="round"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><polyline stroke="#1DB954" points="3 9 4.5 10.5 7 8" strokeWidth="2" /></svg>
             ) : (
@@ -321,14 +321,14 @@ export default function SongCard({
               {acquireState === 'done' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1DB954" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>) : acquireState === 'loading' ? (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f0a500" strokeWidth="2" strokeLinecap="round" style={{ animation: 'spin 1s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>) : (<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>)}
             </button>
           )}
-          <button onClick={handleLike} title={liked ? t('取消喜欢') : t('添加到喜欢')} aria-label={liked ? `取消喜欢 ${title}` : `添加到喜欢 ${title}`} style={actionBtnStyle(liked ? '#e91e63' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleLike} title={liked ? t('取消喜欢') : t('添加到喜欢')} aria-label={liked ? t('取消喜欢 {v0}', { v0: title }) : t('添加到喜欢 {v0}', { v0: title })} style={actionBtnStyle(liked ? '#e91e63' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill={liked ? '#e91e63' : 'none'} stroke={liked ? '#e91e63' : 'currentColor'} strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" /></svg>
           </button>
           {exposure_id && (
             <button
               onClick={e => { e.stopPropagation(); setShowFeedback(prev => !prev); }}
               title={t("评价这次推荐是否合适（不影响长期喜好）")}
-              aria-label={`评价这次推荐是否合适 ${title}`}
+              aria-label={t('评价这次推荐是否合适 {v0}', { v0: title })}
               style={actionBtnStyle(showFeedback ? '#1DB954' : undefined)}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.18)')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
@@ -338,11 +338,11 @@ export default function SongCard({
               </svg>
             </button>
           )}
-          <button onClick={handleDislike} title={t("不喜欢这首歌")} aria-label={`不喜欢这首歌 ${title}`} style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+          <button onClick={handleDislike} title={t("不喜欢这首歌")} aria-label={t('不喜欢这首歌 {v0}', { v0: title })} style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(255,120,120,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" /></svg>
           </button>
           <div style={{ position: 'relative' }}>
-            <button onClick={e => { e.stopPropagation(); setShowFolderPicker(prev => !prev); }} title={t("收藏到歌单")} aria-label={`收藏到歌单 ${title}`} style={actionBtnStyle(showFolderPicker ? '#fff' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+            <button onClick={e => { e.stopPropagation(); setShowFolderPicker(prev => !prev); }} title={t("收藏到歌单")} aria-label={t('收藏到歌单 {v0}', { v0: title })} style={actionBtnStyle(showFolderPicker ? '#fff' : undefined)} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={showFolderPicker ? '#fff' : 'currentColor'} strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg>
             </button>
             {showFolderPicker && (
@@ -362,7 +362,7 @@ export default function SongCard({
             )}
           </div>
           {onRemove && (
-            <button onClick={handleRemove} title={t("从推荐结果中移除")} aria-label={`从推荐结果中移除 ${title}`} style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
+            <button onClick={handleRemove} title={t("从推荐结果中移除")} aria-label={t('从推荐结果中移除 {v0}', { v0: title })} style={actionBtnStyle()} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,80,80,0.18)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,100,100,0.8)" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
             </button>
           )}
@@ -371,7 +371,7 @@ export default function SongCard({
             <button
               onClick={e => { e.stopPropagation(); setShowDeleteConfirm(prev => !prev); }}
               title={t("从本地曲库彻底删除")}
-              aria-label={`从本地曲库彻底删除 ${title}`}
+              aria-label={t('从本地曲库彻底删除 {v0}', { v0: title })}
               style={actionBtnStyle(showDeleteConfirm ? '#ff4444' : undefined)}
               onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,60,60,0.2)')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)')}
@@ -400,7 +400,7 @@ export default function SongCard({
                   {t('⚠️ 彻底删除这首歌？')}
                 </p>
                 <p style={{ margin: '0 0 0.75rem', fontSize: '0.75rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.5 }}>
-                  将从图谱、音频、封面、歌词中<br/>完全移除，此操作不可逆！
+                  {t('将从图谱、音频、封面、歌词中')}<br/>{t('完全移除，此操作不可逆！')}
                 </p>
                 <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                   <button

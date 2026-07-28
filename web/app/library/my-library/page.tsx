@@ -100,7 +100,7 @@ export default function MyLibraryPage() {
             ) ? updatedSong : song));
             showToast('✅ 标签已更新');
         } else {
-            showToast(`❌ 标签更新失败: ${result.error || '未知错误'}`);
+            showToast(t('❌ 标签更新失败: {v0}', { v0: result.error || '未知错误' }));
         }
     };
 
@@ -118,9 +118,9 @@ export default function MyLibraryPage() {
             const updatedSong = { ...selectedSong, audio_retention: 'saved', audio_status: 'cached' };
             setSelectedSong(updatedSong);
             setSongs(prev => prev.map(song => songKey(song) === songKey(selectedSong) ? updatedSong : song));
-            showToast(`✅ 「${selectedSong.title}」音源已长期保存`);
+            showToast(t('✅ 「{v0}」音源已长期保存', { v0: selectedSong.title }));
         } else {
-            showToast(`❌ 保存音源失败: ${result.error || result.message || '未知错误'}`);
+            showToast(t('❌ 保存音源失败: {v0}', { v0: result.error || result.message || '未知错误' }));
         }
     };
 
@@ -130,7 +130,7 @@ export default function MyLibraryPage() {
         const result = await deleteSongFromLibrary(song.title, song.artist);
         setDeleting(null);
         if (result.success) {
-            showToast(`🗑️ 已从曲库中移除「${song.title}」`);
+            showToast(t('🗑️ 已从曲库中移除「{v0}」', { v0: song.title }));
             setSongs(prev => prev.filter(s => songKey(s) !== key));
             setSelectedKeys(prev => {
                 const next = new Set(prev);
@@ -140,7 +140,7 @@ export default function MyLibraryPage() {
             if (selectedSong && songKey(selectedSong) === key) setSelectedSong(null);
             setTotal(prev => prev - 1);
         } else {
-            showToast(`❌ 删除失败: ${result.message}`);
+            showToast(t('❌ 删除失败: {v0}', { v0: result.message }));
         }
     };
 
@@ -163,7 +163,7 @@ export default function MyLibraryPage() {
     const handleBulkDelete = async () => {
         const targets = songs.filter(song => selectedKeys.has(songKey(song)));
         if (!targets.length) return;
-        const ok = window.confirm(`确定从曲库中移除选中的 ${targets.length} 首歌曲吗？`);
+        const ok = window.confirm(t('确定从曲库中移除选中的 {v0} 首歌曲吗？', { v0: targets.length }));
         if (!ok) return;
         for (const song of targets) {
             // Keep the existing safe backend delete path; each item reports its own failure.
@@ -236,7 +236,7 @@ export default function MyLibraryPage() {
         const border = score >= 0.92 ? 'rgba(34,197,94,0.24)' : score >= 0.8 ? 'rgba(250,204,21,0.18)' : 'rgba(248,113,113,0.22)';
         return (
             <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '9999px', color, background, border: `1px solid ${border}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                质量 {Math.round(score * 100)}%{missingCount ? ` · 缺 ${missingCount}` : ''}
+                {t('质量 {v0}%{v1}', { v0: Math.round(score * 100), v1: missingCount ? t(' · 缺 {v0}', { v0: missingCount }) : '' })}
             </span>
         );
     };
@@ -297,7 +297,7 @@ export default function MyLibraryPage() {
                     <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('知识图谱')}</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{t('我的曲库')}</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                        {loading ? '加载中...' : `图谱中共有 ${total} 首歌曲`}
+                        {loading ? '加载中...' : t('图谱中共有 {v0} 首歌曲', { v0: total })}
                     </p>
                 </div>
             </div>
@@ -342,9 +342,9 @@ export default function MyLibraryPage() {
                     <option value="low">{t('低质量优先')}</option>
                     <option value="duplicate">{t('疑似重复')}</option>
                 </select>
-                <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>显示 {filtered.length} / {total}</span>
+                <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>{t('显示 {v0} / {v1}', { v0: filtered.length, v1: total })}</span>
                 {duplicateGroups.length > 0 && (
-                    <span style={{ fontSize: '0.78rem', color: '#fde68a' }}>疑似重复组 {duplicateGroups.length}</span>
+                    <span style={{ fontSize: '0.78rem', color: '#fde68a' }}>{t('疑似重复组 {v0}', { v0: duplicateGroups.length })}</span>
                 )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', minHeight: '2rem' }}>
@@ -355,7 +355,7 @@ export default function MyLibraryPage() {
                     {t('清空选择')}
                 </button>
                 <button onClick={handleBulkDelete} disabled={selectedKeys.size === 0} style={{ padding: '0.45rem 0.7rem', borderRadius: theme.borderRadius.sm, border: '1px solid rgba(248,113,113,0.28)', background: selectedKeys.size ? 'rgba(248,113,113,0.12)' : 'rgba(255,255,255,0.03)', color: selectedKeys.size ? '#fca5a5' : theme.colors.text.muted, cursor: selectedKeys.size ? 'pointer' : 'not-allowed', fontSize: '0.78rem' }}>
-                    批量移除{selectedKeys.size ? ` (${selectedKeys.size})` : ''}
+                    {t('批量移除')}{selectedKeys.size ? ` (${selectedKeys.size})` : ''}
                 </button>
             </div>
 
@@ -406,7 +406,7 @@ export default function MyLibraryPage() {
                             >
                                 <input
                                     type="checkbox"
-                                    aria-label={`选择 ${song.title}`}
+                                    aria-label={t('选择 {v0}', { v0: song.title })}
                                     checked={isSelected}
                                     onChange={e => { e.stopPropagation(); toggleSelected(song); }}
                                     onClick={e => e.stopPropagation()}
@@ -451,13 +451,13 @@ export default function MyLibraryPage() {
                                 </span>
                                 {qualityBadge(song)}
 
-                                <button title="详情" aria-label={`查看 ${song.title} 详情`} onClick={e => { e.stopPropagation(); setSelectedSong(song); }}
+                                <button title="详情" aria-label={t('查看 {v0} 详情', { v0: song.title })} onClick={e => { e.stopPropagation(); setSelectedSong(song); }}
                                     style={{ background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.35rem 0.6rem', borderRadius: theme.borderRadius.sm, fontSize: '0.76rem' }}>
                                     {t('详情')}
                                 </button>
 
                                 {/* Play */}
-                                <button title={song.audio_url ? '播放' : '暂无音源'} aria-label={song.audio_url ? `播放 ${song.title}` : `${song.title} 暂无音源`}
+                                <button title={song.audio_url ? '播放' : '暂无音源'} aria-label={song.audio_url ? t('播放 {v0}', { v0: song.title }) : t('{v0} 暂无音源', { v0: song.title })}
                                     onClick={e => {
                                         e.stopPropagation();
                                         if (song.audio_url) {
@@ -476,7 +476,7 @@ export default function MyLibraryPage() {
                                 </button>
 
                                 {/* Delete */}
-                                <button title="从曲库移除" aria-label={`从曲库移除 ${song.title}`} onClick={e => { e.stopPropagation(); handleDelete(song); }}
+                                <button title="从曲库移除" aria-label={t('从曲库移除 {v0}', { v0: song.title })} onClick={e => { e.stopPropagation(); handleDelete(song); }}
                                     disabled={isDeleting}
                                     style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: isDeleting ? 'wait' : 'pointer', padding: '0.4rem', display: 'flex', transition: 'color 0.2s' }}
                                     onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
@@ -537,7 +537,7 @@ export default function MyLibraryPage() {
                     )}
                     {(duplicateKeyCounts.get(selectedSong.duplicate_key || '') || 0) > 1 && (
                         <div style={{ padding: '0.65rem 0.75rem', border: '1px solid rgba(250,204,21,0.18)', borderRadius: theme.borderRadius.sm, background: 'rgba(250,204,21,0.06)', color: '#fde68a', fontSize: '0.76rem' }}>
-                            疑似重复：同一标准化键下有 {duplicateKeyCounts.get(selectedSong.duplicate_key || '')} 首。建议人工确认版本、Live、Remaster 或翻唱后再删除。
+                            {t('疑似重复：同一标准化键下有 {v0} 首。建议人工确认版本、Live、Remaster 或翻唱后再删除。', { v0: duplicateKeyCounts.get(selectedSong.duplicate_key || '') ?? 0 })}
                         </div>
                     )}
                     {!!selectedSong.knowledge_cards?.length && (
@@ -547,7 +547,7 @@ export default function MyLibraryPage() {
                                 <div key={card.key || index} style={{ display: 'grid', gap: '0.25rem', fontSize: '0.76rem', color: theme.colors.text.secondary, lineHeight: 1.55 }}>
                                     <div>{card.summary}</div>
                                     <div style={{ color: theme.colors.text.muted }}>
- {t('来源：')}{card.source || 'knowledge'}{card.confidence ? ` · 置信度 ${Math.round(card.confidence * 100)}%` : ''}
+ {t('来源：')}{card.source || 'knowledge'}{card.confidence ? t(' · 置信度 {v0}%', { v0: Math.round(card.confidence * 100) }) : ''}
                                         {card.source_url && (
                                             <a href={card.source_url} target="_blank" rel="noreferrer" style={{ marginLeft: '0.5rem', color: theme.colors.primary.accent }}>{t('查看来源')}</a>
                                         )}

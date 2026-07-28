@@ -381,7 +381,7 @@ export default function RecommendationsPage() {
       showToast(t('✅ 已记录这组推荐的反馈'));
       return true;
     } catch (err: any) {
-      showToast(`⚠️ 反馈记录失败：${err?.message || t('未知错误')}`);
+      showToast(t('⚠️ 反馈记录失败：{v0}', { v0: err?.message || t('未知错误') }));
       return false;
     }
   }, [showToast, webSearchEnabled]);
@@ -784,13 +784,13 @@ export default function RecommendationsPage() {
                     fontSize: '1rem', fontWeight: 600,
                     color: theme.colors.text.primary, margin: 0,
                   }}>
-                    推荐歌曲 <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({allSongs.length})</span>
+                    {t('推荐歌曲')} <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({allSongs.length})</span>
                   </h2>
                   <button
                     onClick={() => {
                       if (queueSongs.length === 0) return;
                       playSong(queueSongs[0], queueSongs);
-                      showToast(`▶ 已设置 ${queueSongs.length} 首歌为播放列表`);
+                      showToast(t('▶ 已设置 {v0} 首歌为播放列表', { v0: queueSongs.length }));
                     }}
                     title={t("全部播放")}
                     style={{

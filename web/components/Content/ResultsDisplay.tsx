@@ -50,7 +50,7 @@ export default function ResultsDisplay({ response, songs, onRemoveSong }: Result
   const handleAddAllToQueue = () => {
     if (queueSongs.length === 0) return;
     playSong(queueSongs[0], queueSongs);
-    showToast(`▶ 已设置 ${queueSongs.length} 首歌为播放列表`);
+    showToast(t('▶ 已设置 {v0} 首歌为播放列表', { v0: queueSongs.length }));
     setAddedAll(true);
   };
 
@@ -81,7 +81,7 @@ export default function ResultsDisplay({ response, songs, onRemoveSong }: Result
               fontSize: '1.1rem', fontWeight: 600,
               color: theme.colors.text.primary, margin: 0,
             }}>
-              推荐歌曲 <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({songs.length})</span>
+              {t('推荐歌曲')} <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({songs.length})</span>
             </h2>
 
             {/* 全部加入播放列表按钮 */}

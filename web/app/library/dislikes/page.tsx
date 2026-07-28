@@ -74,7 +74,7 @@ export default function DislikesPage() {
                     </h1>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                            共 {dislikedSongs.length} 首被屏蔽歌曲
+                            {t('共 {v0} 首被屏蔽歌曲', { v0: dislikedSongs.length })}
                         </p>
                         <button
                             onClick={syncFromBackend}

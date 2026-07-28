@@ -122,10 +122,10 @@ export default function MemoryPage() {
     try {
       const resp = await apiFetch(`${API_URL}/api/memory/profile`);
       const data = await resp.json();
-      if (!resp.ok || !data.success) throw new Error(data.error || `读取失败: ${resp.status}`);
+      if (!resp.ok || !data.success) throw new Error(data.error || t('读取失败: {v0}', { v0: resp.status }));
       setMemory(data.memory);
     } catch (err: any) {
-      setMessage(`读取记忆失败：${err.message || t('请确认后端已启动')}`);
+      setMessage(t('读取记忆失败：{v0}', { v0: err.message || t('请确认后端已启动') }));
     } finally {
       setLoading(false);
     }
@@ -171,8 +171,8 @@ export default function MemoryPage() {
       body: JSON.stringify({ user_id: activeProfile.profile_id, preferences: { [targetField]: [cleaned] } }),
     });
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok || !data.success) throw new Error(data.error || `保存失败: ${resp.status}`);
-    setMessage(`已保存：${FIELD_LABELS[targetField] || targetField} / ${cleaned}`);
+    if (!resp.ok || !data.success) throw new Error(data.error || t('保存失败: {v0}', { v0: resp.status }));
+    setMessage(t('已保存：{v0} / {v1}', { v0: FIELD_LABELS[targetField] || targetField, v1: cleaned }));
     setValue('');
     await loadMemory();
   };
@@ -182,8 +182,8 @@ export default function MemoryPage() {
       `${API_URL}/api/memory/preference?field=${encodeURIComponent(targetField)}&value=${encodeURIComponent(targetValue)}`,
       { method: 'DELETE' },
     );
-    if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
-    setMessage(`已删除：${targetValue}`);
+    if (!resp.ok) throw new Error(t('删除失败: {v0}', { v0: resp.status }));
+    setMessage(t('已删除：{v0}', { v0: targetValue }));
     await loadMemory();
   };
 
@@ -203,7 +203,7 @@ export default function MemoryPage() {
     if (!window.confirm(t('清空所有系统学习到的偏好？手动画像、喜欢和收藏不会被删除。'))) return;
     const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
     if (!resp.ok) {
-      setMessage(`清空失败：${resp.status}`);
+      setMessage(t('清空失败：{v0}', { v0: resp.status }));
       return;
     }
     setMessage(t('已清空系统学习偏好'));
@@ -212,7 +212,7 @@ export default function MemoryPage() {
 
   const deleteRecord = async (recordId: string) => {
     const resp = await apiFetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
-    if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
+    if (!resp.ok) throw new Error(t('删除失败: {v0}', { v0: resp.status }));
     setMessage(t('已删除该条记忆；审计历史保留为删除标记'));
     await loadMemory();
   };
@@ -275,7 +275,7 @@ export default function MemoryPage() {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 700 }}>{t('我的评价')}</span>
           <span style={{ fontSize: '0.72rem', color: theme.colors.text.muted }}>
-            逐首「此刻合不合」的记录 · 共 {ratings.length} 条
+            {t('逐首「此刻合不合」的记录 · 共 {v0} 条', { v0: ratings.length })}
           </span>
           <button onClick={loadRatings} style={{ ...smallButtonStyle(), marginLeft: 'auto' }}>{t('刷新')}</button>
         </div>
@@ -327,7 +327,7 @@ export default function MemoryPage() {
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.7rem' }}>
                   <div>
                     <div style={{ fontSize: '0.95rem', fontWeight: 800 }}>{section.label}</div>
-                    <div style={{ fontSize: '0.74rem', color: theme.colors.text.muted }}>{section.field} · {section.values.length} 条</div>
+                    <div style={{ fontSize: '0.74rem', color: theme.colors.text.muted }}>{t('{v0} · {v1} 条', { v0: section.field, v1: section.values.length })}</div>
                   </div>
                 </div>
                 {section.values.length ? (
@@ -379,7 +379,7 @@ export default function MemoryPage() {
                           {item.value} <span style={{ color: theme.colors.text.muted, fontSize: '0.72rem' }}>({FIELD_LABELS[item.field] || item.field})</span>
                         </div>
                         <div style={{ color: theme.colors.text.muted, fontSize: '0.7rem' }}>
-                          置信度 {Math.round(item.confidence * 100)}% · 证据 {item.evidence_count} 条 · {item.expires_at ? `${new Date(item.expires_at).toLocaleDateString()} 前有效` : t('长期有效')}
+                          {t('置信度 {v0}% · 证据 {v1} 条 · {v2}', { v0: Math.round(item.confidence * 100), v1: item.evidence_count, v2: item.expires_at ? t('{v0} 前有效', { v0: new Date(item.expires_at).toLocaleDateString() }) : t('长期有效') })}
                           {item.decision_summary ? ` · ${item.decision_summary}` : ''}
                         </div>
                       </div>
@@ -426,9 +426,9 @@ export default function MemoryPage() {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</div>
                     <div style={{ color: theme.colors.text.muted, fontSize: '0.7rem' }}>
-                      {record.source} · 置信度 {Math.round(record.confidence * 100)}% · {expires}
-                      {scope && scope !== 'global' ? ` · 场景:${scope}` : ''}
-                      {evidenceIds.length ? ` · 证据 ${evidenceIds.length} 条` : ''}
+                      {t('{v0} · 置信度 {v1}% · {v2}', { v0: record.source, v1: Math.round(record.confidence * 100), v2: expires })}
+                      {scope && scope !== 'global' ? t(' · 场景:{v0}', { v0: scope }) : ''}
+                      {evidenceIds.length ? t(' · 证据 {v0} 条', { v0: evidenceIds.length }) : ''}
                       {record.why_used ? ` · ${record.why_used}` : ''}
                     </div>
                   </div>

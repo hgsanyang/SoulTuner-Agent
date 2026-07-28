@@ -74,7 +74,7 @@ export default function LikesPage() {
                         {t('我的喜欢')}
                     </h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                        当前共有 {likedSongs.length} 首已赞歌曲
+                        {t('当前共有 {v0} 首已赞歌曲', { v0: likedSongs.length })}
                     </p>
                 </div>
             </div>

@@ -131,7 +131,7 @@ export default function SlateFeedback({
       backgroundColor: 'rgba(255,255,255,0.03)',
     }}>
       <div style={{ color: theme.colors.text.muted, fontSize: '0.76rem', marginBottom: '0.55rem' }}>
-        这组 {songCount} 首推荐怎么样？你的反馈会用于改进之后的推荐。
+        {t('这组 {v0} 首推荐怎么样？你的反馈会用于改进之后的推荐。', { v0: songCount })}
         <span style={{ opacity: 0.75 }}>{t('（选一个之后可以补充原因、挑出最合适/最不合适的歌，也可以自己写）')}</span>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
@@ -171,7 +171,7 @@ export default function SlateFeedback({
               <div key={which} style={{ marginBottom: '0.5rem' }}>
                 <div style={{ color: theme.colors.text.muted, fontSize: '0.72rem', marginBottom: '0.3rem' }}>
                   {which === 'best' ? t('哪几首最符合？') : t('哪几首最不符合？')}
-                  <span style={{ opacity: 0.6 }}>（可选，最多 {MAX_PICKS} 首；没选的算「未知」，不当负样本）</span>
+                  <span style={{ opacity: 0.6 }}>{t('（可选，最多 {v0} 首；没选的算「未知」，不当负样本）', { v0: MAX_PICKS })}</span>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
                   {pickable.map(song => {

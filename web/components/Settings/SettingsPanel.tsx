@@ -125,7 +125,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       if (result.success) {
         snapshotRef.current = { ...settings };  // 保存成功 → 更新快照
         setDirty(new Set());
-        setSaveMessage(`✅ 已更新: ${result.updated.join(', ')}`);
+        setSaveMessage(t('✅ 已更新: {v0}', { v0: result.updated.join(', ') }));
         setTimeout(() => setSaveMessage(''), 3000);
       }
     } catch (e) {
@@ -532,7 +532,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         <>
           {renderSlider('coarse_cut_ratio', t('粗排保留比例'), 0.3, 1, 0.05)}
           <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-            例: 0.65 = 保留 65% 候选歌曲进入精排，其余淘汰
+            {t('例: 0.65 = 保留 65% 候选歌曲进入精排，其余淘汰')}
           </div>
           {renderSlider('exploration_ratio', t('小众歌曲曝光度'), 0, 0.5, 0.05)}
           <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
@@ -667,7 +667,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <span style={{ fontSize: '0.78rem', color: dirty.size > 0 ? '#f0a040' : theme.colors.text.muted }}>
-            {saveMessage || (dirty.size > 0 ? `${dirty.size} 项修改未保存` : t('所有配置已同步'))}
+            {saveMessage || (dirty.size > 0 ? t('{v0} 项修改未保存', { v0: dirty.size }) : t('所有配置已同步'))}
           </span>
           <div style={{ display: 'flex', gap: '0.6rem' }}>
             <button onClick={resetToDefaults} style={{

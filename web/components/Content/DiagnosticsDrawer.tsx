@@ -90,7 +90,7 @@ export default function DiagnosticsDrawer({
             {report.success ? (
               <>
                 <div style={{ color: '#fff', fontWeight: 650, marginBottom: '0.45rem' }}>
-                  曲库 {report.catalog?.total_songs || 0} 首 · 可播放 {report.catalog?.playable_songs || 0} 首 · 最近曝光 {report.recent_recommendations?.exposures || 0} 批
+                  {t('曲库 {v0} 首 · 可播放 {v1} 首 · 最近曝光 {v2} 批', { v0: report.catalog?.total_songs || 0, v1: report.catalog?.playable_songs || 0, v2: report.recent_recommendations?.exposures || 0 })}
                 </div>
                 <div>{t('语言：')}{(report.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || t('暂无')}</div>
                 <div>{t('流派：')}{(report.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无')}</div>

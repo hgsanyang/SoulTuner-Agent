@@ -122,8 +122,8 @@ export default function PendingPage() {
         })));
         setIngesting(false);
         if (result.success) {
-            const jobText = result.job_id ? `，后台任务 ${result.job_id}` : '';
-            showToast(`✅ 已写入 ${result.ingested} 首歌曲${jobText}`);
+            const jobText = result.job_id ? t('，后台任务 {v0}', { v0: result.job_id }) : '';
+            showToast(t('✅ 已写入 {v0} 首歌曲{v1}', { v0: result.ingested, v1: jobText }));
             setSelected(new Set());
             loadSongs();
             loadJobs();
@@ -147,7 +147,7 @@ export default function PendingPage() {
     const handleDelete = async (song: PendingSong) => {
         const result = await deletePendingSong(song.file_basename, song.format);
         if (result.success) {
-            showToast(`🗑️ 已删除「${song.title}」`);
+            showToast(t('🗑️ 已删除「{v0}」', { v0: song.title }));
             setSongs(prev => prev.filter(s => s.file_basename !== song.file_basename));
             setSelected(prev => {
                 const next = new Set(prev);
@@ -169,10 +169,10 @@ export default function PendingPage() {
         });
         setRetainingSong(null);
         if (result.success) {
-            showToast(`✅ 「${song.title}」音源已长期保存`);
+            showToast(t('✅ 「{v0}」音源已长期保存', { v0: song.title }));
             setSongs(prev => prev.map(item => item.file_basename === song.file_basename ? { ...item, audio_retention: 'saved' } : item));
         } else {
-            showToast(`❌ 保存音源失败: ${result.error || result.message || '未知错误'}`);
+            showToast(t('❌ 保存音源失败: {v0}', { v0: result.error || result.message || '未知错误' }));
         }
     };
 
@@ -181,7 +181,7 @@ export default function PendingPage() {
         for (const song of toDelete) {
             await deletePendingSong(song.file_basename, song.format);
         }
-        showToast(`🗑️ 已删除 ${toDelete.length} 首歌曲`);
+        showToast(t('🗑️ 已删除 {v0} 首歌曲', { v0: toDelete.length }));
         setSelected(new Set());
         loadSongs();
     };
@@ -208,7 +208,7 @@ export default function PendingPage() {
                     <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('暂存区')}</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{t('待入库')}</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                        {loading ? '加载中...' : `共 ${songs.length} 首待确认，当前显示 ${filteredSongs.length} 首，可入库 ${songs.length - invalidPendingCount} 首，已选 ${selected.size} 首`}
+                        {loading ? '加载中...' : t('共 {v0} 首待确认，当前显示 {v1} 首，可入库 {v2} 首，已选 {v3} 首', { v0: songs.length, v1: filteredSongs.length, v2: songs.length - invalidPendingCount, v3: selected.size })}
                     </p>
                 </div>
             </div>
@@ -252,7 +252,7 @@ export default function PendingPage() {
                     </span>
                     {invalidPendingCount > 0 && (
                         <span style={{ fontSize: '0.78rem', color: '#fca5a5' }}>
-                            {invalidPendingCount} 首缺音频，需重新获取后才能入库
+                            {t('{v0} 首缺音频，需重新获取后才能入库', { v0: invalidPendingCount })}
                         </span>
                     )}
                 </div>
@@ -269,7 +269,7 @@ export default function PendingPage() {
                         ))}
                         {invalidJobCount > 0 && (
                             <span style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: 'rgba(248,113,113,0.10)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.25)' }}>
-                                无效: {invalidJobCount}
+                                {t('无效: {v0}', { v0: invalidJobCount })}
                             </span>
                         )}
                         <button onClick={loadJobs} style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary, cursor: 'pointer', padding: '0.28rem 0.65rem', fontSize: '0.74rem' }}>
@@ -291,7 +291,7 @@ export default function PendingPage() {
                                     <span style={{ color: statusColor, width: '5.8rem' }}>
                                         {isInvalid ? '无效' : (JOB_STATUS_LABELS[job.status] || job.status)}
                                     </span>
-                                    <span title={detail} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.job_id} · {job.song_count} 首{detail ? ` · ${detail}` : ''}</span>
+                                    <span title={detail} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('{v0} · {v1} 首{v2}', { v0: job.job_id, v1: job.song_count, v2: detail ? ` · ${detail}` : '' })}</span>
                                     {job.status === 'failed' && !isInvalid && (
                                         <button disabled={isRetrying} onClick={() => handleRetryJob(job)} style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: theme.borderRadius.sm, color: '#fca5a5', cursor: isRetrying ? 'wait' : 'pointer', padding: '0.22rem 0.55rem', fontSize: '0.72rem' }}>
                                             {isRetrying ? '重试中' : '重试'}
@@ -369,14 +369,14 @@ export default function PendingPage() {
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', marginTop: '0.25rem' }}>
                                                 {song.missing_assets.map(asset => (
                                                     <span key={asset} style={{ fontSize: '0.66rem', padding: '0.08rem 0.35rem', borderRadius: '999px', background: 'rgba(248,113,113,0.10)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.22)' }}>
-                                                        缺 {asset}
+                                                        {t('缺 {v0}', { v0: asset })}
                                                     </span>
                                                 ))}
                                             </div>
                                         )}
                                         {song.acquire_status === 'failed' && (
                                             <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#fca5a5' }}>
-                                                音源获取失败{song.acquire_error ? `：${song.acquire_error}` : '，可稍后重新保存'}
+                                                {t('音源获取失败')}{song.acquire_error ? `：${song.acquire_error}` : t('，可稍后重新保存')}
                                             </div>
                                         )}
                                         {song.audio_retention && song.acquire_status !== 'failed' && (
@@ -401,7 +401,7 @@ export default function PendingPage() {
                                     </span>
 
                                     {/* Play */}
-                                    <button title={isInvalid ? '缺音频，无法试听' : '试听'} aria-label={isInvalid ? `${song.title} 缺音频` : `试听 ${song.title}`} disabled={isInvalid} onClick={e => { e.stopPropagation(); if (!isInvalid) playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
+                                    <button title={isInvalid ? '缺音频，无法试听' : '试听'} aria-label={isInvalid ? t('{v0} 缺音频', { v0: song.title }) : t('试听 {v0}', { v0: song.title })} disabled={isInvalid} onClick={e => { e.stopPropagation(); if (!isInvalid) playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
                                         style={{ background: 'none', border: 'none', color: isInvalid ? theme.colors.text.muted : theme.colors.primary.accent, cursor: isInvalid ? 'not-allowed' : 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'transform 0.2s', opacity: isInvalid ? 0.4 : 1 }}
                                         onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
@@ -424,7 +424,7 @@ export default function PendingPage() {
                                     </button>
 
                                     {/* Delete */}
-                                    <button title="删除" aria-label={`删除 ${song.title}`} onClick={e => { e.stopPropagation(); handleDelete(song); }}
+                                    <button title="删除" aria-label={t('删除 {v0}', { v0: song.title })} onClick={e => { e.stopPropagation(); handleDelete(song); }}
                                         style={{ background: 'none', border: 'none', color: theme.colors.text.muted, cursor: 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'color 0.2s' }}
                                         onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
                                         onMouseLeave={e => (e.currentTarget.style.color = theme.colors.text.muted)}
@@ -454,7 +454,7 @@ export default function PendingPage() {
                             </button>
 
                             <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted }}>
-                                已选 {selected.size} / 当前可入库 {validFilteredSongs.length}
+                                {t('已选 {v0} / 当前可入库 {v1}', { v0: selected.size, v1: validFilteredSongs.length })}
                             </span>
 
                             <div style={{ flex: 1 }} />
@@ -481,7 +481,7 @@ export default function PendingPage() {
                                     opacity: ingesting ? 0.6 : 1,
                                 }}
                             >
-                                {ingesting ? '入库中...' : `✅ 入库选中 (${selected.size})`}
+                                {ingesting ? '入库中...' : t('✅ 入库选中 ({v0})', { v0: selected.size })}
                             </button>
                         </div>
                     )}

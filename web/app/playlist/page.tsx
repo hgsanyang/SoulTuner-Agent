@@ -90,7 +90,7 @@ export default function PlaylistPage() {
 
       const mockData = getMockRecommendations(value);
       setResult({
-        response: `已为你创建歌单：${value}\n\n${mockData.response}\n\n歌单已保存，你可以随时查看和编辑。`,
+        response: t('已为你创建歌单：{v0}\n\n{v1}\n\n歌单已保存，你可以随时查看和编辑。', { v0: value, v1: mockData.response }),
         recommendations: mockData.recommendations,
       });
     } catch (error) {

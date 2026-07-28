@@ -62,7 +62,7 @@ export default function CollectionDetailPage() {
                 <div>
                     <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('歌单')}</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.4rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{collection.name}</h1>
-                    <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>共 {collection.songs.length} 首歌曲</p>
+                    <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>{t('共 {v0} 首歌曲', { v0: collection.songs.length })}</p>
                 </div>
             </div>
 

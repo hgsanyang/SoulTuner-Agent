@@ -160,7 +160,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
         `${API_URL}/api/memory/preference?field=${encodeURIComponent(field)}&value=${encodeURIComponent(value)}`,
         { method: 'DELETE' },
       );
-      if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
+      if (!resp.ok) throw new Error(t('删除失败: {v0}', { v0: resp.status }));
       setMessage(t('✅ 已删除该条记忆'));
       await loadProfile();
       setTimeout(() => setMessage(''), 2500);
@@ -176,7 +176,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
     if (!ok) return;
     try {
       const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
-      if (!resp.ok) throw new Error(`清空失败: ${resp.status}`);
+      if (!resp.ok) throw new Error(t('清空失败: {v0}', { v0: resp.status }));
       setMessage(t('✅ 已清空系统学习偏好'));
       await loadProfile();
       setTimeout(() => setMessage(''), 2500);
@@ -213,7 +213,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
             background: 'rgba(29, 185, 84, 0.15)',
             padding: '0.1rem 0.45rem', borderRadius: '8px',
           }}>
-            {selected.length} 项
+            {t('{v0} 项', { v0: selected.length })}
           </span>
         )}
       </div>
@@ -408,13 +408,13 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   {!!memory?.diagnostics && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.1rem' }}>
                       <span style={{ fontSize: '0.68rem', color: '#86efac', background: 'rgba(34,197,94,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
-                        正向 {memory.diagnostics.positive_preference_count || 0}
+                        {t('正向 {v0}', { v0: memory.diagnostics.positive_preference_count || 0 })}
                       </span>
                       <span style={{ fontSize: '0.68rem', color: '#fca5a5', background: 'rgba(248,113,113,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
-                        避开 {memory.diagnostics.negative_preference_count || 0}
+                        {t('避开 {v0}', { v0: memory.diagnostics.negative_preference_count || 0 })}
                       </span>
                       <span style={{ fontSize: '0.68rem', color: '#93c5fd', background: 'rgba(59,130,246,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
-                        场景 {memory.diagnostics.context_preference_count || 0}
+                        {t('场景 {v0}', { v0: memory.diagnostics.context_preference_count || 0 })}
                       </span>
                     </div>
                   )}
@@ -476,9 +476,9 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                 : theme.colors.text.muted,
           }}>
             {message || (dirty
-              ? `已选 ${totalSelected} 项偏好，点击保存`
+              ? t('已选 {v0} 项偏好，点击保存', { v0: totalSelected })
               : totalSelected > 0
-                ? `已设置 ${totalSelected} 项偏好`
+                ? t('已设置 {v0} 项偏好', { v0: totalSelected })
                 : t('暂未设置偏好')
             )}
           </span>
