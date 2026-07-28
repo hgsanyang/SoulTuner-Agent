@@ -1,4 +1,14 @@
-"""Offline replay for exposure logs and lightweight ranking-weight learning."""
+"""Offline replay for exposure logs and lightweight ranking-weight learning.
+
+Reads the SAME training-eligible view the API learning route uses. It used to
+read the raw JSONL instead, which quietly bypassed data governance: developer-
+mode interactions and pre-governance test records would have been trained on as
+if they were real user feedback. A hand-run script must not be the loophole in a
+rule the API enforces.
+
+Pass --include-ineligible only to inspect what governance is excluding; it
+refuses to write or promote a policy.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +25,9 @@ from services.feedback_logger import (  # noqa: E402
     estimate_tri_anchor_weights,
     learn_tri_anchor_weights,
     load_jsonl,
+    load_training_events,
+    load_training_exposures,
+    load_training_slate_feedback,
 )
 from services.ranking_learning import learn_ranking_policy  # noqa: E402
 from services.ranking_policy import (  # noqa: E402
@@ -62,7 +75,18 @@ def main() -> int:
                         help="Restore ranking_policy.previous.json as the active policy")
     parser.add_argument("--force-write", action="store_true",
                         help="Legacy methods only; v2 never bypasses its validation gate")
+    parser.add_argument("--include-ineligible", action="store_true",
+                        help="Diagnostic: also read records governance excludes "
+                             "(developer mode, pre-governance). Cannot write or promote.")
     args = parser.parse_args()
+
+    # Checked BEFORE the rollback/promote short-circuits below: --promote returns
+    # early, so a guard placed next to the loaders would never run for it. A
+    # governance gate that any code path can jump over is not a gate.
+    if args.include_ineligible and (args.write or args.write_candidate or args.promote):
+        print("REFUSING: --include-ineligible is for inspection only; it cannot "
+              "write or promote a policy. Drop the flag to train on eligible data.")
+        return 1
 
     feedback_dir = Path(args.feedback_dir)
     if args.rollback:
@@ -72,9 +96,22 @@ def main() -> int:
         print(f"Promoted {promote_candidate(feedback_dir)}")
         return 0
 
-    exposures = load_jsonl(feedback_dir / "exposures.jsonl")
-    events = load_jsonl(feedback_dir / "events.jsonl")
-    slate_feedback = [] if args.no_slate_feedback else load_jsonl(feedback_dir / "slate_feedback.jsonl")
+    if args.include_ineligible:
+        # Inspection only — never a training input. Kept so you can SEE what
+        # governance is holding back rather than guessing.
+        exposures = load_jsonl(feedback_dir / "exposures.jsonl")
+        events = load_jsonl(feedback_dir / "events.jsonl")
+        slate_feedback = [] if args.no_slate_feedback else load_jsonl(
+            feedback_dir / "slate_feedback.jsonl")
+        print("WARNING: including records that are NOT training-eligible "
+              "(developer mode / pre-governance). Numbers below are diagnostic only.\n")
+    else:
+        # Same view the API learning route uses: deduped by id AND filtered to
+        # explicitly personal, training-approved records. Missing provenance
+        # never qualifies.
+        exposures = load_training_exposures()
+        events = load_training_events()
+        slate_feedback = [] if args.no_slate_feedback else load_training_slate_feedback()
     if args.method == "heuristic":
         report = estimate_tri_anchor_weights(exposures, events)
     elif args.method == "legacy":

@@ -106,7 +106,7 @@ function toneStyle(tone?: string): { color: string; background: string; border: 
 
 export default function MemoryPage() {
   const router = useRouter();
-  const { activeProfile } = useAppSession();
+  const { activeProfile, interactionMode } = useAppSession();
   const [memory, setMemory] = useState<MemoryProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -139,8 +139,11 @@ export default function MemoryPage() {
     }
   }, []);
 
+  // 必须同时盯 interactionMode：后端按运行上下文隔离，但档案 id 在日常/开发
+  // 之间是同一个，所以只盯 profile_id 时切模式不会重取，页面会继续显示上一个
+  // 模式的记忆和评价——隔离是对的，显示是串的。
   useEffect(() => { loadMemory(); loadRatings(); },
-    [activeProfile.profile_id, loadMemory, loadRatings]);
+    [activeProfile.profile_id, interactionMode, loadMemory, loadRatings]);
 
   const sections = useMemo<MemorySection[]>(() => {
     const existing = memory?.editable_sections || [];
