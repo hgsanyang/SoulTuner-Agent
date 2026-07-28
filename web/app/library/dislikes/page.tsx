@@ -132,7 +132,7 @@ export default function DislikesPage() {
                             <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
                         </svg>
                     </div>
-                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>没有屏蔽的歌曲</h3>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>{t('没有屏蔽的歌曲')}</h3>
                     <p style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
                         {t('在推荐结果中点击「不喜欢」按钮，歌曲将被添加到此列表并从后续推荐中排除。')}
                     </p>

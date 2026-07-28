@@ -102,7 +102,7 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
         >
           {t('听懂你的每一刻情绪')}
           <br />
-          <span style={{ color: theme.colors.primary.accent }}>说一句话，交给它去找歌</span>
+          <span style={{ color: theme.colors.primary.accent }}>{t('说一句话，交给它去找歌')}</span>
         </h1>
 
         <p

@@ -333,7 +333,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   <span style={{
                     fontSize: '0.82rem', fontWeight: 600,
                     color: theme.colors.text.primary,
-                  }}>其他偏好描述</span>
+                  }}>{t('其他偏好描述')}</span>
                 </div>
                 <textarea
                   value={freeText}
@@ -368,7 +368,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   <span style={{
                     fontSize: '0.82rem', fontWeight: 600,
                     color: theme.colors.text.primary,
-                  }}>系统学到的偏好</span>
+                  }}>{t('系统学到的偏好')}</span>
                   {(memory?.episodic_backends || []).map(name => (
                     <span key={name} style={{
                       fontSize: '0.68rem',

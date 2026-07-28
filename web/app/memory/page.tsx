@@ -248,13 +248,13 @@ export default function MemoryPage() {
         </button>
         <div style={{ flex: 1, minWidth: '18rem' }}>
           <p style={{ margin: 0, color: theme.colors.text.muted, fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.08em' }}>MEMORY</p>
-          <h1 style={{ margin: '0.15rem 0', fontSize: '2rem', letterSpacing: '-0.03em' }}>我的记忆 / 我的偏好</h1>
+          <h1 style={{ margin: '0.15rem 0', fontSize: '2rem', letterSpacing: '-0.03em' }}>{t('我的记忆 / 我的偏好')}</h1>
           <p style={{ margin: 0, color: theme.colors.text.secondary, fontSize: '0.9rem' }}>
             {t('管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。')}
           </p>
         </div>
-        <button onClick={loadMemory} style={smallButtonStyle()}>刷新</button>
-        <button onClick={clearLearnedMemory} style={smallButtonStyle('#fca5a5', 'rgba(248,113,113,0.10)', 'rgba(248,113,113,0.30)')}>清空学习记忆</button>
+        <button onClick={loadMemory} style={smallButtonStyle()}>{t('刷新')}</button>
+        <button onClick={clearLearnedMemory} style={smallButtonStyle('#fca5a5', 'rgba(248,113,113,0.10)', 'rgba(248,113,113,0.30)')}>{t('清空学习记忆')}</button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
@@ -273,11 +273,11 @@ export default function MemoryPage() {
       {/* 我的评价：以前评完就看不见了，连t("这首评没评过")都不知道。 */}
       <div style={{ display: 'grid', gap: '0.6rem', padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: 700 }}>我的评价</span>
+          <span style={{ fontWeight: 700 }}>{t('我的评价')}</span>
           <span style={{ fontSize: '0.72rem', color: theme.colors.text.muted }}>
             逐首「此刻合不合」的记录 · 共 {ratings.length} 条
           </span>
-          <button onClick={loadRatings} style={{ ...smallButtonStyle(), marginLeft: 'auto' }}>刷新</button>
+          <button onClick={loadRatings} style={{ ...smallButtonStyle(), marginLeft: 'auto' }}>{t('刷新')}</button>
         </div>
         {ratings.length === 0 ? (
           <p style={{ margin: 0, fontSize: '0.78rem', color: theme.colors.text.muted }}>
@@ -306,18 +306,18 @@ export default function MemoryPage() {
       </div>
 
       <div style={{ display: 'grid', gap: '0.75rem', gridTemplateColumns: 'minmax(0, 1fr)', padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
-        <div style={{ fontWeight: 700 }}>新增或修正偏好</div>
+        <div style={{ fontWeight: 700 }}>{t('新增或修正偏好')}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 200px) minmax(180px, 1fr) auto', gap: '0.7rem', alignItems: 'center' }}>
           <select value={field} onChange={e => setField(e.target.value)} style={inputStyle()}>
             {FIELD_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
           <input value={value} onChange={e => setValue(e.target.value)} placeholder={t("例如：雨天、lo-fi、不要太吵、少人声")} style={inputStyle()} />
-          <button onClick={() => addPreference().catch(err => setMessage(err.message))} style={smallButtonStyle(theme.colors.primary.accent, 'rgba(29,185,84,0.12)', 'rgba(29,185,84,0.35)')}>保存</button>
+          <button onClick={() => addPreference().catch(err => setMessage(err.message))} style={smallButtonStyle(theme.colors.primary.accent, 'rgba(29,185,84,0.12)', 'rgba(29,185,84,0.35)')}>{t('保存')}</button>
         </div>
       </div>
 
       {loading ? (
-        <div style={{ color: theme.colors.text.muted, padding: '2rem' }}>加载中...</div>
+        <div style={{ color: theme.colors.text.muted, padding: '2rem' }}>{t('加载中...')}</div>
       ) : (
         <div style={{ display: 'grid', gap: '0.85rem' }}>
           {sections.map(section => {
@@ -337,20 +337,20 @@ export default function MemoryPage() {
                       return isEditing ? (
                         <span key={item} style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>
                           <input value={editing.nextValue} onChange={e => setEditing({ ...editing, nextValue: e.target.value })} style={{ ...inputStyle(), width: '11rem', padding: '0.32rem 0.55rem', fontSize: '0.76rem' }} />
-                          <button onClick={() => saveEdit().catch(err => setMessage(err.message))} style={chipActionStyle('#86efac')}>保存</button>
-                          <button onClick={() => setEditing(null)} style={chipActionStyle()}>取消</button>
+                          <button onClick={() => saveEdit().catch(err => setMessage(err.message))} style={chipActionStyle('#86efac')}>{t('保存')}</button>
+                          <button onClick={() => setEditing(null)} style={chipActionStyle()}>{t('取消')}</button>
                         </span>
                       ) : (
                         <span key={item} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.28rem 0.45rem 0.28rem 0.65rem', borderRadius: '999px', border: `1px solid ${style.border}`, background: style.background, color: style.color, fontSize: '0.76rem' }}>
                           {item}
-                          <button onClick={() => setEditing({ field: section.field, oldValue: item, nextValue: item })} title={t("修改")} style={miniIconButtonStyle()}>改</button>
+                          <button onClick={() => setEditing({ field: section.field, oldValue: item, nextValue: item })} title={t("修改")} style={miniIconButtonStyle()}>{t('改')}</button>
                           <button onClick={() => deletePreference(section.field, item).catch(err => setMessage(err.message))} title={t("删除")} style={miniIconButtonStyle('#fca5a5')}>×</button>
                         </span>
                       );
                     })}
                   </div>
                 ) : (
-                  <div style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>暂无记录。使用推荐、点赞/拉黑或歌单反馈后会逐步形成。</div>
+                  <div style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('暂无记录。使用推荐、点赞/拉黑或歌单反馈后会逐步形成。')}</div>
                 )}
               </section>
             );
@@ -360,7 +360,7 @@ export default function MemoryPage() {
 
       {!loading && ((memory?.profile_views?.views?.length || 0) > 0 || (memory?.profile_views?.recent_tendency?.items?.length || 0) > 0) && (
         <section style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
-          <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>场景画像视图</div>
+          <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>{t('场景画像视图')}</div>
           <div style={{ fontSize: '0.76rem', color: theme.colors.text.muted, marginBottom: '0.8rem' }}>
             {t('偏好按适用场景分组：场景绑定的偏好只在对应场景生效，不会带进其他场景。每条都可删除。')}
           </div>
@@ -383,7 +383,7 @@ export default function MemoryPage() {
                           {item.decision_summary ? ` · ${item.decision_summary}` : ''}
                         </div>
                       </div>
-                      <button onClick={() => deleteRecord(item.record_id).catch(err => setMessage(err.message))} style={chipActionStyle('#fca5a5')}>删除</button>
+                      <button onClick={() => deleteRecord(item.record_id).catch(err => setMessage(err.message))} style={chipActionStyle('#fca5a5')}>{t('删除')}</button>
                     </div>
                   ))}
                 </div>
@@ -409,7 +409,7 @@ export default function MemoryPage() {
 
       {!loading && (memory?.records?.length || 0) > 0 && (
         <section style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
-          <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>记忆来源与有效期</div>
+          <div style={{ fontWeight: 800, marginBottom: '0.25rem' }}>{t('记忆来源与有效期')}</div>
           <div style={{ fontSize: '0.76rem', color: theme.colors.text.muted, marginBottom: '0.8rem' }}>
             {t('L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。')}
           </div>
@@ -432,7 +432,7 @@ export default function MemoryPage() {
                       {record.why_used ? ` · ${record.why_used}` : ''}
                     </div>
                   </div>
-                  <button onClick={() => deleteRecord(record.record_id).catch(err => setMessage(err.message))} style={chipActionStyle('#fca5a5')}>删除</button>
+                  <button onClick={() => deleteRecord(record.record_id).catch(err => setMessage(err.message))} style={chipActionStyle('#fca5a5')}>{t('删除')}</button>
                 </div>
               );
             })}

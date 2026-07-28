@@ -347,9 +347,9 @@ export default function SongCard({
             </button>
             {showFolderPicker && (
               <div style={{ position: 'absolute', right: 0, bottom: 'calc(100% + 6px)', backgroundColor: 'rgba(20,20,20,0.97)', border: `1px solid ${theme.colors.border.focus}`, borderRadius: theme.borderRadius.md, boxShadow: '0 8px 32px rgba(0,0,0,0.7)', minWidth: '190px', zIndex: 200, overflow: 'hidden', backdropFilter: 'blur(16px)' }} onClick={e => e.stopPropagation()}>
-                <div style={{ padding: '0.5rem 0.85rem', fontSize: '0.75rem', color: theme.colors.text.muted, borderBottom: '1px solid rgba(255,255,255,0.07)', fontWeight: 600, letterSpacing: '0.06em' }}>收藏到歌单</div>
+                <div style={{ padding: '0.5rem 0.85rem', fontSize: '0.75rem', color: theme.colors.text.muted, borderBottom: '1px solid rgba(255,255,255,0.07)', fontWeight: 600, letterSpacing: '0.06em' }}>{t('收藏到歌单')}</div>
                 {collections.length === 0 ? (
-                  <div style={{ padding: '1rem', fontSize: '0.85rem', color: theme.colors.text.muted, textAlign: 'center' }}>暂无歌单</div>
+                  <div style={{ padding: '1rem', fontSize: '0.85rem', color: theme.colors.text.muted, textAlign: 'center' }}>{t('暂无歌单')}</div>
                 ) : (
                   collections.map(col => (
                     <button key={col.id} onClick={e => { e.stopPropagation(); addToCollection(col.id, { title, artist, genre, preview_url, source, platform, song_id, exposure_id, exposure_rank }); setShowFolderPicker(false); }} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', width: '100%', padding: '0.65rem 0.85rem', background: 'none', border: 'none', cursor: 'pointer', color: theme.colors.text.primary, fontSize: '0.88rem', textAlign: 'left', transition: 'background-color 0.12s' }} onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)')} onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}>

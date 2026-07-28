@@ -108,7 +108,7 @@ export default function SongFeedbackPanel({
             }}
         >
             <div style={{ fontSize: '0.8rem', color: theme.colors.text.secondary }}>
-                这首适合你此刻要的吗？<span style={{ opacity: 0.6 }}>（只评这一次，不影响你对它的长期喜好）</span>
+                这首适合你此刻要的吗？<span style={{ opacity: 0.6 }}>{t('（只评这一次，不影响你对它的长期喜好）')}</span>
             </div>
 
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>

@@ -56,7 +56,7 @@ export default function DiagnosticsDrawer({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.9rem' }}>
-          <h3 style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.primary }}>曲库诊断（开发工具）</h3>
+          <h3 style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.primary }}>{t('曲库诊断（开发工具）')}</h3>
           <button
             onClick={onClose}
             style={{
@@ -83,7 +83,7 @@ export default function DiagnosticsDrawer({
           </button>
         )}
 
-        {loading && <div style={{ color: theme.colors.text.muted, fontSize: '0.8rem' }}>正在读取曲库分布...</div>}
+        {loading && <div style={{ color: theme.colors.text.muted, fontSize: '0.8rem' }}>{t('正在读取曲库分布...')}</div>}
 
         {!loading && report && (
           <div style={{ color: 'rgba(255,255,255,0.72)', fontSize: '0.78rem', lineHeight: 1.6 }}>
@@ -92,9 +92,9 @@ export default function DiagnosticsDrawer({
                 <div style={{ color: '#fff', fontWeight: 650, marginBottom: '0.45rem' }}>
                   曲库 {report.catalog?.total_songs || 0} 首 · 可播放 {report.catalog?.playable_songs || 0} 首 · 最近曝光 {report.recent_recommendations?.exposures || 0} 批
                 </div>
-                <div>语言：{(report.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || t('暂无')}</div>
-                <div>流派：{(report.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无')}</div>
-                <div>最近来源：{(report.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无曝光')}</div>
+                <div>{t('语言：')}{(report.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || t('暂无')}</div>
+                <div>{t('流派：')}{(report.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无')}</div>
+                <div>{t('最近来源：')}{(report.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无曝光')}</div>
                 {(report.warnings || []).length > 0 && (
                   <div style={{ marginTop: '0.5rem', color: 'rgba(255,220,160,0.92)' }}>
                     {(report.warnings || []).slice(0, 3).map(w => w.message).join('；')}

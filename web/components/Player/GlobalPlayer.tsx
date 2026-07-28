@@ -187,7 +187,7 @@ export default function GlobalPlayer() {
                                     {/* 歌词面板 */}
                                     {activeTab === 'lyrics' && (
                                         <div ref={lyricsRef} style={{ flex: 1, overflowY: 'auto', paddingRight: '0.5rem', scrollbarWidth: 'none' }}>
-                                            {lrcLoading && <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: '1rem', paddingTop: '2rem' }}>加载歌词中...</div>}
+                                            {lrcLoading && <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: '1rem', paddingTop: '2rem' }}>{t('加载歌词中...')}</div>}
                                             {!lrcLoading && lrcLines.length === 0 && (
                                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.28)', fontSize: '1.1rem', letterSpacing: '0.05em' }}>
                                                     {t('暂无歌词')}
@@ -230,7 +230,7 @@ export default function GlobalPlayer() {
                                     {activeTab === 'artist' && (
                                         <div style={{ flex: 1, paddingTop: '0.5rem' }}>
                                             <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#fff', marginBottom: '0.6rem' }}>{currentSong.artist}</div>
-                                            <div style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.4)' }}>正在播放：{currentSong.title}</div>
+                                            <div style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.4)' }}>{t('正在播放：')}{currentSong.title}</div>
                                         </div>
                                     )}
                                 </div>
@@ -276,7 +276,7 @@ export default function GlobalPlayer() {
                         {/* Queue list */}
                         <div style={{ flex: 1, overflowY: 'auto', scrollbarWidth: 'none' }}>
                             {queue.length === 0 ? (
-                                <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.28)', padding: '2.5rem 1rem', fontSize: '0.88rem' }}>播放列表为空</div>
+                                <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.28)', padding: '2.5rem 1rem', fontSize: '0.88rem' }}>{t('播放列表为空')}</div>
                             ) : (
                                 queue.map((song, idx) => {
                                     const isCurrent = currentSong.title === song.title && currentSong.artist === song.artist;
@@ -394,9 +394,9 @@ export default function GlobalPlayer() {
 
                     {showFolderPicker && (
                         <div style={{ position: 'absolute', bottom: '72px', left: '155px', backgroundColor: 'rgba(22,22,22,0.97)', border: '1px solid rgba(255,255,255,0.14)', borderRadius: '12px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)', minWidth: '210px', zIndex: 200, overflow: 'hidden', backdropFilter: 'blur(16px)' }}>
-                            <div style={{ padding: '0.6rem 1rem', fontSize: '0.76rem', color: 'rgba(255,255,255,0.4)', borderBottom: '1px solid rgba(255,255,255,0.07)', fontWeight: 600 }}>收藏到歌单</div>
+                            <div style={{ padding: '0.6rem 1rem', fontSize: '0.76rem', color: 'rgba(255,255,255,0.4)', borderBottom: '1px solid rgba(255,255,255,0.07)', fontWeight: 600 }}>{t('收藏到歌单')}</div>
                             {collections.length === 0
-                                ? <div style={{ padding: '1rem', fontSize: '0.88rem', color: 'rgba(255,255,255,0.38)', textAlign: 'center' }}>暂无歌单</div>
+                                ? <div style={{ padding: '1rem', fontSize: '0.88rem', color: 'rgba(255,255,255,0.38)', textAlign: 'center' }}>{t('暂无歌单')}</div>
                                 : collections.map(col => (
                                     <button key={col.id}
                                         onClick={() => { addToCollection(col.id, { title: currentSong.title, artist: currentSong.artist, genre: currentSong.genre, preview_url: currentSong.preview_url, coverUrl: currentSong.coverUrl }); setShowFolderPicker(false); }}

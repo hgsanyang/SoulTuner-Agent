@@ -113,7 +113,7 @@ export default function LikesPage() {
                             <circle cx="18" cy="16" r="3" />
                         </svg>
                     </div>
-                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>暂无喜欢的歌曲</h3>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>{t('暂无喜欢的歌曲')}</h3>
                     <p style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
                         {t('在音乐推荐与发现流程中，点击爱心即可将喜欢的歌曲收藏到这里。')}
                     </p>

@@ -19,8 +19,8 @@ export default function CollectionDetailPage() {
     if (!collection) {
         return (
             <div style={{ padding: '2rem', color: theme.colors.text.primary, textAlign: 'center' }}>
-                <p>歌单未找到</p>
-                <button onClick={() => router.back()} style={{ color: theme.colors.primary.accent, background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}>← 返回</button>
+                <p>{t('歌单未找到')}</p>
+                <button onClick={() => router.back()} style={{ color: theme.colors.primary.accent, background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem' }}>{t('← 返回')}</button>
             </div>
         );
     }
@@ -60,7 +60,7 @@ export default function CollectionDetailPage() {
                     </svg>
                 </div>
                 <div>
-                    <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>歌单</p>
+                    <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('歌单')}</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.4rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{collection.name}</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>共 {collection.songs.length} 首歌曲</p>
                 </div>
@@ -74,7 +74,7 @@ export default function CollectionDetailPage() {
                     backgroundColor: 'rgba(255,255,255,0.02)', border: `1px dashed ${theme.colors.border.default}`,
                     textAlign: 'center',
                 }}>
-                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>歌单还是空的</h3>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>{t('歌单还是空的')}</h3>
                     <p style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
                         {t('在音乐推荐页面点击歌曲卡片上的收藏图标，选择这个歌单即可添加歌曲。')}
                     </p>

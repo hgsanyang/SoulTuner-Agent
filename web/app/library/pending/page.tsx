@@ -205,8 +205,8 @@ export default function PendingPage() {
                     </svg>
                 </div>
                 <div>
-                    <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>暂存区</p>
-                    <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>待入库</h1>
+                    <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('暂存区')}</p>
+                    <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{t('待入库')}</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
                         {loading ? '加载中...' : `共 ${songs.length} 首待确认，当前显示 ${filteredSongs.length} 首，可入库 ${songs.length - invalidPendingCount} 首，已选 ${selected.size} 首`}
                     </p>
@@ -232,7 +232,7 @@ export default function PendingPage() {
                         onChange={e => setFormatFilter(e.target.value)}
                         style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary, fontSize: '0.88rem', outline: 'none' }}
                     >
-                        <option value="all">全部格式</option>
+                        <option value="all">{t('全部格式')}</option>
                         {formats.map(format => <option key={format} value={format}>{format.toUpperCase()}</option>)}
                     </select>
                     <select
@@ -240,12 +240,12 @@ export default function PendingPage() {
                         onChange={e => setStatusFilter(e.target.value)}
                         style={{ padding: '0.65rem 0.85rem', background: 'rgba(255,255,255,0.05)', border: `1px solid ${theme.colors.border.default}`, borderRadius: theme.borderRadius.sm, color: theme.colors.text.primary, fontSize: '0.88rem', outline: 'none' }}
                     >
-                        <option value="all">全部状态</option>
-                        <option value="ready">可入库</option>
-                        <option value="temporary">临时音源</option>
-                        <option value="saved">长期保存</option>
-                        <option value="failed">获取失败</option>
-                        <option value="invalid">缺音频</option>
+                        <option value="all">{t('全部状态')}</option>
+                        <option value="ready">{t('可入库')}</option>
+                        <option value="temporary">{t('临时音源')}</option>
+                        <option value="saved">{t('长期保存')}</option>
+                        <option value="failed">{t('获取失败')}</option>
+                        <option value="invalid">{t('缺音频')}</option>
                     </select>
                     <span style={{ fontSize: '0.78rem', color: theme.colors.text.muted }}>
                         {t('状态：获取音源 → 元数据入库 → 标签/向量分析')}
@@ -261,7 +261,7 @@ export default function PendingPage() {
             {jobs.length > 0 && (
                 <div style={{ display: 'grid', gap: '0.65rem', padding: '0.85rem 1rem', borderRadius: theme.borderRadius.md, background: 'rgba(255,255,255,0.025)', border: `1px solid ${theme.colors.border.default}` }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>入库处理进度</span>
+                        <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>{t('入库处理进度')}</span>
                         {(Object.entries(JOB_STATUS_LABELS) as [string, string][]).map(([status, label]) => (
                             <span key={status} style={{ fontSize: '0.72rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: 'rgba(255,255,255,0.05)', color: theme.colors.text.secondary }}>
                                 {label}: {jobCounts[status] || 0}

@@ -286,7 +286,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               }
             }}
           >
-            {allowReuse && <option value="">-- 复用主模型 --</option>}
+            {allowReuse && <option value="">{t('-- 复用主模型 --')}</option>}
             {LLM_PROVIDERS.map(p => (
               <option key={p.value} value={p.value}>{p.label}</option>
             ))}
@@ -309,7 +309,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 }}
               >
                 {presets.map(m => <option key={m} value={m}>{m}</option>)}
-                <option value="__custom__">✏️ 自定义...</option>
+                <option value="__custom__">{t('✏️ 自定义...')}</option>
               </select>
             ) : (
               <input
@@ -423,7 +423,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         </div>
 
         <div style={fieldGroup}>
-          <label style={labelStyle}>主模型</label>
+          <label style={labelStyle}>{t('主模型')}</label>
           <select
             style={selectStyle}
             value={dashscopeModels.includes(currentModel) ? currentModel : '__custom__'}
@@ -435,7 +435,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             }}
           >
             {dashscopeModels.map(model => <option key={model} value={model}>{model}</option>)}
-            <option value="__custom__">自定义 DashScope 模型...</option>
+            <option value="__custom__">{t('自定义 DashScope 模型...')}</option>
           </select>
           {!dashscopeModels.includes(currentModel) && (
             <input
@@ -479,7 +479,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             marginBottom: showAdvancedModels ? '0.8rem' : 0,
           }}
         >
-          <span>高级选项</span>
+          <span>{t('高级选项')}</span>
           <span style={{ color: theme.colors.text.muted }}>{showAdvancedModels ? t('收起') : t('展开')}</span>
         </button>
 
@@ -490,18 +490,18 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             padding: '0.8rem 0.9rem',
             background: 'rgba(255,255,255,0.025)',
           }}>
-            <div style={sectionTitleStyle}>主模型提供商</div>
+            <div style={sectionTitleStyle}>{t('主模型提供商')}</div>
             {renderModelPicker('llm_default_provider', 'llm_default_model', t('提供商'), t('模型'))}
 
-            <div style={sectionTitleStyle}>意图分析 / HyDE</div>
+            <div style={sectionTitleStyle}>{t('意图分析 / HyDE')}</div>
             {renderModelPicker('intent_llm_provider', 'intent_llm_model', t('意图模型提供商'), t('意图模型'), true)}
             {renderModelPicker('hyde_llm_provider', 'hyde_llm_model', t('HyDE 提供商'), t('HyDE 模型'), true)}
 
-            <div style={sectionTitleStyle}>解释与上下文压缩</div>
+            <div style={sectionTitleStyle}>{t('解释与上下文压缩')}</div>
             {renderModelPicker('explain_llm_provider', 'explain_llm_model', t('调音师回应模型提供商'), t('调音师回应模型'), true)}
             {renderModelPicker('compress_llm_provider', 'compress_llm_model', t('压缩模型提供商'), t('压缩模型'), true)}
 
-            <div style={sectionTitleStyle}>调用预算</div>
+            <div style={sectionTitleStyle}>{t('调用预算')}</div>
             {renderToggle('explanation_fast_mode', t('兼容低延迟模式（覆盖为关闭文本）'))}
             {renderSlider('llm_timeout', t('LLM 超时'), 10, 120, 5, t('秒'))}
             {renderSlider('intent_max_tokens', t('意图分析最大输出 Token'), 512, 4096, 256, ' tokens')}
@@ -514,7 +514,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
   const renderRetrievalTab = () => (
     <>
-      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🔍 检索 & 排序参数</h4>
+      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>{t('🔍 检索 & 排序参数')}</h4>
 
       {/* ═══ 检索数量 ═══ */}
       {renderSlider('graph_search_limit', t('图谱检索数量（仅图谱模式）'), 3, 30, 1)}
@@ -525,7 +525,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
       {/* ═══ 粗排 & 探索 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>粗排 & 探索（Graph Affinity + Thompson Sampling）</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('粗排 & 探索（Graph Affinity + Thompson Sampling）')}</span>
       </div>
       {renderToggle('graph_affinity_enabled', t('启用图距离粗排 + TS 探索'))}
       {settings.graph_affinity_enabled && (
@@ -544,7 +544,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
       {/* ═══ 内容双锚精排权重 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>内容双锚权重（语义 + 声学）</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('内容双锚权重（语义 + 声学）')}</span>
       </div>
       {renderSlider('tri_anchor_w_semantic', t('语义相关性（M2D-CLAP）'), 0, 1, 0.05)}
       {renderSlider('tri_anchor_w_acoustic', t('声学风格（OMAR-RQ）'), 0, 1, 0.05)}
@@ -554,7 +554,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
       {/* ═══ 多样性 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>多样性控制</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('多样性控制')}</span>
       </div>
       {renderSlider('max_songs_per_artist', t('每歌手最多曲数'), 1, 5, 1)}
       {renderSlider('mmr_lambda', t('MMR 相关性偏好'), 0.3, 1, 0.05)}
@@ -566,7 +566,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
   const renderPathsTab = () => (
     <>
-      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🎵 音乐数据目录</h4>
+      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>{t('🎵 音乐数据目录')}</h4>
       {renderInput('audio_data_dir', t('本地音乐目录'), 'data/processed_audio/audio')}
       {renderInput('mtg_audio_dir', t('MTG 数据集目录'), 'data/mtg_sample/audio')}
       {renderInput('online_acquired_dir', t('联网获取目录'), 'data/online_acquired')}
@@ -576,7 +576,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
   const renderMemoryTab = () => (
     <>
-      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🧠 记忆 & 上下文</h4>
+      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>{t('🧠 记忆 & 上下文')}</h4>
       {renderSlider('memory_retain_rounds', t('上下文保留轮数'), 1, 20, 1, t('轮'))}
       {renderSlider('context_total_budget', t('上下文窗口预算'), 2000, 16000, 500, ' tokens')}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
@@ -617,8 +617,8 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <div>
-            <h3 style={{ margin: 0, color: theme.colors.text.primary, fontSize: '1.1rem' }}>⚙️ 系统设置</h3>
-            <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>修改后点击保存即时生效，关闭则丢弃未保存修改</span>
+            <h3 style={{ margin: 0, color: theme.colors.text.primary, fontSize: '1.1rem' }}>{t('⚙️ 系统设置')}</h3>
+            <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>{t('修改后点击保存即时生效，关闭则丢弃未保存修改')}</span>
           </div>
           <button onClick={handleClose} style={{
             background: 'transparent', border: 'none', color: theme.colors.text.muted,

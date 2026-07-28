@@ -7,103 +7,155 @@
  * otherwise that one string quietly falls back to Chinese in English mode.
  */
 export const EN_DICT: Record<string, string> = {
+    '调用预算': 'Call budget',
+    '质量分：': 'Quality score:',
+    '资料完整': 'Complete',
+    '高级选项': 'Advanced',
+    '（只评这一次，不影响你对它的长期喜好）': '(this moment only — your long-term taste is unaffected)',
+    '（选一个之后可以补充原因、挑出最合适/最不合适的歌，也可以自己写）': '(pick one, then you can add reasons, mark the best and worst, or write your own)',
+    '🎵 音乐数据目录': '🎵 Music folders',
+    '🔍 检索 & 排序参数': '🔍 Retrieval & ranking',
+    '🧠 记忆 & 上下文': '🧠 Memory & context',
     '界面语言': 'Language',
-
-    // ---- filled in after wrapping the JSX text nodes ----
+    '来源：': 'Source:',
+    '待补：': 'Missing:',
+    '✓ 已记录反馈：': '✓ Feedback recorded:',
+    '-- 复用主模型 --': '-- same as main model --',
+    '← 返回': '← Back',
+    '⚙️ 系统设置': '⚙️ Settings',
+    '✏️ 自定义...': '✏️ Custom…',
+    '临时音源': 'Temporary audio',
+    '主模型': 'Main model',
+    '主模型提供商': 'Main provider',
+    '低质量优先': 'Lowest quality first',
+    '修改后点击保存即时生效，关闭则丢弃未保存修改': 'Save applies changes immediately; closing discards anything unsaved',
+    '入库状态：': 'Ingest status:',
+    '全部情绪': 'All moods',
+    '全部来源': 'All sources',
+    '全部格式': 'All formats',
+    '全部状态': 'All statuses',
+    '全部语言': 'All languages',
+    '全部质量': 'All quality levels',
+    '其他偏好描述': 'Anything else',
+    '内容双锚权重（语义 + 声学）': 'Dual-anchor weight (semantic + acoustic)',
+    '加载歌词中...': 'Loading lyrics…',
+    '去重键：': 'Dedup key:',
+    '发行年：': 'Year:',
+    '可入库': 'Ready to add',
+    '场景画像视图': 'By setting',
+    '多样性控制': 'Diversity',
+    '待补资料': 'Incomplete',
+    '意图分析 / HyDE': 'Planning / HyDE',
+    '我的记忆 / 我的偏好': 'My memory / My preferences',
+    '我的评价': 'My ratings',
+    '播放列表为空': 'The queue is empty',
+    '改': 'Edit',
+    '新增或修正偏好': 'Add or correct a preference',
+    '时长：': 'Length:',
+    '暂存区': 'Staging',
+    '暂无喜欢的歌曲': 'No liked songs yet',
+    '暂无歌单': 'No playlists yet',
+    '暂无记录。使用推荐、点赞/拉黑或歌单反馈后会逐步形成。': 'Nothing here yet. Using recommendations, likes/blocks and slate feedback builds this up.',
+    '最近来源：': 'Recent sources:',
+    '查看来源': 'View source',
+    '标签来源：': 'Tag source:',
+    '格式：': 'Format:',
+    '歌单': 'Playlist',
+    '歌单未找到': 'Playlist not found',
+    '歌单还是空的': 'This playlist is empty',
+    '歌词：': 'Lyrics:',
+    '正在播放：': 'Now playing:',
+    '正在读取曲库分布...': 'Reading the library distribution…',
+    '没有屏蔽的歌曲': 'Nothing blocked',
+    '流派：': 'Genre:',
+    '疑似重复': 'Possible duplicate',
+    '知识卡摘要': 'Knowledge card',
+    '知识图谱': 'Knowledge graph',
+    '粗排 & 探索（Graph Affinity + Thompson Sampling）': 'Coarse rank & exploration (graph affinity + Thompson sampling)',
+    '系统学到的偏好': 'What the system learned',
+    '自定义 DashScope 模型...': 'Custom DashScope model…',
+    '解释与上下文压缩': 'Explanation & context compression',
+    '记忆来源与有效期': 'Where memory came from and when it expires',
+    '语言：': 'Language:',
+    '质量：': 'Quality:',
+    '音源保留：': 'Audio retention:',
+    '音频：': 'Audio:',
+    '高质量优先': 'Highest quality first',
+    '默认排序': 'Default order',
+    '共': 'Total',
+    '首歌曲': ' songs',
+    '首': '',
+    '标签': 'Tags',
+    '选中 ': 'Selected ',
+    '删除选中': 'Delete selected',
     'AI Soul Tuner 已就绪': 'AI Soul Tuner is ready',
     'DashScope API 部署': 'DashScope API',
-    'L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。':
-        'L0 is raw behaviour, L1 is what you set yourself, L2 is a system guess with an expiry, L3 is a summary of a conversation.',
+    'L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。': 'L0 is raw behaviour, L1 is what you set yourself, L2 is a system guess with an expiry, L3 is a summary of a conversation.',
     '↩ 清空': '↩ Clear',
     '↩ 还原默认': '↩ Restore defaults',
     '▶ 播放列表': '▶ Queue',
     '⚠️ 彻底删除这首歌？': '⚠️ Delete this song for good?',
-    '之后「用一句话描述就能找到这首歌」才对它们生效。一批歌是一个任务。':
-        'Only then can "describe it in a sentence" find them. One batch is one job.',
-    '从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）':
-        'Share of cut songs pulled back in for exploration (Thompson sampling)',
+    '之后「用一句话描述就能找到这首歌」才对它们生效。一批歌是一个任务。': 'Only then can "describe it in a sentence" find them. One batch is one job.',
+    '从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）': 'Share of cut songs pulled back in for exploration (Thompson sampling)',
     '保存': 'Save',
-    '偏好按适用场景分组：场景绑定的偏好只在对应场景生效，不会带进其他场景。每条都可删除。':
-        'Preferences are grouped by setting: one tied to a setting applies only there and never leaks into another. Any of them can be deleted.',
+    '偏好按适用场景分组：场景绑定的偏好只在对应场景生效，不会带进其他场景。每条都可删除。': 'Preferences are grouped by setting: one tied to a setting applies only there and never leaks into another. Any of them can be deleted.',
     '全屏播放器': 'Full-screen player',
     '全选当前结果': 'Select all results',
     '关闭': 'Close',
     '刷新': 'Refresh',
     '参与个性化学习': 'Feeds personalisation',
     '取消': 'Cancel',
-    '在推荐结果中点击「不喜欢」按钮，歌曲将被添加到此列表并从后续推荐中排除。':
-        'Press Not for me on a recommendation and the song lands here, excluded from later results.',
-    '在音乐推荐与发现流程中，点击爱心即可将喜欢的歌曲收藏到这里。':
-        'Tap the heart on any recommendation to collect it here.',
-    '在音乐推荐页面点击歌曲卡片上的收藏图标，选择这个歌单即可添加歌曲。':
-        'Tap the save icon on a song card and pick this playlist.',
+    '在推荐结果中点击「不喜欢」按钮，歌曲将被添加到此列表并从后续推荐中排除。': 'Press Not for me on a recommendation and the song lands here, excluded from later results.',
+    '在音乐推荐与发现流程中，点击爱心即可将喜欢的歌曲收藏到这里。': 'Tap the heart on any recommendation to collect it here.',
+    '在音乐推荐页面点击歌曲卡片上的收藏图标，选择这个歌单即可添加歌曲。': 'Tap the save icon on a song card and pick this playlist.',
     '对话记录': 'Conversation',
     '屏蔽列表': 'Blocked',
     '已在播放列表': 'Already queued',
     '常驻底部控制栏': 'Docked control bar',
-    '开发模式不使用用户档案，本次交互的数据独立存放、不参与个性化学习。':
-        'Developer mode uses no profile: everything here is stored separately and never feeds personalisation.',
-    '开发模式本来就把数据隔离出去、不参与学习，再让人选档案只会让人以为':
-        'Developer mode already isolates its data, so offering a profile only suggests',
+    '开发模式不使用用户档案，本次交互的数据独立存放、不参与个性化学习。': 'Developer mode uses no profile: everything here is stored separately and never feeds personalisation.',
+    '开发模式本来就把数据隔离出去、不参与学习，再让人选档案只会让人以为': 'Developer mode already isolates its data, so offering a profile only suggests',
     '开启智能推荐': 'Start recommending',
     '当前来源仅提供试听片段，不标记为完整音源': 'This source offers a preview clip only, not a full track',
     '快速灵感注入': 'Quick starts',
-    '懂你此刻的情绪 · 沉浸式专属歌单生成器':
-        'Reads the mood you are in · builds a playlist around it',
+    '懂你此刻的情绪 · 沉浸式专属歌单生成器': 'Reads the mood you are in · builds a playlist around it',
     '我的画像': 'My profile',
     '推荐卡片': 'Suggestion cards',
     '撤销': 'Undo',
     '播放队列浮窗': 'Floating queue',
     '新建歌单': 'New playlist',
     '新建聊天': 'New chat',
-    '新歌确认入库后不会立刻可用：这里的后台任务要先给它们提取音频特征、补齐标签，':
-        'A confirmed song is not usable straight away — these jobs extract its audio features and fill in tags first.',
-    '暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。':
-        'Nothing learned yet. Likes, blocks and slate feedback build this up.',
+    '新歌确认入库后不会立刻可用：这里的后台任务要先给它们提取音频特征、补齐标签，': 'A confirmed song is not usable straight away — these jobs extract its audio features and fill in tags first.',
+    '暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。': 'Nothing learned yet. Likes, blocks and slate feedback build this up.',
     '暂无歌词': 'No lyrics',
     '更懂你的私人灵魂调音师': 'A tuner that actually gets you',
-    '权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分':
-        'Weights are normalised automatically; personalisation only nudges scores in a bounded post-recall pass',
+    '权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分': 'Weights are normalised automatically; personalisation only nudges scores in a bounded post-recall pass',
     '歌曲夹': 'Collection',
     '清空学习记忆': 'Clear learned memory',
     '清空选择': 'Clear selection',
-    '状态：获取音源 → 元数据入库 → 标签/向量分析':
-        'Stages: fetch audio → store metadata → tags and audio features',
-    '用一句话定制你的私人歌单，SoulTuner 会按场景、语言、情绪走向和避雷偏好组织曲目。':
-        'Describe the playlist you want in one sentence; SoulTuner arranges it by setting, language, mood arc and the things you want to avoid.',
-    '用自然语言描述心情或场景，即刻生成专属你的沉浸式歌单。':
-        'Describe a mood or a moment in plain language and get a playlist made for it.',
+    '状态：获取音源 → 元数据入库 → 标签/向量分析': 'Stages: fetch audio → store metadata → tags and audio features',
+    '用一句话定制你的私人歌单，SoulTuner 会按场景、语言、情绪走向和避雷偏好组织曲目。': 'Describe the playlist you want in one sentence; SoulTuner arranges it by setting, language, mood arc and the things you want to avoid.',
+    '用自然语言描述心情或场景，即刻生成专属你的沉浸式歌单。': 'Describe a mood or a moment in plain language and get a playlist made for it.',
     '立即使用': 'Get started',
     '管理并沉淀你的专属听歌体验': 'Shape and keep your own listening experience',
-    '管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。':
-        'Manage what the system learned from your likes, saves, blocks and slate feedback. It is kept in a local structured ledger you can read, edit or delete at any time.',
+    '管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。': 'Manage what the system learned from your likes, saves, blocks and slate feedback. It is kept in a local structured ledger you can read, edit or delete at any time.',
     '系统设置': 'Settings',
     '设置偏好后，推荐系统会更懂你的口味': 'Set these and recommendations get closer to your taste',
     '诊断': 'Diagnostics',
     '读取曲库分布': 'Reading the library distribution',
-    '越大保留越多历史对话，但增加 LLM 调用成本和延迟':
-        'Higher keeps more of the conversation, at more cost and latency',
+    '越大保留越多历史对话，但增加 LLM 调用成本和延迟': 'Higher keeps more of the conversation, at more cost and latency',
     '越高越偏向相关性，越低越偏向多样性': 'Higher favours relevance, lower favours variety',
     '跳到最新': 'Jump to latest',
     '返回对话': 'Back to the conversation',
     '返回收藏夹': 'Back to playlists',
-    '还没有逐首评价。推荐结果里点歌曲卡片上的 💬 就能评价这首歌此刻合不合。':
-        'No per-song ratings yet. Tap 💬 on a song card to say whether it fits right now.',
-    '这些歌曲将不会出现在推荐结果中。点击「撤销」可恢复。':
-        'These never appear in recommendations. Undo to bring one back.',
-    '这首来自联网临时入库。长期保存后，退出应用或清理临时缓存时不会释放 MP3 文件。':
-        'Fetched online and cached temporarily. Keep it and the MP3 survives quitting the app or clearing the cache.',
+    '还没有逐首评价。推荐结果里点歌曲卡片上的 💬 就能评价这首歌此刻合不合。': 'No per-song ratings yet. Tap 💬 on a song card to say whether it fits right now.',
+    '这些歌曲将不会出现在推荐结果中。点击「撤销」可恢复。': 'These never appear in recommendations. Undo to bring one back.',
+    '这首来自联网临时入库。长期保存后，退出应用或清理临时缓存时不会释放 MP3 文件。': 'Fetched online and cached temporarily. Keep it and the MP3 survives quitting the app or clearing the cache.',
     '选择一个场景，快速开始': 'Pick a moment to start from',
-    '默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。':
-        'Songs come back first; the written reply and follow-up directions arrive after. No per-song write-ups by default.',
-    '默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。':
-        'Qwen drives planning, HyDE and the written reply by default. Put the key in .env — the frontend never shows it.',
+    '默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。': 'Songs come back first; the written reply and follow-up directions arrive after. No per-song write-ups by default.',
+    '默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。': 'Qwen drives planning, HyDE and the written reply by default. Put the key in .env — the frontend never shows it.',
     '＋ 新建档案': '＋ New profile',
     '🎭 我的音乐画像': '🎭 My music profile',
     '🗑️ 删除选中': '🗑️ Delete selected',
-
-
-    // ---- status, generic ----
     '未知错误': 'Unknown error',
     '发生未知错误': 'Something went wrong',
     '保存中...': 'Saving…',
@@ -145,8 +197,6 @@ export const EN_DICT: Record<string, string> = {
     '服务端未确认': 'Server did not confirm',
     '请确认后端已启动': 'Check that the backend is running',
     '，可稍后重新保存': ', you can save it again later',
-
-    // ---- playback ----
     '播放': 'Play',
     '暂停': 'Pause',
     '上一首': 'Previous',
@@ -173,8 +223,6 @@ export const EN_DICT: Record<string, string> = {
     '歌手': 'Artist',
     '发行年': 'Year',
     '音频': 'Audio',
-
-    // ---- likes / library actions ----
     '喜欢': 'Like',
     '添加到喜欢': 'Add to liked',
     '移除喜欢': 'Remove from liked',
@@ -190,8 +238,6 @@ export const EN_DICT: Record<string, string> = {
     '从本地曲库彻底删除': 'Delete permanently from the local library',
     '全选当前': 'Select all',
     '取消全选': 'Clear selection',
-
-    // ---- audio retention ----
     '保存音源': 'Keep audio',
     '长期保存音源': 'Keep audio permanently',
     '保存音源并长期保留 MP3': 'Keep this audio file permanently',
@@ -210,13 +256,9 @@ export const EN_DICT: Record<string, string> = {
     '暂无试听': 'No preview',
     '下载失败': 'Download failed',
     '获取失败': 'Could not fetch',
-    '音源：临时缓存（点赞、收藏或保存音源后长期保留）':
-        'Audio: temporary cache (liking, saving or keeping it makes it permanent)',
+    '音源：临时缓存（点赞、收藏或保存音源后长期保留）': 'Audio: temporary cache (liking, saving or keeping it makes it permanent)',
     '音源：长期保存': 'Audio: kept permanently',
-    '✅ 音源已设为长期保存，后台正在补齐标签和向量':
-        '✅ Audio will be kept. Tags and audio features are being filled in.',
-
-    // ---- navigation ----
+    '✅ 音源已设为长期保存，后台正在补齐标签和向量': '✅ Audio will be kept. Tags and audio features are being filled in.',
     '发现音乐': 'Discover',
     '智能推荐': 'Recommendations',
     '音乐库': 'Library',
@@ -240,18 +282,13 @@ export const EN_DICT: Record<string, string> = {
     '深度定制与编排': 'Advanced tuning',
     '创作工具': 'Tools',
     '核心流程': 'Main flow',
-
-    // ---- chat / input ----
     '发送': 'Send',
     '输入你的问题...': 'Type what you want to hear…',
     '例如：想运动，来点劲爆的': 'e.g. I want something high-energy for a workout',
     '例如：创建一个适合运动的歌单': 'e.g. build me a workout playlist',
-    '例如：根据周杰伦在网上为我推荐一些相似风格的歌曲；或 周杰伦 流派：流行':
-        'e.g. find songs online that sound like Jay Chou; or Jay Chou genre: pop',
-    '提示：直接输入自然语言，Shift + Enter 换行':
-        'Just type it in plain language. Shift + Enter for a new line.',
-    '点击 ■ 中止搜索，或直接输入新问题':
-        'Press ■ to stop, or just type a new question',
+    '例如：根据周杰伦在网上为我推荐一些相似风格的歌曲；或 周杰伦 流派：流行': 'e.g. find songs online that sound like Jay Chou; or Jay Chou genre: pop',
+    '提示：直接输入自然语言，Shift + Enter 换行': 'Just type it in plain language. Shift + Enter for a new line.',
+    '点击 ■ 中止搜索，或直接输入新问题': 'Press ■ to stop, or just type a new question',
     '搜索中...输入新问题可直接切换': 'Searching… type a new question to switch',
     '中止当前搜索': 'Stop this search',
     '搜索已被中止': 'Search stopped',
@@ -267,8 +304,6 @@ export const EN_DICT: Record<string, string> = {
     '风格编排器': 'Arranging',
     '我需要再确认一下你的意思。': 'I need to check what you mean.',
     'SoulTuner 引擎已就绪': 'SoulTuner is ready',
-
-    // ---- search ----
     '搜索歌名、歌手、专辑': 'Search titles, artists, albums',
     '搜索歌名、歌手、专辑、标签': 'Search titles, artists, albums, tags',
     '搜索失败，请稍后重试': 'Search failed, try again',
@@ -276,8 +311,6 @@ export const EN_DICT: Record<string, string> = {
     '试试其他关键词': 'Try different words',
     '曲库为空': 'The library is empty',
     '调整搜索关键词或格式筛选后再试。': 'Adjust the search or the format filter and try again.',
-
-    // ---- retrieval labels ----
     '图谱检索': 'Graph',
     '向量检索': 'Vector',
     '智能匹配': 'Smart match',
@@ -286,8 +319,6 @@ export const EN_DICT: Record<string, string> = {
     '长期记忆 + 风格发现': 'Memory + discovery',
     '歌手 + 风格': 'Artist + style',
     '从入门到推荐': 'From a first ask to a playlist',
-
-    // ---- feedback ----
     '整体合适': 'Good fit',
     '部分合适': 'Partly',
     '不太合适': 'Not really',
@@ -304,14 +335,10 @@ export const EN_DICT: Record<string, string> = {
     '哪几首最符合？': 'Which ones fit best?',
     '哪几首最不符合？': 'Which ones fit worst?',
     '可选：具体哪里不对？': 'Optional: what was off?',
-    '想具体说点什么？（可选，比如「前奏太长」「人声太靠前」）':
-        'Anything specific? (optional — e.g. "intro drags", "vocals too forward")',
-    '评价这次推荐是否合适（不影响长期喜好）':
-        'Rate this pick for right now (your long-term taste is unaffected)',
+    '想具体说点什么？（可选，比如「前奏太长」「人声太靠前」）': 'Anything specific? (optional — e.g. "intro drags", "vocals too forward")',
+    '评价这次推荐是否合适（不影响长期喜好）': 'Rate this pick for right now (your long-term taste is unaffected)',
     '还没有可评价的推荐批次': 'Nothing to rate yet',
     '✅ 已记录这组推荐的反馈': '✅ Feedback recorded',
-
-    // ---- memory ----
     '正向偏好': 'Likes',
     '避开偏好': 'Avoids',
     '场景/上下文': 'Context',
@@ -336,16 +363,11 @@ export const EN_DICT: Record<string, string> = {
     '✅ 已删除该条记忆': '✅ Memory deleted',
     '✅ 已清空系统学习偏好': '✅ Learned preferences cleared',
     '已清空系统学习偏好': 'Learned preferences cleared',
-    '已删除该条记忆；审计历史保留为删除标记':
-        'Deleted. The audit trail keeps a tombstone.',
+    '已删除该条记忆；审计历史保留为删除标记': 'Deleted. The audit trail keeps a tombstone.',
     '❌ 删除记忆失败': '❌ Could not delete',
     '❌ 清空学习记忆失败': '❌ Could not clear learned memory',
-    '清空所有系统学习到的偏好？手动画像、喜欢和收藏不会被删除。':
-        'Clear everything the system learned? Your own profile, likes and playlists stay.',
-    '只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？':
-        'This clears only what was learned from feedback. Your own profile, likes and playlists stay. Continue?',
-
-    // ---- profile ----
+    '清空所有系统学习到的偏好？手动画像、喜欢和收藏不会被删除。': 'Clear everything the system learned? Your own profile, likes and playlists stay.',
+    '只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？': 'This clears only what was learned from feedback. Your own profile, likes and playlists stay. Continue?',
     '交互模式': 'Mode',
     '日常': 'Daily',
     '开发': 'Developer',
@@ -356,13 +378,10 @@ export const EN_DICT: Record<string, string> = {
     '情绪，最多 5 个': 'Moods, up to 5',
     '场景，最多 5 个': 'Settings, up to 5',
     '流派，最多 5 个': 'Genres, up to 5',
-    '例如：喜欢 C418 的 Minecraft 原声带风格、偏爱暗黑氛围电子、不太喜欢韩国流行...':
-        'e.g. love the C418 Minecraft soundtrack feel, into dark ambient electronic, not big on K-pop…',
+    '例如：喜欢 C418 的 Minecraft 原声带风格、偏爱暗黑氛围电子、不太喜欢韩国流行...': 'e.g. love the C418 Minecraft soundtrack feel, into dark ambient electronic, not big on K-pop…',
     '❌ 保存失败': '❌ Could not save',
     '❌ 保存失败，请确认后端已启动': '❌ Could not save — is the backend running?',
     '❌ 连接失败，请确认后端已启动': '❌ Cannot connect — is the backend running?',
-
-    // ---- pending / ingest ----
     '入库处理进度': 'Processing queue',
     '暂无待入库歌曲': 'Nothing waiting',
     '没有匹配的待入库歌曲': 'No matching songs waiting',
@@ -370,10 +389,8 @@ export const EN_DICT: Record<string, string> = {
     '✅ 已重新加入入库队列': '✅ Queued again',
     '❌ 入库失败，请重试': '❌ Could not add, try again',
     '❌ 重试失败，请查看后端日志': '❌ Retry failed — check the backend logs',
-    '通过 AI 对话获取新歌后，在待入库页面确认入库即可添加到这里。':
-        'Ask for songs in chat, then confirm them on the Pending page and they land here.',
-    '通过 AI 对话获取新歌后，歌曲会先下载到这里等待你确认入库。':
-        'Songs you fetch in chat land here first, waiting for you to confirm.',
+    '通过 AI 对话获取新歌后，在待入库页面确认入库即可添加到这里。': 'Ask for songs in chat, then confirm them on the Pending page and they land here.',
+    '通过 AI 对话获取新歌后，歌曲会先下载到这里等待你确认入库。': 'Songs you fetch in chat land here first, waiting for you to confirm.',
     '为你的新歌单起个名字...': 'Name your new playlist…',
     '创建歌单失败，请稍后重试': 'Could not create the playlist, try again',
     '保存标签': 'Save tags',
@@ -381,8 +398,6 @@ export const EN_DICT: Record<string, string> = {
     '未标注': 'Untagged',
     '未生成': 'Not generated',
     '未补全': 'Incomplete',
-
-    // ---- settings ----
     '模型配置': 'Models',
     '模型': 'Model',
     '提供商': 'Provider',
@@ -446,8 +461,6 @@ export const EN_DICT: Record<string, string> = {
     'SGLang (本地推荐)': 'SGLang (local, recommended)',
     'vLLM (本地微调)': 'vLLM (local, fine-tuned)',
     'Ollama (本地)': 'Ollama (local)',
-
-    // ---- languages / genres / moods ----
     '中文': 'Chinese',
     '英文': 'English',
     '日语': 'Japanese',
@@ -480,15 +493,12 @@ export const EN_DICT: Record<string, string> = {
     '派对': 'Party',
     '睡前': 'Before sleep',
     '冥想': 'Meditation',
-
-    // ---- welcome screen scenes ----
     '基于自然语言的音乐推荐智能体': 'A natural-language music recommendation agent',
     '说一句话，交给它去找歌': 'Say it in one sentence, it finds the songs',
     '听懂你的每一刻情绪': 'Understands how you feel right now',
     'AI 交互探索': 'Conversational discovery',
     'Deep Search · 音乐体验工作台': 'Deep Search · music workbench',
-    '用一段自然语言描述此刻的心境或场景，即刻生成专属的沉浸式歌单。':
-        'Describe your mood or the moment in plain language and get a playlist made for it.',
+    '用一段自然语言描述此刻的心境或场景，即刻生成专属的沉浸式歌单。': 'Describe your mood or the moment in plain language and get a playlist made for it.',
     '早安，新的一天从音乐开始': 'Good morning — start the day with music',
     '上午好，来点提神的旋律': 'Good morning — something to wake you up',
     '午后好，让音乐陪你放松': 'Good afternoon — something easy',
@@ -497,13 +507,11 @@ export const EN_DICT: Record<string, string> = {
     '夜深了，来点助眠或微醺的旋律': 'Late night — something to wind down to',
     '清晨觉醒': 'Waking up',
     '第一缕阳光，唤醒美好的一天': 'First light, an easy start',
-    '刚睡醒迎接新的早晨，想听清新温暖、充满希望的音乐':
-        'Just woke up — something fresh, warm and hopeful',
+    '刚睡醒迎接新的早晨，想听清新温暖、充满希望的音乐': 'Just woke up — something fresh, warm and hopeful',
     '晨跑的鼓点': 'Morning run',
     '心跳加速，让汗水更有节奏': 'Get the heart going, keep the rhythm',
     '运动燃脂': 'Workout',
-    '跑步健身中，需要热血沸腾、节奏感强的音乐让我停不下来':
-        'Working out — high energy, strong beat, keep me going',
+    '跑步健身中，需要热血沸腾、节奏感强的音乐让我停不下来': 'Working out — high energy, strong beat, keep me going',
     '专注编程': 'Focused coding',
     '屏幕微光，沉入深度心流': 'Screen glow, deep focus',
     '屏幕微光，沉入深度心流，专注编程的夜晚': 'Screen glow, deep focus, a night of coding',
@@ -511,50 +519,38 @@ export const EN_DICT: Record<string, string> = {
     '整理一组写代码时不抢注意力的器乐': 'Instrumentals that stay out of the way while I code',
     '午后咖啡': 'Afternoon coffee',
     '阳光洒落，慵懒的周末时光': 'Sunlight, a lazy weekend',
-    '慵懒的周末下午，阳光洒在阳台上，想听点放松惬意的音乐':
-        'Lazy weekend afternoon, sun on the balcony — something easy',
+    '慵懒的周末下午，阳光洒在阳台上，想听点放松惬意的音乐': 'Lazy weekend afternoon, sun on the balcony — something easy',
     '雨天发呆': 'Rainy day',
     '窗外细雨，配一杯热茶': 'Light rain outside, a cup of tea',
-    '窗外淅淅沥沥下着雨，窝在沙发上发呆，想听点安静治愈的':
-        'Rain outside, curled up on the sofa — something quiet and comforting',
+    '窗外淅淅沥沥下着雨，窝在沙发上发呆，想听点安静治愈的': 'Rain outside, curled up on the sofa — something quiet and comforting',
     '阅读时光': 'Reading',
     '翻开书页，沉浸在文字的世界': 'Open the book, disappear into it',
-    '安静地看书，想要轻柔舒缓的纯音乐作为背景':
-        'Reading quietly — soft instrumental in the background',
+    '安静地看书，想要轻柔舒缓的纯音乐作为背景': 'Reading quietly — soft instrumental in the background',
     '公路旅行': 'Road trip',
     '风驰电掣，自由在路上': 'Wide open road',
-    '一个人开车在空旷的公路上，窗外风景飞驰而过':
-        'Driving alone on an empty road, the view rushing past',
+    '一个人开车在空旷的公路上，窗外风景飞驰而过': 'Driving alone on an empty road, the view rushing past',
     '落日黄昏下自驾，来点微醺氛围感音乐': 'Driving at sunset — something hazy and atmospheric',
     '心情：放松 / 场景：傍晚驾车': 'Mood: relaxed / Setting: evening drive',
     '派对狂欢': 'Party',
     '灯光闪烁，释放所有快乐': 'Lights up, let go',
-    '朋友聚会嗨起来，要那种让人忍不住跟着跳的动感音乐':
-        'Friends over — something nobody can sit still to',
+    '朋友聚会嗨起来，要那种让人忍不住跟着跳的动感音乐': 'Friends over — something nobody can sit still to',
     '烛光晚餐': 'Candlelit dinner',
     '烛光摇曳，共度浪漫夜晚': 'Candlelight, a romantic evening',
-    '烛光晚餐的浪漫夜晚，想要优雅温馨、有情调的音乐':
-        'A romantic candlelit dinner — elegant, warm, with atmosphere',
+    '烛光晚餐的浪漫夜晚，想要优雅温馨、有情调的音乐': 'A romantic candlelit dinner — elegant, warm, with atmosphere',
     '深夜独处': 'Late and alone',
     '万籁俱寂，只剩月光与心事': 'Everything quiet, just moonlight and thoughts',
-    '深夜一个人，有些微醺，想听点慵懒温柔的歌陪着发呆':
-        'Alone late, a little tipsy — something lazy and gentle',
+    '深夜一个人，有些微醺，想听点慵懒温柔的歌陪着发呆': 'Alone late, a little tipsy — something lazy and gentle',
     '冥想放松': 'Meditation',
     '呼吸之间，找到内心的宁静': 'Find the quiet between breaths',
-    '闭上眼睛冥想，想听空灵平静、让心慢慢沉下来的音乐':
-        'Eyes closed — airy, calm, something that slows me down',
+    '闭上眼睛冥想，想听空灵平静、让心慢慢沉下来的音乐': 'Eyes closed — airy, calm, something that slows me down',
     '星空漫游': 'Stargazing',
     '银河流转，思绪飘向远方': 'The galaxy turns, the mind drifts',
-    '仰望星空，迷幻而浪漫，仿佛漂浮在宇宙之间':
-        'Looking up — dreamy and romantic, like floating',
+    '仰望星空，迷幻而浪漫，仿佛漂浮在宇宙之间': 'Looking up — dreamy and romantic, like floating',
     '串联周末的晚风': 'A thread of weekend evening air',
     '做一张周末做饭听的轻快中文歌单': 'A light Chinese playlist for cooking at the weekend',
     '创建一个适合夜跑的电子歌单': 'An electronic playlist for a night run',
-    '我想在午夜慢跑时听些令人振奋的强节奏电子乐':
-        'Uplifting, strong-beat electronic for a midnight jog',
-    '找一些像赵雷一样充满故事感、娓娓道来的民谣':
-        'Storytelling folk in the vein of Zhao Lei',
+    '我想在午夜慢跑时听些令人振奋的强节奏电子乐': 'Uplifting, strong-beat electronic for a midnight jog',
+    '找一些像赵雷一样充满故事感、娓娓道来的民谣': 'Storytelling folk in the vein of Zhao Lei',
     '来一套不太大众的华语独立歌单': 'A less obvious Chinese indie playlist',
-    '根据我过去的偏好，挖掘几首还没听过的小众独立音乐':
-        'Based on my taste, dig up some indie I have not heard',
+    '根据我过去的偏好，挖掘几首还没听过的小众独立音乐': 'Based on my taste, dig up some indie I have not heard',
 };
