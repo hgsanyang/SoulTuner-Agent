@@ -35,9 +35,25 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def _lanes(decision) -> set[str]:
+    if hasattr(decision, "request_kind"):
+        return set(decision.tool_names)
     from schemas.planner_decision import _normalized_tool_lanes
 
     return _normalized_tool_lanes(decision.tool_names)
+
+
+def _decision_contract(raw: dict):
+    if "request_kind" in raw:
+        from schemas.planner_decision_v3 import (
+            PlannerDecisionV3,
+            compile_v3_to_query_plan,
+        )
+
+        return PlannerDecisionV3, compile_v3_to_query_plan, "request_kind"
+
+    from schemas.planner_decision import PlannerDecisionV2, compile_to_query_plan
+
+    return PlannerDecisionV2, compile_to_query_plan, "intent"
 
 
 def _user_key(row: dict) -> str:
@@ -53,8 +69,6 @@ def _user_key(row: dict) -> str:
 
 
 def score(eval_path: Path, pred_path: Path) -> dict:
-    from schemas.planner_decision import PlannerDecisionV2, compile_to_query_plan
-
     golds = [json.loads(line) for line in eval_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     preds = [json.loads(line) for line in pred_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
@@ -101,23 +115,33 @@ def score(eval_path: Path, pred_path: Path) -> dict:
     lane_tp = lane_fp = lane_fn = 0
 
     for k in matched:
-        gold = PlannerDecisionV2.model_validate(json.loads(gold_by_key[k]["messages"][-1]["content"]))
+        gold_raw = json.loads(gold_by_key[k]["messages"][-1]["content"])
+        decision_model, compiler, decision_field = _decision_contract(gold_raw)
+        gold = decision_model.model_validate(gold_raw)
         raw = pred_by_key[k].get("prediction") or pred_by_key[k].get("response") or ""
-        gold_clar = gold.intent == "clarification"
+        gold_clar = (
+            gold.response_mode == "clarify"
+            if hasattr(gold, "response_mode")
+            else gold.intent == "clarification"
+        )
         try:
-            pred = PlannerDecisionV2.model_validate(json.loads(raw))
+            pred = decision_model.model_validate(json.loads(raw))
             t["schema_valid"] += 1
         except Exception:
             if gold_clar:
                 t["clar_fn"] += 1
             continue
         try:
-            compile_to_query_plan(pred)
+            compiler(pred)
             t["compilable"] += 1
         except Exception:
             pass
-        pred_clar = pred.intent == "clarification"
-        if pred.intent == gold.intent:
+        pred_clar = (
+            pred.response_mode == "clarify"
+            if hasattr(pred, "response_mode")
+            else pred.intent == "clarification"
+        )
+        if getattr(pred, decision_field) == getattr(gold, decision_field):
             t["intent_acc"] += 1
         # clarification precision/recall (over-clarification = fp)
         if gold_clar and pred_clar:
@@ -161,6 +185,13 @@ def score(eval_path: Path, pred_path: Path) -> dict:
         "schema_valid": rate("schema_valid"),
         "compilable": rate("compilable"),
         "intent_acc": rate("intent_acc"),
+        "request_kind_acc": (
+            rate("intent_acc")
+            if golds
+            and "request_kind"
+            in json.loads(golds[0]["messages"][-1]["content"])
+            else None
+        ),
         "hard_language_match": rate("hard_lang"),
         "hard_instrumental_match": rate("hard_instr"),
         "artist_set_match": rate("artist"),

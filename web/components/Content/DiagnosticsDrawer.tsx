@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { fetchCatalogDiagnostics, type CatalogDiagnostics } from '@/lib/api';
 import { theme } from '@/styles/theme';
 
@@ -15,6 +16,7 @@ export default function DiagnosticsDrawer({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<CatalogDiagnostics | null>(null);
 
@@ -24,7 +26,7 @@ export default function DiagnosticsDrawer({
       const data = await fetchCatalogDiagnostics(50);
       setReport(data);
     } catch (err: any) {
-      setReport({ success: false, error: err?.message || '曲库诊断失败' });
+      setReport({ success: false, error: err?.message || t('曲库诊断失败') });
     } finally {
       setLoading(false);
     }
@@ -54,7 +56,7 @@ export default function DiagnosticsDrawer({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.9rem' }}>
-          <h3 style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.primary }}>曲库诊断（开发工具）</h3>
+          <h3 style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.primary }}>{t('曲库诊断（开发工具）')}</h3>
           <button
             onClick={onClose}
             style={{
@@ -63,7 +65,7 @@ export default function DiagnosticsDrawer({
               padding: '0.25rem 0.6rem', fontSize: '0.76rem', cursor: 'pointer',
             }}
           >
-            关闭
+            {t('关闭')}
           </button>
         </div>
 
@@ -77,22 +79,22 @@ export default function DiagnosticsDrawer({
               color: 'rgba(238,255,248,0.9)', fontSize: '0.8rem', cursor: 'pointer',
             }}
           >
-            读取曲库分布
+            {t('读取曲库分布')}
           </button>
         )}
 
-        {loading && <div style={{ color: theme.colors.text.muted, fontSize: '0.8rem' }}>正在读取曲库分布...</div>}
+        {loading && <div style={{ color: theme.colors.text.muted, fontSize: '0.8rem' }}>{t('正在读取曲库分布...')}</div>}
 
         {!loading && report && (
           <div style={{ color: 'rgba(255,255,255,0.72)', fontSize: '0.78rem', lineHeight: 1.6 }}>
             {report.success ? (
               <>
                 <div style={{ color: '#fff', fontWeight: 650, marginBottom: '0.45rem' }}>
-                  曲库 {report.catalog?.total_songs || 0} 首 · 可播放 {report.catalog?.playable_songs || 0} 首 · 最近曝光 {report.recent_recommendations?.exposures || 0} 批
+                  {t('曲库 {v0} 首 · 可播放 {v1} 首 · 最近曝光 {v2} 批', { v0: report.catalog?.total_songs || 0, v1: report.catalog?.playable_songs || 0, v2: report.recent_recommendations?.exposures || 0 })}
                 </div>
-                <div>语言：{(report.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || '暂无'}</div>
-                <div>流派：{(report.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无'}</div>
-                <div>最近来源：{(report.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无曝光'}</div>
+                <div>{t('语言：')}{(report.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || t('暂无')}</div>
+                <div>{t('流派：')}{(report.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无')}</div>
+                <div>{t('最近来源：')}{(report.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无曝光')}</div>
                 {(report.warnings || []).length > 0 && (
                   <div style={{ marginTop: '0.5rem', color: 'rgba(255,220,160,0.92)' }}>
                     {(report.warnings || []).slice(0, 3).map(w => w.message).join('；')}
@@ -106,11 +108,11 @@ export default function DiagnosticsDrawer({
                     color: 'rgba(255,255,255,0.7)', fontSize: '0.74rem', cursor: 'pointer',
                   }}
                 >
-                  刷新
+                  {t('刷新')}
                 </button>
               </>
             ) : (
-              <div style={{ color: '#ff8f8f' }}>{report.error || '曲库诊断失败'}</div>
+              <div style={{ color: '#ff8f8f' }}>{report.error || t('曲库诊断失败')}</div>
             )}
           </div>
         )}

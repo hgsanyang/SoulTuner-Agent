@@ -4,6 +4,7 @@
 export const dynamic = 'force-dynamic';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
@@ -12,6 +13,7 @@ import ResultsDisplay from '@/components/Content/ResultsDisplay';
 import { searchMusic } from '@/lib/api';
 
 export default function SearchPage() {
+  const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +40,7 @@ export default function SearchPage() {
       setResults(songs);
     } catch (err: any) {
       console.error('搜索失败', err);
-      setError(err?.message || '搜索失败，请稍后重试');
+      setError(err?.message || t('搜索失败，请稍后重试'));
       setResults([]);
     } finally {
       setLoading(false);
@@ -63,11 +65,11 @@ export default function SearchPage() {
   return (
     <MainLayout
       onInputSubmit={handleSubmit}
-      inputPlaceholder="例如：根据周杰伦在网上为我推荐一些相似风格的歌曲；或 周杰伦 流派：流行"
+      inputPlaceholder={t("例如：根据周杰伦在网上为我推荐一些相似风格的歌曲；或 周杰伦 流派：流行")}
       inputDisabled={loading}
     >
       {!hasResults && !loading && !error && <WelcomeScreen onPromptClick={handleSubmit} />}
-      {loading && <ThinkingIndicator message="正在从网上为你查找和推荐歌曲..." />}
+      {loading && <ThinkingIndicator message={t("正在从网上为你查找和推荐歌曲...")} />}
       {error && (
         <div
           style={{

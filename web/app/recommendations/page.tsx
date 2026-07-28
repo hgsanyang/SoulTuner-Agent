@@ -4,6 +4,7 @@
 export const dynamic = 'force-dynamic';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
@@ -22,6 +23,7 @@ import {
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
+import { useAppSession } from '@/context/AppSessionContext';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 export interface ChatMessage {
@@ -40,16 +42,21 @@ export interface ChatMessage {
 // 可选模型配置
 // 模型选择已统一由设置面板（SettingsPanel）管理，不再在聊天页快捷切换
 
-const STORAGE_KEY = 'music_chat_history';
-const DIALOG_STATE_KEY = 'music_dialog_state';
-
 export default function RecommendationsPage() {
+  const { t } = useLang();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [dialogState, setDialogState] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const cancelRef = useRef<(() => void) | null>(null);
   const { playSong } = usePlayer();
   const { showToast } = useLibrary();
+  const {
+    activeProfile,
+    interactionMode,
+    sessionId,
+    hydrated,
+    storageKey,
+  } = useAppSession();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -61,54 +68,61 @@ export default function RecommendationsPage() {
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [slateFeedbackStatus, setSlateFeedbackStatus] = useState<Record<string, string>>({});
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [storageScope, setStorageScope] = useState('');
+  const currentScope = `${activeProfile.profile_id}:${interactionMode}`;
 
   // 窄屏（移动端）时左右两栏改为上下堆叠，避免推荐列表被压缩遮挡
   const isNarrow = useMediaQuery('(max-width: 900px)');
 
   // 联网搜索开关状态（持久化到 localStorage）
-  const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('music_web_search_enabled');
-      return saved !== null ? saved === 'true' : true;
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+
+  // Switching profile/mode ends the old stream and hydrates an isolated cache.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (cancelRef.current) {
+      cancelRef.current();
+      cancelRef.current = null;
     }
-    return true;
-  });
-
-
-
-  // 持久化联网搜索开关
-  useEffect(() => {
-    localStorage.setItem('music_web_search_enabled', String(webSearchEnabled));
-  }, [webSearchEnabled]);
-
-
-
-  // ── 持久化：从 localStorage 加载聊天记录 ──
-  useEffect(() => {
+    setLoading(false);
+    setSlateFeedbackStatus({});
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(storageKey('chat-history'));
       if (saved) {
         const parsed: ChatMessage[] = JSON.parse(saved);
-        // 清除 thinkingMessage（上次可能是加载中态），保留 error
         const cleaned = parsed.map(m => ({ ...m, thinkingMessage: undefined }));
         setMessages(cleaned);
+      } else {
+        setMessages([]);
       }
-      const savedState = localStorage.getItem(DIALOG_STATE_KEY);
-      if (savedState) setDialogState(JSON.parse(savedState));
-    } catch { /* 忽略解析错误 */ }
-  }, []);
+      const savedState = localStorage.getItem(storageKey('dialog-state'));
+      setDialogState(savedState ? JSON.parse(savedState) : {});
+      const savedWebSearch = localStorage.getItem(storageKey('web-search'));
+      setWebSearchEnabled(savedWebSearch === null ? true : savedWebSearch === 'true');
+    } catch {
+      setMessages([]);
+      setDialogState({});
+      setWebSearchEnabled(true);
+    }
+    setStorageScope(currentScope);
+  }, [currentScope, hydrated, storageKey]);
 
-  // ── 持久化：保存聊天记录到 localStorage（排除正在思考的消息）──
+  // Persist only after the new namespace has been hydrated.
   useEffect(() => {
+    if (storageScope !== currentScope) return;
     if (messages.length === 0) return;
     try {
-      // 只保存已完成的消息（thinkingMessage 已清除）
       const toSave = messages.filter(m => !m.thinkingMessage || m.error);
       if (toSave.length > 0) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+        localStorage.setItem(storageKey('chat-history'), JSON.stringify(toSave));
       }
     } catch { /* 忽略 */ }
-  }, [messages]);
+  }, [currentScope, messages, storageKey, storageScope]);
+
+  useEffect(() => {
+    if (storageScope !== currentScope) return;
+    localStorage.setItem(storageKey('web-search'), String(webSearchEnabled));
+  }, [currentScope, storageKey, storageScope, webSearchEnabled]);
 
   const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
@@ -190,7 +204,7 @@ export default function RecommendationsPage() {
     setMessages(prev => [
       ...prev,
       { id: userMsgId, role: 'user', content: value },
-      { id: assistantMsgId, role: 'assistant', content: '', songs: [], thinkingMessage: '开始分析你的需求...' }
+      { id: assistantMsgId, role: 'assistant', content: '', songs: [], thinkingMessage: t('开始分析你的需求...') }
     ]);
 
     // ③ 启动新的 SSE 流
@@ -200,6 +214,8 @@ export default function RecommendationsPage() {
         chatHistory: chatHistorySnapshot,
         dialogState,
         webSearchEnabled,
+        userId: activeProfile.profile_id,
+        sessionId,
       },
       (event: SSEEvent) => {
         setMessages((prev) => {
@@ -212,7 +228,7 @@ export default function RecommendationsPage() {
           switch (event.type) {
             case 'start':
             case 'thinking':
-              currentMsg.thinkingMessage = event.message || '正在思考...';
+              currentMsg.thinkingMessage = event.message || t('正在思考...');
               break;
             case 'response':
               if (event.text) {
@@ -221,7 +237,7 @@ export default function RecommendationsPage() {
               }
               break;
             case 'recommendations_start':
-              currentMsg.thinkingMessage = '正在获取推荐歌曲...';
+              currentMsg.thinkingMessage = t('正在获取推荐歌曲...');
               currentMsg.songs = [];
               currentMsg.exposureId = event.exposure_id;
               break;
@@ -244,7 +260,7 @@ export default function RecommendationsPage() {
             case 'recommendations_complete':
               break;
             case 'clarification_required':
-              currentMsg.content = event.text || '我需要再确认一下你的意思。';
+              currentMsg.content = event.text || t('我需要再确认一下你的意思。');
               currentMsg.clarificationOptions = event.clarification_options || [];
               currentMsg.thinkingMessage = undefined;
               break;
@@ -253,14 +269,14 @@ export default function RecommendationsPage() {
               if (event.type === 'complete') {
                 if (event.dialog_state) {
                   setDialogState(event.dialog_state);
-                  try { localStorage.setItem(DIALOG_STATE_KEY, JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
+                  try { localStorage.setItem(storageKey('dialog-state'), JSON.stringify(event.dialog_state)); } catch { /* ignore */ }
                 }
                 if (event.exposure_id) currentMsg.exposureId = event.exposure_id;
                 if (typeof event.intent_confidence === 'number') {
                   currentMsg.intentConfidence = event.intent_confidence;
                 }
                 if (event.clarification_options && event.clarification_options.length > 0) {
-                  currentMsg.content = currentMsg.content || '我需要再确认一下你的意思。';
+                  currentMsg.content = currentMsg.content || t('我需要再确认一下你的意思。');
                   currentMsg.clarificationOptions = event.clarification_options;
                 }
                 if (event.refinement_options && event.refinement_options.length > 0) {
@@ -276,7 +292,7 @@ export default function RecommendationsPage() {
               }
               break;
             case 'error':
-              currentMsg.error = event.error || '发生未知错误';
+              currentMsg.error = event.error || t('发生未知错误');
               currentMsg.thinkingMessage = undefined;
               setLoading(false);
               break;
@@ -289,7 +305,7 @@ export default function RecommendationsPage() {
 
     cancelRef.current = cancel;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, webSearchEnabled, dialogState]);
+  }, [activeProfile.profile_id, dialogState, messages, sessionId, storageKey, webSearchEnabled]);
 
   /** 中止当前搜索，立即允许新搜索 */
   const handleAbort = useCallback(() => {
@@ -306,7 +322,7 @@ export default function RecommendationsPage() {
         newMsgs[realIdx] = {
           ...newMsgs[realIdx],
           thinkingMessage: undefined,
-          content: newMsgs[realIdx].content || '搜索已被中止',
+          content: newMsgs[realIdx].content || t('搜索已被中止'),
         };
       }
       return newMsgs;
@@ -321,10 +337,10 @@ export default function RecommendationsPage() {
     }
     setLoading(false);
     setMessages([]);
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(storageKey('chat-history')); } catch { /* ignore */ }
     setDialogState({});
-    try { localStorage.removeItem(DIALOG_STATE_KEY); } catch { /* ignore */ }
-  }, []);
+    try { localStorage.removeItem(storageKey('dialog-state')); } catch { /* ignore */ }
+  }, [storageKey]);
 
   /** 从某条 assistant 消息中删除指定索引的歌曲 */
   const handleRemoveSong = useCallback((msgId: string, songIndex: number) => {
@@ -344,7 +360,7 @@ export default function RecommendationsPage() {
     picks?: { best: string[]; worst: string[] },
   ): Promise<boolean> => {
     if (!exposureId) {
-      showToast('还没有可评价的推荐批次');
+      showToast(t('还没有可评价的推荐批次'));
       return false;
     }
     try {
@@ -360,12 +376,12 @@ export default function RecommendationsPage() {
           web_search_enabled: webSearchEnabled,
         },
       });
-      if (!result?.success) throw new Error(result?.error || '服务端未确认');
+      if (!result?.success) throw new Error(result?.error || t('服务端未确认'));
       setSlateFeedbackStatus(prev => ({ ...prev, [exposureId]: rating }));
-      showToast('✅ 已记录这组推荐的反馈');
+      showToast(t('✅ 已记录这组推荐的反馈'));
       return true;
     } catch (err: any) {
-      showToast(`⚠️ 反馈记录失败：${err?.message || '未知错误'}`);
+      showToast(t('⚠️ 反馈记录失败：{v0}', { v0: err?.message || t('未知错误') }));
       return false;
     }
   }, [showToast, webSearchEnabled]);
@@ -438,13 +454,13 @@ export default function RecommendationsPage() {
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.8')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-          title={webSearchEnabled ? '关闭联网搜索' : '开启联网搜索'}
+          title={webSearchEnabled ? t('关闭联网搜索') : t('开启联网搜索')}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
           </svg>
-          联网搜索
+          {t('联网搜索')}
           <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: webSearchEnabled ? theme.colors.primary.accent : 'rgba(255,255,255,0.25)', transition: 'background-color 0.2s', display: 'inline-block' }} />
         </button>
       </div>
@@ -454,7 +470,7 @@ export default function RecommendationsPage() {
         {/* 曲库诊断（开发工具入口） */}
         <button
           onClick={() => setDiagnosticsOpen(true)}
-          title="曲库诊断（开发工具）"
+          title={t("曲库诊断（开发工具）")}
           style={{
             display: 'flex', alignItems: 'center', gap: '0.4rem',
             padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -469,13 +485,13 @@ export default function RecommendationsPage() {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
           </svg>
-          诊断
+          {t('诊断')}
         </button>
         {/* 返回推荐卡片按钮（仅在对话视图时显示） */}
         {hasMessages && !showWelcome && (
           <button
             onClick={handleBackToCards}
-            title="返回场景推荐卡片"
+            title={t("返回场景推荐卡片")}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -491,14 +507,14 @@ export default function RecommendationsPage() {
               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
-            推荐卡片
+            {t('推荐卡片')}
           </button>
         )}
         {/* 返回对话按钮（在卡片视图且有历史消息时显示） */}
         {hasMessages && showWelcome && (
           <button
             onClick={() => setShowWelcome(false)}
-            title="返回对话记录"
+            title={t("返回对话记录")}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -513,14 +529,14 @@ export default function RecommendationsPage() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
-            返回对话
+            {t('返回对话')}
           </button>
         )}
         {/* 新建聊天按钮 */}
         {hasMessages && (
           <button
             onClick={handleNewChat}
-            title="清空当前对话，开始新的聊天"
+            title={t("清空当前对话，开始新的聊天")}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -535,7 +551,7 @@ export default function RecommendationsPage() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            新建聊天
+            {t('新建聊天')}
           </button>
         )}
       </div>
@@ -546,7 +562,7 @@ export default function RecommendationsPage() {
     <MainLayout
       onInputSubmit={handleSubmitAndHideWelcome}
       onInputAbort={handleAbort}
-      inputPlaceholder="例如：想运动，来点劲爆的"
+      inputPlaceholder={t("例如：想运动，来点劲爆的")}
       inputIsLoading={loading}
       toolbar={toolbar}
     >
@@ -587,7 +603,7 @@ export default function RecommendationsPage() {
               }}>
                 <h2 style={{ fontSize: '1rem', fontWeight: 600, color: theme.colors.text.primary, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(29,185,84,0.7)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-                  对话记录
+                  {t('对话记录')}
                 </h2>
               </div>
               {/* 对话滚动区 */}
@@ -737,7 +753,7 @@ export default function RecommendationsPage() {
                   onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(29,185,84,0.18)')}
                   onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(20,20,20,0.86)')}
                 >
-                  跳到最新
+                  {t('跳到最新')}
                 </button>
               )}
             </div>
@@ -768,15 +784,15 @@ export default function RecommendationsPage() {
                     fontSize: '1rem', fontWeight: 600,
                     color: theme.colors.text.primary, margin: 0,
                   }}>
-                    推荐歌曲 <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({allSongs.length})</span>
+                    {t('推荐歌曲')} <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({allSongs.length})</span>
                   </h2>
                   <button
                     onClick={() => {
                       if (queueSongs.length === 0) return;
                       playSong(queueSongs[0], queueSongs);
-                      showToast(`▶ 已设置 ${queueSongs.length} 首歌为播放列表`);
+                      showToast(t('▶ 已设置 {v0} 首歌为播放列表', { v0: queueSongs.length }));
                     }}
-                    title="全部播放"
+                    title={t("全部播放")}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
                       padding: '0.3rem 0.7rem', borderRadius: '2rem',
@@ -791,7 +807,7 @@ export default function RecommendationsPage() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <polygon points="5 3 19 12 5 21 5 3" />
                     </svg>
-                    全部播放
+                    {t('全部播放')}
                   </button>
                 </div>
 

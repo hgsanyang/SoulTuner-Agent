@@ -1,6 +1,7 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import { useState, useEffect } from 'react';
 
 function useCurrentTime() {
@@ -67,6 +68,7 @@ export default function WelcomeScreen({
   subtitle = '说一句话，交给它去找歌',
   onPromptClick,
 }: WelcomeScreenProps) {
+  const { t } = useLang();
   const greeting = getGreeting();
   const currentTime = useCurrentTime();
   const [hoveredCard, setHoveredCard] = useState<number | null>(null);
@@ -86,7 +88,7 @@ export default function WelcomeScreen({
           animation: 'fadeUp 0.6s ease-out',
         }}>
           <span style={{ fontSize: '1.2rem' }}>{greeting.emoji}</span>
-          {greeting.text}
+          {t(greeting.text)}
           {currentTime && (
             <span style={{
               marginLeft: '0.4rem',
@@ -117,7 +119,7 @@ export default function WelcomeScreen({
             backgroundColor: theme.colors.primary.accent,
             boxShadow: `0 0 10px ${theme.colors.primary.accent}`,
           }} />
-          {badgeLabel}
+          {t(badgeLabel)}
         </div>
 
         {/* ── Hero Text ── */}
@@ -126,19 +128,19 @@ export default function WelcomeScreen({
             margin: 0, fontSize: '2.6rem', lineHeight: 1.2, fontWeight: 800,
             color: theme.colors.text.primary, letterSpacing: '-0.02em',
           }}>
-            {title}
+            {t(title)}
           </h1>
           <h2 style={{
             margin: '0.4rem 0 1rem', fontSize: '1.5rem', fontWeight: 700,
             color: theme.colors.primary.accent, letterSpacing: '-0.01em',
           }}>
-            {subtitle}
+            {t(subtitle)}
           </h2>
           <p style={{
             margin: '0 auto', fontSize: '1rem', lineHeight: 1.6,
             color: theme.colors.text.secondary, maxWidth: '480px',
           }}>
-            {description}
+            {t(description)}
           </p>
         </div>
 
@@ -156,7 +158,7 @@ export default function WelcomeScreen({
               fontSize: '0.78rem', color: theme.colors.text.secondary,
             }}>
               <span style={{ fontSize: '0.85rem' }}>{cap.icon}</span>
-              {cap.label}
+              {t(cap.label)}
             </div>
           ))}
         </div>
@@ -171,7 +173,7 @@ export default function WelcomeScreen({
             display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'center',
           }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(29,185,84,0.5)" strokeWidth="2" strokeLinecap="round"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" /></svg>
-            选择一个场景，快速开始
+            {t('选择一个场景，快速开始')}
           </div>
 
           <div style={{
@@ -211,13 +213,13 @@ export default function WelcomeScreen({
                     color: theme.colors.text.primary,
                     marginBottom: '0.25rem',
                   }}>
-                    {card.title}
+                    {t(card.title)}
                   </div>
                   <div style={{
                     fontSize: '0.8rem', color: theme.colors.text.muted,
                     lineHeight: 1.4,
                   }}>
-                    {card.desc}
+                    {t(card.desc)}
                   </div>
                 </div>
               </div>

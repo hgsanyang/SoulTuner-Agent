@@ -464,6 +464,9 @@ class MusicRecommendationGraph:
                         retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
                         retrieval_plan_dict["_user_profile"] = _profile_text
                         retrieval_plan_dict["_user_id"] = user_id
+                        # 检索层读的是 _session_id：只写 _user_id 会让"同会话抑制"
+                        # 静默退化成"同一用户两小时内全局抑制"。
+                        retrieval_plan_dict["_session_id"] = str(state.get("session_id") or "")
                         logger.info(
                             "[DST] PlanDelta 已确定性应用: mode=%s operations=%d",
                             plan_delta.planner_mode,
@@ -642,6 +645,7 @@ class MusicRecommendationGraph:
             retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
             retrieval_plan_dict["_user_profile"] = _profile_text  # 画像文本供 HyDE 参考
             retrieval_plan_dict["_user_id"] = user_id
+            retrieval_plan_dict["_session_id"] = str(state.get("session_id") or "")
 
             try:
                 log_planning_feedback(

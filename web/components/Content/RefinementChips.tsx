@@ -1,6 +1,7 @@
 'use client';
 
 import type { RefinementOption } from '@/lib/api';
+import { useLang } from '@/context/LanguageContext';
 
 /**
  * 非阻塞微调方向 chips：显示在最新 assistant 回复下方。
@@ -17,6 +18,7 @@ export default function RefinementChips({
   disabled?: boolean;
   onSelect: (prompt: string) => void;
 }) {
+  const { t } = useLang();
   if (!options || options.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.75rem' }}>
@@ -51,7 +53,7 @@ export default function RefinementChips({
             e.currentTarget.style.borderColor = 'rgba(91, 214, 170, 0.34)';
           }}
         >
-          {option.label}
+          {t(option.label)}
         </button>
       ))}
     </div>

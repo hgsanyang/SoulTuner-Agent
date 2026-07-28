@@ -110,6 +110,7 @@ data/pipeline/mtg_metadata/*.tsv
 
 # SFT 训练数据（大文件，通过其他渠道分发）
 data/sft/*.jsonl
+data/sft/reviews/
 data/sft/*.json
 data/sft/planner_sft_training/
 

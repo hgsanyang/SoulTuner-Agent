@@ -4,6 +4,7 @@
 export const dynamic = 'force-dynamic';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
@@ -12,6 +13,7 @@ import { getMockRecommendations, mockDelay } from '@/lib/mockData';
 import { theme } from '@/styles/theme';
 
 function PlaylistWelcome({ onPromptClick }: { onPromptClick: (prompt: string) => void }) {
+  const { t } = useLang();
   const prompts = [
     '创建一个适合夜跑的电子歌单',
     '做一张周末做饭听的轻快中文歌单',
@@ -26,10 +28,10 @@ function PlaylistWelcome({ onPromptClick }: { onPromptClick: (prompt: string) =>
           PLAYLIST BUILDER
         </p>
         <h1 style={{ margin: 0, fontSize: 'clamp(2rem, 7vw, 4.5rem)', lineHeight: 1, fontWeight: 800 }}>
-          风格编排器
+          {t('风格编排器')}
         </h1>
         <p style={{ margin: 0, maxWidth: '38rem', color: theme.colors.text.secondary, fontSize: '1rem', lineHeight: 1.7 }}>
-          用一句话定制你的私人歌单，SoulTuner 会按场景、语言、情绪走向和避雷偏好组织曲目。
+          {t('用一句话定制你的私人歌单，SoulTuner 会按场景、语言、情绪走向和避雷偏好组织曲目。')}
         </p>
       </div>
 
@@ -71,6 +73,7 @@ function PlaylistWelcome({ onPromptClick }: { onPromptClick: (prompt: string) =>
 }
 
 export default function PlaylistPage() {
+  const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ response?: string; recommendations?: any[] } | null>(null);
   const router = useRouter();
@@ -87,12 +90,12 @@ export default function PlaylistPage() {
 
       const mockData = getMockRecommendations(value);
       setResult({
-        response: `已为你创建歌单：${value}\n\n${mockData.response}\n\n歌单已保存，你可以随时查看和编辑。`,
+        response: t('已为你创建歌单：{v0}\n\n{v1}\n\n歌单已保存，你可以随时查看和编辑。', { v0: value, v1: mockData.response }),
         recommendations: mockData.recommendations,
       });
     } catch (error) {
       setResult({
-        response: '创建歌单失败，请稍后重试',
+        response: t('创建歌单失败，请稍后重试'),
       });
       console.error(error);
     } finally {
@@ -109,7 +112,7 @@ export default function PlaylistPage() {
   return (
     <MainLayout
       onInputSubmit={handleSubmit}
-      inputPlaceholder="例如：创建一个适合运动的歌单"
+      inputPlaceholder={t("例如：创建一个适合运动的歌单")}
       inputDisabled={loading}
     >
       {!result && !loading && <PlaylistWelcome onPromptClick={handleSubmit} />}

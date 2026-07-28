@@ -20,19 +20,20 @@ def test_valid_v3_decisions():
     PlannerDecisionV3(request_kind="information", tool_names=["web"])
     # a fact already in the catalog/knowledge cards need not hit the network
     PlannerDecisionV3(request_kind="information", tool_names=["graph"])
-    # no registered tool executes these yet -> they carry no lane
-    PlannerDecisionV3(request_kind="acquisition")
-    PlannerDecisionV3(request_kind="library")
+    PlannerDecisionV3(request_kind="acquisition", tool_names=["web", "ingest"])
+    PlannerDecisionV3(request_kind="library", tool_names=["library"])
     PlannerDecisionV3(request_kind="conversation")
     PlannerDecisionV3(request_kind="recommendation", response_mode="clarify",
                       clarification="你想要哪种?")
 
 
-def test_not_yet_executable_kinds_carry_no_lane():
+def test_library_and_acquisition_require_their_registered_lanes():
     with pytest.raises(ValueError):
         PlannerDecisionV3(request_kind="acquisition", tool_names=["web"])
     with pytest.raises(ValueError):
         PlannerDecisionV3(request_kind="library", tool_names=["graph"])
+    with pytest.raises(ValueError):
+        PlannerDecisionV3(request_kind="library")
 
 
 def test_clarify_is_an_action_not_a_kind():

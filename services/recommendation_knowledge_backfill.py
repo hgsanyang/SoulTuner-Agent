@@ -113,8 +113,12 @@ async def _run_backfill(songs: list[dict[str, str]]) -> None:
 def schedule_recommendation_knowledge_backfill(recommendations: Iterable[Any]) -> dict[str, Any]:
     """Schedule non-blocking knowledge enrichment for the current slate."""
 
+    from services.runtime_context import shared_catalog_side_effects_allowed
+
     if settings.eval_disable_side_effects or not settings.knowledge_background_enrichment_enabled:
         return {"scheduled": 0, "reason": "disabled"}
+    if not shared_catalog_side_effects_allowed():
+        return {"scheduled": 0, "reason": "runtime_context"}
     songs = select_missing_knowledge_songs(recommendations)
     if not songs:
         return {"scheduled": 0, "reason": "complete"}

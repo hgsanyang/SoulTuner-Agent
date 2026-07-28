@@ -260,8 +260,8 @@ def save_results(all_results: List[Dict]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="歌词自动标签提取器（API 版）")
-    parser.add_argument("--provider", default="siliconflow",
-                        help="LLM 厂商: siliconflow, dashscope, google, deepseek, zhipu (默认: siliconflow)")
+    parser.add_argument("--provider", default="dashscope",
+                        help="LLM 厂商: dashscope, siliconflow, google, deepseek, zhipu (默认: dashscope)")
     parser.add_argument("--model", default=None,
                         help="指定模型名称（留空则使用厂商默认模型）")
     parser.add_argument("--temperature", type=float, default=0.3,

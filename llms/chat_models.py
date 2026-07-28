@@ -28,6 +28,25 @@ def _settings_value(name: str, default):
     return getattr(settings, name, default)
 
 
+# Providers whose API can actually search the web during generation.
+# THE single source of truth — every caller must ask here rather than repeating
+# a provider name inline. Adding a provider to this set is a claim that its API
+# really searches; it is not a preference.
+WEB_SEARCH_PROVIDERS = frozenset({"dashscope"})
+
+
+def provider_supports_web_search(provider: str) -> bool:
+    """Whether this provider's API performs a real web search.
+
+    Matters more than it looks: a model without search still answers a "find me
+    songs, and cite your evidence" prompt — fluently, from training memory, with
+    evidence that reads exactly like a search result. The output is then labelled
+    online in the UI. So callers must check this BEFORE running an
+    evidence-driven lane, not just pass a flag and hope.
+    """
+    return str(provider or "").strip().lower() in WEB_SEARCH_PROVIDERS
+
+
 def _chat_openai_extra_body(provider: str, target_model: str) -> dict:
     extra_body = {}
     is_qwen_family = any(kw in target_model.lower() for kw in ["qwen3", "qwen-3", "qwen2.5"])
@@ -76,8 +95,17 @@ def get_chat_model(
         token_budget = max_tokens if max_tokens is not None else 4000
         chat_kwargs = {}
         extra_body = _chat_openai_extra_body(provider_key, target_model)
-        if enable_web_search and provider_key == "dashscope":
-            extra_body = {**extra_body, "enable_search": True}
+        if enable_web_search:
+            if provider_supports_web_search(provider_key):
+                extra_body = {**extra_body, "enable_search": True}
+                logger.info("[LLM] 已开启原生联网搜索 (provider=%s, model=%s)",
+                            provider_key, target_model)
+            else:
+                # Loud on purpose. Silently dropping the flag is how a lane ends
+                # up presenting a model's recollection as a search result.
+                logger.warning(
+                    "[LLM] provider=%s 不支持原生联网搜索，enable_search 未生效；"
+                    "调用方不应把本次输出当作联网结果", provider_key)
         if extra_body:
             chat_kwargs["extra_body"] = extra_body
         return ChatOpenAI(

@@ -1,7 +1,9 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { sendUserEvent, fetchLikedSongs, fetchDislikedSongs, removeDislike as apiRemoveDislike } from '@/lib/api';
+import { useAppSession } from '@/context/AppSessionContext';
+import { useLang } from '@/context/LanguageContext';
 
 export interface LikedSong {
     id: string;
@@ -66,37 +68,64 @@ const INITIAL_COLLECTIONS: Collection[] = [
 const LibraryContext = createContext<LibraryContextType | undefined>(undefined);
 
 export function LibraryProvider({ children }: { children: React.ReactNode }) {
+    const { t } = useLang();
+    const {
+        activeProfile,
+        interactionMode,
+        hydrated,
+        storageKey,
+    } = useAppSession();
     const [likedSongs, setLikedSongs] = useState<LikedSong[]>([]);
     const [dislikedSongs, setDislikedSongs] = useState<DislikedSong[]>([]);
     const [collections, setCollections] = useState<Collection[]>(INITIAL_COLLECTIONS);
     const [toast, setToast] = useState<string | null>(null);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [storageScope, setStorageScope] = useState('');
+    const currentScope = `${activeProfile.profile_id}:${interactionMode}`;
+    const currentScopeRef = useRef(currentScope);
+    const syncGenerationRef = useRef(0);
 
-    // Load from local storage first (fast startup)
+    // Reload the isolated browser cache whenever profile or interaction mode changes.
     useEffect(() => {
+        if (!hydrated) return;
+        currentScopeRef.current = currentScope;
+        syncGenerationRef.current += 1;
+        setIsSyncing(false);
         try {
-            const stored = localStorage.getItem('music_likes');
-            if (stored) setLikedSongs(JSON.parse(stored));
-            const storedCols = localStorage.getItem('music_collections');
-            if (storedCols) setCollections(JSON.parse(storedCols));
-            const storedDislikes = localStorage.getItem('music_dislikes');
-            if (storedDislikes) setDislikedSongs(JSON.parse(storedDislikes));
+            const stored = localStorage.getItem(storageKey('likes'));
+            setLikedSongs(stored ? JSON.parse(stored) : []);
+            const storedCols = localStorage.getItem(storageKey('collections'));
+            setCollections(storedCols ? JSON.parse(storedCols) : INITIAL_COLLECTIONS);
+            const storedDislikes = localStorage.getItem(storageKey('dislikes'));
+            setDislikedSongs(storedDislikes ? JSON.parse(storedDislikes) : []);
         } catch (e) {
             console.error('Failed to load from local storage', e);
+            setLikedSongs([]);
+            setDislikedSongs([]);
+            setCollections(INITIAL_COLLECTIONS);
         }
-    }, []);
+        setStorageScope(currentScope);
+    }, [currentScope, hydrated, storageKey]);
 
     // Then sync from backend (authoritative source)
     // Backend (Neo4j) is the single source of truth for LIKES/DISLIKES.
     // On sync, we REPLACE local state with backend data to ensure
     // unlike/undislike operations are properly reflected after refresh/restart.
     const syncFromBackend = useCallback(async () => {
+        const requestedScope = currentScope;
+        const generation = ++syncGenerationRef.current;
         setIsSyncing(true);
         try {
             const [backendLiked, backendDisliked] = await Promise.all([
                 fetchLikedSongs(50),
                 fetchDislikedSongs(50),
             ]);
+            if (
+                generation !== syncGenerationRef.current
+                || requestedScope !== currentScopeRef.current
+            ) {
+                return;
+            }
 
             // ★ Replace liked songs with backend data (authoritative)
             // Previously this only appended, causing unliked songs to persist in localStorage
@@ -126,32 +155,41 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         } catch (err) {
             console.warn('[Sync] 后端同步失败，保留本地缓存:', err);
         } finally {
-            setIsSyncing(false);
+            if (
+                generation === syncGenerationRef.current
+                && requestedScope === currentScopeRef.current
+            ) {
+                setIsSyncing(false);
+            }
         }
-    }, []);
+    }, [currentScope]);
 
-    // Auto-sync on mount
+    // Re-sync the selected profile/mode after switching sessions.
     useEffect(() => {
+        if (!hydrated) return;
         syncFromBackend();
-    }, [syncFromBackend]);
+    }, [hydrated, syncFromBackend]);
 
     // Save likes to local storage
     useEffect(() => {
-        try { localStorage.setItem('music_likes', JSON.stringify(likedSongs)); }
+        if (storageScope !== currentScope) return;
+        try { localStorage.setItem(storageKey('likes'), JSON.stringify(likedSongs)); }
         catch (e) { console.error('Failed to save liked songs', e); }
-    }, [likedSongs]);
+    }, [currentScope, likedSongs, storageKey, storageScope]);
 
     // Save dislikes to local storage
     useEffect(() => {
-        try { localStorage.setItem('music_dislikes', JSON.stringify(dislikedSongs)); }
+        if (storageScope !== currentScope) return;
+        try { localStorage.setItem(storageKey('dislikes'), JSON.stringify(dislikedSongs)); }
         catch (e) { console.error('Failed to save disliked songs', e); }
-    }, [dislikedSongs]);
+    }, [currentScope, dislikedSongs, storageKey, storageScope]);
 
     // Save collections to local storage
     useEffect(() => {
-        try { localStorage.setItem('music_collections', JSON.stringify(collections)); }
+        if (storageScope !== currentScope) return;
+        try { localStorage.setItem(storageKey('collections'), JSON.stringify(collections)); }
         catch (e) { console.error('Failed to save collections', e); }
-    }, [collections]);
+    }, [collections, currentScope, storageKey, storageScope]);
 
     const showToast = (msg: string) => {
         setToast(msg);
@@ -182,7 +220,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
                 });
                 return prev.filter(s => s.id !== id);
             }
-            showToast(`♥ 已添加到「我的喜欢」`);
+            showToast(t('♥ 已添加到「我的喜欢」'));
             sendUserEvent('like', song.title, song.artist, {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,
@@ -201,12 +239,12 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
             if (existing) {
                 // 已经是不喜欢 → 撤销
                 apiRemoveDislike(song.title, song.artist);
-                showToast(`已撤销「不喜欢」`);
+                showToast(t('已撤销「不喜欢」'));
                 return prev.filter(s => s.id !== id);
             }
             // 标记为不喜欢
             sendUserEvent('dislike', song.title, song.artist);
-            showToast(`👎 已标记为「不喜欢」，后续推荐将过滤此歌曲`);
+            showToast(t('👎 已标记为「不喜欢」，后续推荐将过滤此歌曲'));
             // 同时从 likes 中移除
             setLikedSongs(lp => lp.filter(s => s.id !== id));
             return [{ ...song, id, coverUrl: song.coverUrl, dislikedAt: Date.now() }, ...prev];
@@ -218,7 +256,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         const ok = await apiRemoveDislike(title, artist);
         if (ok) {
             setDislikedSongs(prev => prev.filter(s => s.id !== id));
-            showToast(`✓ 已从「不喜欢」列表中移除`);
+            showToast(t('✓ 已从「不喜欢」列表中移除'));
         }
     };
 
@@ -233,7 +271,7 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         setCollections(prev => prev.map(c => {
             if (c.id !== collectionId) return c;
             if (c.songs.some(s => s.id === id)) return c; // already in
-            showToast(`✓ 已添加到「${c.name}」`);
+            showToast(t('✓ 已添加到「{v0}」', { v0: t(c.name) }));
             sendUserEvent('save', song.title, song.artist, {
                 exposureId: song.exposure_id,
                 position: song.exposure_rank,

@@ -1,6 +1,7 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 
 interface HeaderProps {
   onMenuToggle?: () => void;
@@ -8,6 +9,7 @@ interface HeaderProps {
 }
 
 export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) {
+  const { t } = useLang();
   return (
     <header
       style={{
@@ -30,7 +32,7 @@ export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) 
         {onMenuToggle && (
           <button
             type="button"
-            aria-label="打开导航"
+            aria-label={t("打开导航")}
             onClick={onMenuToggle}
             style={{
               width: '40px',
@@ -104,7 +106,7 @@ export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) 
                   fontSize: '0.85rem',
                 }}
               >
-                懂你此刻的情绪 · 沉浸式专属歌单生成器
+                {t('懂你此刻的情绪 · 沉浸式专属歌单生成器')}
               </p>
             </>
           )}
@@ -138,7 +140,7 @@ export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) 
           onMouseOver={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.15)')}
           onMouseOut={(e) => (e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)')}
         >
-          立即使用
+          {t('立即使用')}
           <svg
             width="16"
             height="16"

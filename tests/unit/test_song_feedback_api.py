@@ -34,7 +34,8 @@ def client(tmp_path, monkeypatch):
 
 def _write_exposure(fl, tmp_path, exposure_id="exp1"):
     row = {
-        "type": "exposure", "exposure_id": exposure_id, "ts": 1784989800000,
+        "type": "exposure", "exposure_id": exposure_id, "user_id": "local_admin",
+        "ts": 1784989800000,
         "policy_version": "rank-v7",
         "items": [
             {"music_id": "m1", "title": "再见", "artist": "张震岳", "rank": 1,
@@ -60,6 +61,34 @@ def test_song_not_in_exposure_rejected(client):
     resp = api.post("/api/song-feedback", json={"exposure_id": "exp1", "music_id": "ghost",
                                                 "title": "不存在", "context_fit": "off"})
     assert resp.status_code == 422
+
+
+def test_feedback_cannot_cross_profile_or_mode(client):
+    api, tmp_path, fl = client
+    from schemas.runtime_context import build_runtime_context
+    from services.runtime_context import runtime_context_scope
+
+    owner = build_runtime_context(profile_id="alice", interaction_mode="personal")
+    with runtime_context_scope(owner):
+        fl.log_exposure(
+            query="q",
+            user_id=owner.effective_user_id,
+            request_id="owned",
+            recommendations=[{"title": "A", "artist": "X", "music_id": "m1"}],
+        )
+
+    cross_user = api.post(
+        "/api/song-feedback",
+        headers={"X-SoulTuner-Profile": "bob", "X-SoulTuner-Mode": "personal"},
+        json={"exposure_id": "owned", "music_id": "m1", "context_fit": "off"},
+    )
+    cross_mode = api.post(
+        "/api/song-feedback",
+        headers={"X-SoulTuner-Profile": "alice", "X-SoulTuner-Mode": "developer"},
+        json={"exposure_id": "owned", "music_id": "m1", "context_fit": "off"},
+    )
+    assert cross_user.status_code == 403
+    assert cross_mode.status_code == 403
 
 
 def test_server_backfills_policy_truth(client):
@@ -142,8 +171,11 @@ def test_feedback_works_against_provisional_exposure(client):
     api, tmp_path, fl = client
     fl.log_exposure(query="q", user_id="u", request_id="expP",
                     recommendations=[{"title": "再见", "music_id": "m1"}], provisional=True)
-    resp = api.post("/api/song-feedback", json={"exposure_id": "expP", "music_id": "m1",
-                                                "context_fit": "fits"})
+    resp = api.post(
+        "/api/song-feedback",
+        headers={"X-SoulTuner-Profile": "u", "X-SoulTuner-Mode": "personal"},
+        json={"exposure_id": "expP", "music_id": "m1", "context_fit": "fits"},
+    )
     assert resp.status_code == 200, resp.text
 
 

@@ -37,6 +37,8 @@ def test_migration_succeeds_and_preserves_every_unique_record(feedback_dir, caps
     rc = _run(mig)
     assert rc == 0
     assert fs.counts()["slate_feedback"] == 5
+    assert all(row["interaction_mode"] == "legacy" for row in fs.load_slate_feedback())
+    assert all(row["training_eligible"] is False for row in fs.load_slate_feedback())
 
 
 def test_migration_fails_when_a_write_is_incomplete(feedback_dir, monkeypatch):

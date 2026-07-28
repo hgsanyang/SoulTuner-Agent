@@ -2,8 +2,10 @@
 
 import { ReactNode, useState } from 'react';
 import NavItem from './NavItem';
+import { useLang } from '@/context/LanguageContext';
 import SettingsPanel from '@/components/Settings/SettingsPanel';
 import UserProfilePanel from '@/components/Profile/UserProfilePanel';
+import ProfileSwitcher from '@/components/Profile/ProfileSwitcher';
 import { theme } from '@/styles/theme';
 
 interface NavItemConfig {
@@ -149,6 +151,7 @@ const navGroups: NavGroup[] = [
 ];
 
 export default function Sidebar({ isMobile = false, isOpen = true, onClose }: SidebarProps) {
+  const { t } = useLang();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -207,7 +210,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
             cursor: 'pointer',
           }}
         >
-          关闭
+          {t('关闭')}
         </button>
       )}
       <div
@@ -215,7 +218,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
           display: 'flex',
           flexDirection: 'column',
           gap: '1rem',
-          marginBottom: '2rem',
+          marginBottom: '1rem',
           flexShrink: 0,
         }}
       >
@@ -249,6 +252,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
             <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>AI Powered Studio</span>
           </div>
         </div>
+        <ProfileSwitcher />
       </div>
 
       <nav
@@ -267,7 +271,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
           <div key={group.title} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <div style={{ paddingLeft: '0.5rem', marginBottom: '0.2rem' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>
-                {group.title}
+                {t(group.title)}
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
@@ -322,7 +326,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
             <circle cx="12" cy="7" r="4" />
           </svg>
-          我的画像
+          {t('我的画像')}
         </button>
 
         {/* ⚙️ 设置按钮 */}
@@ -355,7 +359,7 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
-          系统设置
+          {t('系统设置')}
         </button>
       </div>
 

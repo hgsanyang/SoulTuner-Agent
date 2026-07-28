@@ -42,6 +42,15 @@ def _dependency_songs(dependencies: Mapping[str, ToolObservation]) -> list[dict[
     return songs
 
 
+def _song_source_id(song: Mapping[str, Any]) -> str:
+    return str(
+        song.get("music_id")
+        or song.get("id")
+        or song.get("source_id")
+        or f"{song.get('title')}::{song.get('artist')}"
+    ).strip()
+
+
 def build_music_tool_registry(
     *,
     user_id: str,
@@ -157,6 +166,126 @@ def build_music_tool_registry(
             "error": result.error,
         }
 
+    async def read_library(arguments: dict[str, Any], _deps: dict[str, ToolObservation]) -> Any:
+        """Read a bounded user collection without accepting identity from the plan."""
+
+        from retrieval.neo4j_client import get_neo4j_client
+
+        relation_by_collection = {
+            "liked": "LIKES",
+            "saved": "SAVES",
+            "disliked": "DISLIKES",
+            "recent": "LISTENED_TO",
+        }
+        collection = str(arguments.get("collection") or "liked")
+        relation = relation_by_collection[collection]
+        text_query = str(arguments.get("query") or "").strip()
+        cypher = f"""
+        MATCH (u:User {{id: $user_id}})-[r:{relation}]->(s:Song)
+        OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        WHERE $query = ''
+           OR toLower(s.title) CONTAINS toLower($query)
+           OR toLower(coalesce(a.name, s.artist, '')) CONTAINS toLower($query)
+        RETURN s.music_id AS music_id,
+               s.title AS title,
+               coalesce(a.name, s.artist, '') AS artist,
+               s.album AS album,
+               s.audio_url AS audio_url,
+               s.cover_url AS cover_url,
+               coalesce(r.updated_at, r.created_at, 0) AS interaction_at
+        ORDER BY interaction_at DESC
+        LIMIT $limit
+        """
+        client = get_neo4j_client()
+        records = await asyncio.to_thread(
+            client.execute_query,
+            cypher,
+            {
+                "user_id": user_id,
+                "query": text_query,
+                "limit": int(arguments.get("limit") or 30),
+            },
+        )
+        songs = [
+            {
+                "music_id": record.get("music_id"),
+                "title": record.get("title") or "",
+                "artist": record.get("artist") or "",
+                "album": record.get("album") or "",
+                "audio_url": record.get("audio_url") or "",
+                "cover_url": record.get("cover_url") or "",
+                "interaction_at": record.get("interaction_at") or 0,
+            }
+            for record in records
+        ]
+        return {
+            "songs": songs,
+            "source": "library",
+            "collection": collection,
+            "metadata": {"read_only": True, "user_bound_by_server": True},
+        }
+
+    async def stage_ingest(
+        arguments: dict[str, Any],
+        dependencies: dict[str, ToolObservation],
+    ) -> Any:
+        """Validate an ingest proposal in shadow mode; never enqueue or persist it."""
+
+        requested = {str(value).strip() for value in arguments.get("candidate_source_ids") or []}
+        candidates = _dependency_songs(dependencies)
+        if requested:
+            candidates = [song for song in candidates if _song_source_id(song) in requested]
+
+        accepted: list[dict[str, Any]] = []
+        rejected: list[dict[str, str]] = []
+        for song in candidates:
+            source_id = _song_source_id(song)
+            title = str(song.get("title") or song.get("name") or "").strip()
+            artist = str(song.get("artist") or "").strip()
+            audio_pointer = str(
+                song.get("audio_url")
+                or song.get("play_url")
+                or song.get("preview_url")
+                or song.get("file_basename")
+                or ""
+            ).strip()
+            missing = [
+                field
+                for field, value in (("title", title), ("artist", artist), ("audio_pointer", audio_pointer))
+                if not value
+            ]
+            if missing:
+                rejected.append(
+                    {
+                        "source_id": source_id,
+                        "reason": f"missing {', '.join(missing)}",
+                    }
+                )
+                continue
+            accepted.append(
+                {
+                    "source_id": source_id,
+                    "title": title,
+                    "artist": artist,
+                    "audio_pointer": audio_pointer,
+                    "preserve_audio": bool(arguments.get("preserve_audio")),
+                }
+            )
+
+        return {
+            "shadow": True,
+            "side_effects_applied": False,
+            "would_stage": accepted,
+            "rejected": rejected,
+            "reason": str(arguments.get("reason") or ""),
+            "metadata": {
+                "shadow": True,
+                "side_effects_applied": False,
+                "needs_confirmation": bool(accepted),
+                "needs_replan": not bool(accepted),
+            },
+        }
+
     registry.register(ToolName.RETRIEVE_MEMORY, retrieve_memory)
     registry.register(ToolName.SEARCH_GRAPH, search_graph)
     registry.register(ToolName.SEARCH_AUDIO, search_audio)
@@ -164,4 +293,6 @@ def build_music_tool_registry(
     registry.register(ToolName.SEARCH_EXTERNAL_MUSIC, search_external)
     registry.register(ToolName.RESOLVE_PLAYABLE_TRACKS, resolve_playable)
     registry.register(ToolName.COMMIT_MEMORY_DELTA, commit_memory)
+    registry.register(ToolName.READ_LIBRARY, read_library)
+    registry.register(ToolName.STAGE_INGEST, stage_ingest)
     return registry

@@ -30,7 +30,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-FEEDBACK_SCHEMA_VERSION = "feedback_events_v1"
+FEEDBACK_SCHEMA_VERSION = "feedback_events_v2"
 
 TasteSignal = Literal["like", "save", "dislike", "block"]
 ContextFit = Literal["fits", "partial", "off"]
@@ -110,6 +110,10 @@ class SongFeedback(_Strict):
     title: str = ""
     artist: str = ""
     user_id: str = "local_admin"
+    profile_id: str = "local_admin"
+    interaction_mode: Literal["personal", "developer", "legacy"] = "personal"
+    training_eligible: bool = True
+    data_purpose: str = "ranking"
 
     taste: Optional[TasteSignal] = None       # long-term preference (purpose 1)
     context_fit: Optional[ContextFit] = None  # this slate, this context (purpose 2)
@@ -130,6 +134,10 @@ class SlateFeedback(_Strict):
     schema_version: str = FEEDBACK_SCHEMA_VERSION
     exposure_id: str = ""
     user_id: str = "local_admin"
+    profile_id: str = "local_admin"
+    interaction_mode: Literal["personal", "developer", "legacy"] = "personal"
+    training_eligible: bool = True
+    data_purpose: str = "ranking"
     overall: Optional[ContextFit] = None
     best_music_ids: list[str] = Field(default_factory=list, max_length=3)
     worst_music_ids: list[str] = Field(default_factory=list, max_length=3)

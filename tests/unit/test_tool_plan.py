@@ -26,6 +26,69 @@ def test_tool_plan_rejects_unknown_arguments():
         )
 
 
+def test_tool_plan_v11_adds_bounded_library_and_shadow_ingest_tools():
+    plan = ToolPlan.model_validate(
+        {
+            "request_mode": "library",
+            "tool_calls": [
+                {
+                    "id": "library",
+                    "name": "read_library",
+                    "arguments": {"collection": "liked", "query": "雨天", "limit": 20},
+                }
+            ],
+        }
+    )
+    assert plan.version == "1.1"
+    assert plan.tool_calls[0].arguments["collection"] == "liked"
+
+    acquisition = ToolPlan.model_validate(
+        {
+            "request_mode": "acquisition",
+            "tool_calls": [
+                {
+                    "id": "stage",
+                    "name": "stage_ingest",
+                    "arguments": {"mode": "preview", "preserve_audio": False},
+                }
+            ],
+        }
+    )
+    assert acquisition.tool_calls[0].arguments["mode"] == "preview"
+
+
+def test_tool_plan_v10_cannot_claim_v11_capabilities():
+    with pytest.raises(ValueError, match="require ToolPlan version 1.1"):
+        ToolPlan.model_validate(
+            {
+                "version": "1.0",
+                "request_mode": "library",
+                "tool_calls": [
+                    {
+                        "id": "library",
+                        "name": "read_library",
+                        "arguments": {},
+                    }
+                ],
+            }
+        )
+
+
+def test_stage_ingest_rejects_commit_mode_and_extra_write_arguments():
+    with pytest.raises(ValueError):
+        ToolCall(
+            id="stage",
+            name=ToolName.STAGE_INGEST,
+            arguments={"mode": "commit"},
+        )
+    with pytest.raises(ValueError):
+        ToolCall(
+            id="stage",
+            name=ToolName.STAGE_INGEST,
+            arguments={"enqueue": True},
+        )
+
+
 def test_tool_plan_alignment_detects_missing_audio_tool():
     plan = MusicQueryPlan(
         intent_type="vector_search",

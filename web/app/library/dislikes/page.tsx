@@ -7,10 +7,12 @@
  */
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { useRouter } from 'next/navigation';
 
 export default function DislikesPage() {
+  const { t } = useLang();
     const { dislikedSongs, undoDislike, syncFromBackend, isSyncing } = useLibrary();
     const router = useRouter();
 
@@ -41,7 +43,7 @@ export default function DislikesPage() {
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polyline points="15 18 9 12 15 6" />
                 </svg>
-                返回
+                {t('返回')}
             </button>
 
             {/* 标题区 */}
@@ -65,14 +67,14 @@ export default function DislikesPage() {
                 </div>
                 <div>
                     <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>
-                        屏蔽列表
+                        {t('屏蔽列表')}
                     </p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '3rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
-                        不喜欢管理
+                        {t('不喜欢管理')}
                     </h1>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                            共 {dislikedSongs.length} 首被屏蔽歌曲
+                            {t('共 {v0} 首被屏蔽歌曲', { v0: dislikedSongs.length })}
                         </p>
                         <button
                             onClick={syncFromBackend}
@@ -89,11 +91,11 @@ export default function DislikesPage() {
                                 opacity: isSyncing ? 0.5 : 1,
                             }}
                         >
-                            {isSyncing ? '同步中...' : '🔄 从后端同步'}
+                            {isSyncing ? t('同步中...') : t('🔄 从后端同步')}
                         </button>
                     </div>
                     <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: theme.colors.text.muted }}>
-                        这些歌曲将不会出现在推荐结果中。点击「撤销」可恢复。
+                        {t('这些歌曲将不会出现在推荐结果中。点击「撤销」可恢复。')}
                     </p>
                 </div>
             </div>
@@ -130,9 +132,9 @@ export default function DislikesPage() {
                             <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
                         </svg>
                     </div>
-                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>没有屏蔽的歌曲</h3>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 600 }}>{t('没有屏蔽的歌曲')}</h3>
                     <p style={{ margin: 0, fontSize: '0.95rem', color: theme.colors.text.muted, maxWidth: '24rem' }}>
-                        在推荐结果中点击「不喜欢」按钮，歌曲将被添加到此列表并从后续推荐中排除。
+                        {t('在推荐结果中点击「不喜欢」按钮，歌曲将被添加到此列表并从后续推荐中排除。')}
                     </p>
                 </div>
             ) : (
@@ -174,7 +176,7 @@ export default function DislikesPage() {
                                     fontWeight: 500,
                                     transition: 'all 0.2s',
                                 }}
-                                title="撤销不喜欢"
+                                title={t('撤销不喜欢')}
                                 onClick={() => undoDislike(song.title, song.artist)}
                                 onMouseEnter={(e) => {
                                     e.currentTarget.style.borderColor = '#1db954';
@@ -185,7 +187,7 @@ export default function DislikesPage() {
                                     e.currentTarget.style.color = theme.colors.text.secondary;
                                 }}
                             >
-                                撤销
+                                {t('撤销')}
                             </button>
                         </div>
                     ))}

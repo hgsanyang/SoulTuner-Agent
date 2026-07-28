@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { createPortal } from 'react-dom';
 import { theme } from '@/styles/theme';
+import { apiFetch } from '@/lib/app-session';
+import { useAppSession } from '@/context/AppSessionContext';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 
@@ -49,6 +52,8 @@ interface MemoryProfile {
 }
 
 export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelProps) {
+  const { t } = useLang();
+  const { activeProfile } = useAppSession();
   const [genres, setGenres] = useState<string[]>([]);
   const [moods, setMoods] = useState<string[]>([]);
   const [scenarios, setScenarios] = useState<string[]>([]);
@@ -64,7 +69,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
   const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/user-profile`);
+      const res = await apiFetch(`${API_URL}/api/user-profile`);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.profile) {
@@ -75,7 +80,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
           setFreeText(data.profile.free_text || '');
         }
       }
-      const memoryRes = await fetch(`${API_URL}/api/memory/profile`);
+      const memoryRes = await apiFetch(`${API_URL}/api/memory/profile`);
       if (memoryRes.ok) {
         const memoryData = await memoryRes.json();
         if (memoryData.success && memoryData.memory) {
@@ -95,7 +100,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
       setMessage('');
       loadProfile();
     }
-  }, [isOpen, loadProfile]);
+  }, [activeProfile.profile_id, isOpen, loadProfile]);
 
   // ---- 标签切换 ----
   const toggleTag = (
@@ -111,7 +116,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
   const saveProfile = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/user-profile`, {
+      const res = await apiFetch(`${API_URL}/api/user-profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -125,14 +130,14 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
       const result = await res.json();
       if (result.success) {
         setDirty(false);
-        setMessage('✅ 偏好已保存');
+        setMessage(t('✅ 偏好已保存'));
         setTimeout(() => setMessage(''), 3000);
       } else {
-        setMessage('❌ 保存失败');
+        setMessage(t('❌ 保存失败'));
         setTimeout(() => setMessage(''), 3000);
       }
     } catch {
-      setMessage('❌ 连接失败，请确认后端已启动');
+      setMessage(t('❌ 连接失败，请确认后端已启动'));
       setTimeout(() => setMessage(''), 3000);
     } finally {
       setSaving(false);
@@ -151,33 +156,33 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
 
   const removeLearnedPreference = async (field: string, value: string) => {
     try {
-      const resp = await fetch(
+      const resp = await apiFetch(
         `${API_URL}/api/memory/preference?field=${encodeURIComponent(field)}&value=${encodeURIComponent(value)}`,
         { method: 'DELETE' },
       );
-      if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
-      setMessage('✅ 已删除该条记忆');
+      if (!resp.ok) throw new Error(t('删除失败: {v0}', { v0: resp.status }));
+      setMessage(t('✅ 已删除该条记忆'));
       await loadProfile();
       setTimeout(() => setMessage(''), 2500);
     } catch (e) {
       console.error('Failed to remove memory preference:', e);
-      setMessage('❌ 删除记忆失败');
+      setMessage(t('❌ 删除记忆失败'));
       setTimeout(() => setMessage(''), 3000);
     }
   };
 
   const clearLearnedPreferences = async () => {
-    const ok = window.confirm('只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？');
+    const ok = window.confirm(t('只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？'));
     if (!ok) return;
     try {
-      const resp = await fetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
-      if (!resp.ok) throw new Error(`清空失败: ${resp.status}`);
-      setMessage('✅ 已清空系统学习偏好');
+      const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
+      if (!resp.ok) throw new Error(t('清空失败: {v0}', { v0: resp.status }));
+      setMessage(t('✅ 已清空系统学习偏好'));
       await loadProfile();
       setTimeout(() => setMessage(''), 2500);
     } catch (e) {
       console.error('Failed to clear learned preferences:', e);
-      setMessage('❌ 清空学习记忆失败');
+      setMessage(t('❌ 清空学习记忆失败'));
       setTimeout(() => setMessage(''), 3000);
     }
   };
@@ -208,7 +213,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
             background: 'rgba(29, 185, 84, 0.15)',
             padding: '0.1rem 0.45rem', borderRadius: '8px',
           }}>
-            {selected.length} 项
+            {t('{v0} 项', { v0: selected.length })}
           </span>
         )}
       </div>
@@ -293,10 +298,10 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
         }}>
           <div>
             <h3 style={{ margin: 0, color: theme.colors.text.primary, fontSize: '1.1rem' }}>
-              🎭 我的音乐画像
+              {t('🎭 我的音乐画像')}
             </h3>
             <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>
-              设置偏好后，推荐系统会更懂你的口味
+              {t('设置偏好后，推荐系统会更懂你的口味')}
             </span>
           </div>
           <button onClick={onClose} style={{
@@ -309,14 +314,14 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
         <div style={{ flex: 1, overflowY: 'auto', padding: '1.2rem 1.5rem' }}>
           {loading ? (
             <div style={{ textAlign: 'center', color: theme.colors.text.muted, padding: '3rem' }}>
-              加载中...
+              {t('加载中...')}
             </div>
           ) : (
             <>
-              {renderTagGroup('流派偏好', '🎸', PRESET_GENRES, genres, setGenres)}
-              {renderTagGroup('情绪倾向', '💭', PRESET_MOODS, moods, setMoods)}
-              {renderTagGroup('常听场景', '🎧', PRESET_SCENARIOS, scenarios, setScenarios)}
-              {renderTagGroup('语言偏好', '🌍', PRESET_LANGUAGES, languages, setLanguages)}
+              {renderTagGroup(t('流派偏好'), '🎸', PRESET_GENRES, genres, setGenres)}
+              {renderTagGroup(t('情绪倾向'), '💭', PRESET_MOODS, moods, setMoods)}
+              {renderTagGroup(t('常听场景'), '🎧', PRESET_SCENARIOS, scenarios, setScenarios)}
+              {renderTagGroup(t('语言偏好'), '🌍', PRESET_LANGUAGES, languages, setLanguages)}
 
               {/* 自由描述 */}
               <div style={{ marginBottom: '1rem' }}>
@@ -328,12 +333,12 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   <span style={{
                     fontSize: '0.82rem', fontWeight: 600,
                     color: theme.colors.text.primary,
-                  }}>其他偏好描述</span>
+                  }}>{t('其他偏好描述')}</span>
                 </div>
                 <textarea
                   value={freeText}
                   onChange={e => { setFreeText(e.target.value); setDirty(true); }}
-                  placeholder="例如：喜欢 C418 的 Minecraft 原声带风格、偏爱暗黑氛围电子、不太喜欢韩国流行..."
+                  placeholder={t("例如：喜欢 C418 的 Minecraft 原声带风格、偏爱暗黑氛围电子、不太喜欢韩国流行...")}
                   rows={3}
                   style={{
                     width: '100%',
@@ -363,7 +368,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   <span style={{
                     fontSize: '0.82rem', fontWeight: 600,
                     color: theme.colors.text.primary,
-                  }}>系统学到的偏好</span>
+                  }}>{t('系统学到的偏好')}</span>
                   {(memory?.episodic_backends || []).map(name => (
                     <span key={name} style={{
                       fontSize: '0.68rem',
@@ -388,7 +393,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                         cursor: 'pointer',
                       }}
                     >
-                      清空学习记忆
+                      {t('清空学习记忆')}
                     </button>
                   )}
                 </div>
@@ -403,13 +408,13 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   {!!memory?.diagnostics && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.1rem' }}>
                       <span style={{ fontSize: '0.68rem', color: '#86efac', background: 'rgba(34,197,94,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
-                        正向 {memory.diagnostics.positive_preference_count || 0}
+                        {t('正向 {v0}', { v0: memory.diagnostics.positive_preference_count || 0 })}
                       </span>
                       <span style={{ fontSize: '0.68rem', color: '#fca5a5', background: 'rgba(248,113,113,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
-                        避开 {memory.diagnostics.negative_preference_count || 0}
+                        {t('避开 {v0}', { v0: memory.diagnostics.negative_preference_count || 0 })}
                       </span>
                       <span style={{ fontSize: '0.68rem', color: '#93c5fd', background: 'rgba(59,130,246,0.10)', borderRadius: '999px', padding: '0.12rem 0.45rem' }}>
-                        场景 {memory.diagnostics.context_preference_count || 0}
+                        {t('场景 {v0}', { v0: memory.diagnostics.context_preference_count || 0 })}
                       </span>
                     </div>
                   )}
@@ -422,13 +427,13 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                           fontSize: '0.72rem',
                           color: theme.colors.text.muted,
                           marginBottom: '0.35rem',
-                        }}>{section.label}</div>
+                        }}>{t(section.label)}</div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
                           {values.map((value: string) => (
                             <button
                               key={`${section.field}-${value}`}
                               onClick={() => section.deletable !== false && removeLearnedPreference(section.field, value)}
-                              title="点击删除这条学习记忆"
+                              title={t("点击删除这条学习记忆")}
                               style={{
                                 border: '1px solid rgba(29,185,84,0.35)',
                                 background: 'rgba(29,185,84,0.10)',
@@ -448,7 +453,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                   })}
                   {!hasLearnedPrefs && (
                     <span style={{ color: theme.colors.text.muted, fontSize: '0.76rem' }}>
-                      暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。
+                      {t('暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。')}
                     </span>
                   )}
                 </div>
@@ -471,10 +476,10 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                 : theme.colors.text.muted,
           }}>
             {message || (dirty
-              ? `已选 ${totalSelected} 项偏好，点击保存`
+              ? t('已选 {v0} 项偏好，点击保存', { v0: totalSelected })
               : totalSelected > 0
-                ? `已设置 ${totalSelected} 项偏好`
-                : '暂未设置偏好'
+                ? t('已设置 {v0} 项偏好', { v0: totalSelected })
+                : t('暂未设置偏好')
             )}
           </span>
           <div style={{ display: 'flex', gap: '0.6rem' }}>
@@ -484,7 +489,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
               borderRadius: theme.borderRadius.sm, color: '#f06060',
               cursor: 'pointer', fontSize: '0.78rem',
             }}>
-              ↩ 清空
+              {t('↩ 清空')}
             </button>
             <button onClick={onClose} style={{
               padding: '0.5rem 1.2rem', background: 'transparent',
@@ -492,7 +497,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
               borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary,
               cursor: 'pointer', fontSize: '0.82rem',
             }}>
-              关闭
+              {t('关闭')}
             </button>
             <button
               onClick={saveProfile}
@@ -507,7 +512,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                 transition: 'all 0.2s',
               }}
             >
-              {saving ? '保存中...' : '💾 保存偏好'}
+              {saving ? t('保存中...') : t('💾 保存偏好')}
             </button>
           </div>
         </div>

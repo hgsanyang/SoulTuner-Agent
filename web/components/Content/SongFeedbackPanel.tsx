@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { SONG_OFF_REASON_LABELS, SongOffReason, sendSongFeedback } from '@/lib/api';
 import { theme } from '@/styles/theme';
 
@@ -32,6 +33,7 @@ export default function SongFeedbackPanel({
     scene?: string;
     onClose: () => void;
 }) {
+  const { t } = useLang();
     const [fit, setFit] = useState<'fits' | 'partial' | 'off' | null>(null);
     const [reasons, setReasons] = useState<SongOffReason[]>([]);
     const [note, setNote] = useState('');
@@ -71,11 +73,11 @@ export default function SongFeedbackPanel({
             });
             // The endpoint answers 200 with {success:false} when the write fails,
             // so resp.ok alone would show "已记录" for feedback nobody stored.
-            if (!result?.success) throw new Error(result?.error || '服务端未确认');
+            if (!result?.success) throw new Error(result?.error || t('服务端未确认'));
             setState('done');
             setTimeout(onClose, 900);
         } catch (e: any) {
-            setError(e?.message || '提交失败');
+            setError(e?.message || t('提交失败'));
             setState('error');
         }
     };
@@ -106,13 +108,13 @@ export default function SongFeedbackPanel({
             }}
         >
             <div style={{ fontSize: '0.8rem', color: theme.colors.text.secondary }}>
-                这首适合你此刻要的吗？<span style={{ opacity: 0.6 }}>（只评这一次，不影响你对它的长期喜好）</span>
+                {t('这首适合你此刻要的吗？')}<span style={{ opacity: 0.6 }}>{t('（只评这一次，不影响你对它的长期喜好）')}</span>
             </div>
 
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                {([['fits', '很符合'], ['partial', '一般'], ['off', '不符合']] as const).map(([v, label]) => (
+                {([['fits', t('很符合')], ['partial', t('一般')], ['off', t('不符合')]] as const).map(([v, label]) => (
                     <button key={v} onClick={() => chooseFit(v)} style={chip(fit === v)}>
-                        {label}
+                        {t(label)}
                     </button>
                 ))}
             </div>
@@ -121,7 +123,7 @@ export default function SongFeedbackPanel({
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                     {(Object.keys(SONG_OFF_REASON_LABELS) as SongOffReason[]).map(r => (
                         <button key={r} onClick={() => toggleReason(r)} style={chip(reasons.includes(r))}>
-                            {SONG_OFF_REASON_LABELS[r]}
+                            {t(SONG_OFF_REASON_LABELS[r])}
                         </button>
                     ))}
                 </div>
@@ -130,7 +132,7 @@ export default function SongFeedbackPanel({
             <textarea
                 value={note}
                 onChange={e => setNote(e.target.value.slice(0, 500))}
-                placeholder="想具体说点什么？（可选，比如「前奏太长」「人声太靠前」）"
+                placeholder={t("想具体说点什么？（可选，比如「前奏太长」「人声太靠前」）")}
                 rows={2}
                 style={{
                     width: '100%',
@@ -160,13 +162,13 @@ export default function SongFeedbackPanel({
                         fontWeight: 600,
                     }}
                 >
-                    {state === 'done' ? '已记录' : state === 'sending' ? '提交中…' : '提交'}
+                    {state === 'done' ? t('已记录') : state === 'sending' ? t('提交中…') : t('提交')}
                 </button>
                 <button
                     onClick={onClose}
                     style={{ background: 'none', border: 'none', color: theme.colors.text.secondary, fontSize: '0.8rem', cursor: 'pointer' }}
                 >
-                    取消
+                    {t('取消')}
                 </button>
                 {state === 'error' && <span style={{ color: '#ff6b6b', fontSize: '0.78rem' }}>{error}</span>}
             </div>

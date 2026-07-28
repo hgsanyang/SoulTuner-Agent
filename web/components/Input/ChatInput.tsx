@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, FormEvent } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { theme } from '@/styles/theme';
 
 interface ChatInputProps {
@@ -22,6 +23,7 @@ export default function ChatInput({
   isLoading = false,
   isMobile = false,
 }: ChatInputProps) {
+  const { t } = useLang();
   const [value, setValue] = useState('');
 
   const handleSubmit = (e: FormEvent) => {
@@ -101,7 +103,7 @@ export default function ChatInput({
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={isLoading ? '搜索中...输入新问题可直接切换' : placeholder}
+            placeholder={isLoading ? t('搜索中...输入新问题可直接切换') : placeholder}
             disabled={disabled}
             style={{
               flex: 1,
@@ -121,8 +123,8 @@ export default function ChatInput({
             <button
               type="button"
               onClick={handleAbort}
-              title="中止当前搜索"
-              aria-label="中止当前搜索"
+              title={t("中止当前搜索")}
+              aria-label={t("中止当前搜索")}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: '40px', height: '40px',
@@ -151,8 +153,8 @@ export default function ChatInput({
             <button
               type="submit"
               disabled={!value.trim()}
-              title="发送"
-              aria-label="发送"
+              title={t("发送")}
+              aria-label={t("发送")}
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: '40px', height: '40px',
@@ -183,7 +185,7 @@ export default function ChatInput({
             marginTop: '0.2rem',
           }}
         >
-          {isLoading ? '点击 ■ 中止搜索，或直接输入新问题' : '提示：直接输入自然语言，Shift + Enter 换行'}
+          {isLoading ? t('点击 ■ 中止搜索，或直接输入新问题') : t('提示：直接输入自然语言，Shift + Enter 换行')}
         </span>
       )}
     </form>

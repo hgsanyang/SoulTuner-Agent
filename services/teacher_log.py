@@ -23,6 +23,13 @@ ALLOW_FAST_ENV = "TEACHER_LOG_ALLOW_FAST"
 
 
 def teacher_log_enabled() -> bool:
+    try:
+        from services.runtime_context import current_runtime_context
+
+        if not current_runtime_context().teacher_log_eligible:
+            return False
+    except Exception:
+        return False
     return not side_effects_disabled() and os.getenv("TEACHER_LOG", "1").strip().lower() in {
         "1",
         "true",

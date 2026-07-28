@@ -1,6 +1,14 @@
 import json
 
+from schemas.runtime_context import build_runtime_context
+from services.runtime_context import runtime_context_scope
 from services.teacher_log import log_teacher_example
+
+
+def _personal_scope():
+    return runtime_context_scope(
+        build_runtime_context(profile_id="local_admin", interaction_mode="personal")
+    )
 
 
 def test_teacher_log_can_be_disabled(tmp_path, monkeypatch):
@@ -16,12 +24,13 @@ def test_teacher_log_hashes_text_by_default(tmp_path, monkeypatch):
     monkeypatch.delenv("TEACHER_LOG_STORE_TEXT", raising=False)
     monkeypatch.setenv("TEACHER_LOG_DIR", str(tmp_path))
 
-    path = log_teacher_example(
-        "planner",
-        inputs={"query": "想听雨天歌"},
-        output={"plan": "soft"},
-        metadata={"model": "qwen3.7-plus", "planner_quality_mode": "teacher"},
-    )
+    with _personal_scope():
+        path = log_teacher_example(
+            "planner",
+            inputs={"query": "想听雨天歌"},
+            output={"plan": "soft"},
+            metadata={"model": "qwen3.7-plus", "planner_quality_mode": "teacher"},
+        )
 
     assert path is not None
     row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
@@ -37,12 +46,13 @@ def test_teacher_log_skips_fast_mode_by_default(tmp_path, monkeypatch):
     monkeypatch.delenv("TEACHER_LOG_ALLOW_FAST", raising=False)
     monkeypatch.setenv("TEACHER_LOG_DIR", str(tmp_path))
 
-    path = log_teacher_example(
-        "planner",
-        inputs={"query": "fast"},
-        output={"plan": "fast"},
-        metadata={"model": "qwen-turbo", "planner_quality_mode": "fast"},
-    )
+    with _personal_scope():
+        path = log_teacher_example(
+            "planner",
+            inputs={"query": "fast"},
+            output={"plan": "fast"},
+            metadata={"model": "qwen-turbo", "planner_quality_mode": "fast"},
+        )
 
     assert path is None
     assert not list(tmp_path.glob("*.jsonl"))
@@ -53,7 +63,12 @@ def test_teacher_log_can_store_full_text_when_explicitly_enabled(tmp_path, monke
     monkeypatch.setenv("TEACHER_LOG_STORE_TEXT", "1")
     monkeypatch.setenv("TEACHER_LOG_DIR", str(tmp_path))
 
-    path = log_teacher_example("hyde", inputs={"query": "rainy"}, output={"caption": "soft rain"})
+    with _personal_scope():
+        path = log_teacher_example(
+            "hyde",
+            inputs={"query": "rainy"},
+            output={"caption": "soft rain"},
+        )
 
     assert path is not None
     row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])

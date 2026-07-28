@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { theme } from '@/styles/theme';
+import { apiFetch } from '@/lib/app-session';
+import { useLang } from '@/context/LanguageContext';
+import { LANGUAGES } from '@/lib/i18n';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
 
@@ -54,6 +57,7 @@ interface SettingsPanelProps {
 }
 
 export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
+  const { t, lang, setLang } = useLang();
   const [activeTab, setActiveTab] = useState<TabKey>('models');
   const [settings, setSettings] = useState<Settings>({});
   const [loading, setLoading] = useState(true);
@@ -69,7 +73,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const loadSettings = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_URL}/api/settings`);
+      const res = await apiFetch(`${API_URL}/api/settings`);
       if (res.ok) {
         const data = await res.json();
         snapshotRef.current = { ...data };   // 保存快照
@@ -112,7 +116,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       const payload: Record<string, unknown> = {};
       dirty.forEach(key => { payload[key] = settings[key]; });
 
-      const res = await fetch(`${API_URL}/api/settings`, {
+      const res = await apiFetch(`${API_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -121,11 +125,11 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       if (result.success) {
         snapshotRef.current = { ...settings };  // 保存成功 → 更新快照
         setDirty(new Set());
-        setSaveMessage(`✅ 已更新: ${result.updated.join(', ')}`);
+        setSaveMessage(t('✅ 已更新: {v0}', { v0: result.updated.join(', ') }));
         setTimeout(() => setSaveMessage(''), 3000);
       }
     } catch (e) {
-      setSaveMessage('❌ 保存失败，请确认后端已启动');
+      setSaveMessage(t('❌ 保存失败，请确认后端已启动'));
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
       setSaving(false);
@@ -136,17 +140,17 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const resetToDefaults = async () => {
     try {
       setSaving(true);
-      const res = await fetch(`${API_URL}/api/settings/reset`, { method: 'POST' });
+      const res = await apiFetch(`${API_URL}/api/settings/reset`, { method: 'POST' });
       if (res.ok) {
         const result = await res.json();
         snapshotRef.current = { ...result.settings };
         setSettings(result.settings);
         setDirty(new Set());
-        setSaveMessage('✅ 已还原为默认配置');
+        setSaveMessage(t('✅ 已还原为默认配置'));
         setTimeout(() => setSaveMessage(''), 3000);
       }
     } catch (e) {
-      setSaveMessage('❌ 还原失败，请确认后端已启动');
+      setSaveMessage(t('❌ 还原失败，请确认后端已启动'));
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
       setSaving(false);
@@ -194,7 +198,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         value={String(settings[key] || '')}
         onChange={e => updateField(key, e.target.value)}
       >
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {options.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
       </select>
     </div>
   );
@@ -282,7 +286,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               }
             }}
           >
-            {allowReuse && <option value="">-- 复用主模型 --</option>}
+            {allowReuse && <option value="">{t('-- 复用主模型 --')}</option>}
             {LLM_PROVIDERS.map(p => (
               <option key={p.value} value={p.value}>{p.label}</option>
             ))}
@@ -305,22 +309,22 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 }}
               >
                 {presets.map(m => <option key={m} value={m}>{m}</option>)}
-                <option value="__custom__">✏️ 自定义...</option>
+                <option value="__custom__">{t('✏️ 自定义...')}</option>
               </select>
             ) : (
               <input
                 style={inputStyle}
                 value={currentModel}
-                placeholder={LLM_PROVIDERS.find(p => p.value === currentProvider)?.defaultModel || '输入模型名'}
+                placeholder={LLM_PROVIDERS.find(p => p.value === currentProvider)?.defaultModel || t('输入模型名')}
                 onChange={e => updateField(modelKey, e.target.value)}
               />
             )}
-            {/* 自定义输入框（仅当选择了"自定义"时显示） */}
+            {/* 自定义输入框（仅当选择了t("自定义")时显示） */}
             {presets.length > 0 && isCustom && (
               <input
                 style={{ ...inputStyle, marginTop: '0.4rem' }}
                 value={currentModel}
-                placeholder="输入自定义模型名"
+                placeholder={t("输入自定义模型名")}
                 onChange={e => updateField(modelKey, e.target.value)}
                 autoFocus
               />
@@ -351,7 +355,42 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
     return (
       <>
-        <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🤖 LLM 模型配置</h4>
+        {/* 界面语言：纯前端偏好，存 localStorage，不经过后端 settings。 */}
+        <h4 style={{ color: theme.colors.text.primary, margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
+          🌐 {t('界面语言')} / Language
+        </h4>
+        <div style={{
+          display: 'flex', gap: '0.5rem', marginBottom: '1.4rem',
+          padding: '0.6rem 0.75rem',
+          border: `1px solid ${theme.colors.border.default}`,
+          borderRadius: theme.borderRadius.md,
+          background: 'rgba(255,255,255,0.02)',
+        }}>
+          {LANGUAGES.map(option => {
+            const active = lang === option.value;
+            return (
+              <button
+                key={option.value}
+                onClick={() => setLang(option.value)}
+                aria-pressed={active}
+                style={{
+                  padding: '0.4rem 1rem',
+                  borderRadius: theme.borderRadius.sm,
+                  border: `1px solid ${active ? theme.colors.primary.accent : theme.colors.border.default}`,
+                  background: active ? 'rgba(29,185,84,0.16)' : 'rgba(255,255,255,0.04)',
+                  color: active ? theme.colors.primary.accent : theme.colors.text.secondary,
+                  cursor: 'pointer',
+                  fontSize: '0.82rem',
+                  fontWeight: active ? 700 : 500,
+                }}
+              >
+                {t(option.label)}
+              </button>
+            );
+          })}
+        </div>
+
+        <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🤖 {t('模型配置')}</h4>
 
         <div style={{
           padding: '0.95rem 1rem',
@@ -363,10 +402,10 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center' }}>
             <div>
               <div style={{ color: theme.colors.text.primary, fontWeight: 700, fontSize: '0.9rem' }}>
-                DashScope API 部署
+                {t('DashScope API 部署')}
               </div>
               <div style={{ color: theme.colors.text.muted, fontSize: '0.74rem', lineHeight: 1.5, marginTop: '0.25rem' }}>
-                默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。
+                {t('默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。')}
               </div>
             </div>
             <span style={{
@@ -378,13 +417,13 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               fontSize: '0.72rem',
               whiteSpace: 'nowrap',
             }}>
-              {currentProvider === 'dashscope' ? '当前默认' : '已自定义'}
+              {currentProvider === 'dashscope' ? t('当前默认') : t('已自定义')}
             </span>
           </div>
         </div>
 
         <div style={fieldGroup}>
-          <label style={labelStyle}>主模型</label>
+          <label style={labelStyle}>{t('主模型')}</label>
           <select
             style={selectStyle}
             value={dashscopeModels.includes(currentModel) ? currentModel : '__custom__'}
@@ -396,13 +435,13 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             }}
           >
             {dashscopeModels.map(model => <option key={model} value={model}>{model}</option>)}
-            <option value="__custom__">自定义 DashScope 模型...</option>
+            <option value="__custom__">{t('自定义 DashScope 模型...')}</option>
           </select>
           {!dashscopeModels.includes(currentModel) && (
             <input
               style={{ ...inputStyle, marginTop: '0.45rem' }}
               value={currentModel}
-              placeholder="例如 qwen3.7-plus"
+              placeholder={t("例如 qwen3.7-plus")}
               onChange={e => {
                 updateField('llm_default_provider', 'dashscope');
                 updateField('intent_llm_provider', 'dashscope');
@@ -413,13 +452,13 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           )}
         </div>
 
-        {renderSelect('explanation_mode', '推荐后回应方式', [
-          { value: 'tuner_async', label: '调音师异步回应（默认）' },
-          { value: 'off', label: '关闭 LLM 文本，只返回歌单' },
-          { value: 'song_detail', label: '旧版逐首推荐解释' },
+        {renderSelect('explanation_mode', t('推荐后回应方式'), [
+          { value: 'tuner_async', label: t('调音师异步回应（默认）') },
+          { value: 'off', label: t('关闭 LLM 文本，只返回歌单') },
+          { value: 'song_detail', label: t('旧版逐首推荐解释') },
         ])}
         <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.7rem', marginBottom: '1rem', lineHeight: 1.5 }}>
-          默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。
+          {t('默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。')}
         </div>
 
         <button
@@ -440,8 +479,8 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             marginBottom: showAdvancedModels ? '0.8rem' : 0,
           }}
         >
-          <span>高级选项</span>
-          <span style={{ color: theme.colors.text.muted }}>{showAdvancedModels ? '收起' : '展开'}</span>
+          <span>{t('高级选项')}</span>
+          <span style={{ color: theme.colors.text.muted }}>{showAdvancedModels ? t('收起') : t('展开')}</span>
         </button>
 
         {showAdvancedModels && (
@@ -451,22 +490,22 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             padding: '0.8rem 0.9rem',
             background: 'rgba(255,255,255,0.025)',
           }}>
-            <div style={sectionTitleStyle}>主模型提供商</div>
-            {renderModelPicker('llm_default_provider', 'llm_default_model', '提供商', '模型')}
+            <div style={sectionTitleStyle}>{t('主模型提供商')}</div>
+            {renderModelPicker('llm_default_provider', 'llm_default_model', t('提供商'), t('模型'))}
 
-            <div style={sectionTitleStyle}>意图分析 / HyDE</div>
-            {renderModelPicker('intent_llm_provider', 'intent_llm_model', '意图模型提供商', '意图模型', true)}
-            {renderModelPicker('hyde_llm_provider', 'hyde_llm_model', 'HyDE 提供商', 'HyDE 模型', true)}
+            <div style={sectionTitleStyle}>{t('意图分析 / HyDE')}</div>
+            {renderModelPicker('intent_llm_provider', 'intent_llm_model', t('意图模型提供商'), t('意图模型'), true)}
+            {renderModelPicker('hyde_llm_provider', 'hyde_llm_model', t('HyDE 提供商'), t('HyDE 模型'), true)}
 
-            <div style={sectionTitleStyle}>解释与上下文压缩</div>
-            {renderModelPicker('explain_llm_provider', 'explain_llm_model', '调音师回应模型提供商', '调音师回应模型', true)}
-            {renderModelPicker('compress_llm_provider', 'compress_llm_model', '压缩模型提供商', '压缩模型', true)}
+            <div style={sectionTitleStyle}>{t('解释与上下文压缩')}</div>
+            {renderModelPicker('explain_llm_provider', 'explain_llm_model', t('调音师回应模型提供商'), t('调音师回应模型'), true)}
+            {renderModelPicker('compress_llm_provider', 'compress_llm_model', t('压缩模型提供商'), t('压缩模型'), true)}
 
-            <div style={sectionTitleStyle}>调用预算</div>
-            {renderToggle('explanation_fast_mode', '兼容低延迟模式（覆盖为关闭文本）')}
-            {renderSlider('llm_timeout', 'LLM 超时', 10, 120, 5, '秒')}
-            {renderSlider('intent_max_tokens', '意图分析最大输出 Token', 512, 4096, 256, ' tokens')}
-            {renderSlider('context_total_budget', '上下文窗口预算', 2000, 16000, 500, ' tokens')}
+            <div style={sectionTitleStyle}>{t('调用预算')}</div>
+            {renderToggle('explanation_fast_mode', t('兼容低延迟模式（覆盖为关闭文本）'))}
+            {renderSlider('llm_timeout', t('LLM 超时'), 10, 120, 5, t('秒'))}
+            {renderSlider('intent_max_tokens', t('意图分析最大输出 Token'), 512, 4096, 256, ' tokens')}
+            {renderSlider('context_total_budget', t('上下文窗口预算'), 2000, 16000, 500, ' tokens')}
           </div>
         )}
       </>
@@ -475,75 +514,74 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
   const renderRetrievalTab = () => (
     <>
-      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🔍 检索 & 排序参数</h4>
+      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>{t('🔍 检索 & 排序参数')}</h4>
 
       {/* ═══ 检索数量 ═══ */}
-      {renderSlider('graph_search_limit', '图谱检索数量（仅图谱模式）', 3, 30, 1)}
-      {renderSlider('semantic_search_limit', '向量检索数量（仅向量模式）', 3, 30, 1)}
-      {renderSlider('mixed_retrieval_limit', '混合检索数量（每引擎各返回）', 3, 30, 1)}
-      {renderSlider('hybrid_retrieval_limit', '歌单输出数量（最终展示）', 3, 30, 1)}
-      {renderSlider('web_search_max_results', '联网搜索数量', 1, 10, 1)}
+      {renderSlider('graph_search_limit', t('图谱检索数量（仅图谱模式）'), 3, 30, 1)}
+      {renderSlider('semantic_search_limit', t('向量检索数量（仅向量模式）'), 3, 30, 1)}
+      {renderSlider('mixed_retrieval_limit', t('混合检索数量（每引擎各返回）'), 3, 30, 1)}
+      {renderSlider('hybrid_retrieval_limit', t('歌单输出数量（最终展示）'), 3, 30, 1)}
+      {renderSlider('web_search_max_results', t('联网搜索数量'), 1, 10, 1)}
 
       {/* ═══ 粗排 & 探索 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>粗排 & 探索（Graph Affinity + Thompson Sampling）</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('粗排 & 探索（Graph Affinity + Thompson Sampling）')}</span>
       </div>
-      {renderToggle('graph_affinity_enabled', '启用图距离粗排 + TS 探索')}
+      {renderToggle('graph_affinity_enabled', t('启用图距离粗排 + TS 探索'))}
       {settings.graph_affinity_enabled && (
         <>
-          {renderSlider('coarse_cut_ratio', '粗排保留比例', 0.3, 1, 0.05)}
+          {renderSlider('coarse_cut_ratio', t('粗排保留比例'), 0.3, 1, 0.05)}
           <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-            例: 0.65 = 保留 65% 候选歌曲进入精排，其余淘汰
+            {t('例: 0.65 = 保留 65% 候选歌曲进入精排，其余淘汰')}
           </div>
-          {renderSlider('exploration_ratio', '小众歌曲曝光度', 0, 0.5, 0.05)}
+          {renderSlider('exploration_ratio', t('小众歌曲曝光度'), 0, 0.5, 0.05)}
           <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-            从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）
+            {t('从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）')}
           </div>
-          {renderSlider('graph_affinity_max_hops', '最大跳数', 2, 8, 1)}
+          {renderSlider('graph_affinity_max_hops', t('最大跳数'), 2, 8, 1)}
         </>
       )}
 
       {/* ═══ 内容双锚精排权重 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>内容双锚权重（语义 + 声学）</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('内容双锚权重（语义 + 声学）')}</span>
       </div>
-      {renderSlider('tri_anchor_w_semantic', '语义相关性（M2D-CLAP）', 0, 1, 0.05)}
-      {renderSlider('tri_anchor_w_acoustic', '声学风格（OMAR-RQ）', 0, 1, 0.05)}
+      {renderSlider('tri_anchor_w_semantic', t('语义相关性（M2D-CLAP）'), 0, 1, 0.05)}
+      {renderSlider('tri_anchor_w_acoustic', t('声学风格（OMAR-RQ）'), 0, 1, 0.05)}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分
+        {t('权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分')}
       </div>
 
       {/* ═══ 多样性 ═══ */}
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
-        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>多样性控制</span>
+        <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('多样性控制')}</span>
       </div>
-      {renderSlider('max_songs_per_artist', '每歌手最多曲数', 1, 5, 1)}
-      {renderSlider('mmr_lambda', 'MMR 相关性偏好', 0.3, 1, 0.05)}
+      {renderSlider('max_songs_per_artist', t('每歌手最多曲数'), 1, 5, 1)}
+      {renderSlider('mmr_lambda', t('MMR 相关性偏好'), 0.3, 1, 0.05)}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        越高越偏向相关性，越低越偏向多样性
+        {t('越高越偏向相关性，越低越偏向多样性')}
       </div>
     </>
   );
 
   const renderPathsTab = () => (
     <>
-      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🎵 音乐数据目录</h4>
-      {renderInput('audio_data_dir', '本地音乐目录', 'data/processed_audio/audio')}
-      {renderInput('mtg_audio_dir', 'MTG 数据集目录', 'data/mtg_sample/audio')}
-      {renderInput('online_acquired_dir', '联网获取目录', 'data/online_acquired')}
-      {renderInput('model_output_dir', '模型训练导出目录', 'output/sft-checkpoint')}
+      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>{t('🎵 音乐数据目录')}</h4>
+      {renderInput('audio_data_dir', t('本地音乐目录'), 'data/processed_audio/audio')}
+      {renderInput('mtg_audio_dir', t('MTG 数据集目录'), 'data/mtg_sample/audio')}
+      {renderInput('online_acquired_dir', t('联网获取目录'), 'data/online_acquired')}
+      {renderInput('model_output_dir', t('模型训练导出目录'), 'output/sft-checkpoint')}
     </>
   );
 
   const renderMemoryTab = () => (
     <>
-      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🧠 记忆 & 上下文</h4>
-      {renderSlider('memory_retain_rounds', '上下文保留轮数', 1, 20, 1, '轮')}
-      {renderSlider('context_total_budget', '上下文窗口预算', 2000, 16000, 500, ' tokens')}
+      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>{t('🧠 记忆 & 上下文')}</h4>
+      {renderSlider('memory_retain_rounds', t('上下文保留轮数'), 1, 20, 1, t('轮'))}
+      {renderSlider('context_total_budget', t('上下文窗口预算'), 2000, 16000, 500, ' tokens')}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
-        越大保留越多历史对话，但增加 LLM 调用成本和延迟
+        {t('越大保留越多历史对话，但增加 LLM 调用成本和延迟')}
       </div>
-      {renderInput('default_user_id', '用户 ID', 'local_admin')}
     </>
   );
 
@@ -579,8 +617,8 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <div>
-            <h3 style={{ margin: 0, color: theme.colors.text.primary, fontSize: '1.1rem' }}>⚙️ 系统设置</h3>
-            <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>修改后点击保存即时生效，关闭则丢弃未保存修改</span>
+            <h3 style={{ margin: 0, color: theme.colors.text.primary, fontSize: '1.1rem' }}>{t('⚙️ 系统设置')}</h3>
+            <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>{t('修改后点击保存即时生效，关闭则丢弃未保存修改')}</span>
           </div>
           <button onClick={handleClose} style={{
             background: 'transparent', border: 'none', color: theme.colors.text.muted,
@@ -606,7 +644,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 transition: 'all 0.15s',
               }}>
                 <span>{tab.icon}</span>
-                <span>{tab.label}</span>
+                <span>{t(tab.label)}</span>
               </button>
             ))}
           </div>
@@ -617,7 +655,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           }}>
             {loading ? (
               <div style={{ textAlign: 'center', color: theme.colors.text.muted, padding: '2rem' }}>
-                加载中...
+                {t('加载中...')}
               </div>
             ) : tabContent[activeTab]()}
           </div>
@@ -629,7 +667,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <span style={{ fontSize: '0.78rem', color: dirty.size > 0 ? '#f0a040' : theme.colors.text.muted }}>
-            {saveMessage || (dirty.size > 0 ? `${dirty.size} 项修改未保存` : '所有配置已同步')}
+            {saveMessage || (dirty.size > 0 ? t('{v0} 项修改未保存', { v0: dirty.size }) : t('所有配置已同步'))}
           </span>
           <div style={{ display: 'flex', gap: '0.6rem' }}>
             <button onClick={resetToDefaults} style={{
@@ -638,7 +676,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               borderRadius: theme.borderRadius.sm, color: '#f06060',
               cursor: 'pointer', fontSize: '0.78rem',
             }}>
-              ↩ 还原默认
+              {t('↩ 还原默认')}
             </button>
             <button onClick={handleClose} style={{
               padding: '0.5rem 1.2rem', background: 'transparent',
@@ -646,7 +684,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               borderRadius: theme.borderRadius.sm, color: theme.colors.text.secondary,
               cursor: 'pointer', fontSize: '0.82rem',
             }}>
-              关闭
+              {t('关闭')}
             </button>
             <button onClick={saveSettings} disabled={dirty.size === 0 || saving} style={{
               padding: '0.5rem 1.5rem',
@@ -657,7 +695,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
               fontWeight: 600, fontSize: '0.82rem',
               transition: 'all 0.2s',
             }}>
-              {saving ? '保存中...' : '💾 保存设置'}
+              {saving ? t('保存中...') : t('💾 保存设置')}
             </button>
           </div>
         </div>

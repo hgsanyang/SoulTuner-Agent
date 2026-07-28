@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode, useState, useEffect } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import Header from './Header';
 import Sidebar from '../Navigation/Sidebar';
 import ChatInput from '../Input/ChatInput';
@@ -28,6 +29,7 @@ export default function MainLayout({
   inputIsLoading = false,
   toolbar,
 }: MainLayoutProps) {
+  const { t } = useLang();
   const isMobile = useMediaQuery('(max-width: 960px)');
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const sidebarWidth = isMobile ? 0 : theme.layout.sidebarWidth;
@@ -78,7 +80,7 @@ export default function MainLayout({
         {isMobile && (
           <button
             type="button"
-            aria-label="打开导航"
+            aria-label={t("打开导航")}
             onClick={() => setSidebarOpen(true)}
             style={{
               position: 'absolute',

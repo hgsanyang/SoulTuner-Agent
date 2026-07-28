@@ -4,7 +4,7 @@
 - POST /api/user-portrait/refresh  手动触发画像刷新
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -13,14 +13,17 @@ router = APIRouter()
 
 
 @router.get("/api/user-portrait")
-async def get_user_portrait(user_id: str = "local_admin"):
+async def get_user_portrait(raw_request: Request, user_id: str = "local_admin"):
     """
     获取当前用户的动态画像。
     优先返回内存缓存，其次从 Neo4j 加载，最后提示无画像。
     """
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.profile_synthesizer import get_profile_synthesizer
-        synth = get_profile_synthesizer(user_id)
+
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
+        synth = get_profile_synthesizer(runtime_context.effective_user_id)
 
         # 优先读缓存
         portrait = synth.get_cached_portrait()
@@ -51,14 +54,17 @@ async def get_user_portrait(user_id: str = "local_admin"):
 
 
 @router.post("/api/user-portrait/refresh")
-async def refresh_user_portrait(user_id: str = "local_admin"):
+async def refresh_user_portrait(raw_request: Request, user_id: str = "local_admin"):
     """
     手动触发画像刷新。
     收集 GraphZep + Neo4j 数据 → LLM 聚合 → 保存 → 返回新画像。
     """
     try:
+        from api.runtime_context import runtime_context_from_request
         from services.profile_synthesizer import trigger_portrait_refresh
-        portrait = await trigger_portrait_refresh(user_id)
+
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
+        portrait = await trigger_portrait_refresh(runtime_context.effective_user_id)
 
         if portrait is None:
             return {

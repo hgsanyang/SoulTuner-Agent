@@ -180,3 +180,48 @@ def test_event_without_its_id_is_kept_not_collapsed(store):
     for i in range(3):
         fs.insert_song_feedback({"ts": i, "exposure_id": "e1", "music_id": f"m{i}"})
     assert fs.counts()["song_feedback"] == 3
+
+
+def test_training_loaders_fail_closed_and_exclude_developer_records(store):
+    from schemas.runtime_context import build_runtime_context
+    from services.runtime_context import runtime_context_scope
+
+    personal = build_runtime_context(profile_id="alice", interaction_mode="personal")
+    developer = build_runtime_context(profile_id="alice", interaction_mode="developer")
+    with runtime_context_scope(personal):
+        fl.log_exposure(
+            query="quiet",
+            user_id=personal.effective_user_id,
+            request_id="personal-exp",
+            recommendations=[{"title": "A", "artist": "X", "music_id": "m1"}],
+        )
+        fl.log_user_event(
+            event_type="like",
+            song_title="A",
+            artist="X",
+            user_id=personal.effective_user_id,
+            exposure_id="personal-exp",
+        )
+    with runtime_context_scope(developer):
+        fl.log_exposure(
+            query="test",
+            user_id=developer.effective_user_id,
+            request_id="dev-exp",
+            recommendations=[{"title": "B", "artist": "Y", "music_id": "m2"}],
+        )
+        fl.log_user_event(
+            event_type="like",
+            song_title="B",
+            artist="Y",
+            user_id=developer.effective_user_id,
+            exposure_id="dev-exp",
+        )
+
+    assert {row["exposure_id"] for row in fl.load_training_exposures()} == {"personal-exp"}
+    assert {
+        row["exposure_id"] for row in fl.load_training_events()
+    } == {"personal-exp"}
+    assert {row["interaction_mode"] for row in fs.load_exposures()} == {
+        "personal",
+        "developer",
+    }

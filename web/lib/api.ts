@@ -1,3 +1,11 @@
+import {
+    apiFetch,
+    apiFetchFor,
+    getActiveRequestContext,
+    registerActiveStream,
+    SessionRequestContext,
+} from '@/lib/app-session';
+
 export interface RefinementOption {
     label: string;
     prompt: string;
@@ -42,10 +50,12 @@ export function streamRecommendations(
     onEvent: (event: SSEEvent) => void
 ): () => void {
     const controller = new AbortController();
+    const unregisterStream = registerActiveStream(controller);
 
     const startStream = async () => {
         try {
-            const response = await fetch(`http://localhost:8501/api/recommendations/stream`, {
+            const requestContext = getActiveRequestContext();
+            const response = await apiFetchFor(requestContext, `http://localhost:8501/api/recommendations/stream`, {
                 method: 'POST',
                 headers: {
                     'Accept': 'text/event-stream',
@@ -55,11 +65,11 @@ export function streamRecommendations(
                     query: params.query,
                     chat_history: params.chatHistory || [],
                     dialog_state: params.dialogState || {},
-                    user_id: params.userId || 'local_admin',
+                    user_id: params.userId || requestContext.profileId,
                     web_search_enabled: params.webSearchEnabled !== false,  // 默认 true
                     // 收听上下文：只有客户端知道用户时区/会话/场景，事后无法回填
                     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-                    session_id: params.sessionId || '',
+                    session_id: params.sessionId || requestContext.sessionId,
                     scene: params.scene || '',
                     device: 'web',
                 }),
@@ -115,6 +125,8 @@ export function streamRecommendations(
                 console.error('Stream error:', err);
                 onEvent({ type: 'error', error: err.message || 'Unknown error' });
             }
+        } finally {
+            unregisterStream();
         }
     };
 
@@ -142,14 +154,18 @@ export async function sendUserEvent(
         musicId?: string;
         album?: string;
         duration?: number;
+        requestContext?: SessionRequestContext;
     } = {},
 ): Promise<void> {
     try {
-        const response = await fetch('http://localhost:8501/api/user-event', {
+        const requestContext = getActiveRequestContext();
+        const eventContext = options.requestContext || requestContext;
+        const response = await apiFetchFor(eventContext, 'http://localhost:8501/api/user-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 event_type: eventType,
+                user_id: eventContext.profileId,
                 song_title: songTitle,
                 artist: artist,
                 exposure_id: options.exposureId,
@@ -157,7 +173,7 @@ export async function sendUserEvent(
                     position: options.position,
                     play_duration_ms: options.playDurationMs,
                     progress_ratio: options.progressRatio,
-                    session_id: options.sessionId,
+                    session_id: options.sessionId || eventContext.sessionId,
                     source: options.source,
                     platform: options.platform,
                     song_id: options.songId,
@@ -229,7 +245,8 @@ export async function sendSongFeedback(params: {
     device?: string;
     userId?: string;
 }): Promise<{ success: boolean; song_feedback_id?: string; error?: string }> {
-    const resp = await fetch('http://localhost:8501/api/song-feedback', {
+    const requestContext = getActiveRequestContext();
+    const resp = await apiFetchFor(requestContext, 'http://localhost:8501/api/song-feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -245,7 +262,7 @@ export async function sendSongFeedback(params: {
             device: params.device || (typeof navigator !== 'undefined' ? 'web' : ''),
             // the user's own timezone — the server must never assume its own
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
-            user_id: params.userId || 'local_admin',
+            user_id: params.userId || requestContext.profileId,
         }),
     });
     if (!resp.ok) {
@@ -265,7 +282,8 @@ export async function sendSlateFeedback(params: {
     worstMusicIds?: string[];
     extra?: Record<string, any>;
 }): Promise<{ success: boolean; feedback_id?: string; error?: string }> {
-    const resp = await fetch('http://localhost:8501/api/slate-feedback', {
+    const requestContext = getActiveRequestContext();
+    const resp = await apiFetchFor(requestContext, 'http://localhost:8501/api/slate-feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -273,7 +291,7 @@ export async function sendSlateFeedback(params: {
             rating: params.rating,
             reasons: params.reasons || [],
             note: params.note || '',
-            user_id: params.userId || 'local_admin',
+            user_id: params.userId || requestContext.profileId,
             best_music_ids: params.bestMusicIds || [],
             worst_music_ids: params.worstMusicIds || [],
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
@@ -321,7 +339,7 @@ export interface CatalogDiagnostics {
 }
 
 export async function fetchCatalogDiagnostics(limit: number = 50): Promise<CatalogDiagnostics> {
-    const resp = await fetch(`http://localhost:8501/api/catalog-diagnostics?limit=${limit}`);
+    const resp = await apiFetch(`http://localhost:8501/api/catalog-diagnostics?limit=${limit}`);
     if (!resp.ok) throw new Error(`曲库诊断失败: ${resp.status}`);
     return resp.json();
 }
@@ -358,7 +376,7 @@ export interface DislikedSongBackend {
 
 export async function fetchLikedSongs(limit: number = 50): Promise<LikedSongBackend[]> {
     try {
-        const resp = await fetch(`http://localhost:8501/api/liked-songs?limit=${limit}`);
+        const resp = await apiFetch(`http://localhost:8501/api/liked-songs?limit=${limit}`);
         if (!resp.ok) return [];
         const data = await resp.json();
         return data.success ? data.songs : [];
@@ -370,7 +388,7 @@ export async function fetchLikedSongs(limit: number = 50): Promise<LikedSongBack
 
 export async function fetchDislikedSongs(limit: number = 50): Promise<DislikedSongBackend[]> {
     try {
-        const resp = await fetch(`http://localhost:8501/api/disliked-songs?limit=${limit}`);
+        const resp = await apiFetch(`http://localhost:8501/api/disliked-songs?limit=${limit}`);
         if (!resp.ok) return [];
         const data = await resp.json();
         return data.success ? data.songs : [];
@@ -382,7 +400,7 @@ export async function fetchDislikedSongs(limit: number = 50): Promise<DislikedSo
 
 export async function removeDislike(songTitle: string, artist: string): Promise<boolean> {
     try {
-        const resp = await fetch(
+        const resp = await apiFetch(
             `http://localhost:8501/api/disliked-songs?song_title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(artist)}`,
             { method: 'DELETE' }
         );
@@ -401,7 +419,7 @@ export async function deleteSongFromLibrary(
     artist: string,
 ): Promise<{ success: boolean; message: string; deleted_files?: string[] }> {
     try {
-        const resp = await fetch(
+        const resp = await apiFetch(
             `http://localhost:8501/api/songs?song_title=${encodeURIComponent(songTitle)}&artist=${encodeURIComponent(artist)}`,
             { method: 'DELETE' },
         );
@@ -423,7 +441,7 @@ export async function acquireSong(song: {
     song_id?: string;
     platform?: string;
 }): Promise<{ success: boolean; message: string; song?: any; job_id?: string }> {
-    const resp = await fetch('http://localhost:8501/api/acquire-song', {
+    const resp = await apiFetch('http://localhost:8501/api/acquire-song', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -442,7 +460,7 @@ export async function acquireSong(song: {
 
 // ---- 搜索歌曲 ----
 export async function searchMusic(query: string, genre?: string): Promise<any> {
-    const resp = await fetch('http://localhost:8501/api/search', {
+    const resp = await apiFetch('http://localhost:8501/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, genre, limit: 20 }),
@@ -494,7 +512,7 @@ export interface IngestJob {
 
 export async function fetchPendingSongs(): Promise<PendingSong[]> {
     try {
-        const resp = await fetch('http://localhost:8501/api/pending-songs');
+        const resp = await apiFetch('http://localhost:8501/api/pending-songs');
         if (!resp.ok) return [];
         const data = await resp.json();
         return data.success ? data.songs : [];
@@ -518,7 +536,7 @@ export async function ingestPendingSongs(songs: {
     metadata_source?: string;
 }[]): Promise<{ success: boolean; ingested: number; message: string; job_id?: string; enrichment?: string }> {
     try {
-        const resp = await fetch('http://localhost:8501/api/pending-songs/ingest', {
+        const resp = await apiFetch('http://localhost:8501/api/pending-songs/ingest', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ songs }),
@@ -535,7 +553,7 @@ export async function deletePendingSong(
     fileBasename: string, ext: string = 'mp3'
 ): Promise<{ success: boolean }> {
     try {
-        const resp = await fetch(
+        const resp = await apiFetch(
             `http://localhost:8501/api/pending-songs?file_basename=${encodeURIComponent(fileBasename)}&ext=${encodeURIComponent(ext)}`,
             { method: 'DELETE' },
         );
@@ -556,7 +574,7 @@ export async function retainOnlineAudio(song: {
     artist?: string;
 }): Promise<{ success: boolean; message?: string; error?: string }> {
     try {
-        const resp = await fetch('http://localhost:8501/api/online-audio/retain', {
+        const resp = await apiFetch('http://localhost:8501/api/online-audio/retain', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(song),
@@ -574,7 +592,7 @@ export async function retainOnlineAudio(song: {
 
 export async function fetchIngestJobs(limit: number = 30): Promise<{ jobs: IngestJob[]; counts: Record<string, number> }> {
     try {
-        const resp = await fetch(`http://localhost:8501/api/ingest-jobs?limit=${limit}`);
+        const resp = await apiFetch(`http://localhost:8501/api/ingest-jobs?limit=${limit}`);
         if (!resp.ok) return { jobs: [], counts: {} };
         const data = await resp.json();
         return data.success ? { jobs: data.jobs || [], counts: data.counts || {} } : { jobs: [], counts: {} };
@@ -586,7 +604,7 @@ export async function fetchIngestJobs(limit: number = 30): Promise<{ jobs: Inges
 
 export async function retryIngestJob(jobId: string): Promise<{ success: boolean }> {
     try {
-        const resp = await fetch(`http://localhost:8501/api/ingest-jobs/${encodeURIComponent(jobId)}/retry`, {
+        const resp = await apiFetch(`http://localhost:8501/api/ingest-jobs/${encodeURIComponent(jobId)}/retry`, {
             method: 'POST',
         });
         if (!resp.ok) return { success: false };
@@ -651,7 +669,7 @@ export async function fetchLibrarySongs(
     offset: number = 0, limit: number = 200
 ): Promise<{ songs: LibrarySong[]; total: number }> {
     try {
-        const resp = await fetch(
+        const resp = await apiFetch(
             `http://localhost:8501/api/library-songs?offset=${offset}&limit=${limit}`
         );
         if (!resp.ok) return { songs: [], total: 0 };
@@ -674,7 +692,7 @@ export async function updateLibrarySongTags(song: {
     language?: string;
 }): Promise<{ success: boolean; error?: string }> {
     try {
-        const resp = await fetch('http://localhost:8501/api/library-songs/tags', {
+        const resp = await apiFetch('http://localhost:8501/api/library-songs/tags', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(song),

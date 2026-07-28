@@ -282,6 +282,106 @@ def build_slate_feedback_rows(
     return rows, dict(diagnostics)
 
 
+# Per-song "does this fit what I want right now" -> reward. Stronger than a
+# slate label (it names ONE track, not a list) but weaker than a behavioural
+# event like save: an opinion is cheaper to give than an action.
+# `partial` gets no label at all — it is genuinely neutral, not weakly positive.
+SONG_CONTEXT_FIT_REWARD = {"fits": 0.45, "off": -0.50}
+
+
+def build_song_feedback_rows(
+    exposures: list[dict[str, Any]],
+    song_feedback: list[dict[str, Any]],
+    *,
+    attribution_window_ms: int = 7 * 86_400_000,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Turn per-song context_fit judgements into labelled rows.
+
+    This table was written and read by nobody: rating a track "doesn't fit"
+    landed in SQLite and never reached the learner, so the ranking could not
+    improve from the most specific signal a user can give.
+
+    Attribution rules match the other builders exactly — anchor on shown_at_ms
+    (the exposure is written twice and `ts` is the later write), require the song
+    to have actually been in that exposure, and never invent a label for a
+    judgement we cannot place.
+    """
+    exposure_map = {
+        str(exposure.get("exposure_id")): exposure
+        for exposure in exposures
+        if exposure.get("exposure_id")
+    }
+    diagnostics: defaultdict[str, int] = defaultdict(int)
+    rows: list[dict[str, Any]] = []
+
+    for feedback in sorted(song_feedback, key=lambda row: int(row.get("ts") or 0)):
+        fit = str(feedback.get("context_fit") or "").strip()
+        reward = SONG_CONTEXT_FIT_REWARD.get(fit)
+        if reward is None:
+            # `partial` and unrated are UNKNOWN, never a weak negative.
+            diagnostics["neutral_or_missing_context_fit"] += 1
+            continue
+
+        exposure_id = str(feedback.get("exposure_id") or "")
+        exposure = exposure_map.get(exposure_id) if exposure_id else None
+        if exposure is None:
+            diagnostics["unknown_exposure_id"] += 1
+            continue
+
+        shown_at = int(exposure.get("shown_at_ms") or exposure.get("ts") or 0)
+        feedback_ts = int(feedback.get("ts") or 0)
+        if shown_at and feedback_ts and not (
+            shown_at <= feedback_ts <= shown_at + attribution_window_ms
+        ):
+            diagnostics["outside_attribution_window"] += 1
+            continue
+
+        music_id = _normalise_identity(feedback.get("music_id"))
+        song_key = _song_key(feedback.get("title"), feedback.get("artist"))
+        item = None
+        for candidate in exposure.get("items") or []:
+            if music_id and _normalise_identity(candidate.get("music_id")) == music_id:
+                item = candidate
+                break
+            if song_key and _song_key(candidate.get("title"), candidate.get("artist")) == song_key:
+                item = candidate
+                break
+        if item is None:
+            # Rating a song that was not in the slate cannot be attributed to a
+            # ranking decision, so it must not become a training row.
+            diagnostics["song_not_in_exposure"] += 1
+            continue
+
+        rows.append(
+            {
+                "event_id": f"songfit:{feedback.get('song_feedback_id') or exposure_id}:{item.get('rank')}",
+                "event_type": f"context_fit:{fit}",
+                "exposure_id": exposure_id,
+                "user_id": str(feedback.get("user_id") or exposure.get("user_id") or "local_admin"),
+                "intent_type": str(exposure.get("intent_type") or ""),
+                "ts": feedback_ts,
+                "title": item.get("title"),
+                "artist": item.get("artist"),
+                "rank": item.get("rank"),
+                "reward": reward,
+                "label": 1 if reward > 0 else 0,
+                "sample_weight": abs(reward),
+                "features": feature_vector(item),
+                "label_source": "song_feedback",
+                "context_fit": fit,
+                # Kept for diagnostics and the future reason-aware work; the
+                # learner does not consume reasons yet.
+                "off_reasons": list(feedback.get("off_reasons") or []),
+            }
+        )
+        diagnostics["matched_song_feedback"] += 1
+
+    diagnostics["song_rows"] = len(rows)
+    diagnostics["positive_rows"] = sum(1 for row in rows if row["label"] == 1)
+    diagnostics["negative_rows"] = sum(1 for row in rows if row["label"] == 0)
+    return rows, dict(diagnostics)
+
+
 def build_preference_pairs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Create strict positive-vs-negative pairs from the same exposure."""
     grouped: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -517,6 +617,7 @@ def learn_ranking_policy(
     exposures: list[dict[str, Any]],
     events: list[dict[str, Any]],
     slate_feedback: list[dict[str, Any]] | None = None,
+    song_feedback: list[dict[str, Any]] | None = None,
     *,
     min_events: int = 20,
     per_user_min_events: int = 30,
@@ -529,13 +630,18 @@ def learn_ranking_policy(
         slate_feedback or [],
         top_k=slate_top_k,
     )
-    rows = explicit_rows + slate_rows
+    # Per-song context_fit: the most specific signal a user can give, and until
+    # now the only feedback table the learner never opened.
+    song_rows, song_diagnostics = build_song_feedback_rows(exposures, song_feedback or [])
+    rows = explicit_rows + slate_rows + song_rows
     diagnostics = {
         "training_rows": len(rows),
         "explicit_rows": len(explicit_rows),
         "slate_rows": len(slate_rows),
+        "song_rows": len(song_rows),
         "explicit": explicit_diagnostics,
         "slate": slate_diagnostics,
+        "song": song_diagnostics,
     }
     global_model = _fit_scope(
         rows,

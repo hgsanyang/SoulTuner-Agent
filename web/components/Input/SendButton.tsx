@@ -9,6 +9,7 @@
  */
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 
 interface SendButtonProps {
   onClick: (e: React.MouseEvent) => void;
@@ -16,12 +17,13 @@ interface SendButtonProps {
 }
 
 export default function SendButton({ onClick, disabled }: SendButtonProps) {
+  const { t } = useLang();
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label="发送"
+      aria-label={t("发送")}
       style={{
         width: '44px',
         height: '44px',

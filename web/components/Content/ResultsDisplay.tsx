@@ -1,6 +1,7 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import SongCard from './SongCard';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -29,6 +30,7 @@ interface ResultsDisplayProps {
 }
 
 export default function ResultsDisplay({ response, songs, onRemoveSong }: ResultsDisplayProps) {
+  const { t } = useLang();
   const { playSong } = usePlayer();
   const { showToast } = useLibrary();
   const [addedAll, setAddedAll] = useState(false);
@@ -48,7 +50,7 @@ export default function ResultsDisplay({ response, songs, onRemoveSong }: Result
   const handleAddAllToQueue = () => {
     if (queueSongs.length === 0) return;
     playSong(queueSongs[0], queueSongs);
-    showToast(`▶ 已设置 ${queueSongs.length} 首歌为播放列表`);
+    showToast(t('▶ 已设置 {v0} 首歌为播放列表', { v0: queueSongs.length }));
     setAddedAll(true);
   };
 
@@ -79,13 +81,13 @@ export default function ResultsDisplay({ response, songs, onRemoveSong }: Result
               fontSize: '1.1rem', fontWeight: 600,
               color: theme.colors.text.primary, margin: 0,
             }}>
-              推荐歌曲 <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({songs.length})</span>
+              {t('推荐歌曲')} <span style={{ fontSize: '0.82rem', color: theme.colors.text.muted, fontWeight: 400 }}>({songs.length})</span>
             </h2>
 
             {/* 全部加入播放列表按钮 */}
             <button
               onClick={handleAddAllToQueue}
-              title="将所有推荐加入播放列表并开始播放"
+              title={t("将所有推荐加入播放列表并开始播放")}
               style={{
                 display: 'flex', alignItems: 'center', gap: '0.4rem',
                 padding: '0.35rem 0.85rem',
@@ -104,14 +106,14 @@ export default function ResultsDisplay({ response, songs, onRemoveSong }: Result
               {addedAll ? (
                 <>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-                  已在播放列表
+                  {t('已在播放列表')}
                 </>
               ) : (
                 <>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <polygon points="5 3 19 12 5 21 5 3" />
                   </svg>
-                  全部播放
+                  {t('全部播放')}
                 </>
               )}
             </button>

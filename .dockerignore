@@ -20,6 +20,7 @@ data/pipeline/*
 # 环境和配置
 .env
 .env.local
+config/user_settings.json
 *.log
 
 # 版本控制

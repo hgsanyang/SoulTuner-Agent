@@ -7,7 +7,7 @@ import asyncio
 import json
 from typing import List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from config.logging_config import get_logger, safe_labels, safe_query
@@ -20,6 +20,8 @@ router = APIRouter()
 class UserProfileRequest(BaseModel):
     """用户画像保存请求"""
     user_id: str = "local_admin"
+    profile_id: str = ""
+    interaction_mode: str = ""
     preferred_genres: List[str] = []       # 流派偏好
     preferred_moods: List[str] = []        # 情绪偏向
     preferred_scenarios: List[str] = []    # 常听场景
@@ -38,12 +40,16 @@ PRESET_LANGUAGES = ["中文", "英文", "日语", "韩语", "纯音乐"]
 
 
 @router.get("/api/user-profile")
-async def get_user_profile(user_id: str = "local_admin"):
+async def get_user_profile(raw_request: Request, user_id: str = "local_admin"):
     """
     从 Neo4j User 节点读取已保存的偏好。
     """
     try:
+        from api.runtime_context import runtime_context_from_request
         from retrieval.neo4j_client import get_neo4j_client
+
+        runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
+        effective_user_id = runtime_context.effective_user_id
         client = get_neo4j_client()
 
         # 使用 MERGE 确保 User 节点始终存在，避免 MATCH 返回空结果
@@ -54,7 +60,7 @@ async def get_user_profile(user_id: str = "local_admin"):
                u.preferred_scenarios AS preferred_scenarios,
                u.preferred_languages AS preferred_languages,
                u.profile_free_text AS free_text
-        """, {"user_id": user_id})
+        """, {"user_id": effective_user_id})
 
         # 原来这里整行打印 result —— 里面是这个人全部的流派/情绪/场景/语言偏好
         # 加自由描述文本，等于把用户画像明文写进日志。只记录"查到没查到"。
@@ -63,7 +69,7 @@ async def get_user_profile(user_id: str = "local_admin"):
         if result and result[0]:
             row = result[0]
             profile = {
-                "user_id": user_id,
+                "user_id": effective_user_id,
                 "preferred_genres": json.loads(row.get("preferred_genres") or "[]"),
                 "preferred_moods": json.loads(row.get("preferred_moods") or "[]"),
                 "preferred_scenarios": json.loads(row.get("preferred_scenarios") or "[]"),
@@ -88,7 +94,7 @@ async def get_user_profile(user_id: str = "local_admin"):
             return {
                 "success": True,
                 "profile": {
-                    "user_id": user_id,
+                    "user_id": effective_user_id,
                     "preferred_genres": [],
                     "preferred_moods": [],
                     "preferred_scenarios": [],
@@ -109,18 +115,28 @@ async def get_user_profile(user_id: str = "local_admin"):
 
 
 @router.post("/api/user-profile")
-async def save_user_profile(request: UserProfileRequest):
+async def save_user_profile(request: UserProfileRequest, raw_request: Request):
     """
     保存偏好到 Neo4j User 节点属性，并通过 MemoryGateway 旁路写入长期记忆。
     """
     try:
+        from api.runtime_context import runtime_context_from_request
         from retrieval.neo4j_client import get_neo4j_client
+        from services.runtime_context import runtime_context_scope
+
+        runtime_context = runtime_context_from_request(
+            raw_request,
+            profile_id=request.profile_id,
+            user_id=request.user_id,
+            interaction_mode=request.interaction_mode,
+        )
+        effective_user_id = runtime_context.effective_user_id
         client = get_neo4j_client()
 
         # ① 确保 User 节点存在
         client.execute_query("""
         MERGE (u:User {id: $user_id})
-        """, {"user_id": request.user_id})
+        """, {"user_id": effective_user_id})
 
         # ② 保存偏好属性到 User 节点（JSON 字符串）
         client.execute_query("""
@@ -132,7 +148,7 @@ async def save_user_profile(request: UserProfileRequest):
             u.profile_free_text = $free_text,
             u.profile_updated_at = datetime()
         """, {
-            "user_id": request.user_id,
+            "user_id": effective_user_id,
             "genres": json.dumps(request.preferred_genres, ensure_ascii=False),
             "moods": json.dumps(request.preferred_moods, ensure_ascii=False),
             "scenarios": json.dumps(request.preferred_scenarios, ensure_ascii=False),
@@ -166,13 +182,14 @@ async def save_user_profile(request: UserProfileRequest):
             try:
                 from services.memory_gateway import get_memory_gateway
 
-                asyncio.create_task(
-                    get_memory_gateway().remember_text(
-                        description=description,
-                        user_id=request.user_id,
-                        extra={"source": "user_profile"},
+                with runtime_context_scope(runtime_context):
+                    asyncio.create_task(
+                        get_memory_gateway().remember_text(
+                            description=description,
+                            user_id=effective_user_id,
+                            extra={"source": "user_profile"},
+                        )
                     )
-                )
                 # description 是由偏好拼出来的自然语言，截断也照样泄露；按 query 脱敏。
                 logger.info("[UserProfile] 长期记忆旁路已投递: %s", safe_query(description))
             except Exception as memory_err:
@@ -181,8 +198,8 @@ async def save_user_profile(request: UserProfileRequest):
         # ★ 清除精排阶段的偏好缓存，确保下次推荐使用最新画像
         try:
             from retrieval.hybrid_retrieval import invalidate_user_pref_cache
-            invalidate_user_pref_cache(request.user_id)
-            logger.info(f"[UserProfile] 已清除偏好缓存: {request.user_id}")
+            invalidate_user_pref_cache(effective_user_id)
+            logger.info(f"[UserProfile] 已清除偏好缓存: {effective_user_id}")
         except Exception:
             pass
 
@@ -192,7 +209,7 @@ async def save_user_profile(request: UserProfileRequest):
             from services.profile_synthesizer import trigger_portrait_refresh
             # 注意：不要在此函数内 `import asyncio` —— 局部导入会把函数内更早的
             # asyncio 引用变成未绑定局部变量，曾导致长期记忆投递静默失败。
-            asyncio.create_task(trigger_portrait_refresh(request.user_id))
+            asyncio.create_task(trigger_portrait_refresh(effective_user_id))
             logger.info("[UserProfile] 已触发画像刷新（用户主动设置偏好）")
         except Exception as e:
             logger.warning(f"[UserProfile] 画像刷新触发失败: {e}")
