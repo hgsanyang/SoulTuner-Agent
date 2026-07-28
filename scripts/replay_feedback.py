@@ -65,7 +65,9 @@ def main() -> int:
     parser.add_argument("--slate-top-k", type=int, default=5,
                         help="Top-k items per high-confidence slate feedback used as weak labels")
     parser.add_argument("--no-slate-feedback", action="store_true",
-                        help="Ignore slate_feedback.jsonl when fitting the v2 policy")
+                        help="Ignore slate feedback when fitting the v2 policy")
+    parser.add_argument("--no-song-feedback", action="store_true",
+                        help="Ignore per-song context_fit when fitting the v2 policy")
     parser.add_argument("--write-candidate", action="store_true",
                         help="Write ranking_policy.candidate.json, even before manual promotion")
     parser.add_argument("--promote", action="store_true",
@@ -104,7 +106,7 @@ def main() -> int:
         events = load_jsonl(feedback_dir / "events.jsonl")
         slate_feedback = [] if args.no_slate_feedback else load_jsonl(
             feedback_dir / "slate_feedback.jsonl")
-        song_feedback = [] if args.no_slate_feedback else load_jsonl(
+        song_feedback = [] if args.no_song_feedback else load_jsonl(
             feedback_dir / "song_feedback.jsonl")
         print("WARNING: including records that are NOT training-eligible "
               "(developer mode / pre-governance). Numbers below are diagnostic only.\n")
@@ -115,7 +117,7 @@ def main() -> int:
         exposures = load_training_exposures()
         events = load_training_events()
         slate_feedback = [] if args.no_slate_feedback else load_training_slate_feedback()
-        song_feedback = [] if args.no_slate_feedback else load_training_song_feedback()
+        song_feedback = [] if args.no_song_feedback else load_training_song_feedback()
     if args.method == "heuristic":
         report = estimate_tri_anchor_weights(exposures, events)
     elif args.method == "legacy":

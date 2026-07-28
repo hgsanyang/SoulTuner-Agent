@@ -289,7 +289,7 @@ export default function MemoryPage() {
               const fit = CONTEXT_FIT_LABELS[item.context_fit] || { label: item.context_fit || '—', color: theme.colors.text.muted };
               return (
                 <div key={item.song_feedback_id} style={{ display: 'flex', gap: '0.6rem', alignItems: 'baseline', fontSize: '0.78rem', padding: '0.35rem 0', borderBottom: `1px solid ${theme.colors.border.default}` }}>
-                  <span style={{ color: fit.color, width: '3.5rem', flexShrink: 0 }}>{fit.label}</span>
+                  <span style={{ color: fit.color, width: '3.5rem', flexShrink: 0 }}>{t(fit.label)}</span>
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {item.title || item.music_id}
                     {item.artist && <span style={{ color: theme.colors.text.muted }}> · {item.artist}</span>}
@@ -309,7 +309,7 @@ export default function MemoryPage() {
         <div style={{ fontWeight: 700 }}>{t('新增或修正偏好')}</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 200px) minmax(180px, 1fr) auto', gap: '0.7rem', alignItems: 'center' }}>
           <select value={field} onChange={e => setField(e.target.value)} style={inputStyle()}>
-            {FIELD_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+            {FIELD_OPTIONS.map(item => <option key={item.value} value={item.value}>{t(item.label)}</option>)}
           </select>
           <input value={value} onChange={e => setValue(e.target.value)} placeholder={t("例如：雨天、lo-fi、不要太吵、少人声")} style={inputStyle()} />
           <button onClick={() => addPreference().catch(err => setMessage(err.message))} style={smallButtonStyle(theme.colors.primary.accent, 'rgba(29,185,84,0.12)', 'rgba(29,185,84,0.35)')}>{t('保存')}</button>
@@ -326,7 +326,7 @@ export default function MemoryPage() {
               <section key={section.field} style={{ padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.7rem' }}>
                   <div>
-                    <div style={{ fontSize: '0.95rem', fontWeight: 800 }}>{section.label}</div>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 800 }}>{t(section.label)}</div>
                     <div style={{ fontSize: '0.74rem', color: theme.colors.text.muted }}>{t('{v0} · {v1} 条', { v0: section.field, v1: section.values.length })}</div>
                   </div>
                 </div>
@@ -368,7 +368,7 @@ export default function MemoryPage() {
             {(memory?.profile_views?.views || []).map(view => (
               <div key={view.scope}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.45rem', color: '#c4b5fd' }}>
-                  {view.title} <span style={{ color: theme.colors.text.muted, fontWeight: 400, fontSize: '0.72rem' }}>({view.scope})</span>
+                  {t(view.title)} <span style={{ color: theme.colors.text.muted, fontWeight: 400, fontSize: '0.72rem' }}>({view.scope})</span>
                 </div>
                 <div style={{ display: 'grid', gap: '0.45rem' }}>
                   {view.items.map(item => (

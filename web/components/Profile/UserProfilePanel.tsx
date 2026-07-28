@@ -427,7 +427,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                           fontSize: '0.72rem',
                           color: theme.colors.text.muted,
                           marginBottom: '0.35rem',
-                        }}>{section.label}</div>
+                        }}>{t(section.label)}</div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
                           {values.map((value: string) => (
                             <button

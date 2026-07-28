@@ -471,7 +471,7 @@ export default function SongCard({
           ))}
           {onlineAudioStatus && (
             <span style={{ padding: '0.2rem 0.55rem', fontSize: '0.68rem', backgroundColor: onlineAudioStatus.background, color: onlineAudioStatus.color, borderRadius: theme.borderRadius.full, border: `1px solid ${onlineAudioStatus.border}` }}>
-              {onlineAudioStatus.text}
+              {t(onlineAudioStatus.text)}
             </span>
           )}
           {inQueue && (

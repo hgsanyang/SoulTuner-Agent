@@ -192,8 +192,8 @@ export default function ProductIntro({ onPrimaryAction, onSecondaryAction, onQui
                   e.currentTarget.style.borderColor = theme.colors.border.default;
                 }}
               >
-                <span>{example.title}</span>
-                <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>· {example.meta}</span>
+                <span>{t(example.title)}</span>
+                <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>· {t(example.meta)}</span>
               </button>
             ))}
           </div>

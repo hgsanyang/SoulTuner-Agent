@@ -11,6 +11,14 @@ Two mechanisms, deliberately at very different confidence levels:
    acoustically close to something you rejected. Much lower confidence, so it is
    **off by default** and every term in it is capped.
 
+Scoping
+-------
+A rejection applies within its SESSION when one is known, and otherwise inside a
+recency window. Session is the honest boundary: rejecting a track while asking
+for "quiet, before sleep" should not keep it out of a road-trip request an hour
+later. The window is the fallback for callers that have no session id, not the
+primary rule.
+
 What this module deliberately does NOT do
 -----------------------------------------
 It never touches the query. An earlier design extracted a rejected song's
@@ -18,15 +26,12 @@ acoustic traits into ``soft_intent.avoid``; that reads as "reject piano, slow
 tempo and Chinese" from one data point about one song, and it propagates into
 the planner, HyDE and hard filtering where it is invisible and hard to undo.
 Negative feedback should lower confidence, not invert a preference.
-
-Scoping is by TIME, not by session id: the retrieval layer has a user id but no
-session id, and inventing a fake session boundary would be worse than saying
-plainly that this is a recency window.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any, Iterable
 
@@ -34,16 +39,14 @@ from config.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# How long a "doesn't fit" keeps a song out of your results. Roughly one
-# listening session — long enough that asking again in five minutes does not
-# hand you back the song you just rejected, short enough that a mood from last
-# week does not follow you around.
+# Fallback scope when the caller has no session id. Roughly one sitting.
 DEFAULT_SUPPRESSION_WINDOW_MS = 2 * 60 * 60 * 1000      # 2 hours
 
 # Hard cap on how much the (default-off) similarity penalty may subtract,
-# expressed as a fraction of the song's own score. Four data points must not be
-# able to reorder a slate.
+# expressed as a fraction of the song's own score.
 MAX_PENALTY_RATIO = 0.20
+
+_NORMALISE = re.compile(r"[\s\-_—·・,，.。!！?？'\"()（）\[\]【】]+")
 
 
 def _now_ms() -> int:
@@ -54,27 +57,42 @@ def _truthy(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def similarity_penalty_enabled() -> bool:
-    """The bounded similarity penalty is OFF until a targeted eval says otherwise.
+def song_key(title: Any, artist: Any) -> str:
+    """Normalised title+artist, the fallback identity when music_id is absent.
 
-    Exact-song suppression needs no such gate — it changes nothing except not
-    repeating a song you explicitly rejected.
+    Web-supplement candidates often arrive without a music_id, so an id-only
+    match let a track you just rejected come back through the online lane.
     """
+    text = "%s|%s" % (str(title or ""), str(artist or ""))
+    return _NORMALISE.sub("", text).casefold()
+
+
+def similarity_penalty_enabled() -> bool:
+    """The bounded similarity penalty is OFF until a targeted eval says otherwise."""
     return _truthy(os.getenv("MUSIC_NEGATIVE_ANCHOR_PENALTY"))
 
 
 def recent_context_rejections(
     user_id: str,
     *,
+    session_id: str = "",
     now_ms: int | None = None,
     window_ms: int = DEFAULT_SUPPRESSION_WINDOW_MS,
     feedback_rows: list[dict[str, Any]] | None = None,
-) -> set[str]:
-    """music_ids this user marked ``context_fit=off`` inside the window.
+    with_names: bool = False,
+):
+    """What this user rejected, scoped to the session when one is known.
 
-    Only an explicit "off" counts. ``partial`` is genuinely mixed and unrated is
-    UNKNOWN — treating either as a rejection would punish songs the user never
-    complained about.
+    Only an explicit ``context_fit == "off"`` counts. ``partial`` is genuinely
+    mixed and unrated is UNKNOWN — treating either as a rejection would punish
+    songs the user never complained about.
+
+    Returns a set of music_ids, or ``(music_ids, song_keys)`` when
+    ``with_names`` — the second set covers candidates that carry no music_id.
+
+    LATEST WINS: if you rate the same song in the same exposure twice, only the
+    most recent judgement counts. Rating "off" then correcting to "fits" must
+    lift the suppression, not leave both records fighting.
     """
     now = int(now_ms if now_ms is not None else _now_ms())
     cutoff = now - max(0, int(window_ms))
@@ -87,45 +105,80 @@ def recent_context_rejections(
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("[NegativeFeedback] 读取逐首反馈失败，跳过抑制: %s: %s",
                          type(exc).__name__, exc)
-            return set()
+            return (set(), set()) if with_names else set()
 
     target_user = str(user_id or "").strip()
-    rejected: set[str] = set()
+    target_session = str(session_id or "").strip()
+
+    # Collapse to the latest judgement per (exposure, song).
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
-        if str(row.get("context_fit") or "").strip() != "off":
-            continue
         if target_user and str(row.get("user_id") or "").strip() != target_user:
             continue
-        ts = int(row.get("ts") or 0)
-        if ts and ts < cutoff:
+        identity = (
+            str(row.get("exposure_id") or ""),
+            str(row.get("music_id") or "") or song_key(row.get("title"), row.get("artist")),
+        )
+        current = latest.get(identity)
+        if current is None or int(row.get("ts") or 0) >= int(current.get("ts") or 0):
+            latest[identity] = row
+
+    ids: set[str] = set()
+    names: set[str] = set()
+    for row in latest.values():
+        if str(row.get("context_fit") or "").strip() != "off":
             continue
+        if target_session:
+            row_session = str(
+                (row.get("context") or {}).get("session_id")
+                or row.get("session_id") or ""
+            ).strip()
+            # An in-session rejection always applies. A rejection with no session
+            # recorded falls back to the time window rather than being ignored.
+            if row_session and row_session != target_session:
+                continue
+            if not row_session and int(row.get("ts") or 0) < cutoff:
+                continue
+        elif int(row.get("ts") or 0) and int(row.get("ts") or 0) < cutoff:
+            continue
+
         music_id = str(row.get("music_id") or "").strip()
         if music_id:
-            rejected.add(music_id)
-    return rejected
+            ids.add(music_id)
+        key = song_key(row.get("title"), row.get("artist"))
+        if key:
+            names.add(key)
+    return (ids, names) if with_names else ids
 
 
 def suppress_rejected(
     items: list[dict[str, Any]],
     rejected_music_ids: Iterable[str],
     *,
+    rejected_names: Iterable[str] | None = None,
     keep_at_least: int = 5,
 ) -> tuple[list[dict[str, Any]], int]:
     """Drop candidates the user just rejected, without emptying the slate.
 
+    Matches on music_id first and on normalised title+artist second, because web
+    candidates frequently have no music_id — matching only on id let a rejected
+    song return through the online lane.
+
     ``keep_at_least`` is a floor, not a preference: if suppression would leave
-    almost nothing, returning a thin useless slate is worse than showing a
-    rejected song again. Returns (kept, dropped_count).
+    almost nothing, a thin useless slate is worse than a repeat.
     """
     rejected = {str(mid).strip() for mid in rejected_music_ids if str(mid).strip()}
-    if not rejected:
+    names = {str(n).strip() for n in (rejected_names or ()) if str(n).strip()}
+    if not rejected and not names:
         return items, 0
 
     kept, dropped = [], []
     for item in items:
         song = item.get("song") or item
         music_id = str(song.get("music_id") or "").strip()
-        (dropped if music_id and music_id in rejected else kept).append(item)
+        key = song_key(song.get("title"), song.get("artist"))
+        hit = (music_id and music_id in rejected) or (key and key in names)
+        (dropped if hit else kept).append(item)
 
     if not dropped:
         return items, 0
@@ -157,7 +210,6 @@ def negative_anchor_penalty(
       * time_decay      — an old "not tonight" should fade
 
     Returns a RATIO to subtract, so the caller keeps ownership of the score.
-    This function does not know what a song is and cannot touch the query.
     """
     sim = max(0.0, min(float(similarity_to_nearest_rejection), 1.0))
     ctx = max(0.0, min(float(context_similarity), 1.0))
@@ -166,3 +218,63 @@ def negative_anchor_penalty(
         return 0.0
     decay = 0.5 ** (max(0, int(age_ms)) / max(1, int(half_life_ms)))
     return round(sim * ctx * cap * decay, 6)
+
+
+def apply_negative_anchor_penalty(
+    items: list[dict[str, Any]],
+    rejected_rows: list[dict[str, Any]],
+    *,
+    now_ms: int | None = None,
+    score_field: str = "similarity_score",
+) -> int:
+    """Apply the bounded penalty to a candidate list, in place. Returns count.
+
+    THE production entry point. Without this the penalty was a tested function
+    nobody called — setting the flag changed nothing, which made "implemented,
+    off by default" an overstatement.
+
+    Similarity is cosine over whichever audio embedding both the candidate and
+    the rejected song carry. A candidate with no comparable embedding is left
+    alone rather than guessed at.
+    """
+    if not similarity_penalty_enabled() or not items or not rejected_rows:
+        return 0
+
+    now = int(now_ms if now_ms is not None else _now_ms())
+    touched = 0
+    for item in items:
+        song = item.get("song") or item
+        best_sim, best_age = 0.0, 0
+        for rejected in rejected_rows:
+            sim = _embedding_similarity(song, rejected)
+            if sim > best_sim:
+                best_sim = sim
+                best_age = max(0, now - int(rejected.get("ts") or now))
+        if best_sim <= 0.0:
+            continue
+        ratio = negative_anchor_penalty(best_sim, age_ms=best_age)
+        if ratio <= 0.0:
+            continue
+        base = float(item.get(score_field) or 0.0)
+        item[score_field] = base * (1.0 - ratio)
+        item["_negative_anchor_penalty"] = round(ratio, 4)
+        touched += 1
+    if touched:
+        logger.info("[NegativeFeedback] 负例相似度惩罚已应用于 %d 首（上限 %.0f%%）",
+                    touched, MAX_PENALTY_RATIO * 100)
+    return touched
+
+
+def _embedding_similarity(song: dict[str, Any], rejected: dict[str, Any]) -> float:
+    """Cosine over a shared embedding field, or 0.0 when there is none."""
+    for field in ("muq_embedding", "m2d2_embedding", "omar_embedding"):
+        left, right = song.get(field), rejected.get(field)
+        if not left or not right or len(left) != len(right):
+            continue
+        dot = sum(a * b for a, b in zip(left, right))
+        na = sum(a * a for a in left) ** 0.5
+        nb = sum(b * b for b in right) ** 0.5
+        if na <= 0 or nb <= 0:
+            continue
+        return max(0.0, min(dot / (na * nb), 1.0))
+    return 0.0

@@ -456,6 +456,10 @@ class MusicHybridRetrieval:
         graph_entities = list(dict.fromkeys(graph_artist_entities + graph_song_entities))
         intent_type = str(plan.get("_intent_type") or "hybrid_search")
         user_id = str(plan.get("_user_id") or GRAPH_AFFINITY_USER_ID)
+        # Same channel the user id arrives on. Empty when the caller has no
+        # session, which makes suppression fall back to the recency window
+        # rather than silently applying across unrelated requests.
+        session_id = str(plan.get("_session_id") or "")
         recall_weights = recall_weights_for_intent(
             intent_type,
             query=query,
@@ -770,6 +774,7 @@ class MusicHybridRetrieval:
             hints=hints,
             web_res=web_raw,
             web_playable=web_playable,
+            session_id=session_id,
             graph_entities=graph_entities,
             final_limit=limit,
             timings=timings,
@@ -1384,6 +1389,11 @@ class MusicHybridRetrieval:
         final_limit: int = 15,
         timings: Dict[str, float] = None,
         user_id: str = GRAPH_AFFINITY_USER_ID,
+        # Suppression is scoped by session when one is known. Rejecting a track
+        # while asking for "quiet, before sleep" must not keep it out of a
+        # road-trip request an hour later; the recency window is only the
+        # fallback for callers that have no session id.
+        session_id: str = "",
     ) -> ToolOutput:
         """
         合并各召回源并执行统一过滤与排序。
@@ -1433,21 +1443,6 @@ class MusicHybridRetrieval:
             len(final_list),
         )
 
-        # 你刚说过"不符合"的歌，短期内不再端上来。只对**这一首**生效，不推断
-        # "所以你不喜欢钢琴/慢歌/中文"——一条负反馈只够支撑这一个结论。
-        # 保底：如果抑制会让结果太少，宁可重复也不给你一个空结果。
-        try:
-            from services.negative_feedback import recent_context_rejections, suppress_rejected
-
-            rejected = recent_context_rejections(user_id)
-            if rejected:
-                final_list, dropped = suppress_rejected(final_list, rejected)
-                if dropped:
-                    logger.info("[NegativeFeedback] 最近「不符合」抑制: %d → %d",
-                                dropped + len(final_list), len(final_list))
-        except Exception as exc:
-            # 抑制是加分项，不能拖垮推荐。
-            logger.warning("[NegativeFeedback] 抑制跳过: %s: %s", type(exc).__name__, exc)
 
         # 联网歌曲也遵守同一硬过滤，再进入后续统一排序。
         if web_playable:
@@ -1486,6 +1481,26 @@ class MusicHybridRetrieval:
                     continue
                 final_list.append(item)
                 existing_pairs.append((title, artist))
+
+        # 抑制必须放在联网候选合并之后：本地先抑制、联网后追加的话，
+        # 你刚标「不符合」的那首歌会从联网通道原路返回。
+        # 只对**这一首**生效，不推断"所以你不喜欢钢琴/慢歌/中文"——
+        # 一条负反馈只够支撑这一个结论。
+        try:
+            from services.negative_feedback import recent_context_rejections, suppress_rejected
+
+            rejected, rejected_names = recent_context_rejections(
+                user_id, session_id=session_id, with_names=True)
+            if rejected or rejected_names:
+                before_suppress = len(final_list)
+                final_list, dropped = suppress_rejected(
+                    final_list, rejected, rejected_names=rejected_names)
+                if dropped:
+                    logger.info("[NegativeFeedback] 最近「不符合」抑制: %d → %d",
+                                before_suppress, len(final_list))
+        except Exception as exc:
+            # 抑制是加分项，不能拖垮推荐。
+            logger.warning("[NegativeFeedback] 抑制跳过: %s: %s", type(exc).__name__, exc)
 
         timings["fusion_filter_ms"] = round(
             (time.perf_counter() - fusion_started) * 1000,

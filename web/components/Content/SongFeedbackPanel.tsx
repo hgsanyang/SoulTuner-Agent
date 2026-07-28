@@ -114,7 +114,7 @@ export default function SongFeedbackPanel({
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                 {([['fits', t('很符合')], ['partial', t('一般')], ['off', t('不符合')]] as const).map(([v, label]) => (
                     <button key={v} onClick={() => chooseFit(v)} style={chip(fit === v)}>
-                        {label}
+                        {t(label)}
                     </button>
                 ))}
             </div>
@@ -123,7 +123,7 @@ export default function SongFeedbackPanel({
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                     {(Object.keys(SONG_OFF_REASON_LABELS) as SongOffReason[]).map(r => (
                         <button key={r} onClick={() => toggleReason(r)} style={chip(reasons.includes(r))}>
-                            {SONG_OFF_REASON_LABELS[r]}
+                            {t(SONG_OFF_REASON_LABELS[r])}
                         </button>
                     ))}
                 </div>

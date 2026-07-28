@@ -198,7 +198,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
         value={String(settings[key] || '')}
         onChange={e => updateField(key, e.target.value)}
       >
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {options.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
       </select>
     </div>
   );
@@ -384,7 +384,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   fontWeight: active ? 700 : 500,
                 }}
               >
-                {option.label}
+                {t(option.label)}
               </button>
             );
           })}
@@ -644,7 +644,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 transition: 'all 0.15s',
               }}>
                 <span>{tab.icon}</span>
-                <span>{tab.label}</span>
+                <span>{t(tab.label)}</span>
               </button>
             ))}
           </div>
