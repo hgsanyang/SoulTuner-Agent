@@ -1,6 +1,7 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 
 interface HeaderProps {
   onMenuToggle?: () => void;
@@ -8,6 +9,7 @@ interface HeaderProps {
 }
 
 export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) {
+  const { t } = useLang();
   return (
     <header
       style={{
@@ -30,7 +32,7 @@ export default function Header({ onMenuToggle, isMobile = false }: HeaderProps) 
         {onMenuToggle && (
           <button
             type="button"
-            aria-label="打开导航"
+            aria-label={t("打开导航")}
             onClick={onMenuToggle}
             style={{
               width: '40px',

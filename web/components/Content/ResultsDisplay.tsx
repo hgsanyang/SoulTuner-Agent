@@ -1,6 +1,7 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 import SongCard from './SongCard';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -29,6 +30,7 @@ interface ResultsDisplayProps {
 }
 
 export default function ResultsDisplay({ response, songs, onRemoveSong }: ResultsDisplayProps) {
+  const { t } = useLang();
   const { playSong } = usePlayer();
   const { showToast } = useLibrary();
   const [addedAll, setAddedAll] = useState(false);
@@ -85,7 +87,7 @@ export default function ResultsDisplay({ response, songs, onRemoveSong }: Result
             {/* 全部加入播放列表按钮 */}
             <button
               onClick={handleAddAllToQueue}
-              title="将所有推荐加入播放列表并开始播放"
+              title={t("将所有推荐加入播放列表并开始播放")}
               style={{
                 display: 'flex', alignItems: 'center', gap: '0.4rem',
                 padding: '0.35rem 0.85rem',

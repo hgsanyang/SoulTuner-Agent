@@ -7,6 +7,8 @@
  * otherwise that one string quietly falls back to Chinese in English mode.
  */
 export const EN_DICT: Record<string, string> = {
+    '界面语言': 'Language',
+
     // ---- status, generic ----
     '未知错误': 'Unknown error',
     '发生未知错误': 'Something went wrong',

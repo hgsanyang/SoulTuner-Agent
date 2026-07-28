@@ -4,6 +4,7 @@
 export const dynamic = 'force-dynamic';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
@@ -71,6 +72,7 @@ function PlaylistWelcome({ onPromptClick }: { onPromptClick: (prompt: string) =>
 }
 
 export default function PlaylistPage() {
+  const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ response?: string; recommendations?: any[] } | null>(null);
   const router = useRouter();
@@ -92,7 +94,7 @@ export default function PlaylistPage() {
       });
     } catch (error) {
       setResult({
-        response: '创建歌单失败，请稍后重试',
+        response: t('创建歌单失败，请稍后重试'),
       });
       console.error(error);
     } finally {
@@ -109,7 +111,7 @@ export default function PlaylistPage() {
   return (
     <MainLayout
       onInputSubmit={handleSubmit}
-      inputPlaceholder="例如：创建一个适合运动的歌单"
+      inputPlaceholder={t("例如：创建一个适合运动的歌单")}
       inputDisabled={loading}
     >
       {!result && !loading && <PlaylistWelcome onPromptClick={handleSubmit} />}

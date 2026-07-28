@@ -39,13 +39,26 @@ export function readStoredLang(): Lang {
 }
 
 /**
- * Translate one source string.
+ * Translate one source string, optionally filling {name} placeholders.
  *
- * Interpolation is intentionally absent: call sites build their own strings
- * from template literals, and a translation layer that also owned formatting
- * would need every one of those rewritten. `t()` handles the fixed parts.
+ * Interpolation has to live here, not at the call site: word order differs.
+ * "这组 15 首推荐怎么样？" is "How was this set of 15?" — the number lands in a
+ * different place, so splitting the sentence around the value in JSX and
+ * translating the pieces produces broken English. The whole sentence is one
+ * key with a placeholder instead.
+ *
+ *   t('这组 {n} 首推荐怎么样？', { n: songCount })
+ *
+ * A placeholder with no matching value is left as-is rather than blanked, so a
+ * mistake shows up as `{n}` on screen instead of a silently missing number.
  */
-export function translate(source: string, lang: Lang): string {
-    if (lang === 'zh') return source;
-    return EN[source] ?? source;
+export function translate(
+    source: string,
+    lang: Lang,
+    vars?: Record<string, string | number>,
+): string {
+    const text = lang === 'zh' ? source : (EN[source] ?? source);
+    if (!vars) return text;
+    return text.replace(/\{(\w+)\}/g, (whole, name) =>
+        name in vars ? String(vars[name]) : whole);
 }

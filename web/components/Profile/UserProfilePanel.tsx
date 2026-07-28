@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { createPortal } from 'react-dom';
 import { theme } from '@/styles/theme';
 import { apiFetch } from '@/lib/app-session';
@@ -51,6 +52,7 @@ interface MemoryProfile {
 }
 
 export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelProps) {
+  const { t } = useLang();
   const { activeProfile } = useAppSession();
   const [genres, setGenres] = useState<string[]>([]);
   const [moods, setMoods] = useState<string[]>([]);
@@ -128,14 +130,14 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
       const result = await res.json();
       if (result.success) {
         setDirty(false);
-        setMessage('✅ 偏好已保存');
+        setMessage(t('✅ 偏好已保存'));
         setTimeout(() => setMessage(''), 3000);
       } else {
-        setMessage('❌ 保存失败');
+        setMessage(t('❌ 保存失败'));
         setTimeout(() => setMessage(''), 3000);
       }
     } catch {
-      setMessage('❌ 连接失败，请确认后端已启动');
+      setMessage(t('❌ 连接失败，请确认后端已启动'));
       setTimeout(() => setMessage(''), 3000);
     } finally {
       setSaving(false);
@@ -159,28 +161,28 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
         { method: 'DELETE' },
       );
       if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
-      setMessage('✅ 已删除该条记忆');
+      setMessage(t('✅ 已删除该条记忆'));
       await loadProfile();
       setTimeout(() => setMessage(''), 2500);
     } catch (e) {
       console.error('Failed to remove memory preference:', e);
-      setMessage('❌ 删除记忆失败');
+      setMessage(t('❌ 删除记忆失败'));
       setTimeout(() => setMessage(''), 3000);
     }
   };
 
   const clearLearnedPreferences = async () => {
-    const ok = window.confirm('只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？');
+    const ok = window.confirm(t('只清空系统从反馈中学到的偏好，不会删除你手动设置的画像、喜欢或收藏。确定继续吗？'));
     if (!ok) return;
     try {
       const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
       if (!resp.ok) throw new Error(`清空失败: ${resp.status}`);
-      setMessage('✅ 已清空系统学习偏好');
+      setMessage(t('✅ 已清空系统学习偏好'));
       await loadProfile();
       setTimeout(() => setMessage(''), 2500);
     } catch (e) {
       console.error('Failed to clear learned preferences:', e);
-      setMessage('❌ 清空学习记忆失败');
+      setMessage(t('❌ 清空学习记忆失败'));
       setTimeout(() => setMessage(''), 3000);
     }
   };
@@ -316,10 +318,10 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
             </div>
           ) : (
             <>
-              {renderTagGroup('流派偏好', '🎸', PRESET_GENRES, genres, setGenres)}
-              {renderTagGroup('情绪倾向', '💭', PRESET_MOODS, moods, setMoods)}
-              {renderTagGroup('常听场景', '🎧', PRESET_SCENARIOS, scenarios, setScenarios)}
-              {renderTagGroup('语言偏好', '🌍', PRESET_LANGUAGES, languages, setLanguages)}
+              {renderTagGroup(t('流派偏好'), '🎸', PRESET_GENRES, genres, setGenres)}
+              {renderTagGroup(t('情绪倾向'), '💭', PRESET_MOODS, moods, setMoods)}
+              {renderTagGroup(t('常听场景'), '🎧', PRESET_SCENARIOS, scenarios, setScenarios)}
+              {renderTagGroup(t('语言偏好'), '🌍', PRESET_LANGUAGES, languages, setLanguages)}
 
               {/* 自由描述 */}
               <div style={{ marginBottom: '1rem' }}>
@@ -336,7 +338,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                 <textarea
                   value={freeText}
                   onChange={e => { setFreeText(e.target.value); setDirty(true); }}
-                  placeholder="例如：喜欢 C418 的 Minecraft 原声带风格、偏爱暗黑氛围电子、不太喜欢韩国流行..."
+                  placeholder={t("例如：喜欢 C418 的 Minecraft 原声带风格、偏爱暗黑氛围电子、不太喜欢韩国流行...")}
                   rows={3}
                   style={{
                     width: '100%',
@@ -431,7 +433,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                             <button
                               key={`${section.field}-${value}`}
                               onClick={() => section.deletable !== false && removeLearnedPreference(section.field, value)}
-                              title="点击删除这条学习记忆"
+                              title={t("点击删除这条学习记忆")}
                               style={{
                                 border: '1px solid rgba(29,185,84,0.35)',
                                 background: 'rgba(29,185,84,0.10)',
@@ -477,7 +479,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
               ? `已选 ${totalSelected} 项偏好，点击保存`
               : totalSelected > 0
                 ? `已设置 ${totalSelected} 项偏好`
-                : '暂未设置偏好'
+                : t('暂未设置偏好')
             )}
           </span>
           <div style={{ display: 'flex', gap: '0.6rem' }}>
@@ -510,7 +512,7 @@ export default function UserProfilePanel({ isOpen, onClose }: UserProfilePanelPr
                 transition: 'all 0.2s',
               }}
             >
-              {saving ? '保存中...' : '💾 保存偏好'}
+              {saving ? t('保存中...') : t('💾 保存偏好')}
             </button>
           </div>
         </div>

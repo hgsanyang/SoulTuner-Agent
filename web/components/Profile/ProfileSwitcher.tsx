@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { useAppSession } from '@/context/AppSessionContext';
 import { theme } from '@/styles/theme';
 
 export default function ProfileSwitcher() {
+  const { t } = useLang();
   const {
     profiles,
     activeProfile,
@@ -33,7 +35,7 @@ export default function ProfileSwitcher() {
   return (
     <div style={{ display: 'grid', gap: '0.55rem' }}>
       <div
-        aria-label="交互模式"
+        aria-label={t("交互模式")}
         style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
@@ -44,8 +46,8 @@ export default function ProfileSwitcher() {
         }}
       >
         {([
-          { value: 'personal' as const, label: '日常' },
-          { value: 'developer' as const, label: '开发' },
+          { value: 'personal' as const, label: t('日常') },
+          { value: 'developer' as const, label: t('开发') },
         ]).map(option => {
           const active = interactionMode === option.value;
           return (
@@ -104,7 +106,7 @@ export default function ProfileSwitcher() {
           type="button"
           onClick={() => setOpen(value => !value)}
           aria-expanded={open}
-          aria-label="切换用户档案"
+          aria-label={t("切换用户档案")}
           style={{
             width: '100%',
             minHeight: '38px',
@@ -214,7 +216,7 @@ export default function ProfileSwitcher() {
                       if (event.key === 'Enter') submitProfile();
                       if (event.key === 'Escape') setCreating(false);
                     }}
-                    placeholder="新档案名称"
+                    placeholder={t("新档案名称")}
                     maxLength={32}
                     style={{
                       minWidth: 0,
@@ -231,7 +233,7 @@ export default function ProfileSwitcher() {
                     type="button"
                     onClick={submitProfile}
                     disabled={profileLoading || !displayName.trim()}
-                    title="创建档案"
+                    title={t("创建档案")}
                     style={{
                       width: '30px',
                       height: '30px',

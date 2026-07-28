@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { useRouter } from 'next/navigation';
 import { theme } from '@/styles/theme';
 import { apiFetch } from '@/lib/app-session';
@@ -105,6 +106,7 @@ function toneStyle(tone?: string): { color: string; background: string; border: 
 }
 
 export default function MemoryPage() {
+  const { t } = useLang();
   const router = useRouter();
   const { activeProfile, interactionMode } = useAppSession();
   const [memory, setMemory] = useState<MemoryProfile | null>(null);
@@ -123,7 +125,7 @@ export default function MemoryPage() {
       if (!resp.ok || !data.success) throw new Error(data.error || `读取失败: ${resp.status}`);
       setMemory(data.memory);
     } catch (err: any) {
-      setMessage(`读取记忆失败：${err.message || '请确认后端已启动'}`);
+      setMessage(`读取记忆失败：${err.message || t('请确认后端已启动')}`);
     } finally {
       setLoading(false);
     }
@@ -198,20 +200,20 @@ export default function MemoryPage() {
   };
 
   const clearLearnedMemory = async () => {
-    if (!window.confirm('清空所有系统学习到的偏好？手动画像、喜欢和收藏不会被删除。')) return;
+    if (!window.confirm(t('清空所有系统学习到的偏好？手动画像、喜欢和收藏不会被删除。'))) return;
     const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
     if (!resp.ok) {
       setMessage(`清空失败：${resp.status}`);
       return;
     }
-    setMessage('已清空系统学习偏好');
+    setMessage(t('已清空系统学习偏好'));
     await loadMemory();
   };
 
   const deleteRecord = async (recordId: string) => {
     const resp = await apiFetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
     if (!resp.ok) throw new Error(`删除失败: ${resp.status}`);
-    setMessage('已删除该条记忆；审计历史保留为删除标记');
+    setMessage(t('已删除该条记忆；审计历史保留为删除标记'));
     await loadMemory();
   };
 
@@ -223,7 +225,7 @@ export default function MemoryPage() {
         {/* 这页原来只能靠浏览器后退退出。 */}
         <button
           onClick={() => router.back()}
-          aria-label="返回"
+          aria-label={t("返回")}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -256,19 +258,19 @@ export default function MemoryPage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-        <MetricCard label="正向偏好" value={diagnostics.positive_preference_count || 0} color="#86efac" />
-        <MetricCard label="避开偏好" value={diagnostics.negative_preference_count || 0} color="#fca5a5" />
-        <MetricCard label="场景/上下文" value={diagnostics.context_preference_count || 0} color="#93c5fd" />
-        <MetricCard label="旁路记忆" value={memory?.episodic_backends?.length || 0} color="#c4b5fd" />
+        <MetricCard label={t("正向偏好")} value={diagnostics.positive_preference_count || 0} color="#86efac" />
+        <MetricCard label={t("避开偏好")} value={diagnostics.negative_preference_count || 0} color="#fca5a5" />
+        <MetricCard label={t("场景/上下文")} value={diagnostics.context_preference_count || 0} color="#93c5fd" />
+        <MetricCard label={t("旁路记忆")} value={memory?.episodic_backends?.length || 0} color="#c4b5fd" />
       </div>
 
       {message && (
-        <div style={{ padding: '0.7rem 0.85rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, color: message.includes('失败') ? '#fca5a5' : '#86efac', background: 'rgba(255,255,255,0.035)' }}>
+        <div style={{ padding: '0.7rem 0.85rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, color: message.includes(t('失败')) ? '#fca5a5' : '#86efac', background: 'rgba(255,255,255,0.035)' }}>
           {message}
         </div>
       )}
 
-      {/* 我的评价：以前评完就看不见了，连"这首评没评过"都不知道。 */}
+      {/* 我的评价：以前评完就看不见了，连t("这首评没评过")都不知道。 */}
       <div style={{ display: 'grid', gap: '0.6rem', padding: '1rem', borderRadius: theme.borderRadius.md, border: `1px solid ${theme.colors.border.default}`, background: 'rgba(255,255,255,0.025)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap' }}>
           <span style={{ fontWeight: 700 }}>我的评价</span>
@@ -309,7 +311,7 @@ export default function MemoryPage() {
           <select value={field} onChange={e => setField(e.target.value)} style={inputStyle()}>
             {FIELD_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
           </select>
-          <input value={value} onChange={e => setValue(e.target.value)} placeholder="例如：雨天、lo-fi、不要太吵、少人声" style={inputStyle()} />
+          <input value={value} onChange={e => setValue(e.target.value)} placeholder={t("例如：雨天、lo-fi、不要太吵、少人声")} style={inputStyle()} />
           <button onClick={() => addPreference().catch(err => setMessage(err.message))} style={smallButtonStyle(theme.colors.primary.accent, 'rgba(29,185,84,0.12)', 'rgba(29,185,84,0.35)')}>保存</button>
         </div>
       </div>
@@ -341,8 +343,8 @@ export default function MemoryPage() {
                       ) : (
                         <span key={item} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.28rem 0.45rem 0.28rem 0.65rem', borderRadius: '999px', border: `1px solid ${style.border}`, background: style.background, color: style.color, fontSize: '0.76rem' }}>
                           {item}
-                          <button onClick={() => setEditing({ field: section.field, oldValue: item, nextValue: item })} title="修改" style={miniIconButtonStyle()}>改</button>
-                          <button onClick={() => deletePreference(section.field, item).catch(err => setMessage(err.message))} title="删除" style={miniIconButtonStyle('#fca5a5')}>×</button>
+                          <button onClick={() => setEditing({ field: section.field, oldValue: item, nextValue: item })} title={t("修改")} style={miniIconButtonStyle()}>改</button>
+                          <button onClick={() => deletePreference(section.field, item).catch(err => setMessage(err.message))} title={t("删除")} style={miniIconButtonStyle('#fca5a5')}>×</button>
                         </span>
                       );
                     })}
@@ -377,7 +379,7 @@ export default function MemoryPage() {
                           {item.value} <span style={{ color: theme.colors.text.muted, fontSize: '0.72rem' }}>({FIELD_LABELS[item.field] || item.field})</span>
                         </div>
                         <div style={{ color: theme.colors.text.muted, fontSize: '0.7rem' }}>
-                          置信度 {Math.round(item.confidence * 100)}% · 证据 {item.evidence_count} 条 · {item.expires_at ? `${new Date(item.expires_at).toLocaleDateString()} 前有效` : '长期有效'}
+                          置信度 {Math.round(item.confidence * 100)}% · 证据 {item.evidence_count} 条 · {item.expires_at ? `${new Date(item.expires_at).toLocaleDateString()} 前有效` : t('长期有效')}
                           {item.decision_summary ? ` · ${item.decision_summary}` : ''}
                         </div>
                       </div>
@@ -390,7 +392,7 @@ export default function MemoryPage() {
             {(memory?.profile_views?.recent_tendency?.items?.length || 0) > 0 && (
               <div>
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.45rem', color: '#fcd34d' }}>
-                  {memory?.profile_views?.recent_tendency?.title || '最近推断倾向'}
+                  {memory?.profile_views?.recent_tendency?.title || t('最近推断倾向')}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem' }}>
                   {(memory?.profile_views?.recent_tendency?.items || []).map(item => (
@@ -415,7 +417,7 @@ export default function MemoryPage() {
             {(memory?.records || []).slice(0, 40).map(record => {
               const payload = record.payload || {};
               const summary = String(payload.value || payload.description || payload.title || record.kind);
-              const expires = record.expires_at ? new Date(record.expires_at).toLocaleDateString() : '长期有效';
+              const expires = record.expires_at ? new Date(record.expires_at).toLocaleDateString() : t('长期有效');
               const scope = String(payload.scope || '');
               const evidenceIds = Array.isArray(payload.evidence_ids) ? payload.evidence_ids : [];
               return (

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import type { SlateFeedbackRating } from '@/lib/api';
 import { theme } from '@/styles/theme';
 
@@ -52,6 +53,7 @@ export default function SlateFeedback({
   submittedRating?: string;
   onSubmit: (rating: SlateFeedbackRating, reasons: string[], note: string, picks: SlatePicks) => Promise<boolean>;
 }) {
+  const { t } = useLang();
   const [expandedRating, setExpandedRating] = useState<SlateFeedbackRating | null>(null);
   const [reasons, setReasons] = useState<string[]>([]);
   const [note, setNote] = useState('');
@@ -65,7 +67,7 @@ export default function SlateFeedback({
   if (!exposureId || songCount === 0) return null;
 
   if (submittedRating) {
-    const label = PRIMARY_OPTIONS.find(o => o.rating === submittedRating)?.label || '已记录';
+    const label = PRIMARY_OPTIONS.find(o => o.rating === submittedRating)?.label || t('已记录');
     return (
       <div style={{
         marginTop: '0.7rem',
@@ -168,7 +170,7 @@ export default function SlateFeedback({
             return (
               <div key={which} style={{ marginBottom: '0.5rem' }}>
                 <div style={{ color: theme.colors.text.muted, fontSize: '0.72rem', marginBottom: '0.3rem' }}>
-                  {which === 'best' ? '哪几首最符合？' : '哪几首最不符合？'}
+                  {which === 'best' ? t('哪几首最符合？') : t('哪几首最不符合？')}
                   <span style={{ opacity: 0.6 }}>（可选，最多 {MAX_PICKS} 首；没选的算「未知」，不当负样本）</span>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
@@ -238,7 +240,7 @@ export default function SlateFeedback({
             <input
               value={note}
               onChange={event => setNote(event.target.value)}
-              placeholder="可选：具体哪里不对？"
+              placeholder={t("可选：具体哪里不对？")}
               maxLength={240}
               style={{
                 width: '100%',
@@ -268,7 +270,7 @@ export default function SlateFeedback({
               cursor: submitting ? 'wait' : 'pointer',
             }}
           >
-            {submitting ? '提交中…' : '提交反馈'}
+            {submitting ? t('提交中…') : t('提交反馈')}
           </button>
         </div>
       )}

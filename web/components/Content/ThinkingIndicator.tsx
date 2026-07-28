@@ -1,13 +1,15 @@
 'use client';
 
 import { theme } from '@/styles/theme';
+import { useLang } from '@/context/LanguageContext';
 
 interface ThinkingIndicatorProps {
   message?: string;
 }
 
 export default function ThinkingIndicator({ message }: ThinkingIndicatorProps) {
-  const steps = ['理解意图', '检索曲库', '对齐听感'];
+  const { t } = useLang();
+  const steps = [t('理解意图'), t('检索曲库'), t('对齐听感')];
 
   return (
     <div
@@ -69,7 +71,7 @@ export default function ThinkingIndicator({ message }: ThinkingIndicatorProps) {
             textOverflow: 'ellipsis',
           }}
         >
-          {message || '正在理解你的音乐偏好'}
+          {message || t('正在理解你的音乐偏好')}
         </span>
         <div
           style={{

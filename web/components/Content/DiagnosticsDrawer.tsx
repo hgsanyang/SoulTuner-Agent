@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { fetchCatalogDiagnostics, type CatalogDiagnostics } from '@/lib/api';
 import { theme } from '@/styles/theme';
 
@@ -15,6 +16,7 @@ export default function DiagnosticsDrawer({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<CatalogDiagnostics | null>(null);
 
@@ -24,7 +26,7 @@ export default function DiagnosticsDrawer({
       const data = await fetchCatalogDiagnostics(50);
       setReport(data);
     } catch (err: any) {
-      setReport({ success: false, error: err?.message || '曲库诊断失败' });
+      setReport({ success: false, error: err?.message || t('曲库诊断失败') });
     } finally {
       setLoading(false);
     }
@@ -90,9 +92,9 @@ export default function DiagnosticsDrawer({
                 <div style={{ color: '#fff', fontWeight: 650, marginBottom: '0.45rem' }}>
                   曲库 {report.catalog?.total_songs || 0} 首 · 可播放 {report.catalog?.playable_songs || 0} 首 · 最近曝光 {report.recent_recommendations?.exposures || 0} 批
                 </div>
-                <div>语言：{(report.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || '暂无'}</div>
-                <div>流派：{(report.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无'}</div>
-                <div>最近来源：{(report.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || '暂无曝光'}</div>
+                <div>语言：{(report.catalog?.top?.languages || []).slice(0, 4).map(item => `${item.label} ${Math.round(item.ratio * 100)}%`).join(' / ') || t('暂无')}</div>
+                <div>流派：{(report.catalog?.top?.genres || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无')}</div>
+                <div>最近来源：{(report.recent_recommendations?.top_recall_sources || []).slice(0, 5).map(item => `${item.label} ${item.count}`).join(' / ') || t('暂无曝光')}</div>
                 {(report.warnings || []).length > 0 && (
                   <div style={{ marginTop: '0.5rem', color: 'rgba(255,220,160,0.92)' }}>
                     {(report.warnings || []).slice(0, 3).map(w => w.message).join('；')}
@@ -110,7 +112,7 @@ export default function DiagnosticsDrawer({
                 </button>
               </>
             ) : (
-              <div style={{ color: '#ff8f8f' }}>{report.error || '曲库诊断失败'}</div>
+              <div style={{ color: '#ff8f8f' }}>{report.error || t('曲库诊断失败')}</div>
             )}
           </div>
         )}

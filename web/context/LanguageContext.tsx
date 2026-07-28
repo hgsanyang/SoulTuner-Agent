@@ -6,7 +6,7 @@ import { Lang, LANG_STORAGE_KEY, defaultLang, readStoredLang, translate } from '
 type LanguageValue = {
     lang: Lang;
     setLang: (next: Lang) => void;
-    t: (source: string) => string;
+    t: (source: string, vars?: Record<string, string | number>) => string;
 };
 
 const LanguageContext = createContext<LanguageValue | null>(null);
@@ -32,7 +32,8 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     const value = useMemo<LanguageValue>(() => ({
         lang,
         setLang,
-        t: (source: string) => translate(source, lang),
+        t: (source: string, vars?: Record<string, string | number>) =>
+            translate(source, lang, vars),
     }), [lang, setLang]);
 
     return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
@@ -46,5 +47,10 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 export function useLang(): LanguageValue {
     const ctx = useContext(LanguageContext);
     if (ctx) return ctx;
-    return { lang: 'zh', setLang: () => {}, t: (source: string) => source };
+    return {
+        lang: 'zh',
+        setLang: () => {},
+        t: (source: string, vars?: Record<string, string | number>) =>
+            translate(source, 'zh', vars),
+    };
 }

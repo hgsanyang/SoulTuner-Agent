@@ -4,6 +4,7 @@
 export const dynamic = 'force-dynamic';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useLang } from '@/context/LanguageContext';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
@@ -42,6 +43,7 @@ export interface ChatMessage {
 // 模型选择已统一由设置面板（SettingsPanel）管理，不再在聊天页快捷切换
 
 export default function RecommendationsPage() {
+  const { t } = useLang();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [dialogState, setDialogState] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
@@ -202,7 +204,7 @@ export default function RecommendationsPage() {
     setMessages(prev => [
       ...prev,
       { id: userMsgId, role: 'user', content: value },
-      { id: assistantMsgId, role: 'assistant', content: '', songs: [], thinkingMessage: '开始分析你的需求...' }
+      { id: assistantMsgId, role: 'assistant', content: '', songs: [], thinkingMessage: t('开始分析你的需求...') }
     ]);
 
     // ③ 启动新的 SSE 流
@@ -226,7 +228,7 @@ export default function RecommendationsPage() {
           switch (event.type) {
             case 'start':
             case 'thinking':
-              currentMsg.thinkingMessage = event.message || '正在思考...';
+              currentMsg.thinkingMessage = event.message || t('正在思考...');
               break;
             case 'response':
               if (event.text) {
@@ -235,7 +237,7 @@ export default function RecommendationsPage() {
               }
               break;
             case 'recommendations_start':
-              currentMsg.thinkingMessage = '正在获取推荐歌曲...';
+              currentMsg.thinkingMessage = t('正在获取推荐歌曲...');
               currentMsg.songs = [];
               currentMsg.exposureId = event.exposure_id;
               break;
@@ -258,7 +260,7 @@ export default function RecommendationsPage() {
             case 'recommendations_complete':
               break;
             case 'clarification_required':
-              currentMsg.content = event.text || '我需要再确认一下你的意思。';
+              currentMsg.content = event.text || t('我需要再确认一下你的意思。');
               currentMsg.clarificationOptions = event.clarification_options || [];
               currentMsg.thinkingMessage = undefined;
               break;
@@ -274,7 +276,7 @@ export default function RecommendationsPage() {
                   currentMsg.intentConfidence = event.intent_confidence;
                 }
                 if (event.clarification_options && event.clarification_options.length > 0) {
-                  currentMsg.content = currentMsg.content || '我需要再确认一下你的意思。';
+                  currentMsg.content = currentMsg.content || t('我需要再确认一下你的意思。');
                   currentMsg.clarificationOptions = event.clarification_options;
                 }
                 if (event.refinement_options && event.refinement_options.length > 0) {
@@ -290,7 +292,7 @@ export default function RecommendationsPage() {
               }
               break;
             case 'error':
-              currentMsg.error = event.error || '发生未知错误';
+              currentMsg.error = event.error || t('发生未知错误');
               currentMsg.thinkingMessage = undefined;
               setLoading(false);
               break;
@@ -320,7 +322,7 @@ export default function RecommendationsPage() {
         newMsgs[realIdx] = {
           ...newMsgs[realIdx],
           thinkingMessage: undefined,
-          content: newMsgs[realIdx].content || '搜索已被中止',
+          content: newMsgs[realIdx].content || t('搜索已被中止'),
         };
       }
       return newMsgs;
@@ -358,7 +360,7 @@ export default function RecommendationsPage() {
     picks?: { best: string[]; worst: string[] },
   ): Promise<boolean> => {
     if (!exposureId) {
-      showToast('还没有可评价的推荐批次');
+      showToast(t('还没有可评价的推荐批次'));
       return false;
     }
     try {
@@ -374,12 +376,12 @@ export default function RecommendationsPage() {
           web_search_enabled: webSearchEnabled,
         },
       });
-      if (!result?.success) throw new Error(result?.error || '服务端未确认');
+      if (!result?.success) throw new Error(result?.error || t('服务端未确认'));
       setSlateFeedbackStatus(prev => ({ ...prev, [exposureId]: rating }));
-      showToast('✅ 已记录这组推荐的反馈');
+      showToast(t('✅ 已记录这组推荐的反馈'));
       return true;
     } catch (err: any) {
-      showToast(`⚠️ 反馈记录失败：${err?.message || '未知错误'}`);
+      showToast(`⚠️ 反馈记录失败：${err?.message || t('未知错误')}`);
       return false;
     }
   }, [showToast, webSearchEnabled]);
@@ -452,7 +454,7 @@ export default function RecommendationsPage() {
           }}
           onMouseEnter={e => (e.currentTarget.style.opacity = '0.8')}
           onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-          title={webSearchEnabled ? '关闭联网搜索' : '开启联网搜索'}
+          title={webSearchEnabled ? t('关闭联网搜索') : t('开启联网搜索')}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" />
@@ -468,7 +470,7 @@ export default function RecommendationsPage() {
         {/* 曲库诊断（开发工具入口） */}
         <button
           onClick={() => setDiagnosticsOpen(true)}
-          title="曲库诊断（开发工具）"
+          title={t("曲库诊断（开发工具）")}
           style={{
             display: 'flex', alignItems: 'center', gap: '0.4rem',
             padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -489,7 +491,7 @@ export default function RecommendationsPage() {
         {hasMessages && !showWelcome && (
           <button
             onClick={handleBackToCards}
-            title="返回场景推荐卡片"
+            title={t("返回场景推荐卡片")}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -512,7 +514,7 @@ export default function RecommendationsPage() {
         {hasMessages && showWelcome && (
           <button
             onClick={() => setShowWelcome(false)}
-            title="返回对话记录"
+            title={t("返回对话记录")}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -534,7 +536,7 @@ export default function RecommendationsPage() {
         {hasMessages && (
           <button
             onClick={handleNewChat}
-            title="清空当前对话，开始新的聊天"
+            title={t("清空当前对话，开始新的聊天")}
             style={{
               display: 'flex', alignItems: 'center', gap: '0.4rem',
               padding: '0.35rem 0.8rem', borderRadius: '2rem',
@@ -560,7 +562,7 @@ export default function RecommendationsPage() {
     <MainLayout
       onInputSubmit={handleSubmitAndHideWelcome}
       onInputAbort={handleAbort}
-      inputPlaceholder="例如：想运动，来点劲爆的"
+      inputPlaceholder={t("例如：想运动，来点劲爆的")}
       inputIsLoading={loading}
       toolbar={toolbar}
     >
@@ -790,7 +792,7 @@ export default function RecommendationsPage() {
                       playSong(queueSongs[0], queueSongs);
                       showToast(`▶ 已设置 ${queueSongs.length} 首歌为播放列表`);
                     }}
-                    title="全部播放"
+                    title={t("全部播放")}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '0.4rem',
                       padding: '0.3rem 0.7rem', borderRadius: '2rem',
