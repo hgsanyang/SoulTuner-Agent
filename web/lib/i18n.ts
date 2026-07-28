@@ -13,6 +13,8 @@
  * user picks in Settings wins and is remembered.
  */
 
+import { EN_DICT } from './i18n-en';
+
 export type Lang = 'zh' | 'en';
 
 export const LANG_STORAGE_KEY = 'soultuner_lang';
@@ -23,7 +25,7 @@ export const LANGUAGES: { value: Lang; label: string }[] = [
 ];
 
 /** Chinese source -> English. Anything missing renders as the Chinese source. */
-export const EN: Record<string, string> = {};
+export const EN: Record<string, string> = EN_DICT;
 
 export function defaultLang(): Lang {
     const configured = (process.env.NEXT_PUBLIC_DEFAULT_LANG || 'en').trim().toLowerCase();
