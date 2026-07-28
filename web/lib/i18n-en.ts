@@ -9,6 +9,100 @@
 export const EN_DICT: Record<string, string> = {
     '界面语言': 'Language',
 
+    // ---- filled in after wrapping the JSX text nodes ----
+    'AI Soul Tuner 已就绪': 'AI Soul Tuner is ready',
+    'DashScope API 部署': 'DashScope API',
+    'L0 是原始行为，L1 是你明确设置的偏好，L2 是有期限的系统推断，L3 是对话情节摘要。':
+        'L0 is raw behaviour, L1 is what you set yourself, L2 is a system guess with an expiry, L3 is a summary of a conversation.',
+    '↩ 清空': '↩ Clear',
+    '↩ 还原默认': '↩ Restore defaults',
+    '▶ 播放列表': '▶ Queue',
+    '⚠️ 彻底删除这首歌？': '⚠️ Delete this song for good?',
+    '之后「用一句话描述就能找到这首歌」才对它们生效。一批歌是一个任务。':
+        'Only then can "describe it in a sentence" find them. One batch is one job.',
+    '从淘汰歌曲中按此比例捞回冷门歌（Thompson Sampling 采样）':
+        'Share of cut songs pulled back in for exploration (Thompson sampling)',
+    '保存': 'Save',
+    '偏好按适用场景分组：场景绑定的偏好只在对应场景生效，不会带进其他场景。每条都可删除。':
+        'Preferences are grouped by setting: one tied to a setting applies only there and never leaks into another. Any of them can be deleted.',
+    '全屏播放器': 'Full-screen player',
+    '全选当前结果': 'Select all results',
+    '关闭': 'Close',
+    '刷新': 'Refresh',
+    '参与个性化学习': 'Feeds personalisation',
+    '取消': 'Cancel',
+    '在推荐结果中点击「不喜欢」按钮，歌曲将被添加到此列表并从后续推荐中排除。':
+        'Press Not for me on a recommendation and the song lands here, excluded from later results.',
+    '在音乐推荐与发现流程中，点击爱心即可将喜欢的歌曲收藏到这里。':
+        'Tap the heart on any recommendation to collect it here.',
+    '在音乐推荐页面点击歌曲卡片上的收藏图标，选择这个歌单即可添加歌曲。':
+        'Tap the save icon on a song card and pick this playlist.',
+    '对话记录': 'Conversation',
+    '屏蔽列表': 'Blocked',
+    '已在播放列表': 'Already queued',
+    '常驻底部控制栏': 'Docked control bar',
+    '开发模式不使用用户档案，本次交互的数据独立存放、不参与个性化学习。':
+        'Developer mode uses no profile: everything here is stored separately and never feeds personalisation.',
+    '开发模式本来就把数据隔离出去、不参与学习，再让人选档案只会让人以为':
+        'Developer mode already isolates its data, so offering a profile only suggests',
+    '开启智能推荐': 'Start recommending',
+    '当前来源仅提供试听片段，不标记为完整音源': 'This source offers a preview clip only, not a full track',
+    '快速灵感注入': 'Quick starts',
+    '懂你此刻的情绪 · 沉浸式专属歌单生成器':
+        'Reads the mood you are in · builds a playlist around it',
+    '我的画像': 'My profile',
+    '推荐卡片': 'Suggestion cards',
+    '撤销': 'Undo',
+    '播放队列浮窗': 'Floating queue',
+    '新建歌单': 'New playlist',
+    '新建聊天': 'New chat',
+    '新歌确认入库后不会立刻可用：这里的后台任务要先给它们提取音频特征、补齐标签，':
+        'A confirmed song is not usable straight away — these jobs extract its audio features and fill in tags first.',
+    '暂无可编辑的学习偏好。点赞、拉黑、歌单反馈后会逐步生成。':
+        'Nothing learned yet. Likes, blocks and slate feedback build this up.',
+    '暂无歌词': 'No lyrics',
+    '更懂你的私人灵魂调音师': 'A tuner that actually gets you',
+    '权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分':
+        'Weights are normalised automatically; personalisation only nudges scores in a bounded post-recall pass',
+    '歌曲夹': 'Collection',
+    '清空学习记忆': 'Clear learned memory',
+    '清空选择': 'Clear selection',
+    '状态：获取音源 → 元数据入库 → 标签/向量分析':
+        'Stages: fetch audio → store metadata → tags and audio features',
+    '用一句话定制你的私人歌单，SoulTuner 会按场景、语言、情绪走向和避雷偏好组织曲目。':
+        'Describe the playlist you want in one sentence; SoulTuner arranges it by setting, language, mood arc and the things you want to avoid.',
+    '用自然语言描述心情或场景，即刻生成专属你的沉浸式歌单。':
+        'Describe a mood or a moment in plain language and get a playlist made for it.',
+    '立即使用': 'Get started',
+    '管理并沉淀你的专属听歌体验': 'Shape and keep your own listening experience',
+    '管理系统从点赞、收藏、拉黑和歌单反馈中学到的偏好。记忆保存在本地结构化账本中，可随时查看、修改、删除。':
+        'Manage what the system learned from your likes, saves, blocks and slate feedback. It is kept in a local structured ledger you can read, edit or delete at any time.',
+    '系统设置': 'Settings',
+    '设置偏好后，推荐系统会更懂你的口味': 'Set these and recommendations get closer to your taste',
+    '诊断': 'Diagnostics',
+    '读取曲库分布': 'Reading the library distribution',
+    '越大保留越多历史对话，但增加 LLM 调用成本和延迟':
+        'Higher keeps more of the conversation, at more cost and latency',
+    '越高越偏向相关性，越低越偏向多样性': 'Higher favours relevance, lower favours variety',
+    '跳到最新': 'Jump to latest',
+    '返回对话': 'Back to the conversation',
+    '返回收藏夹': 'Back to playlists',
+    '还没有逐首评价。推荐结果里点歌曲卡片上的 💬 就能评价这首歌此刻合不合。':
+        'No per-song ratings yet. Tap 💬 on a song card to say whether it fits right now.',
+    '这些歌曲将不会出现在推荐结果中。点击「撤销」可恢复。':
+        'These never appear in recommendations. Undo to bring one back.',
+    '这首来自联网临时入库。长期保存后，退出应用或清理临时缓存时不会释放 MP3 文件。':
+        'Fetched online and cached temporarily. Keep it and the MP3 survives quitting the app or clearing the cache.',
+    '选择一个场景，快速开始': 'Pick a moment to start from',
+    '默认先返回歌单，再异步生成一段调音师式对话和可选方向；不再默认逐首编写听感解释。':
+        'Songs come back first; the written reply and follow-up directions arrive after. No per-song write-ups by default.',
+    '默认由通义千问驱动意图分析、HyDE 与调音师异步回应。Key 请放在项目 .env 中，前端不会展示密钥。':
+        'Qwen drives planning, HyDE and the written reply by default. Put the key in .env — the frontend never shows it.',
+    '＋ 新建档案': '＋ New profile',
+    '🎭 我的音乐画像': '🎭 My music profile',
+    '🗑️ 删除选中': '🗑️ Delete selected',
+
+
     // ---- status, generic ----
     '未知错误': 'Unknown error',
     '发生未知错误': 'Something went wrong',
