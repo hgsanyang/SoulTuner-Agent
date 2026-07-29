@@ -643,6 +643,7 @@ export interface LibrarySong {
     audio_retention?: 'temporary' | 'saved' | string;
     audio_status?: string;
     acquire_status?: string;
+    catalog_tier?: 'library' | 'candidate' | string;
     tag_source?: string;
     tag_confidence_json?: string;
     vector_coverage?: {
@@ -665,19 +666,52 @@ export interface LibrarySong {
     }>;
 }
 
+export type CatalogTier = 'library' | 'candidate' | 'all';
+
+export interface LibraryTierCounts {
+    library: number;
+    candidate: number;
+}
+
 export async function fetchLibrarySongs(
-    offset: number = 0, limit: number = 200
-): Promise<{ songs: LibrarySong[]; total: number }> {
+    offset: number = 0, limit: number = 200, tier: CatalogTier = 'library'
+): Promise<{ songs: LibrarySong[]; total: number; counts: LibraryTierCounts }> {
+    const empty = { songs: [], total: 0, counts: { library: 0, candidate: 0 } };
     try {
         const resp = await apiFetch(
-            `http://localhost:8501/api/library-songs?offset=${offset}&limit=${limit}`
+            `http://localhost:8501/api/library-songs?offset=${offset}&limit=${limit}&tier=${tier}`
         );
-        if (!resp.ok) return { songs: [], total: 0 };
+        if (!resp.ok) return empty;
         const data = await resp.json();
-        return data.success ? { songs: data.songs, total: data.total } : { songs: [], total: 0 };
+        if (!data.success) return empty;
+        return {
+            songs: data.songs,
+            total: data.total,
+            counts: data.counts || { library: data.total, candidate: 0 },
+        };
     } catch (err) {
         console.warn('[API] fetchLibrarySongs 失败:', err);
-        return { songs: [], total: 0 };
+        return empty;
+    }
+}
+
+/** 清理已过期、用户从未操作过的联网临时候选。dryRun 时只报数不删。 */
+export async function purgeCatalogCandidates(
+    dryRun: boolean = true
+): Promise<{ success: boolean; eligible?: number; deleted?: number; sample?: Array<{ title: string; artist: string }>; error?: string }> {
+    try {
+        const resp = await apiFetch(
+            `http://localhost:8501/api/library-songs/purge-candidates?dry_run=${dryRun}`,
+            { method: 'POST' }
+        );
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: '清理失败' }));
+            return { success: false, error: err.detail || `清理失败: ${resp.status}` };
+        }
+        return resp.json();
+    } catch (err: any) {
+        console.warn('[API] purgeCatalogCandidates 失败:', err);
+        return { success: false, error: err.message || '清理失败' };
     }
 }
 

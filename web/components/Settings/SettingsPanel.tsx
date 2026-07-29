@@ -39,8 +39,9 @@ const MODEL_PRESETS: Record<string, string[]> = {
 };
 
 // ---- 标签页定义 ----
-type TabKey = 'models' | 'retrieval' | 'paths' | 'memory';
+type TabKey = 'general' | 'models' | 'retrieval' | 'paths' | 'memory';
 const TABS: { key: TabKey; label: string; icon: string }[] = [
+  { key: 'general', label: '通用', icon: '🌐' },
   { key: 'models', label: '模型配置', icon: '🤖' },
   { key: 'retrieval', label: '检索参数', icon: '🔍' },
   { key: 'paths', label: '音乐数据', icon: '🎵' },
@@ -58,7 +59,7 @@ interface SettingsPanelProps {
 
 export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const { t, lang, setLang } = useLang();
-  const [activeTab, setActiveTab] = useState<TabKey>('models');
+  const [activeTab, setActiveTab] = useState<TabKey>('general');
   const [settings, setSettings] = useState<Settings>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -348,6 +349,49 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   };
 
   // ---- 标签页内容 ----
+  // 界面语言是纯前端偏好（存 localStorage，不经过后端 settings），和模型配置
+  // 没有关系，所以单独放在"通用"里，不再挤在模型页顶部。
+  const renderGeneralTab = () => (
+    <>
+      <h4 style={{ color: theme.colors.text.primary, margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
+        🌐 {t('界面语言')} / Language
+      </h4>
+      <div style={{
+        display: 'flex', gap: '0.5rem', marginBottom: '0.6rem',
+        padding: '0.6rem 0.75rem',
+        border: `1px solid ${theme.colors.border.default}`,
+        borderRadius: theme.borderRadius.md,
+        background: 'rgba(255,255,255,0.02)',
+      }}>
+        {LANGUAGES.map(option => {
+          const active = lang === option.value;
+          return (
+            <button
+              key={option.value}
+              onClick={() => setLang(option.value)}
+              aria-pressed={active}
+              style={{
+                padding: '0.4rem 1rem',
+                borderRadius: theme.borderRadius.sm,
+                border: `1px solid ${active ? theme.colors.primary.accent : theme.colors.border.default}`,
+                background: active ? 'rgba(29,185,84,0.16)' : 'rgba(255,255,255,0.04)',
+                color: active ? theme.colors.primary.accent : theme.colors.text.secondary,
+                cursor: 'pointer',
+                fontSize: '0.82rem',
+                fontWeight: active ? 700 : 500,
+              }}
+            >
+              {t(option.label)}
+            </button>
+          );
+        })}
+      </div>
+      <p style={{ fontSize: '0.75rem', color: theme.colors.text.muted, margin: 0 }}>
+        {t('切换立即生效，保存在本机浏览器，不影响推荐结果的语言。')}
+      </p>
+    </>
+  );
+
   const renderModelsTab = () => {
     const dashscopeModels = MODEL_PRESETS.dashscope;
     const currentProvider = String(settings.llm_default_provider || 'dashscope');
@@ -355,41 +399,6 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
     return (
       <>
-        {/* 界面语言：纯前端偏好，存 localStorage，不经过后端 settings。 */}
-        <h4 style={{ color: theme.colors.text.primary, margin: '0 0 0.75rem', fontSize: '0.95rem' }}>
-          🌐 {t('界面语言')} / Language
-        </h4>
-        <div style={{
-          display: 'flex', gap: '0.5rem', marginBottom: '1.4rem',
-          padding: '0.6rem 0.75rem',
-          border: `1px solid ${theme.colors.border.default}`,
-          borderRadius: theme.borderRadius.md,
-          background: 'rgba(255,255,255,0.02)',
-        }}>
-          {LANGUAGES.map(option => {
-            const active = lang === option.value;
-            return (
-              <button
-                key={option.value}
-                onClick={() => setLang(option.value)}
-                aria-pressed={active}
-                style={{
-                  padding: '0.4rem 1rem',
-                  borderRadius: theme.borderRadius.sm,
-                  border: `1px solid ${active ? theme.colors.primary.accent : theme.colors.border.default}`,
-                  background: active ? 'rgba(29,185,84,0.16)' : 'rgba(255,255,255,0.04)',
-                  color: active ? theme.colors.primary.accent : theme.colors.text.secondary,
-                  cursor: 'pointer',
-                  fontSize: '0.82rem',
-                  fontWeight: active ? 700 : 500,
-                }}
-              >
-                {t(option.label)}
-              </button>
-            );
-          })}
-        </div>
-
         <h4 style={{ color: theme.colors.text.primary, margin: '0 0 1rem', fontSize: '0.95rem' }}>🤖 {t('模型配置')}</h4>
 
         <div style={{
@@ -586,6 +595,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   );
 
   const tabContent: Record<TabKey, () => JSX.Element> = {
+    general: renderGeneralTab,
     models: renderModelsTab,
     retrieval: renderRetrievalTab,
     paths: renderPathsTab,

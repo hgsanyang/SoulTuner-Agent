@@ -606,9 +606,29 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
 
+        from services.catalog_tier import resolve_ingest_tier
+
         for song in songs:
             title = song["title"]
             artist = song["artist"]
+
+            # ── 第零步：定档。自动飞轮抓来的只是临时候选，不进"我的曲库" ──
+            # 单独查一次而不是塞进下面的 SET：同一个 SET 子句里 s.source 会先被
+            # 改成 'online'，再用它判断层级就永远是 candidate，本地曲库会被误降级。
+            tier_rows = client.execute_query(
+                """MATCH (s:Song) WHERE s.title = $title
+                     AND (coalesce(s.artist, '') = $artist
+                          OR EXISTS { MATCH (s)-[:PERFORMED_BY]->(a:Artist) WHERE a.name = $artist })
+                   RETURN coalesce(s.catalog_tier, '') AS tier,
+                          coalesce(s.source, '') AS source LIMIT 1""",
+                {"title": title, "artist": artist},
+            )
+            catalog_tier = resolve_ingest_tier(
+                song,
+                existing_tier=(tier_rows[0].get("tier") if tier_rows else ""),
+                existing_source=(tier_rows[0].get("source") if tier_rows else ""),
+                node_exists=bool(tier_rows),
+            )
 
             # ── 第一步：检查是否已存在（通过关系匹配，兼容初始数据集） ──
             existing = client.execute_query(
@@ -639,6 +659,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.album_id = $album_id,
                     s.audio_retention = $audio_retention,
                     s.audio_status = 'cached',
+                    s.catalog_tier = $catalog_tier,
                     s.is_trial = $is_trial,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
@@ -663,6 +684,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.album_id = $album_id,
                     s.audio_retention = $audio_retention,
                     s.audio_status = 'cached',
+                    s.catalog_tier = $catalog_tier,
                     s.is_trial = $is_trial,
                     s.source = 'online',
                     s.acquired_at = $acquired_at,
@@ -706,6 +728,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 "release_year": normalized_meta.get("release_year"),
                 "album_id": normalized_meta.get("album_id", ""),
                 "audio_retention": song.get("audio_retention") or "temporary",
+                "catalog_tier": catalog_tier,
                 "is_trial": bool(song.get("is_trial")),
                 "acquired_at": datetime.now().isoformat(),
             }

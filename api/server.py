@@ -2404,6 +2404,7 @@ async def retain_online_audio_endpoint(
                    OR ($music_id = '' AND $source_id = '' AND s.title = $title AND coalesce(s.artist, '') = $artist)
                 SET s.audio_retention = 'saved',
                     s.audio_status = 'cached',
+                    s.catalog_tier = 'library',
                     s.audio_url = coalesce(NULLIF(s.audio_url, ''), $audio_url),
                     s.updated_at = timestamp()
                 RETURN count(s) AS updated
@@ -2522,12 +2523,16 @@ async def retry_ingest_job(
 # ================================================================
 
 @app.get("/api/library-songs")
-async def get_library_songs(offset: int = 0, limit: int = 200):
-    """
-    查询 Neo4j 中所有 Song 节点（含 Artist 关联），返回曲库列表。
+async def get_library_songs(offset: int = 0, limit: int = 200, tier: str = "library"):
+    """查询 Neo4j 中的 Song 节点（含 Artist 关联），返回曲库列表。
+
+    ``tier`` 决定看哪一层：``library`` 是用户自己的曲库（默认），``candidate``
+    是推荐时联网抓来的临时缓存，``all`` 是两者。默认只给 library —— 用户没有
+    要求下载或入库的歌，不该混在"我的曲库"里充数。
     """
     try:
         from retrieval.neo4j_client import get_neo4j_client
+        from services.catalog_tier import candidate_predicate, tier_filter_clause
         from services.library_quality import (
             duplicate_key,
             missing_fields_for_song,
@@ -2536,8 +2541,10 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
         )
 
         client = get_neo4j_client()
+        # 不用 f-string：查询体里有 map 字面量 `{ key: ... }`，会被当成插值。
         query = """
         MATCH (s:Song)
+        __TIER_WHERE__
         OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
@@ -2578,6 +2585,7 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                s.metadata_source AS metadata_source,
                s.audio_retention AS audio_retention,
                s.audio_status AS audio_status,
+               s.catalog_tier AS catalog_tier,
                s.acquire_status AS acquire_status,
                s.release_year AS release_year,
                s.tag_source AS tag_source,
@@ -2591,11 +2599,28 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
         ORDER BY s.updated_at DESC
         SKIP $offset LIMIT $limit
         """
+        tier_clause = tier_filter_clause(tier)
+        query = query.replace("__TIER_WHERE__", f"WHERE {tier_clause}" if tier_clause else "")
         results = client.execute_query(query, {"offset": offset, "limit": limit})
 
-        # 获取总数
-        count_result = client.execute_query("MATCH (s:Song) RETURN count(s) AS total", {})
-        total = count_result[0]["total"] if count_result else 0
+        # 两层各自的总数：前端要能显示"曲库 N 首 / 临时候选 M 首"，
+        # 而不是把缓存算进曲库规模。
+        counts = client.execute_query(
+            f"""
+            MATCH (s:Song)
+            RETURN sum(CASE WHEN {candidate_predicate()} THEN 0 ELSE 1 END) AS library,
+                   sum(CASE WHEN {candidate_predicate()} THEN 1 ELSE 0 END) AS candidate
+            """,
+            {},
+        )
+        library_total = int((counts[0] if counts else {}).get("library") or 0)
+        candidate_total = int((counts[0] if counts else {}).get("candidate") or 0)
+        requested = str(tier or "library").strip().lower()
+        total = (
+            candidate_total if requested == "candidate"
+            else library_total + candidate_total if requested == "all"
+            else library_total
+        )
 
         songs = []
         for r in results:
@@ -2646,6 +2671,7 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "audio_retention": r.get("audio_retention", ""),
                 "audio_status": r.get("audio_status", ""),
                 "acquire_status": r.get("acquire_status", ""),
+                "catalog_tier": r.get("catalog_tier") or "",
                 "tag_source": r.get("tag_source", ""),
                 "tag_confidence_json": r.get("tag_confidence_json", ""),
                 "vector_coverage": vector_coverage,
@@ -2655,10 +2681,75 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "knowledge_cards": knowledge_cards,
             })
 
-        return {"success": True, "songs": songs, "total": total}
+        return {
+            "success": True,
+            "songs": songs,
+            "total": total,
+            "tier": requested,
+            "counts": {"library": library_total, "candidate": candidate_total},
+        }
     except Exception as e:
         logger.error(f"查询曲库失败: {e}")
         return {"success": False, "songs": [], "total": 0, "error": str(e)}
+
+
+@app.post("/api/library-songs/purge-candidates")
+async def purge_catalog_candidates(
+    raw_request: Request,
+    dry_run: bool = True,
+    _: None = Depends(require_admin_api_key),
+):
+    """删除已过期、且用户从未操作过的联网临时候选节点。
+
+    默认 ``dry_run=True`` 只报数不动数据 —— 删节点不可撤销，必须先让用户看到
+    要删什么。喜欢/收藏/不喜欢/跳过/听过任意一条都算用户动过，一律保留。
+    """
+    reject_shared_safe_action("purge catalog candidates")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        from services.catalog_tier import purgeable_predicate
+
+        client = get_neo4j_client()
+        where = purgeable_predicate()
+        preview = client.execute_query(
+            f"""
+            MATCH (s:Song) WHERE {where}
+            RETURN s.title AS title, coalesce(s.artist, '') AS artist
+            ORDER BY s.updated_at DESC LIMIT 50
+            """,
+            {},
+        )
+        total = client.execute_query(
+            f"MATCH (s:Song) WHERE {where} RETURN count(s) AS n", {}
+        )
+        eligible = int((total[0] if total else {}).get("n") or 0)
+
+        if dry_run:
+            return {
+                "success": True,
+                "dry_run": True,
+                "eligible": eligible,
+                "sample": [dict(row) for row in preview],
+            }
+
+        deleted = client.execute_query(
+            f"""
+            MATCH (s:Song) WHERE {where}
+            WITH s LIMIT 5000
+            DETACH DELETE s
+            RETURN count(s) AS n
+            """,
+            {},
+        )
+        removed = int((deleted[0] if deleted else {}).get("n") or 0)
+        logger.info("[catalog-tier] 清理临时候选节点 %d 个", removed)
+        return {"success": True, "dry_run": False, "deleted": removed, "eligible": eligible}
+    except Exception as exc:
+        logger.error("清理临时候选失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
 
 
 @app.patch("/api/library-songs/tags")
