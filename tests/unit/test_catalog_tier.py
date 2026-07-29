@@ -14,11 +14,15 @@ import pytest
 from services.catalog_tier import (
     CANDIDATE,
     LIBRARY,
+    RatingLedgerUnavailable,
     candidate_predicate,
+    load_rated_identities,
     purgeable_predicate,
+    rated_identities,
     resolve_ingest_tier,
     tier_filter_clause,
     tier_for_ingest,
+    unprotected,
 )
 
 
@@ -124,3 +128,96 @@ def test_purge_only_touches_expired_audio():
 def test_purge_never_reaches_the_library_shelf():
     predicate = purgeable_predicate()
     assert predicate.startswith(candidate_predicate())
+
+
+# ---- cross-store protection: ratings live in SQLite and write no relation ----
+#
+# The graph-only gate above was not enough. /api/song-feedback stores per-song
+# ratings in SQLite and creates no Neo4j relationship at all, so a track the user
+# explicitly rated looked untouched to the purge — and deleting it takes the
+# vector the negative-feedback anchor needs, leaving the rating in place but
+# pointing at nothing.
+
+def test_a_song_rated_only_in_sqlite_is_protected():
+    rows = [{"music_id": "m-1", "title": "Summer", "artist": "Calvin Harris",
+             "context_fit": "off"}]
+    ids, keys = rated_identities(rows)
+    candidates = [{"eid": "1", "music_id": "m-1", "title": "Summer", "artist": "Calvin Harris"}]
+    assert unprotected(candidates, ids, keys) == []
+
+
+def test_a_rated_song_without_music_id_is_still_protected():
+    """Web-lane candidates are routinely ingested with no music_id — an id-only
+    check would leave exactly the rated-but-unidentified tracks unprotected."""
+    rows = [{"music_id": "", "title": "Summer", "artist": "Calvin Harris", "note": "太吵"}]
+    ids, keys = rated_identities(rows)
+    assert ids == set()
+    candidates = [{"eid": "1", "music_id": "", "title": "Summer", "artist": "Calvin Harris"}]
+    assert unprotected(candidates, ids, keys) == []
+
+
+@pytest.mark.parametrize("rating", [
+    {"context_fit": "off"},
+    {"context_fit": "fits"},
+    {"taste": "love"},
+    {"off_reasons": ["too_fast"]},
+    {"note": "  下次别再放了  "},
+])
+def test_any_non_empty_rating_protects_not_just_a_rejection(rating):
+    """Protecting only context_fit='off' would drop a track the user took the
+    trouble to write a note about."""
+    rows = [{"music_id": "m-1", "title": "A", "artist": "B", **rating}]
+    ids, keys = rated_identities(rows)
+    assert ids == {"m-1"}
+
+
+@pytest.mark.parametrize("rating", [
+    {}, {"note": "   "}, {"off_reasons": []}, {"context_fit": None, "taste": None},
+])
+def test_an_empty_rating_row_protects_nothing(rating):
+    rows = [{"music_id": "m-1", "title": "A", "artist": "B", **rating}]
+    assert rated_identities(rows) == (set(), set())
+
+
+def test_an_unrated_candidate_is_still_deletable():
+    """The protection must not swallow the whole feature."""
+    rows = [{"music_id": "m-rated", "title": "A", "artist": "B", "context_fit": "off"}]
+    ids, keys = rated_identities(rows)
+    candidates = [
+        {"eid": "1", "music_id": "m-rated", "title": "A", "artist": "B"},
+        {"eid": "2", "music_id": "m-other", "title": "C", "artist": "D"},
+    ]
+    assert [row["eid"] for row in unprotected(candidates, ids, keys)] == ["2"]
+
+
+def test_an_unreadable_rating_ledger_refuses_rather_than_deletes(monkeypatch):
+    """"I couldn't check" must not collapse into "nothing to protect" — that is
+    the fail-open shape that turns a missing file into silent data loss."""
+    import services.feedback_store as store
+
+    def boom():
+        raise OSError("database is locked")
+
+    monkeypatch.setattr(store, "load_song_feedback", boom)
+    with pytest.raises(RatingLedgerUnavailable):
+        load_rated_identities()
+
+
+def test_a_readable_empty_ledger_protects_nothing():
+    """The fail-closed path must not fire on a legitimately empty ledger."""
+    assert load_rated_identities([]) == (set(), set())
+
+
+def test_the_purge_endpoint_consults_the_rating_ledger():
+    """A pure-function fix nobody calls is the same bug in a new place."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "api" / "server.py"
+    code = src.read_text(encoding="utf-8")
+    start = code.index("async def purge_catalog_candidates")
+    body = code[start : start + 4000]
+    assert "load_rated_identities()" in body
+    assert "unprotected(" in body
+    assert "RatingLedgerUnavailable" in body
+    # protection must apply to the dry run too, not only the delete
+    assert body.index("unprotected(") < body.index("if dry_run:")

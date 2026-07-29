@@ -2708,45 +2708,88 @@ async def purge_catalog_candidates(
     from api.runtime_context import reject_developer_catalog_mutation
 
     reject_developer_catalog_mutation(raw_request)
+    from services.catalog_tier import RatingLedgerUnavailable
+
     try:
         from retrieval.neo4j_client import get_neo4j_client
-        from services.catalog_tier import purgeable_predicate
+        from services.catalog_tier import (
+            load_rated_identities,
+            purgeable_predicate,
+            unprotected,
+        )
+
+        # 逐首评价存在 SQLite，且完全不写 Neo4j 关系，所以图上的
+        # LIKES/SKIPPED/... 检查看不到它。先把受保护身份从账本读出来，
+        # 读不到就整个拒绝删除 —— "查不了"不等于"没有要保护的"。
+        protected_ids, protected_keys = load_rated_identities()
 
         client = get_neo4j_client()
         where = purgeable_predicate()
-        preview = client.execute_query(
-            f"""
-            MATCH (s:Song) WHERE {where}
-            RETURN s.title AS title, coalesce(s.artist, '') AS artist
-            ORDER BY s.updated_at DESC LIMIT 50
-            """,
-            {},
-        )
-        total = client.execute_query(
-            f"MATCH (s:Song) WHERE {where} RETURN count(s) AS n", {}
-        )
-        eligible = int((total[0] if total else {}).get("n") or 0)
+        rows = [
+            dict(row)
+            for row in client.execute_query(
+                f"""
+                MATCH (s:Song) WHERE {where}
+                RETURN elementId(s) AS eid,
+                       s.title AS title,
+                       coalesce(s.artist, '') AS artist,
+                       coalesce(toString(s.music_id), '') AS music_id
+                ORDER BY s.updated_at DESC
+                """,
+                {},
+            )
+        ]
+        # 归一化的 title+artist 兜底身份在 Python 里比对：把同一套归一规则
+        # 再用 Cypher 写一遍，等于给"同一首歌"留两个会各自漂移的定义。
+        deletable = unprotected(rows, protected_ids, protected_keys)
+        eligible = len(deletable)
+        protected_here = len(rows) - eligible
 
         if dry_run:
             return {
                 "success": True,
                 "dry_run": True,
                 "eligible": eligible,
-                "sample": [dict(row) for row in preview],
+                "protected_by_rating": protected_here,
+                "sample": [
+                    {"title": row.get("title"), "artist": row.get("artist")}
+                    for row in deletable[:50]
+                ],
             }
 
-        deleted = client.execute_query(
-            f"""
-            MATCH (s:Song) WHERE {where}
-            WITH s LIMIT 5000
-            DETACH DELETE s
-            RETURN count(s) AS n
-            """,
-            {},
+        removed = 0
+        if deletable:
+            # 按 elementId 精确删除，并重新套一遍 purgeable 谓词：列举与删除之间
+            # 状态可能变化（例如用户刚点了喜欢）。
+            deleted = client.execute_query(
+                f"""
+                MATCH (s:Song)
+                WHERE elementId(s) IN $eids AND {where}
+                WITH s LIMIT 5000
+                DETACH DELETE s
+                RETURN count(s) AS n
+                """,
+                {"eids": [row["eid"] for row in deletable]},
+            )
+            removed = int((deleted[0] if deleted else {}).get("n") or 0)
+        logger.info(
+            "[catalog-tier] 清理临时候选 %d 个，因逐首评价保留 %d 个",
+            removed,
+            protected_here,
         )
-        removed = int((deleted[0] if deleted else {}).get("n") or 0)
-        logger.info("[catalog-tier] 清理临时候选节点 %d 个", removed)
-        return {"success": True, "dry_run": False, "deleted": removed, "eligible": eligible}
+        return {
+            "success": True,
+            "dry_run": False,
+            "deleted": removed,
+            "eligible": eligible,
+            "protected_by_rating": protected_here,
+        }
+    except RatingLedgerUnavailable as exc:
+        logger.error("逐首评价账本不可读，拒绝清理: %s", exc)
+        return {
+            "success": False,
+            "error": "无法读取逐首评价记录，已拒绝清理（不确定要保护什么时不删）",
+        }
     except Exception as exc:
         logger.error("清理临时候选失败: %s", exc, exc_info=True)
         return {"success": False, "error": str(exc)}

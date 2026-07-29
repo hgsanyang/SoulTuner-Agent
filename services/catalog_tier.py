@@ -20,7 +20,7 @@ never a precondition.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 LIBRARY = "library"
 CANDIDATE = "candidate"
@@ -114,6 +114,11 @@ def purgeable_predicate(var: str = "s") -> str:
     expired (so nothing is playing it), and the user never acted on it. A skip or
     a dislike counts as acting on it — those rows are what the negative-feedback
     ranker learns from, so deleting them would erase the evidence.
+
+    This covers only what the *graph* knows. Per-song ratings live in SQLite and
+    write no relationship at all, so :func:`rated_identities` has to filter the
+    result of this predicate before anything is deleted — see
+    :func:`unprotected`. The graph half alone is not a safe gate.
     """
     rels = ", ".join(f"'{rel}'" for rel in USER_INTERACTION_RELS)
     return (
@@ -121,3 +126,88 @@ def purgeable_predicate(var: str = "s") -> str:
         f"AND coalesce({var}.audio_status, '') = 'released' "
         f"AND NOT EXISTS {{ MATCH (:User)-[r]->({var}) WHERE type(r) IN [{rels}] }}"
     )
+
+
+def _rating_is_empty(row: dict[str, Any]) -> bool:
+    """Mirror of ``SongFeedback.is_empty`` for a raw stored row.
+
+    Any of the four channels counts. Protecting only ``context_fit='off'`` would
+    drop a track the user took the trouble to write a note about.
+    """
+    if row.get("taste") or row.get("context_fit"):
+        return False
+    if row.get("off_reasons"):
+        return False
+    return not str(row.get("note") or "").strip()
+
+
+def rated_identities(feedback_rows: Iterable[dict[str, Any]]) -> tuple[set[str], set[str]]:
+    """``(music_ids, song_keys)`` for songs carrying any per-song rating.
+
+    Two identities because the graph and the ledger disagree about which one
+    exists: web-lane candidates are frequently ingested without a music_id, so an
+    id-only check would leave exactly the rated-but-unidentified tracks
+    unprotected — the subset most likely to be a cache entry in the first place.
+    """
+    from services.negative_feedback import song_key
+
+    ids: set[str] = set()
+    keys: set[str] = set()
+    for row in feedback_rows or []:
+        if not isinstance(row, dict) or _rating_is_empty(row):
+            continue
+        music_id = str(row.get("music_id") or "").strip()
+        if music_id:
+            ids.add(music_id)
+        key = song_key(row.get("title"), row.get("artist"))
+        if key.strip("|"):
+            keys.add(key)
+    return ids, keys
+
+
+class RatingLedgerUnavailable(RuntimeError):
+    """The per-song rating ledger could not be read, so nothing may be deleted."""
+
+
+def load_rated_identities(
+    feedback_rows: Iterable[dict[str, Any]] | None = None,
+) -> tuple[set[str], set[str]]:
+    """Read the rating ledger and return the identities that must not be deleted.
+
+    Raises rather than returning empty sets on failure. An unreadable ledger and
+    an empty ledger produce the same value, and only one of those two readings
+    is recoverable — treating "I couldn't check" as "nothing to protect" is the
+    fail-open shape that turns a missing file into silent data loss.
+    """
+    if feedback_rows is None:
+        try:
+            from services.feedback_store import load_song_feedback
+
+            feedback_rows = load_song_feedback()
+        except Exception as exc:
+            raise RatingLedgerUnavailable(str(exc)) from exc
+    return rated_identities(feedback_rows)
+
+
+def unprotected(
+    rows: Iterable[dict[str, Any]],
+    protected_ids: set[str],
+    protected_keys: set[str],
+) -> list[dict[str, Any]]:
+    """Drop rows whose song carries a per-song rating.
+
+    Done in Python on purpose: the fallback identity is a normalised
+    title+artist, and reimplementing that normalisation in Cypher would give two
+    definitions of "the same song" that drift apart silently.
+    """
+    from services.negative_feedback import song_key
+
+    kept: list[dict[str, Any]] = []
+    for row in rows or []:
+        music_id = str(row.get("music_id") or "").strip()
+        if music_id and music_id in protected_ids:
+            continue
+        if song_key(row.get("title"), row.get("artist")) in protected_keys:
+            continue
+        kept.append(row)
+    return kept
