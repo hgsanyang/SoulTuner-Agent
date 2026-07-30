@@ -42,6 +42,8 @@ ENV/
 *.pem
 config/setting.local.json
 config/user_settings.json
+# 网易云账号会话（cookie）。这是长期有效的账号凭证，和 API key 同级。
+config/netease_session.json
 
 # ================================================================
 # Logs & Debug Output

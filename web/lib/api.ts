@@ -565,6 +565,85 @@ export async function deletePendingSong(
     }
 }
 
+// ---- 网易云账号（只读自己的日推/红心元数据）----
+// 会话 cookie 只存在后端，这里的任何函数都拿不到它，也不该拿到。
+
+export interface NeteaseDailySong {
+    song_id: string;
+    title: string;
+    artist: string;
+    album?: string;
+    cover_url?: string;
+    duration?: number;
+}
+
+export interface NeteaseDailyResult {
+    success: boolean;
+    logged_in: boolean;
+    songs: NeteaseDailySong[];
+    in_library: NeteaseDailySong[];
+    in_candidates: NeteaseDailySong[];
+    missing: NeteaseDailySong[];
+    counts: { total: number; in_library: number; in_candidates: number; missing: number };
+    error?: string;
+}
+
+const EMPTY_DAILY: NeteaseDailyResult = {
+    success: false, logged_in: false, songs: [],
+    in_library: [], in_candidates: [], missing: [],
+    counts: { total: 0, in_library: 0, in_candidates: 0, missing: 0 },
+};
+
+export async function fetchNeteaseAccount(): Promise<{ logged_in: boolean; nickname?: string; stale_session?: boolean }> {
+    try {
+        const resp = await apiFetch(`http://localhost:8501/api/netease/account`);
+        if (!resp.ok) return { logged_in: false };
+        return resp.json();
+    } catch {
+        return { logged_in: false };
+    }
+}
+
+export async function startNeteaseQrLogin(): Promise<{ success: boolean; key?: string; qr_image?: string; error?: string }> {
+    try {
+        const resp = await apiFetch(`http://localhost:8501/api/netease/login/qr`, { method: 'POST' });
+        if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+        return resp.json();
+    } catch (err: any) {
+        return { success: false, error: err?.message || '发起登录失败' };
+    }
+}
+
+export async function checkNeteaseQrLogin(key: string): Promise<{ success: boolean; status?: string; error?: string }> {
+    try {
+        const resp = await apiFetch(`http://localhost:8501/api/netease/login/check?key=${encodeURIComponent(key)}`);
+        if (!resp.ok) return { success: false, error: `HTTP ${resp.status}` };
+        return resp.json();
+    } catch (err: any) {
+        return { success: false, error: err?.message || '状态查询失败' };
+    }
+}
+
+export async function logoutNetease(): Promise<{ success: boolean }> {
+    try {
+        const resp = await apiFetch(`http://localhost:8501/api/netease/account`, { method: 'DELETE' });
+        return resp.ok ? resp.json() : { success: false };
+    } catch {
+        return { success: false };
+    }
+}
+
+export async function fetchNeteaseDaily(limit = 30): Promise<NeteaseDailyResult> {
+    try {
+        const resp = await apiFetch(`http://localhost:8501/api/netease/daily?limit=${limit}`);
+        if (!resp.ok) return EMPTY_DAILY;
+        const data = await resp.json();
+        return { ...EMPTY_DAILY, ...data };
+    } catch (err: any) {
+        return { ...EMPTY_DAILY, error: err?.message || '日推获取失败' };
+    }
+}
+
 export async function retainOnlineAudio(song: {
     file_basename?: string;
     ext?: string;

@@ -2693,6 +2693,84 @@ async def get_library_songs(offset: int = 0, limit: int = 200, tier: str = "libr
         return {"success": False, "songs": [], "total": 0, "error": str(e)}
 
 
+@app.post("/api/netease/login/qr")
+async def netease_login_qr(raw_request: Request, _: None = Depends(require_admin_api_key)):
+    """开始扫码登录，返回二维码图片和轮询用的 key。
+
+    登录的是用户自己的网易云账号，用来读自己的日推/红心/歌单元数据。
+    会话 cookie 只存在后端，任何响应体都不会带它。
+    """
+    reject_shared_safe_action("netease login")
+    try:
+        from services.netease_account import start_qr_login
+
+        return await start_qr_login()
+    except Exception as exc:
+        logger.error("[netease] 扫码登录发起失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.get("/api/netease/login/check")
+async def netease_login_check(key: str, _: None = Depends(require_admin_api_key)):
+    """轮询扫码状态。确认后 cookie 落到后端，不回传给浏览器。"""
+    try:
+        from services.netease_account import check_qr_login
+
+        return await check_qr_login(key)
+    except Exception as exc:
+        logger.error("[netease] 扫码状态查询失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.get("/api/netease/account")
+async def netease_account(_: None = Depends(require_admin_api_key)):
+    """当前登录的是谁。只返回昵称和 id。"""
+    try:
+        from services.netease_account import account_status
+
+        return await account_status()
+    except Exception as exc:
+        logger.error("[netease] 账号状态查询失败: %s", exc, exc_info=True)
+        return {"logged_in": False, "error": str(exc)}
+
+
+@app.delete("/api/netease/account")
+async def netease_logout(raw_request: Request, _: None = Depends(require_admin_api_key)):
+    reject_shared_safe_action("netease logout")
+    try:
+        from services.netease_account import clear_cookie
+
+        return {"success": True, "cleared": clear_cookie()}
+    except Exception as exc:
+        logger.error("[netease] 退出登录失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.get("/api/netease/daily")
+async def netease_daily(limit: int = 30, _: None = Depends(require_admin_api_key)):
+    """日推 + 与本地曲库的对账结果。
+
+    纯元数据。没登录或代理挂了都返回空列表 —— 日推是补充源，不是基础设施，
+    上游 2024-04 起已归档只读，随时可能失效，不能让它拖垮推荐主流程。
+    """
+    try:
+        from services.netease_account import (
+            fetch_daily_songs,
+            is_logged_in,
+            match_against_library,
+        )
+
+        if not is_logged_in():
+            return {"success": True, "logged_in": False, "songs": [],
+                    "counts": {"total": 0, "in_library": 0, "in_candidates": 0, "missing": 0}}
+        songs = await fetch_daily_songs(limit=limit)
+        matched = match_against_library(songs)
+        return {"success": True, "logged_in": True, "songs": songs, **matched}
+    except Exception as exc:
+        logger.error("[netease] 日推获取失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc), "songs": []}
+
+
 @app.post("/api/library-songs/purge-candidates")
 async def purge_catalog_candidates(
     raw_request: Request,
