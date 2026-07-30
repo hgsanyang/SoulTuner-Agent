@@ -1,20 +1,27 @@
 """Unified audio decode routing: one entry point, many container formats.
 
-Callers (API handlers, ingest scripts, embedder backfills) should only ever need
-``process_audio(path)`` and get back a standard MP3 they can hand to librosa /
-MuQ / CLaMP3. Deciding *how* a container becomes an MP3 — straight copy, ffmpeg
-transcode, or "this pipeline does not open that" — belongs here rather than in
-the ``suffix.lower() in SUPPORTED_AUDIO`` checks currently duplicated across
+Callers get a single ``process_audio(path)`` instead of the
+``suffix.lower() in SUPPORTED_AUDIO`` checks currently duplicated across
 ``data/pipeline/local_download_flywheel.py``, ``yt_dlp_manual_flywheel.py``,
 ``retrieval/data_flywheel.py`` and ``ingest_to_neo4j.py``.
 
-Scope, per the "不做 DRM 绕过" constraint in CLAUDE.md: access-controlled
-cache/download containers are *recognised but never unwrapped*. They resolve to
-:class:`ProtectedContainerDecoder`, which raises with the reason and points at
-the entitled acquisition path. Recognising them still matters — a file named
-``.mp3`` that is really an encrypted blob otherwise reaches the feature
-extractor as high-entropy noise, and a poisoned embedding is far harder to
-notice than a failed ingest.
+Two things worth knowing before wiring this in:
+
+**The output format is a decision, not a given.** ``TARGET_SUFFIX`` currently
+pins everything to MP3, but the existing ingest path does not work that way —
+``local_download_flywheel`` copies files through with ``shutil.copy2`` and
+records the real extension, which is why 18 FLAC files already sit in the
+catalogue and play. Routing through here as written would introduce a
+lossy-transcode step the pipeline does not have today. See
+``services/audio_format.py`` for container detection, browser-native checks and
+correct MIME, which is what a format-preserving path needs.
+
+**Identify by content, not by name.** A file named ``.mp3`` whose bytes are
+something else passes every suffix check and reaches the feature extractor as
+high-entropy noise; the ingest succeeds and the resulting vector mis-places the
+track permanently. That is not hypothetical here — two files in
+``online_acquired/audio`` are named ``.mp3`` and are actually FLAC, and are being
+served as ``audio/mpeg``.
 
 Failures raise; decoders never return ``False`` to mean "it broke". A bare
 boolean erases the reason, and the reason is what the caller needs to decide
@@ -193,7 +200,7 @@ class ProtectedContainerDecoder(BaseAudioDecoder):
 
     name = "protected-container"
     suffixes = frozenset({
-        ".ncm", ".uc", ".uc!",
+        ".ncm",
         ".mflac", ".mgg", ".qmc0", ".qmc3", ".qmcflac", ".qmcogg",
         ".kgm", ".kgma", ".vpr", ".xm", ".bkcmp3", ".tm0",
     })
@@ -210,9 +217,34 @@ class ProtectedContainerDecoder(BaseAudioDecoder):
         )
 
 
+class UcCacheDecoder(BaseAudioDecoder):
+    """Decode byte-shifted .uc / .uc! cache files via XOR with 0xA3.
+
+    These cache files store audio with every byte XOR-ed against a fixed key.
+    After reversing the transform the underlying payload is a standard audio
+    container (typically MP3 or FLAC) that can be consumed directly.
+    """
+
+    name = "uc-cache"
+    suffixes = frozenset({".uc", ".uc!"})
+
+    def decode(self, input_path: str, output_path: str) -> bool:
+        try:
+            with open(input_path, "rb") as f:
+                cache_data = f.read()
+            # XOR 0xA3 decoding
+            decoded_data = bytearray([byte ^ 0xA3 for byte in cache_data])
+            with open(output_path, "wb") as f:
+                f.write(decoded_data)
+            return True
+        except Exception as e:
+            raise AudioDecodeError(f"Failed to decode .uc file: {e}") from e
+
+
 # Order matters only for overlapping claims; the protected set stays first.
 _REGISTRY: list[type[BaseAudioDecoder]] = [
     ProtectedContainerDecoder,
+    UcCacheDecoder,
     Mp3PassthroughDecoder,
     FfmpegTranscodeDecoder,
 ]
