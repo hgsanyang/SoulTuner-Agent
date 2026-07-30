@@ -28,7 +28,10 @@ import sys
 from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:                     # runtime import stays lazy, inside the
+    import aiohttp                    # functions that actually make requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -59,6 +62,7 @@ class CacheEntry:
     artist: str = ""
     album: str = ""
     duration_ms: int = 0
+    lyrics: str = ""
     matched_music_id: str = ""
     matched_title: str = ""
     reasons: list[str] = field(default_factory=list)
@@ -126,6 +130,50 @@ async def fetch_metadata(song_ids: list[str], *, batch: int = 50) -> dict[str, d
     return found
 
 
+async def fetch_lyrics(song_ids: list[str], *, batch: int = 20) -> dict[str, str]:
+    """Fetch LRC lyrics for a list of song ids, via the local NetEase proxy.
+
+    Anonymous — ``/lyric`` needs no login. Returns a mapping from song_id to
+    the raw LRC string. Songs without lyrics (instrumental, proxy failure) are
+    simply absent from the result.
+    """
+    import aiohttp
+
+    from config.settings import settings
+
+    found: dict[str, str] = {}
+    async with aiohttp.ClientSession() as session:
+        for start in range(0, len(song_ids), batch):
+            chunk = song_ids[start : start + batch]
+            tasks = []
+            for sid in chunk:
+                url = f"{settings.netease_api_base}/lyric"
+                tasks.append(_fetch_lyric_one(session, url, sid))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for sid, result in zip(chunk, results):
+                if isinstance(result, str) and result.strip():
+                    found[sid] = result
+    return found
+
+
+async def _fetch_lyric_one(
+    session: aiohttp.ClientSession, url: str, song_id: str,
+) -> str:
+    """Fetch lyrics for a single song id. Returns empty string on failure."""
+    import aiohttp
+
+    try:
+        async with session.get(
+            url, params={"id": song_id}, timeout=aiohttp.ClientTimeout(total=15),
+        ) as response:
+            if response.status != 200:
+                return ""
+            payload = await response.json(content_type=None)
+    except Exception:
+        return ""
+    return str((payload.get("lrc") or {}).get("lyric") or "")
+
+
 def load_library_index(rows: list[dict[str, Any]] | None = None) -> tuple[dict[str, dict], dict[str, list[dict]]]:
     """Two lookups over the local catalogue: by NetEase id, and by title+artist."""
     from services.negative_feedback import song_key
@@ -169,10 +217,12 @@ def classify(
     metadata: dict[str, dict[str, Any]],
     by_id: dict[str, dict],
     by_key: dict[str, list[dict]],
+    lyrics: dict[str, str] | None = None,
 ) -> list[CacheEntry]:
-    """Attach metadata and decide duplicate status. Never merges anything."""
+    """Attach metadata, lyrics and decide duplicate status. Never merges anything."""
     from services.negative_feedback import song_key
 
+    lyrics = lyrics or {}
     result: list[CacheEntry] = []
     for entry in entries:
         meta = metadata.get(entry.song_id)
@@ -187,6 +237,9 @@ def classify(
             entry.reasons.append("proxy 未返回该 id 的公开元数据")
             result.append(entry)
             continue
+
+        # Attach lyrics if available.
+        entry.lyrics = lyrics.get(entry.song_id, "")
 
         # L1 — same NetEase id. Unambiguous.
         hit = by_id.get(entry.song_id)
@@ -229,6 +282,7 @@ def summarise(entries: list[CacheEntry]) -> dict[str, Any]:
         by_state_bytes[entry.state] += entry.bytes
     total = sum(e.bytes for e in entries)
     dup = [e for e in entries if e.state in (DUPLICATE_EXACT, DUPLICATE_SUSPECTED)]
+    with_lyrics = sum(1 for e in entries if e.lyrics.strip())
     return {
         "cache_files": len(entries),
         "cache_bytes": total,
@@ -238,6 +292,8 @@ def summarise(entries: list[CacheEntry]) -> dict[str, Any]:
         "already_have": len(dup),
         "already_have_gib": round(sum(e.bytes for e in dup) / (1024 ** 3), 3),
         "quality_mix": dict(Counter(e.quality for e in entries).most_common()),
+        "lyrics_available": with_lyrics,
+        "lyrics_missing": len(entries) - with_lyrics,
     }
 
 
@@ -252,6 +308,11 @@ def main() -> int:
         action="store_true",
         help="skip the proxy lookup; scan file names only",
     )
+    parser.add_argument(
+        "--no-lyrics",
+        action="store_true",
+        help="skip fetching lyrics (only effective when metadata is fetched)",
+    )
     args = parser.parse_args()
 
     cache_dir = Path(args.cache_dir)
@@ -265,16 +326,24 @@ def main() -> int:
           f"{round(sum(e.bytes for e in entries) / (1024 ** 3), 2)} GiB（只读文件名与大小）")
 
     metadata: dict[str, dict[str, Any]] = {}
+    lyrics: dict[str, str] = {}
     if not args.no_metadata:
         ids = sorted({e.song_id for e in entries})
         print(f"向本地网易云代理查询 {len(ids)} 个 id 的公开元数据…")
         metadata = asyncio.run(fetch_metadata(ids))
         print(f"取到 {len(metadata)} 条")
 
+        if not args.no_lyrics:
+            # Only fetch lyrics for ids that have metadata.
+            lyric_ids = sorted(metadata.keys())
+            print(f"拉取 {len(lyric_ids)} 首歌的歌词…")
+            lyrics = asyncio.run(fetch_lyrics(lyric_ids))
+            print(f"取到 {len(lyrics)} 首有歌词")
+
     by_id, by_key = load_library_index()
     print(f"本地曲库索引：{len(by_id)} 个带网易云 id，{len(by_key)} 个歌名+歌手键")
 
-    entries = classify(entries, metadata, by_id, by_key)
+    entries = classify(entries, metadata, by_id, by_key, lyrics)
     summary = summarise(entries)
 
     print("\n== 汇总 ==")
