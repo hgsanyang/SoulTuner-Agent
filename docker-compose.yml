@@ -222,7 +222,10 @@ services:
     ports:
       - "${BIND_HOST:-127.0.0.1}:3003:3003"
     environment:
+      # 浏览器侧：跑在宿主机上，用发布出来的端口
       NEXT_PUBLIC_API_URL: http://localhost:8501
+      # 注意：服务端 rewrite 的目标在 web/Dockerfile 里设（构建期），
+      # 放在这里是无效的——next build 已经把它冻进 routes-manifest.json 了。
     restart: unless-stopped
 
 volumes:

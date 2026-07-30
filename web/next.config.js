@@ -14,7 +14,10 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:8501/:path*', // 代理到 Streamlit 后端
+        // 容器里 localhost 是前端容器自己，必须走 compose 服务名 backend。
+        // 默认留 localhost，这样宿主机 npm run dev 也能用。后端是 FastAPI，
+        // 不是 Streamlit（旧注释遗留）。
+        destination: `${process.env.BACKEND_INTERNAL_URL || 'http://localhost:8501'}/api/:path*`,
       },
     ];
   },
