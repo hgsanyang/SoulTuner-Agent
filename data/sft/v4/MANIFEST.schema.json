@@ -119,7 +119,8 @@
         "trajectory_kind",
         "observation_origin",
         "teacher",
-        "reviewer"
+        "reviewer",
+        "reviewer_verdict"
       ],
       "additionalProperties": false,
       "properties": {
@@ -132,7 +133,12 @@
         "turn_id": { "type": "integer", "minimum": 0 },
         "trace_id": {
           "type": ["string", "null"],
-          "description": "Execution trace this row was derived from. Required whenever observation_origin is real_execution."
+          "description": "Execution trace this row was derived from. Required for production and controlled-harness executions."
+        },
+        "execution_environment": {
+          "type": "string",
+          "enum": ["production", "controlled_harness"],
+          "description": "Distinguishes real product traffic from deterministic fault injection. It is omitted when no tool observation exists."
         },
         "request_kind": {
           "enum": ["recommendation", "information", "acquisition", "library", "conversation"]
@@ -140,8 +146,8 @@
         "trajectory_kind": { "$ref": "#/$defs/trajectoryKind" },
         "observation_origin": {
           "type": "string",
-          "enum": ["none", "real_execution", "teacher_authored"],
-          "description": "`none` for single-shot planner rows that contain no observation at all — the whole of V3. `teacher_authored` is forbidden for failure_recovery: an invented failure teaches an invented recovery."
+          "enum": ["none", "real_execution", "harness_execution", "teacher_authored"],
+          "description": "`none` is a single-shot planner row. `real_execution` is product traffic. `harness_execution` is an actual ToolPlan run with controlled fault injection. Teacher-authored failures are forbidden."
         },
         "teacher": { "$ref": "#/$defs/modelRef" },
         "reviewer": { "$ref": "#/$defs/modelRef" },
@@ -150,11 +156,33 @@
       "allOf": [
         {
           "if": { "properties": { "observation_origin": { "const": "real_execution" } }, "required": ["observation_origin"] },
-          "then": { "required": ["trace_id"], "properties": { "trace_id": { "type": "string", "minLength": 1 } } }
+          "then": {
+            "required": ["trace_id", "execution_environment"],
+            "properties": {
+              "trace_id": { "type": "string", "minLength": 1 },
+              "execution_environment": { "const": "production" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "observation_origin": { "const": "harness_execution" } }, "required": ["observation_origin"] },
+          "then": {
+            "required": ["trace_id", "execution_environment"],
+            "properties": {
+              "trace_id": { "type": "string", "minLength": 1 },
+              "execution_environment": { "const": "controlled_harness" }
+            }
+          }
         },
         {
           "if": { "properties": { "trajectory_kind": { "const": "failure_recovery" } }, "required": ["trajectory_kind"] },
-          "then": { "properties": { "observation_origin": { "const": "real_execution" } } }
+          "then": {
+            "properties": {
+              "observation_origin": {
+                "enum": ["real_execution", "harness_execution"]
+              }
+            }
+          }
         }
       ]
     },

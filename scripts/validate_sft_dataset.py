@@ -319,7 +319,7 @@ def main() -> int:
           f"eval artists seen in train={ov['artists']['share_seen']:.1%}")
 
     if report.ok:
-        print("CONTRACT OK — no schema or executability violation")
+        print("CONTRACT OK - no schema or executability violation")
         return 0
     print(f"CONTRACT FAIL — {len(report.hard)} violation(s):")
     for finding in report.hard[: args.max_findings]:

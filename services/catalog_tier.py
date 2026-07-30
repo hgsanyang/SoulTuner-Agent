@@ -181,9 +181,9 @@ def load_rated_identities(
     """
     if feedback_rows is None:
         try:
-            from services.feedback_store import load_song_feedback
+            from services.feedback_logger import load_song_feedback_canonical_strict
 
-            feedback_rows = load_song_feedback()
+            feedback_rows = load_song_feedback_canonical_strict()
         except Exception as exc:
             raise RatingLedgerUnavailable(str(exc)) from exc
     return rated_identities(feedback_rows)

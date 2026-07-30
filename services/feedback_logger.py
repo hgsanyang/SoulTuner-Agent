@@ -573,6 +573,24 @@ def load_song_feedback_canonical() -> list[dict[str, Any]]:
     ]
 
 
+def load_song_feedback_canonical_strict() -> list[dict[str, Any]]:
+    """Merge SQLite and legacy JSONL without hiding a read failure.
+
+    Normal read paths may tolerate one unavailable source. Destructive catalog
+    cleanup may not: treating an unreadable ledger as an empty ledger can delete
+    the Song node that a stored rating still references.
+    """
+    from services import feedback_store
+    from services.runtime_context import normalize_provenance
+
+    sqlite_rows = feedback_store.load_song_feedback()
+    jsonl_rows = load_jsonl(_jsonl_path("song_feedback.jsonl"))
+    return [
+        normalize_provenance(row)
+        for row in _merge_canonical("song_feedback", sqlite_rows, jsonl_rows)
+    ]
+
+
 def _eligible(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     from services.runtime_context import is_training_eligible
 

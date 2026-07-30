@@ -131,6 +131,7 @@ def row() -> dict:
         "observation_origin": "none",
         "teacher": {"model": "qwen3.7-plus", "version": "2026-07"},
         "reviewer": {"model": "independent-reviewer", "version": "1"},
+        "reviewer_verdict": "accept",
     }
 
 
@@ -138,6 +139,11 @@ def test_a_single_shot_planner_row_needs_no_trace(provenance, row):
     """All 1515 V3 rows are this shape: no observation exists to be traced, and
     demanding one would make the whole format invalid rather than honest."""
     assert not list(provenance.iter_errors(row))
+
+
+def test_reviewer_verdict_is_required(provenance, row):
+    del row["reviewer_verdict"]
+    assert list(provenance.iter_errors(row))
 
 
 def test_a_teacher_invented_failure_is_rejected(provenance, row):
@@ -157,7 +163,28 @@ def test_a_real_traced_failure_is_accepted(provenance, row):
     row["trajectory_kind"] = "failure_recovery"
     row["observation_origin"] = "real_execution"
     row["trace_id"] = "run-7f3a"
+    row["execution_environment"] = "production"
     assert not list(provenance.iter_errors(row))
+
+
+def test_a_controlled_harness_failure_is_accepted_and_cannot_claim_production(
+    provenance, row
+):
+    row["trajectory_kind"] = "failure_recovery"
+    row["observation_origin"] = "harness_execution"
+    row["trace_id"] = "harness-timeout-001"
+    row["execution_environment"] = "controlled_harness"
+    assert not list(provenance.iter_errors(row))
+
+    row["execution_environment"] = "production"
+    assert list(provenance.iter_errors(row))
+
+
+def test_real_execution_cannot_be_mislabeled_as_controlled_harness(provenance, row):
+    row["observation_origin"] = "real_execution"
+    row["trace_id"] = "run-7f3a"
+    row["execution_environment"] = "controlled_harness"
+    assert list(provenance.iter_errors(row))
 
 
 def test_the_v3_baseline_in_the_config_matches_what_the_gate_reports():

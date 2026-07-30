@@ -203,6 +203,43 @@ def test_an_unreadable_rating_ledger_refuses_rather_than_deletes(monkeypatch):
         load_rated_identities()
 
 
+def test_an_unmigrated_jsonl_rating_is_also_protected(tmp_path, monkeypatch):
+    """Cleanup must protect feedback written before the SQLite migration."""
+    import json
+
+    import services.feedback_store as store
+
+    monkeypatch.setenv("MUSIC_FEEDBACK_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "load_song_feedback", lambda: [])
+    row = {
+        "song_feedback_id": "legacy-1",
+        "music_id": "legacy-song",
+        "title": "Old Song",
+        "artist": "Old Artist",
+        "context_fit": "off",
+    }
+    (tmp_path / "song_feedback.jsonl").write_text(
+        json.dumps(row, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    ids, keys = load_rated_identities()
+
+    assert ids == {"legacy-song"}
+    assert keys
+
+
+def test_an_unreadable_legacy_jsonl_ledger_also_refuses_cleanup(tmp_path, monkeypatch):
+    import services.feedback_store as store
+
+    monkeypatch.setenv("MUSIC_FEEDBACK_DIR", str(tmp_path))
+    monkeypatch.setattr(store, "load_song_feedback", lambda: [])
+    (tmp_path / "song_feedback.jsonl").write_text("{broken-json\n", encoding="utf-8")
+
+    with pytest.raises(RatingLedgerUnavailable):
+        load_rated_identities()
+
+
 def test_a_readable_empty_ledger_protects_nothing():
     """The fail-closed path must not fire on a legitimately empty ledger."""
     assert load_rated_identities([]) == (set(), set())

@@ -104,8 +104,11 @@ rule). A teacher inventing a plausible failure produces a plausible-looking
 recovery from a failure mode the system does not actually have, and the model
 learns to handle imaginary problems.
 
-These rows must come from a real run: real empty result, real timeout, real web
-lane refusal — with `trace_id` recorded.
+These rows must come from an executed run: either product traffic
+(`real_execution`) or deterministic fault injection through the production
+orchestrator (`harness_execution`). Both require a `trace_id`; harness rows also
+record `execution_environment=controlled_harness`. This distinction prevents a
+controlled timeout from being misreported as a user-facing production incident.
 
 Note this needs a message shape V3 does not have (tool / observation roles). Keep
 it in a separate file from the single-shot planner rows so the loss masks do not
