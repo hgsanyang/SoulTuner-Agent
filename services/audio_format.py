@@ -31,7 +31,10 @@ from typing import Any, Final
 
 logger = logging.getLogger(__name__)
 
-_HEADER_BYTES: Final = 16
+# An Ogg page header is 27 bytes plus a segment table, so the codec name lands
+# around offset 28. 16 bytes reached the container but never the codec, which
+# silently turned every Opus file into a plain Ogg one.
+_HEADER_BYTES: Final = 512
 
 #: container -> (canonical suffix, mime, lossless)
 CONTAINERS: Final[dict[str, tuple[str, str, bool]]] = {
@@ -101,11 +104,10 @@ def detect_container(data: bytes) -> str:
         return "flac"
     if data[:4] == b"OggS":
         # Opus and Vorbis share the Ogg container; the codec name sits in the
-        # first packet. Reading it matters because they need different suffixes.
-        head = data[:64]
-        if b"OpusHead" in head:
-            return "opus"
-        return "ogg"
+        # first packet, past the page header and segment table. Search whatever
+        # the caller gave us rather than a fixed window — with too few bytes the
+        # honest answer is the container, not a guess at the codec.
+        return "opus" if b"OpusHead" in data else "ogg"
     if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
         return "wav"
     if data[:4] == b"FORM" and data[8:12] in (b"AIFF", b"AIFC"):
@@ -273,9 +275,13 @@ def read_metadata(path: str | Path) -> MetadataCandidate:
 
     def first(keys: tuple[str, ...]) -> str:
         for key in keys:
-            if key not in tags:
+            try:
+                raw = tags[key]
+            except (KeyError, ValueError, TypeError):
+                # ValueError: mutagen's VComment rejects keys that are not legal
+                # Vorbis names, and this table deliberately mixes ID3 frames,
+                # MP4 atoms and Vorbis keys so one lookup covers every format.
                 continue
-            raw = tags[key]
             values = raw if isinstance(raw, list) else [raw]
             for value in values:
                 text = _stringify(value)

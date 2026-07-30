@@ -213,6 +213,25 @@ app.add_middleware(
 # 挂载静态音频/封面/歌词文件目录
 # Docker 内为 /app/data，本地开发为 Windows 路径
 from fastapi.staticfiles import StaticFiles
+
+
+def _register_audio_mimetypes() -> None:
+    """Teach Python's mimetypes table the audio types we actually serve.
+
+    StaticFiles derives Content-Type from that table, and on Windows it does not
+    know .flac or .opus — so a lossless file went out as
+    application/octet-stream. The mapping comes from services.audio_format so the
+    served header and the stored extension cannot drift apart.
+    """
+    import mimetypes
+
+    from services.audio_format import CONTAINERS
+
+    for suffix, mime, _lossless in CONTAINERS.values():
+        mimetypes.add_type(mime, suffix)
+
+
+_register_audio_mimetypes()
 from starlette.middleware.cors import CORSMiddleware as _StarletteCORS
 
 # StaticFiles 是独立的 ASGI sub-app，主 app 的 CORSMiddleware 不覆盖它。

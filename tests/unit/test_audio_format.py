@@ -8,6 +8,8 @@ failed import is loud; a poisoned embedding is not.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from services.audio_format import (
@@ -195,3 +197,133 @@ def test_artist_splitting_handles_the_separators_that_actually_occur():
     assert _split_artists("A; B") == ["A", "B"]
     assert _split_artists("单人") == ["单人"]
     assert _split_artists("") == []
+
+
+# ---- real files, produced by ffmpeg ----------------------------------------
+#
+# Everything above feeds hand-built byte strings to detect_container. That is
+# useful for pinning the ordering rules, and it is also how a real bug survived:
+# the Opus fixture put OpusHead inside the first 64 bytes, while a real Ogg page
+# header is 27 bytes plus a segment table and pushes it to offset 28. detect_file
+# read 16 bytes, so every real Opus file was detected as plain Ogg — wrong
+# suffix, wrong MIME — and the suite stayed green.
+#
+# These tests read files ffmpeg actually encoded, through the on-disk path.
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "audio"
+
+
+def _fixture(name: str) -> Path:
+    path = FIXTURES / name
+    if not path.exists():
+        pytest.skip(f"fixture missing: {name}")
+    return path
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("tone.mp3", "mp3"),
+    ("tone.flac", "flac"),
+    ("tone.ogg", "ogg"),
+    ("tone.opus", "opus"),
+    ("tone.wav", "wav"),
+    ("tone.m4a", "m4a"),
+])
+def test_real_encoded_files_are_detected_through_the_disk_path(name, expected):
+    assert detect_file(_fixture(name)) == expected
+
+
+def test_a_real_opus_file_is_not_reported_as_plain_ogg():
+    """The regression this file exists for. OpusHead is at byte 28 in real
+    output, so any header window shorter than that silently loses the codec."""
+    path = _fixture("tone.opus")
+    assert b"OpusHead" not in path.read_bytes()[:16]     # the trap
+    assert detect_file(path) == "opus"                    # and it still works
+    assert suffix_for("opus") == ".opus"
+    assert mime_for("opus") == "audio/opus"
+
+
+def test_every_real_fixture_has_a_matching_suffix():
+    for path in sorted(FIXTURES.glob("tone.*")):
+        assert suffix_matches_content(path), f"{path.name} 内容与扩展名不符"
+
+
+def test_real_files_probe_to_a_plausible_duration():
+    """ffprobe is optional on the host; when present it must agree with the
+    one-second tone these fixtures encode."""
+    from services.audio_format import probe
+
+    stream = probe(_fixture("tone.flac"))
+    if not stream:
+        pytest.skip("ffprobe unavailable on this host")
+    assert 800 <= stream["duration_ms"] <= 1200
+    assert stream["sample_rate"] > 0
+
+
+def test_read_metadata_reports_real_container_facts():
+    from services.audio_format import read_metadata
+
+    candidate = read_metadata(_fixture("tone.flac"))
+    assert candidate.container == "flac"
+    assert candidate.lossless is True
+
+
+def test_tags_written_by_mutagen_are_read_back(tmp_path):
+    """Proves the tag reader actually reads tags, rather than merely not
+    crashing on a file that has none."""
+    mutagen = pytest.importorskip("mutagen")
+    from mutagen.flac import FLAC, Picture
+
+    src = _fixture("tone.flac")
+    work = tmp_path / "tagged.flac"
+    work.write_bytes(src.read_bytes())
+
+    audio = FLAC(str(work))
+    audio["title"] = "海阔天空"
+    audio["artist"] = "Beyond"
+    audio["album"] = "乐与怒"
+    audio["date"] = "1993"
+    audio["lyrics"] = "[00:00.00]今天我"
+    picture = Picture()
+    picture.type = 3
+    picture.mime = "image/jpeg"
+    picture.data = b"\xff\xd8\xff\xe0" + b"cover-bytes" * 8
+    audio.add_picture(picture)
+    audio.save()
+
+    from services.audio_format import read_metadata
+
+    candidate = read_metadata(work)
+    assert candidate.value("title") == "海阔天空"
+    assert candidate.value("artists") == ["Beyond"]
+    assert candidate.value("album") == "乐与怒"
+    assert str(candidate.value("year")).startswith("1993")
+    assert candidate.cover_bytes.startswith(b"\xff\xd8\xff")
+    # a timestamped line has to survive in both forms
+    assert candidate.synced_lyrics.startswith("[00:00.00]")
+    assert candidate.plain_lyrics == "今天我"
+    assert candidate.fields["title"].source == "embedded_tag"
+
+
+def test_id3_tags_on_a_real_mp3_are_read_back(tmp_path):
+    pytest.importorskip("mutagen")
+    from mutagen.id3 import APIC, ID3, TALB, TIT2, TPE1
+
+    src = _fixture("tone.mp3")
+    work = tmp_path / "tagged.mp3"
+    work.write_bytes(src.read_bytes())
+
+    tags = ID3()
+    tags.add(TIT2(encoding=3, text="Yellow"))
+    tags.add(TPE1(encoding=3, text="Coldplay"))
+    tags.add(TALB(encoding=3, text="Parachutes"))
+    tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="",
+                  data=b"\xff\xd8\xff\xe0" + b"jpegdata" * 4))
+    tags.save(str(work))
+
+    from services.audio_format import read_metadata
+
+    candidate = read_metadata(work)
+    assert candidate.value("title") == "Yellow"
+    assert candidate.value("artists") == ["Coldplay"]
+    assert candidate.value("album") == "Parachutes"
+    assert candidate.cover_bytes.startswith(b"\xff\xd8\xff")
