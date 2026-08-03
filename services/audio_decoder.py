@@ -69,13 +69,20 @@ class ProtectedContainerError(UnsupportedAudioFormatException):
 
 @dataclass(frozen=True, slots=True)
 class DecodeResult:
-    """What ``process_audio`` produced, and how."""
+    """What ``process_audio`` produced, and how.
+
+    ``container`` is what the bytes actually are, which is not always what the
+    name says — that mismatch is how a FLAC ends up served as audio/mpeg.
+    """
 
     output_path: Path
     decoder: str
     source_suffix: str
     transcoded: bool
     reused: bool = False
+    container: str = ""
+    mime_type: str = ""
+    lossless: bool = False
 
 
 class BaseAudioDecoder(ABC):
@@ -304,33 +311,75 @@ def process_audio(
     output_dir: str | Path | None = None,
     *,
     overwrite: bool = False,
+    playback_format: str | None = None,
 ) -> DecodeResult:
-    """Produce a standard MP3 for ``file`` and report which strategy did it.
+    """Route one audio file, preserving its format unless asked otherwise.
 
-    The single entry point outward-facing code should use. ``output_dir``
-    defaults to the input's own directory. With ``overwrite=False`` an existing
-    target is reused rather than rebuilt, which is what makes this cheap to call
-    from an idempotent ingest pass.
+    The output keeps the container the bytes actually are: a FLAC stays a FLAC
+    and is named ``.flac``. Transcoding happens only when the source is
+    something no downstream component reads, or when a caller explicitly passes
+    ``playback_format="mp3"`` because it needs a derived playback copy.
+
+    This used to name every output ``.mp3`` and re-encode anything that was not
+    already MP3, which discarded the lossless data in every FLAC and produced
+    exactly the "FLAC content under an .mp3 name" defect found in the live
+    catalogue. Preserving the format is not an optimisation; it is the
+    difference between keeping and destroying the source.
+
+    ``output_dir`` defaults to the input's own directory. With
+    ``overwrite=False`` an existing target is reused, which is what makes this
+    cheap to call from an idempotent ingest pass.
     """
+    from services.audio_format import detect_file, is_lossless, mime_for, suffix_for
+
     src = _existing_file(file)
     decoder = resolve_decoder(src)
     suffix = src.suffix.lower()
 
+    # What it is, not what it is called. A wrapped container has no readable
+    # header until the decoder runs, so fall back to the decoder's own target.
+    container = detect_file(src)
+    if playback_format:
+        out_suffix = playback_format if playback_format.startswith(".") else f".{playback_format}"
+        want_transcode = True
+    elif container:
+        out_suffix = suffix_for(container)
+        want_transcode = False
+    else:
+        out_suffix = TARGET_SUFFIX
+        want_transcode = True
+
     target_dir = Path(output_dir) if output_dir is not None else src.parent
     _ensure_writable_dir(target_dir)
-    dst = target_dir / f"{src.stem}{TARGET_SUFFIX}"
+    dst = target_dir / f"{src.stem}{out_suffix}"
 
     same_file = dst.exists() and src.resolve() == dst.resolve()
     if dst.exists() and not overwrite and not same_file:
         logger.debug("%s: reusing existing %s", src.name, dst)
-        return DecodeResult(dst, decoder.name, suffix, transcoded=False, reused=True)
+        return DecodeResult(dst, decoder.name, suffix, transcoded=False, reused=True,
+                            container=container, mime_type=mime_for(container),
+                            lossless=is_lossless(container))
 
-    decoder.decode(str(src), str(dst))
+    if want_transcode:
+        decoder.decode(str(src), str(dst))
+    elif container == "mp3" and isinstance(decoder, Mp3PassthroughDecoder):
+        # Genuine MP3: keep the header check, which is what refuses a file named
+        # .mp3 whose bytes are not audio. Gated on the detected container, not on
+        # the name — otherwise a FLAC called .mp3 is rejected instead of simply
+        # being written as the FLAC it is.
+        decoder.decode(str(src), str(dst))
+    elif src.resolve() != dst.resolve():
+        _copy(src, dst)                      # format preserved, bytes untouched
+
+    final = detect_file(dst) or container
     return DecodeResult(
         output_path=dst,
         decoder=decoder.name,
         source_suffix=suffix,
-        transcoded=not isinstance(decoder, Mp3PassthroughDecoder),
+        transcoded=want_transcode and not isinstance(decoder, Mp3PassthroughDecoder),
+        container=final,
+        mime_type=mime_for(final),
+        lossless=is_lossless(final),
     )
 
 

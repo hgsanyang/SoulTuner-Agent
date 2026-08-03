@@ -327,3 +327,75 @@ def test_id3_tags_on_a_real_mp3_are_read_back(tmp_path):
     assert candidate.value("artists") == ["Coldplay"]
     assert candidate.value("album") == "Parachutes"
     assert candidate.cover_bytes.startswith(b"\xff\xd8\xff")
+
+
+# ---- process_audio must not destroy what it routes -------------------------
+#
+# It used to name every output .mp3 and re-encode anything that was not already
+# MP3. Fed a FLAC that meant: lossy re-encode, then store the result under a
+# name claiming it is an MP3 — the same defect found in the live catalogue,
+# except produced systematically at the entry point.
+
+def test_a_flac_survives_routing_as_a_flac(tmp_path):
+    from services.audio_decoder import process_audio
+
+    src = tmp_path / "song.flac"
+    src.write_bytes(_fixture("tone.flac").read_bytes())
+    out = tmp_path / "out"
+    result = process_audio(src, out)
+
+    assert result.output_path.suffix == ".flac"
+    assert result.container == "flac"
+    assert result.mime_type == "audio/flac"
+    assert result.lossless is True
+    assert result.transcoded is False
+    # byte-identical: preserved, not re-encoded
+    assert result.output_path.read_bytes() == src.read_bytes()
+
+
+def test_an_mp3_stays_an_mp3(tmp_path):
+    from services.audio_decoder import process_audio
+
+    src = tmp_path / "song.mp3"
+    src.write_bytes(_fixture("tone.mp3").read_bytes())
+    result = process_audio(src, tmp_path / "out")
+    assert result.output_path.suffix == ".mp3"
+    assert result.container == "mp3"
+    assert result.lossless is False
+
+
+def test_a_mislabelled_flac_is_written_under_its_real_extension(tmp_path):
+    """The production defect, at the routing layer: bytes are FLAC, name says
+    mp3. The output must follow the bytes."""
+    from services.audio_decoder import process_audio
+
+    src = tmp_path / "liar.mp3"
+    src.write_bytes(_fixture("tone.flac").read_bytes())
+    result = process_audio(src, tmp_path / "out")
+    assert result.output_path.suffix == ".flac"
+    assert result.mime_type == "audio/flac"
+
+
+def test_asking_for_mp3_playback_is_explicit_not_implicit(tmp_path):
+    """A caller that needs a derived MP3 says so. It is never imposed."""
+    from services.audio_decoder import process_audio
+
+    src = tmp_path / "song.flac"
+    src.write_bytes(_fixture("tone.flac").read_bytes())
+    try:
+        result = process_audio(src, tmp_path / "out", playback_format="mp3")
+    except Exception as exc:                 # ffmpeg absent on this host
+        pytest.skip(f"transcode unavailable: {type(exc).__name__}")
+    assert result.output_path.suffix == ".mp3"
+    assert result.transcoded is True
+
+
+@pytest.mark.parametrize("name", ["tone.ogg", "tone.opus", "tone.wav", "tone.m4a"])
+def test_every_real_format_keeps_its_own_container(tmp_path, name):
+    from services.audio_decoder import process_audio
+
+    src = tmp_path / name
+    src.write_bytes(_fixture(name).read_bytes())
+    result = process_audio(src, tmp_path / "out")
+    assert result.output_path.suffix == Path(name).suffix
+    assert result.transcoded is False
