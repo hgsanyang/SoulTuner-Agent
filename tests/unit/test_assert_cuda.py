@@ -160,6 +160,16 @@ def test_the_ingest_action_loads_the_gpu_overlay():
     assert "docker-compose.gpu.yml" in ingest[:1500]
 
 
-def test_both_gpu_paths_self_check():
+def test_up_gpu_self_checks_both_services():
+    """Checking only the backend leaves the case that costs most: the
+    long-running worker quietly extracting every vector on CPU."""
     launcher = (SCRIPT.parent.parent / "soultuner.ps1").read_text(encoding="utf-8")
-    assert launcher.count("assert_cuda.py") >= 2
+    up_block = launcher[launcher.index('"up" {'):launcher.index('"down" {')]
+    assert "exec -T backend python scripts/assert_cuda.py" in up_block
+    assert "exec -T ingest-worker python scripts/assert_cuda.py" in up_block
+
+
+def test_the_ingest_action_also_self_checks():
+    launcher = (SCRIPT.parent.parent / "soultuner.ps1").read_text(encoding="utf-8")
+    ingest = launcher[launcher.index('"ingest" {'):]
+    assert "assert_cuda.py" in ingest[:2000]

@@ -97,7 +97,8 @@ services:
     build: .
     container_name: soultuner-backend
     # 运行时从项目私有 .env 注入密钥；.env 已被 Git 与 Docker build context 排除。
-    # 使用 env_file 可避免宿主机同名环境变量覆盖项目内的私有配置。
+    # 密钥改由下面的 environment 从宿主机(用户级)环境变量透传；.env 里不再有明文。
+    # compose 中 environment 优先级高于 env_file，所以那组是权威来源。
     env_file:
       - .env
     depends_on:
@@ -106,6 +107,17 @@ services:
     ports:
       - "${BIND_HOST:-127.0.0.1}:8501:8501"
     environment:
+      # 密钥透传：值来自宿主机环境变量，不落在仓库任何文件里。
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      SiliconFlow_API_KEY: ${SiliconFlow_API_KEY}
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"

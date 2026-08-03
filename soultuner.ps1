@@ -240,10 +240,13 @@ switch ($Action) {
         if ($Profile -eq "gpu") {
             docker compose @ComposeFiles --profile gpu up -d ingest-worker
             Assert-LastNativeCommand "Starting GPU ingestion worker"
-            # Asked for GPU, so prove it arrived. Without this the whole chain
-            # above can fail and still look like a successful startup.
+            # Asked for GPU, so prove it arrived — on BOTH services. Checking
+            # only the backend leaves the exact case that costs most: the
+            # long-running worker quietly extracting every vector on CPU.
             docker compose @ComposeFiles exec -T backend python scripts/assert_cuda.py
             Assert-LastNativeCommand "backend CUDA self-check"
+            docker compose @ComposeFiles exec -T ingest-worker python scripts/assert_cuda.py
+            Assert-LastNativeCommand "ingest-worker CUDA self-check"
         }
         Write-Host "Frontend: http://localhost:3003"
         Write-Host "Backend:  http://localhost:8501"
