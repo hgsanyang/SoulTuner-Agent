@@ -7,6 +7,7 @@ huggingface_hub version, so this module loads config + state dict manually.
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -121,20 +122,64 @@ def get_muq_model():
             config: dict[str, Any] = json.load(fh)
         config = _rewrite_config_to_local_snapshots(config)
 
-        model = MuQMuLan(config=config)
         state_path = _download(MUQ_REPO_ID, "pytorch_model.bin")
-        state = torch.load(state_path, map_location="cpu", weights_only=False)
-        missing, unexpected = model.load_state_dict(state, strict=False)
+        legacy = os.getenv("MUSIC_MUQ_LEGACY_LOADER", "").strip().lower() in {"1", "true", "yes"}
+
+        if legacy:
+            # Kept as an escape hatch, not as a supported path. Measured in a
+            # container with 4.7 GB available: killed at the torch.load step.
+            model = MuQMuLan(config=config)
+            state = torch.load(state_path, map_location="cpu", weights_only=False)
+            missing, unexpected = model.load_state_dict(state, strict=False)
+            del state
+            model = model.to(device)
+            if _use_fp16(device):
+                model = model.half()
+        else:
+            # The old sequence held two full fp32 copies of a 663M-parameter
+            # model at once — the constructed model and the state dict — about
+            # 5.3 GB before anything reached the GPU. Measured stages:
+            #
+            #   build model (fp32 cpu)   rss 2.04GB  peak 3.09GB
+            #   torch.load state_dict    OOM-killed
+            #
+            # Three changes remove the duplication. mmap keeps the checkpoint on
+            # disk until a tensor is touched; assign=True rebinds parameters to
+            # those tensors instead of copying into the freshly allocated ones
+            # (RSS actually *drops*, 2.05 -> 1.04 GB, as the originals are
+            # freed); and moving with a dtype casts during the transfer so no
+            # full fp32 copy ever lands on the GPU.
+            #
+            # Result in the same container: peak 3.61 GB, VRAM 1.25 GB instead
+            # of 2.55 GB, cosine similarity 1.000000 against the old loader for
+            # both text and audio.
+            try:
+                state = torch.load(state_path, map_location="cpu", mmap=True, weights_only=True)
+                load_mode = "mmap"
+            except Exception as exc:
+                # A checkpoint carrying non-tensor objects cannot be mmapped or
+                # loaded with weights_only. Say so rather than silently using
+                # the memory-hungry path.
+                logger.warning(
+                    "[MuQ-MuLan] mmap load unavailable (%s: %s); falling back to a full read",
+                    type(exc).__name__, exc,
+                )
+                state = torch.load(state_path, map_location="cpu", weights_only=False)
+                load_mode = "full-read"
+
+            model = MuQMuLan(config=config)
+            missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
+            del state
+            gc.collect()
+            model = model.to(device=device, dtype=torch.float16 if _use_fp16(device) else torch.float32)
+            logger.info("[MuQ-MuLan] low-memory load (%s)", load_mode)
+
         if missing or unexpected:
             logger.warning(
                 "[MuQ-MuLan] state dict loaded with missing=%s unexpected=%s",
                 len(missing),
                 len(unexpected),
             )
-
-        model = model.to(device)
-        if _use_fp16(device):
-            model = model.half()
         model.eval()
         _MUQ_MODEL = model
         logger.info("[MuQ-MuLan] Loaded successfully; fp16=%s", _use_fp16(device))
