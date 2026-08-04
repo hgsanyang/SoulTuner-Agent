@@ -26,7 +26,20 @@ WORKDIR /app
 ARG TORCH_VERSION=2.5.1
 ARG TORCHVISION_VERSION=0.20.1
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir --index-url ${TORCH_INDEX_URL} \
+# 可选的国内镜像，默认空（公开构建仍走官方源）。GPU overlay 会设置它：
+# cu124 要拉 ~3GB（torch + 13 个 nvidia_* 运行时 + triton），官方源在长链路上
+# 会读超时 —— 第一次 CUDA 构建就是在第 1757 秒因此失败的。
+ARG TORCH_FIND_LINKS=
+# nvidia_* 是普通 PyPI 包，可以走 requirements.txt 已经在用的清华源。
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# --timeout/--retries 不是保险起见：3GB 长传至少会卡一次，
+# 一次卡顿不该让已经下了半小时的东西全部作废。
+RUN pip install --no-cache-dir --timeout 120 --retries 10 \
+    ${TORCH_FIND_LINKS:+--find-links ${TORCH_FIND_LINKS}} \
+    --index-url ${TORCH_INDEX_URL} \
+    --extra-index-url ${PYPI_INDEX_URL} \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    --trusted-host mirrors.aliyun.com \
     torch==${TORCH_VERSION} torchaudio==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION}
 
 # 安装业务依赖（利用 Docker 缓存层）

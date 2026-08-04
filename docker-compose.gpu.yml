@@ -5,6 +5,10 @@ services:
       args:
         TORCH_VERSION: "2.5.1"
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+        # 国内镜像。官方源实测在第 1757 秒读超时，构建失败（exit 2）。
+        # 已验证该镜像有 cp312/linux_x86_64 的 torch 2.5.1 / torchaudio 2.5.1 /
+        # torchvision 0.20.1。
+        TORCH_FIND_LINKS: https://mirrors.aliyun.com/pytorch-wheels/cu124/
     environment:
       DENSE_TEXT_AUDIO_BACKEND: muq
       MUQ_MULAN_FP16: "true"
@@ -24,6 +28,10 @@ services:
       args:
         TORCH_VERSION: "2.5.1"
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+        # 国内镜像。官方源实测在第 1757 秒读超时，构建失败（exit 2）。
+        # 已验证该镜像有 cp312/linux_x86_64 的 torch 2.5.1 / torchaudio 2.5.1 /
+        # torchvision 0.20.1。
+        TORCH_FIND_LINKS: https://mirrors.aliyun.com/pytorch-wheels/cu124/
     environment:
       # Fail loudly rather than quietly extracting vectors on CPU: a silent
       # fallback here looks like "ingestion is just slow" for hours.
