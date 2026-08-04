@@ -126,8 +126,9 @@ def get_muq_model():
         legacy = os.getenv("MUSIC_MUQ_LEGACY_LOADER", "").strip().lower() in {"1", "true", "yes"}
 
         if legacy:
-            # Kept as an escape hatch, not as a supported path. Measured in a
-            # container with 4.7 GB available: killed at the torch.load step.
+            # The pre-2026-08 sequence: a full fp32 model and a full fp32 state
+            # dict alive at the same time. Opt-in only — it is the path that
+            # cannot load in a 4.7 GB container.
             model = MuQMuLan(config=config)
             state = torch.load(state_path, map_location="cpu", weights_only=False)
             missing, unexpected = model.load_state_dict(state, strict=False)
@@ -136,43 +137,34 @@ def get_muq_model():
             if _use_fp16(device):
                 model = model.half()
         else:
-            # The old sequence held two full fp32 copies of a 663M-parameter
-            # model at once — the constructed model and the state dict — about
-            # 5.3 GB before anything reached the GPU. Measured stages:
-            #
-            #   build model (fp32 cpu)   rss 2.04GB  peak 3.09GB
-            #   torch.load state_dict    OOM-killed
-            #
-            # Three changes remove the duplication. mmap keeps the checkpoint on
-            # disk until a tensor is touched; assign=True rebinds parameters to
-            # those tensors instead of copying into the freshly allocated ones
-            # (RSS actually *drops*, 2.05 -> 1.04 GB, as the originals are
-            # freed); and moving with a dtype casts during the transfer so no
-            # full fp32 copy ever lands on the GPU.
-            #
-            # Result in the same container: peak 3.61 GB, VRAM 1.25 GB instead
-            # of 2.55 GB, cosine similarity 1.000000 against the old loader for
-            # both text and audio.
+            # Three things keep only one copy of the weights in memory:
+            #   mmap        the checkpoint stays on disk until a tensor is read
+            #   assign      parameters are rebound to those tensors rather than
+            #               copied into freshly allocated ones
+            #   to(dtype)   the cast happens during the transfer, so no full
+            #               fp32 copy lands on the GPU either
+            # Numbers and the stage-by-stage measurement are in
+            # codex_doc/SoulTuner-Agent/reports/MUQ_LOW_MEMORY_LOADER_2026-08.md
             try:
                 state = torch.load(state_path, map_location="cpu", mmap=True, weights_only=True)
-                load_mode = "mmap"
             except Exception as exc:
-                # A checkpoint carrying non-tensor objects cannot be mmapped or
-                # loaded with weights_only. Say so rather than silently using
-                # the memory-hungry path.
-                logger.warning(
-                    "[MuQ-MuLan] mmap load unavailable (%s: %s); falling back to a full read",
-                    type(exc).__name__, exc,
-                )
-                state = torch.load(state_path, map_location="cpu", weights_only=False)
-                load_mode = "full-read"
+                # Deliberately not falling back to a full read. That is the path
+                # this function exists to avoid, and taking it automatically
+                # would turn a clear failure here into an OOM kill later, in a
+                # different process, with no indication of the cause.
+                raise RuntimeError(
+                    f"MuQ low-memory load failed ({type(exc).__name__}) for "
+                    f"{os.path.basename(state_path)}. The checkpoint may hold "
+                    "non-tensor objects, which cannot be memory-mapped. "
+                    "Set MUSIC_MUQ_LEGACY_LOADER=1 to use the full-read loader, "
+                    "which needs roughly 5.3 GB of CPU RAM."
+                ) from exc
 
             model = MuQMuLan(config=config)
             missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
             del state
             gc.collect()
             model = model.to(device=device, dtype=torch.float16 if _use_fp16(device) else torch.float32)
-            logger.info("[MuQ-MuLan] low-memory load (%s)", load_mode)
 
         if missing or unexpected:
             logger.warning(
