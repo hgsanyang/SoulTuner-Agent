@@ -1,9 +1,8 @@
 """The manifest must never claim two recordings are the same on weak evidence.
 
-Title+artist agreeing is not identity: a live take, a remaster and a cover all
-share those two fields. The handoff is explicit that such conflicts must not be
-auto-merged, so the strongest verdict this classifier may reach from them is
-"suspected", which a human resolves.
+Title+artist plus a near-identical duration identifies the same recording for
+ingestion deduplication. Album agreement strengthens that evidence; a duration
+conflict stays in manual review so alternate recordings are not discarded.
 
 Also pinned: the inventory scanner reads file names and sizes; audio validation
 belongs to the separate staging command.
@@ -75,9 +74,7 @@ def test_a_matching_song_id_is_an_exact_duplicate():
     assert entries[0].matched_music_id == "1054603"
 
 
-def test_same_title_and_artist_with_matching_duration_is_only_suspected():
-    """Not exact. A remaster shares the title, artist and very nearly the
-    duration, and merging it would silently discard one of the two."""
+def test_same_title_artist_and_matching_duration_is_exact_duplicate():
     from services.negative_feedback import song_key
 
     entries = classify(
@@ -87,8 +84,84 @@ def test_same_title_and_artist_with_matching_duration_is_only_suspected():
         {song_key("海阔天空", "Beyond"): [{"music_id": "m-1", "title": "海阔天空",
                                             "artist": "Beyond", "duration": 327000}]},
     )
-    assert entries[0].state == DUPLICATE_SUSPECTED
-    assert "人工确认" in entries[0].reasons[0]
+    assert entries[0].state == DUPLICATE_EXACT
+    assert "时长差不超过 2 秒" in entries[0].reasons[0]
+
+
+def test_title_artist_album_and_duration_cross_check_as_exact_duplicate():
+    from services.negative_feedback import song_key
+
+    entries = classify(
+        [_entry("999")],
+        {"999": _meta(duration=326000)},
+        {},
+        {song_key("海阔天空", "Beyond"): [{
+            "music_id": "m-1",
+            "title": "海阔天空",
+            "artist": "Beyond",
+            "album": "乐 与 怒",
+            "duration": 327000,
+        }]},
+    )
+    assert entries[0].state == DUPLICATE_EXACT
+    assert "歌名+歌手+专辑三项一致" in entries[0].reasons[0]
+
+
+def test_matching_title_artist_and_duration_overrides_compilation_album_difference():
+    from services.negative_feedback import song_key
+
+    entries = classify(
+        [_entry("999")],
+        {"999": _meta(duration=326000)},
+        {},
+        {song_key("海阔天空", "Beyond"): [{
+            "music_id": "m-1",
+            "title": "海阔天空",
+            "artist": "Beyond",
+            "album": "精选集",
+            "duration": 326500,
+        }]},
+    )
+    assert entries[0].state == DUPLICATE_EXACT
+    assert "再发行/收录差异" in entries[0].reasons[0]
+
+
+def test_matching_duration_is_enough_when_album_is_a_placeholder():
+    from services.negative_feedback import song_key
+
+    entries = classify(
+        [_entry("999")],
+        {"999": {**_meta(duration=326000), "album": "Unknown"}},
+        {},
+        {song_key("海阔天空", "Beyond"): [{
+            "music_id": "m-1",
+            "title": "海阔天空",
+            "artist": "Beyond",
+            "album": "Unknown",
+            "duration": 326500,
+        }]},
+    )
+    assert entries[0].state == DUPLICATE_EXACT
+    assert "时长差不超过 2 秒" in entries[0].reasons[0]
+
+
+def test_title_artist_album_are_exact_when_catalog_duration_is_missing():
+    from services.negative_feedback import song_key
+
+    entries = classify(
+        [_entry("999")],
+        {"999": _meta(duration=326000)},
+        {},
+        {song_key("海阔天空", "Beyond"): [{
+            "music_id": "m-1",
+            "title": "海阔天空",
+            "artist": "Beyond",
+            "album": "乐与怒",
+            "duration": 0,
+        }]},
+    )
+    assert entries[0].state == DUPLICATE_EXACT
+    assert "歌名+歌手+专辑三项一致" in entries[0].reasons[0]
 
 
 def test_same_title_but_a_very_different_duration_is_flagged_as_a_version_difference():
@@ -99,10 +172,11 @@ def test_same_title_but_a_very_different_duration_is_flagged_as_a_version_differ
         {"999": _meta(duration=326000)},
         {},
         {song_key("海阔天空", "Beyond"): [{"music_id": "m-1", "title": "海阔天空",
-                                            "artist": "Beyond", "duration": 500000}]},
+                                            "artist": "Beyond", "album": "乐与怒",
+                                            "duration": 500000}]},
     )
     assert entries[0].state == DUPLICATE_SUSPECTED
-    assert "Live/重制/翻唱" in entries[0].reasons[0]
+    assert "Live/重制/剪辑版" in entries[0].reasons[0]
 
 
 def test_a_library_duration_stored_in_seconds_is_still_compared_correctly():
@@ -115,9 +189,10 @@ def test_a_library_duration_stored_in_seconds_is_still_compared_correctly():
         {"999": _meta(duration=326000)},
         {},
         {song_key("海阔天空", "Beyond"): [{"music_id": "m-1", "title": "海阔天空",
-                                            "artist": "Beyond", "duration": 326}]},
+                                            "artist": "Beyond", "album": "乐与怒",
+                                            "duration": 326}]},
     )
-    assert "人工确认" in entries[0].reasons[0]
+    assert entries[0].state == DUPLICATE_EXACT
 
 
 def test_an_unknown_track_stays_metadata_ready():

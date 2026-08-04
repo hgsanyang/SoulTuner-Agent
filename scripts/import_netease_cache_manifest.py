@@ -42,10 +42,19 @@ DUPLICATE_SUSPECTED = "duplicate_suspected"
 CACHE_NAME = re.compile(r"^(?P<song_id>\d+)-(?P<quality>\d+)-(?P<digest>[0-9a-f]+)\.uc!?$", re.I)
 DEFAULT_CACHE_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "NetEase" / "CloudMusic" / "Cache" / "Cache"
 
-# Two tracks with the same title+artist are only the *same recording* if their
-# durations agree. Live takes, remasters and covers routinely share both fields,
-# so this stays a "suspected" verdict a human resolves — never an auto-merge.
+# Title+artist plus a near-identical duration identifies the same recording for
+# ingestion deduplication. Album is supporting evidence (the same recording can
+# appear on a single, original album and compilation); a large duration conflict
+# still keeps the row in manual review rather than dropping it.
 DURATION_TOLERANCE_MS = 2000
+_IDENTITY_NORMALISE = re.compile(r"[\s\-_—·・,，.。!！?？'\"()（）\[\]【】]+")
+_UNKNOWN_ALBUMS = {"", "unknown", "unknownalbum", "未知", "未知专辑", "无专辑"}
+
+
+def album_key(value: Any) -> str:
+    """Normalise an album name without treating placeholders as evidence."""
+    key = _IDENTITY_NORMALISE.sub("", str(value or "")).casefold()
+    return "" if key in _UNKNOWN_ALBUMS else key
 
 
 @dataclass
@@ -193,7 +202,11 @@ async def _fetch_lyric_one(
 
 
 def load_library_index(rows: list[dict[str, Any]] | None = None) -> tuple[dict[str, dict], dict[str, list[dict]]]:
-    """Two lookups over the local catalogue: by NetEase id, and by title+artist."""
+    """Two lookups over the local catalogue: by NetEase id, and by title+artist.
+
+    Rows in the second lookup retain album and duration so classification can
+    cross-check identity instead of trusting a two-field collision.
+    """
     from services.negative_feedback import song_key
 
     if rows is None:
@@ -223,6 +236,7 @@ def _query_library() -> list[dict[str, Any]]:
                    coalesce(toString(s.source_id), '') AS source_id,
                    s.title AS title,
                    coalesce(a.name, s.artist, '') AS artist,
+                   coalesce(s.album, '') AS album,
                    coalesce(s.duration, 0) AS duration
             """,
             {},
@@ -273,8 +287,9 @@ def classify(
             result.append(entry)
             continue
 
-        # L2 — same normalised title+artist. Only "suspected": a live take, a
-        # remaster and a cover all share these two fields.
+        # L2 — title+artist are already equal by lookup. A near-identical
+        # duration is strong enough to avoid storing the same recording twice;
+        # album agreement strengthens the explanation but is not required.
         for row in by_key.get(song_key(entry.title, entry.artist), []):
             local_ms = int(row.get("duration") or 0)
             if local_ms and local_ms < 10000:      # some rows store seconds
@@ -284,14 +299,34 @@ def classify(
                 if local_ms and entry.duration_ms
                 else False
             )
-            entry.state = DUPLICATE_SUSPECTED
             entry.matched_music_id = str(row.get("music_id") or "")
             entry.matched_title = str(row.get("title") or "")
-            entry.reasons.append(
-                "歌名+歌手一致且时长接近（±2s），需人工确认是否同一录音"
-                if close
-                else "歌名+歌手一致但时长不符，很可能是 Live/重制/翻唱，不可自动合并"
-            )
+            incoming_album = album_key(entry.album)
+            local_album = album_key(row.get("album"))
+            album_matches = bool(incoming_album and local_album and incoming_album == local_album)
+
+            duration_comparable = bool(local_ms and entry.duration_ms)
+            if close:
+                entry.state = DUPLICATE_EXACT
+                entry.reasons.append(
+                    "歌名+歌手+专辑三项一致，且时长差不超过 2 秒"
+                    if album_matches
+                    else "歌名+歌手一致，且时长差不超过 2 秒；专辑差异视为再发行/收录差异"
+                )
+            elif album_matches and not duration_comparable:
+                entry.state = DUPLICATE_EXACT
+                entry.reasons.append("歌名+歌手+专辑三项一致；曲库缺少可比时长")
+            else:
+                entry.state = DUPLICATE_SUSPECTED
+                if not incoming_album or not local_album:
+                    reason = "歌名+歌手一致，但缺少有效专辑字段，不能确认同一录音"
+                elif not album_matches:
+                    reason = "歌名+歌手一致但专辑和时长均不支持同一录音"
+                elif not close:
+                    reason = "歌名+歌手+专辑一致但时长不符，可能是 Live/重制/剪辑版"
+                else:  # pragma: no cover - exhaustive guard for future changes
+                    reason = "元数据证据不足，需人工确认"
+                entry.reasons.append(reason)
             break
         result.append(entry)
     return result
