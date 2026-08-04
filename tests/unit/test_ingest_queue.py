@@ -29,9 +29,12 @@ def test_ingest_queue_lifecycle(tmp_path, monkeypatch):
     assert payload["job_id"] == job_id
     assert payload["songs"][0]["title"] == "Song A"
 
-    ingest_queue.complete_job(job_path)
+    ingest_queue.complete_job(job_path, result={"song_count": 1, "warnings": []})
     done_payload = json.loads((tmp_path / "done" / job_path.name).read_text(encoding="utf-8"))
     assert done_payload["job_id"] == job_id
+    assert done_payload["result"]["song_count"] == 1
+    assert done_payload["completed_at"] > 0
+    assert ingest_queue.list_jobs()[0]["result"]["song_count"] == 1
 
 
 def test_ingest_queue_lists_and_retries_failed_jobs(tmp_path, monkeypatch):

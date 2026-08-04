@@ -15,6 +15,7 @@ import aiohttp
 import json
 import os
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -37,10 +38,25 @@ from schemas.music_state import ToolOutput  # noqa: E402
 
 logger = get_logger(__name__)
 
+
+def _normalize_identity_text(value: Any) -> str:
+    """Collapse Unicode whitespace so equivalent catalog identities stay stable."""
+    return " ".join(str(value or "").strip().split())
+
+
+@dataclass
+class EmbeddingExtraction:
+    vectors: Dict[str, List[float]] = field(default_factory=dict)
+    errors: Dict[str, str] = field(default_factory=dict)
+
+
+class EnrichmentIncompleteError(RuntimeError):
+    """Raised when a queue job lacks an embedding required by live retrieval."""
+
 # ---- 存储目录（与 processed_audio 隔离）---
 ONLINE_DATA_ROOT = os.path.join(
-    str(PROJECT_ROOT.parent),   # music_recommendation/
-    "data", "online_acquired"
+    os.getenv("MUSIC_DATA_ROOT", str(PROJECT_ROOT.parent / "data")),
+    "online_acquired",
 )
 ONLINE_AUDIO_DIR = os.path.join(ONLINE_DATA_ROOT, "audio")
 ONLINE_COVER_DIR = os.path.join(ONLINE_DATA_ROOT, "covers")
@@ -65,6 +81,38 @@ def _ensure_dirs():
 def _safe_filename(text: str) -> str:
     """生成安全的文件名"""
     return "".join(c for c in text if c not in r'\/:*?"<>|').strip()
+
+
+def _resolve_enrichment_paths(
+    song: Dict[str, Any],
+    basename: str,
+    ext: str,
+) -> tuple[str, str]:
+    """Resolve both online-candidate and durable-library assets in host or Docker."""
+    explicit_audio = str(song.get("audio_path") or "").strip()
+    explicit_lrc = str(song.get("lrc_path") or "").strip()
+    if explicit_audio and os.path.exists(explicit_audio):
+        audio_path = explicit_audio
+    else:
+        audio_url = str(song.get("audio_url") or "").replace("\\", "/")
+        filename = Path(audio_url).name or f"{basename}.{ext}"
+        if audio_url.startswith("/static/audio/"):
+            data_root = Path(os.getenv("MUSIC_DATA_ROOT", str(PROJECT_ROOT.parent / "data")))
+            audio_path = str(data_root / "processed_audio" / "audio" / filename)
+        else:
+            audio_path = os.path.join(ONLINE_AUDIO_DIR, filename)
+
+    if explicit_lrc and os.path.exists(explicit_lrc):
+        lrc_path = explicit_lrc
+    else:
+        lrc_url = str(song.get("lrc_url") or "").replace("\\", "/")
+        lyric_name = Path(lrc_url).name or f"{basename}.lrc"
+        if lrc_url.startswith("/static/lyrics/"):
+            data_root = Path(os.getenv("MUSIC_DATA_ROOT", str(PROJECT_ROOT.parent / "data")))
+            lrc_path = str(data_root / "processed_audio" / "lyrics" / lyric_name)
+        else:
+            lrc_path = os.path.join(ONLINE_LYRICS_DIR, lyric_name)
+    return audio_path, lrc_path
 
 
 def _artist_names_from_payload(song: Dict[str, Any]) -> List[str]:
@@ -606,25 +654,60 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
         from retrieval.neo4j_client import get_neo4j_client
         client = get_neo4j_client()
 
+        from services.catalog_tier import resolve_ingest_tier
+
         for song in songs:
-            title = song["title"]
-            artist = song["artist"]
+            title = _normalize_identity_text(song["title"])
+            artist = _normalize_identity_text(song["artist"])
+            music_id = _normalize_identity_text(song.get("song_id") or song.get("source_id"))
+            source = str(song.get("source") or "online")
+            cache_import_run_id = str(song.get("cache_import_run_id") or "")
+
+            # ── 第零步：定档。自动飞轮抓来的只是临时候选，不进"我的曲库" ──
+            # 单独查一次而不是塞进下面的 SET：同一个 SET 子句里 s.source 会先被
+            # 改成 'online'，再用它判断层级就永远是 candidate，本地曲库会被误降级。
+            tier_rows = client.execute_query(
+                """MATCH (s:Song)
+                   WHERE ($music_id <> '' AND
+                          (toString(s.music_id) = $music_id OR toString(s.source_id) = $music_id))
+                      OR (s.title = $title
+                          AND (coalesce(s.artist, '') = $artist
+                               OR EXISTS {
+                                   MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+                                   WHERE a.name = $artist
+                               }))
+                   RETURN coalesce(s.catalog_tier, '') AS tier,
+                          coalesce(s.source, '') AS source LIMIT 1""",
+                {"music_id": music_id, "title": title, "artist": artist},
+            )
+            catalog_tier = resolve_ingest_tier(
+                song,
+                existing_tier=(tier_rows[0].get("tier") if tier_rows else ""),
+                existing_source=(tier_rows[0].get("source") if tier_rows else ""),
+                node_exists=bool(tier_rows),
+            )
 
             # ── 第一步：检查是否已存在（通过关系匹配，兼容初始数据集） ──
             existing = client.execute_query(
-                """MATCH (s:Song)-[:PERFORMED_BY]->(a:Artist)
-                WHERE s.title = $title AND a.name = $artist
+                """MATCH (s:Song)
+                WHERE ($music_id <> '' AND
+                       (toString(s.music_id) = $music_id OR toString(s.source_id) = $music_id))
+                   OR (s.title = $title
+                       AND (coalesce(s.artist, '') = $artist
+                            OR EXISTS {
+                                MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+                                WHERE a.name = $artist
+                            }))
                 RETURN elementId(s) AS eid LIMIT 1""",
-                {"title": title, "artist": artist}
+                {"music_id": music_id, "title": title, "artist": artist}
             )
 
             if existing:
                 # ── 已存在：更新属性（不创建新节点） ──
                 query = """
-                MATCH (s:Song)-[:PERFORMED_BY]->(a:Artist)
-                WHERE s.title = $title AND a.name = $artist_name
-                WITH s LIMIT 1
-                SET s.music_id = $music_id,
+                MATCH (s:Song) WHERE elementId(s) = $eid
+                SET s.title = $title,
+                    s.music_id = $music_id,
                     s.artist = $artist_name,
                     s.album = $album,
                     s.duration = $duration,
@@ -639,8 +722,9 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.album_id = $album_id,
                     s.audio_retention = $audio_retention,
                     s.audio_status = 'cached',
+                    s.catalog_tier = $catalog_tier,
                     s.is_trial = $is_trial,
-                    s.source = 'online',
+                    s.source = CASE WHEN coalesce(s.source, '') = '' THEN $source ELSE s.source END,
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
                 """
@@ -663,8 +747,12 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     s.album_id = $album_id,
                     s.audio_retention = $audio_retention,
                     s.audio_status = 'cached',
+                    s.catalog_tier = $catalog_tier,
                     s.is_trial = $is_trial,
-                    s.source = 'online',
+                    s.source = $source,
+                    s.cache_import_run_id = CASE
+                        WHEN $cache_import_run_id <> '' THEN $cache_import_run_id
+                        ELSE s.cache_import_run_id END,
                     s.acquired_at = $acquired_at,
                     s.updated_at = timestamp()
 
@@ -682,7 +770,7 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                     "album_id": song.get("album_id", ""),
                     "duration": song.get("duration", 0),
                     "format": song.get("ext", "mp3"),
-                    "source": "online",
+                    "source": source,
                     "source_platform": song.get("platform") or "netease",
                     "metadata_source": song.get("metadata_source") or "netease",
                     "release_year": song.get("release_year"),
@@ -691,7 +779,8 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 }
             )
             params = {
-                "music_id": song["song_id"],
+                "eid": existing[0].get("eid") if existing else "",
+                "music_id": music_id,
                 "title": title,
                 "artist_name": artist,
                 "album": song.get("album", "Unknown"),
@@ -706,8 +795,11 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
                 "release_year": normalized_meta.get("release_year"),
                 "album_id": normalized_meta.get("album_id", ""),
                 "audio_retention": song.get("audio_retention") or "temporary",
+                "catalog_tier": catalog_tier,
                 "is_trial": bool(song.get("is_trial")),
                 "acquired_at": datetime.now().isoformat(),
+                "source": source,
+                "cache_import_run_id": cache_import_run_id,
             }
             client.execute_query(query, params)
             _promote_external_candidate_feedback(client, title=title, artist=artist)
@@ -716,132 +808,204 @@ async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
         logger.error(f"Neo4j 快速入库失败: {e}")
 
 
-async def _background_flywheel(songs: List[Dict[str, Any]]):
-    """
-    后台异步数据飞轮：歌词标签提取 + 向量提取 + Neo4j 更新。    在后台静默运行，不阻塞用户交互。    """
-    try:
-        logger.info(f"[后台飞轮] 开始处理 {len(songs)} 首歌...")
+def _song_identity_parameters(song: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "music_id": _normalize_identity_text(song.get("song_id") or song.get("source_id")),
+        "title": _normalize_identity_text(song.get("title")),
+        "artist_name": _normalize_identity_text(song.get("artist")),
+    }
 
-        from retrieval.neo4j_client import get_neo4j_client
-        client = get_neo4j_client()
 
-        for song in songs:
-            basename = song["file_basename"]
-            ext = song["ext"]
-            audio_path = os.path.join(ONLINE_AUDIO_DIR, f"{basename}.{ext}")
-            lrc_path = os.path.join(ONLINE_LYRICS_DIR, f"{basename}.lrc")
+_SONG_IDENTITY_MATCH = """
+MATCH (s:Song)
+WHERE ($music_id <> '' AND
+       (toString(s.music_id) = $music_id OR toString(s.source_id) = $music_id))
+   OR (s.title = $title AND coalesce(s.artist, '') = $artist_name)
+WITH s,
+     CASE WHEN $music_id <> '' AND
+                    (toString(s.music_id) = $music_id OR toString(s.source_id) = $music_id)
+          THEN 0 ELSE 1 END AS identity_rank
+ORDER BY identity_rank
+LIMIT 1
+"""
 
-            # ---- 步骤1: 歌词标签提取 ----
-            if os.path.exists(lrc_path):
-                try:
-                    tags = await _extract_lyrics_tags(basename, lrc_path)
-                    if tags:
-                        enriched_tags = prepare_tag_enrichment(tags, source="llm_lyrics")
-                        # 将标签写入 Neo4j（统一用 title+artist 匹配）
-                        tag_query = """
-                        MATCH (s:Song {title: $title, artist: $artist_name})
-                        SET s.vibe = $vibe,
-                            s.language = $language,
-                            s.region = $region,
-                            s.tag_source = $tag_source,
-                            s.tag_confidence_json = $tag_confidence_json,
-                            s.tag_sources_json = $tag_sources_json,
-                            s.updated_at = timestamp()
 
-                        WITH s
-                        OPTIONAL MATCH (s)-[old_m:HAS_MOOD]->(:Mood)
-                        DELETE old_m
-                        WITH s
-                        OPTIONAL MATCH (s)-[old_t:HAS_THEME]->(:Theme)
-                        DELETE old_t
-                        WITH s
-                        OPTIONAL MATCH (s)-[old_sc:FITS_SCENARIO]->(:Scenario)
-                        DELETE old_sc
-                        WITH s
-                        OPTIONAL MATCH (s)-[old_g:BELONGS_TO_GENRE]->(:Genre)
-                        DELETE old_g
-                        WITH s
-                        OPTIONAL MATCH (s)-[old_l:HAS_LANGUAGE]->(:Language)
-                        DELETE old_l
-                        WITH s
-                        OPTIONAL MATCH (s)-[old_r:IN_REGION]->(:Region)
-                        DELETE old_r
+async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Enrich queued songs and fail the job when required retrieval vectors are absent."""
+    logger.info("[后台飞轮] 开始处理 %s 首歌...", len(songs))
 
-                        WITH s
-                        FOREACH (mood IN $moods |
-                            MERGE (m:Mood {name: mood})
-                            MERGE (s)-[:HAS_MOOD]->(m)
-                        )
-                        WITH s
-                        FOREACH (theme IN $themes |
-                            MERGE (t:Theme {name: theme})
-                            MERGE (s)-[:HAS_THEME]->(t)
-                        )
-                        WITH s
-                        FOREACH (scenario IN $scenarios |
-                            MERGE (sc:Scenario {name: scenario})
-                            MERGE (s)-[:FITS_SCENARIO]->(sc)
-                        )
-                        WITH s
-                        FOREACH (genre IN $genres |
-                            MERGE (g:Genre {name: genre})
-                            MERGE (s)-[:BELONGS_TO_GENRE]->(g)
-                        )
-                        WITH s
-                        FOREACH (_ IN CASE WHEN $language <> '' THEN [1] ELSE [] END |
-                            MERGE (lang:Language {name: $language})
-                            MERGE (s)-[:HAS_LANGUAGE]->(lang)
-                        )
-                        WITH s
-                        FOREACH (_ IN CASE WHEN $region <> '' THEN [1] ELSE [] END |
-                            MERGE (reg:Region {name: $region})
-                            MERGE (s)-[:IN_REGION]->(reg)
-                        )
-                        """
-                        client.execute_query(tag_query, {
-                            "title": song["title"],
-                            "artist_name": song["artist"],
-                            "moods": enriched_tags.get("moods", []),
-                            "themes": enriched_tags.get("themes", []),
-                            "scenarios": enriched_tags.get("scenarios", []),
-                            "genres": enriched_tags.get("genres", []),
-                            "vibe": tags.get("vibe", ""),
-                            "language": str(tags.get("language") or "").strip()[:40],
-                            "region": str(tags.get("region") or "").strip()[:60],
-                            "tag_source": enriched_tags.get("tag_source", "llm_lyrics"),
-                            "tag_confidence_json": enriched_tags.get("tag_confidence_json", "{}"),
-                            "tag_sources_json": enriched_tags.get("tag_sources_json", "{}"),
-                        })
-                        logger.info(f"[后台飞轮] 歌词标签入库: {song['title']}")
-                except Exception as e:
-                    logger.warning(f"[后台飞轮] 歌词标签提取失败 {song['title']}: {e}")
+    from retrieval.neo4j_client import get_neo4j_client
 
-            # ---- 步骤2: 向量提取 ----
-            if os.path.exists(audio_path):
-                try:
-                    embeddings = await _extract_embeddings(audio_path)
-                    if embeddings:
-                        embed_query = """
-                        MATCH (s:Song {title: $title, artist: $artist_name})
-                        SET s.m2d2_embedding = $m2d2_embedding,
-                            s.omar_embedding = $omar_embedding,
-                            s.muq_embedding = $muq_embedding
-                        """
-                        client.execute_query(embed_query, {
-                            "title": song["title"],
-                            "artist_name": song["artist"],
-                            "m2d2_embedding": embeddings.get("m2d2_embedding", []),
-                            "omar_embedding": embeddings.get("omar_embedding", []),
-                            "muq_embedding": embeddings.get("muq_embedding", []),
-                        })
-                        logger.info(f"[后台飞轮] 向量入库: {song['title']}")
-                except Exception as e:
-                    logger.warning(f"[后台飞轮] 向量提取失败 {song['title']}: {e}")
+    client = get_neo4j_client()
+    required_embeddings = {"muq_embedding", "m2d2_embedding"}
+    failures: list[str] = []
+    warnings: list[str] = []
+    song_results: list[dict[str, Any]] = []
 
-        logger.info(f"[后台飞轮] 全部完成，{len(songs)} 首歌已入库")
+    for song in songs:
+        basename = song["file_basename"]
+        ext = song["ext"]
+        audio_path, lrc_path = _resolve_enrichment_paths(song, basename, ext)
+        identity = _song_identity_parameters(song)
+        song_result: dict[str, Any] = {
+            "music_id": identity["music_id"],
+            "title": identity["title"],
+            "tagged": False,
+            "embedding_dimensions": {},
+            "warnings": [],
+        }
 
-    except Exception as e:
-        logger.error(f"[后台飞轮] 整体失败: {e}")
+        if os.path.exists(lrc_path):
+            try:
+                tags = await _extract_lyrics_tags(basename, lrc_path)
+                if tags:
+                    enriched_tags = prepare_tag_enrichment(tags, source="llm_lyrics")
+                    tag_query = _SONG_IDENTITY_MATCH + """
+                    SET s.title = $title,
+                        s.artist = $artist_name,
+                        s.vibe = $vibe,
+                        s.language = $language,
+                        s.region = $region,
+                        s.tag_source = $tag_source,
+                        s.tag_confidence_json = $tag_confidence_json,
+                        s.tag_sources_json = $tag_sources_json,
+                        s.updated_at = timestamp()
+
+                    WITH s
+                    OPTIONAL MATCH (s)-[old_m:HAS_MOOD]->(:Mood)
+                    DELETE old_m
+                    WITH s
+                    OPTIONAL MATCH (s)-[old_t:HAS_THEME]->(:Theme)
+                    DELETE old_t
+                    WITH s
+                    OPTIONAL MATCH (s)-[old_sc:FITS_SCENARIO]->(:Scenario)
+                    DELETE old_sc
+                    WITH s
+                    OPTIONAL MATCH (s)-[old_g:BELONGS_TO_GENRE]->(:Genre)
+                    DELETE old_g
+                    WITH s
+                    OPTIONAL MATCH (s)-[old_l:HAS_LANGUAGE]->(:Language)
+                    DELETE old_l
+                    WITH s
+                    OPTIONAL MATCH (s)-[old_r:IN_REGION]->(:Region)
+                    DELETE old_r
+
+                    WITH s
+                    FOREACH (mood IN $moods |
+                        MERGE (m:Mood {name: mood})
+                        MERGE (s)-[:HAS_MOOD]->(m)
+                    )
+                    WITH s
+                    FOREACH (theme IN $themes |
+                        MERGE (t:Theme {name: theme})
+                        MERGE (s)-[:HAS_THEME]->(t)
+                    )
+                    WITH s
+                    FOREACH (scenario IN $scenarios |
+                        MERGE (sc:Scenario {name: scenario})
+                        MERGE (s)-[:FITS_SCENARIO]->(sc)
+                    )
+                    WITH s
+                    FOREACH (genre IN $genres |
+                        MERGE (g:Genre {name: genre})
+                        MERGE (s)-[:BELONGS_TO_GENRE]->(g)
+                    )
+                    WITH s
+                    FOREACH (_ IN CASE WHEN $language <> '' THEN [1] ELSE [] END |
+                        MERGE (lang:Language {name: $language})
+                        MERGE (s)-[:HAS_LANGUAGE]->(lang)
+                    )
+                    WITH s
+                    FOREACH (_ IN CASE WHEN $region <> '' THEN [1] ELSE [] END |
+                        MERGE (reg:Region {name: $region})
+                        MERGE (s)-[:IN_REGION]->(reg)
+                    )
+                    RETURN elementId(s) AS eid
+                    """
+                    tag_rows = client.execute_query(tag_query, {
+                        **identity,
+                        "moods": enriched_tags.get("moods", []),
+                        "themes": enriched_tags.get("themes", []),
+                        "scenarios": enriched_tags.get("scenarios", []),
+                        "genres": enriched_tags.get("genres", []),
+                        "vibe": tags.get("vibe", ""),
+                        "language": str(tags.get("language") or "").strip()[:40],
+                        "region": str(tags.get("region") or "").strip()[:60],
+                        "tag_source": enriched_tags.get("tag_source", "llm_lyrics"),
+                        "tag_confidence_json": enriched_tags.get("tag_confidence_json", "{}"),
+                        "tag_sources_json": enriched_tags.get("tag_sources_json", "{}"),
+                    })
+                    if not tag_rows:
+                        raise RuntimeError("catalog node was not found for tag update")
+                    song_result["tagged"] = True
+                    logger.info("[后台飞轮] 歌词标签入库: %s", identity["title"])
+            except Exception as exc:
+                message = f"tags: {type(exc).__name__}: {exc}"
+                song_result["warnings"].append(message)
+                warnings.append(f"{identity['music_id'] or identity['title']}: {message}")
+                logger.warning("[后台飞轮] 歌词标签提取失败 %s: %s", identity["title"], exc)
+
+        if not os.path.exists(audio_path):
+            failures.append(f"{identity['music_id'] or identity['title']}: audio file missing")
+            song_results.append(song_result)
+            continue
+
+        extraction = await _extract_embeddings(audio_path)
+        vectors = extraction.vectors
+        embedding_query = _SONG_IDENTITY_MATCH + """
+        SET s.m2d2_embedding = CASE WHEN size($m2d2_embedding) > 0
+                                    THEN $m2d2_embedding ELSE s.m2d2_embedding END,
+            s.omar_embedding = CASE WHEN size($omar_embedding) > 0
+                                    THEN $omar_embedding ELSE s.omar_embedding END,
+            s.muq_embedding = CASE WHEN size($muq_embedding) > 0
+                                   THEN $muq_embedding ELSE s.muq_embedding END,
+            s.enrichment_status = $enrichment_status,
+            s.enrichment_error = $enrichment_error,
+            s.updated_at = timestamp()
+        RETURN elementId(s) AS eid,
+               size(coalesce(s.m2d2_embedding, [])) AS m2d2,
+               size(coalesce(s.omar_embedding, [])) AS omar,
+               size(coalesce(s.muq_embedding, [])) AS muq
+        """
+        missing_required = sorted(required_embeddings - {key for key, value in vectors.items() if value})
+        error_text = "; ".join(f"{name}: {error}" for name, error in sorted(extraction.errors.items()))
+        embed_rows = client.execute_query(embedding_query, {
+            **identity,
+            "m2d2_embedding": vectors.get("m2d2_embedding", []),
+            "omar_embedding": vectors.get("omar_embedding", []),
+            "muq_embedding": vectors.get("muq_embedding", []),
+            "enrichment_status": "failed" if missing_required else "ready",
+            "enrichment_error": error_text[:1000],
+        })
+        if not embed_rows:
+            failures.append(f"{identity['music_id'] or identity['title']}: catalog node not found")
+        else:
+            dimensions = embed_rows[0]
+            song_result["embedding_dimensions"] = {
+                "m2d2": int(dimensions.get("m2d2") or 0),
+                "omar": int(dimensions.get("omar") or 0),
+                "muq": int(dimensions.get("muq") or 0),
+            }
+        if missing_required:
+            failures.append(
+                f"{identity['music_id'] or identity['title']}: missing {','.join(missing_required)}"
+            )
+        for name, error in sorted(extraction.errors.items()):
+            message = f"{name}: {error}"
+            song_result["warnings"].append(message)
+            warnings.append(f"{identity['music_id'] or identity['title']}: {message}")
+        song_results.append(song_result)
+
+    result = {
+        "song_count": len(songs),
+        "songs": song_results,
+        "warnings": warnings,
+        "failure_count": len(failures),
+    }
+    if failures:
+        raise EnrichmentIncompleteError("; ".join(failures)[:1000])
+    logger.info("[后台飞轮] 全部完成，%s 首歌已完成必要增强", len(songs))
+    return result
 
 
 async def _extract_lyrics_tags(basename: str, lrc_path: str) -> Optional[Dict]:
@@ -909,18 +1073,14 @@ async def _extract_lyrics_tags(basename: str, lrc_path: str) -> Optional[Dict]:
         return None
 
 
-async def _extract_embeddings(audio_path: str) -> Optional[Dict[str, List[float]]]:
-    """提取双模型音频向量（在线程池中执行，避免阻塞事件循环）"""
-    try:
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _sync_extract_embeddings, audio_path)
-    except Exception as e:
-        logger.warning(f"向量提取失败: {e}")
-        return None
+async def _extract_embeddings(audio_path: str) -> EmbeddingExtraction:
+    """Extract independent embeddings outside the event loop."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _sync_extract_embeddings, audio_path)
 
 
-def _sync_extract_embeddings(audio_path: str) -> Dict[str, List[float]]:
-    """同步版本的向量提取"""
+def _sync_extract_embeddings(audio_path: str) -> EmbeddingExtraction:
+    """Extract each model independently so one optional anchor cannot erase the others."""
     import librosa
     from retrieval.audio_embedder import encode_audio_to_embedding, extract_audio_representation
     from retrieval.muq_embedder import encode_audio_to_muq
@@ -933,15 +1093,21 @@ def _sync_extract_embeddings(audio_path: str) -> Dict[str, List[float]]:
     audio_16k = librosa.resample(audio_np, orig_sr=sr, target_sr=16000)
     audio_24k = librosa.resample(audio_np, orig_sr=sr, target_sr=24000)
 
-    m2d2_emb = encode_audio_to_embedding(audio_16k, sample_rate=16000)
-    omar_emb = extract_audio_representation(audio_16k, sample_rate=16000)
-    try:
-        muq_emb = encode_audio_to_muq(audio_24k, sample_rate=24000)
-    except Exception as exc:
-        logger.warning("MuQ embedding 提取失败，在线歌曲将暂时缺少主文搜音锚: %s", exc)
-        muq_emb = []
-
-    return {"m2d2_embedding": m2d2_emb, "omar_embedding": omar_emb, "muq_embedding": muq_emb}
+    result = EmbeddingExtraction()
+    extractors = (
+        ("muq_embedding", lambda: encode_audio_to_muq(audio_24k, sample_rate=24000)),
+        ("m2d2_embedding", lambda: encode_audio_to_embedding(audio_16k, sample_rate=16000)),
+        ("omar_embedding", lambda: extract_audio_representation(audio_16k, sample_rate=16000)),
+    )
+    for name, extractor in extractors:
+        try:
+            vector = extractor()
+            result.vectors[name] = list(vector or [])
+        except Exception as exc:
+            result.vectors[name] = []
+            result.errors[name] = f"{type(exc).__name__}: {exc}"[:500]
+            logger.warning("%s 提取失败: %s", name, exc)
+    return result
 
 
 # ---- 全局单例 ----
