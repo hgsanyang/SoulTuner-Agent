@@ -36,6 +36,8 @@ def test_task_is_stable_and_prompt_requests_jsonl(tmp_path):
     assert first["task_id"] in prompt
     assert "results/result-007.jsonl" in prompt
     assert "必须返回 1 行" in prompt
+    assert "不要返回 sandbox" in prompt
+    assert "前 25 行" in prompt
 
 
 def test_validate_result_caps_tags_and_ignores_model_confidence(tmp_path):
@@ -124,3 +126,4 @@ def test_export_caps_web_prompt_batches_at_fifty(tmp_path):
     readme = (tmp_path / "bundle" / "RESULTS_README.md").read_text(encoding="utf-8")
     assert "result-001.jsonl" in readme
     assert "应有行数" in readme
+    assert "25+25" in readme

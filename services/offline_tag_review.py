@@ -62,8 +62,10 @@ def build_review_prompt(
 本批输出与保存要求：
 1. 本文件共有 {len(rows)} 首歌，必须返回 {len(rows)} 行；每首歌恰好一行 JSON。
 2. 推荐保存为 `{result_filename}`，编码为 UTF-8。
-3. 不要输出 JSON 数组，不要在行尾加逗号，不要添加 Markdown 代码围栏或解释段落。
-4. 如果无法确认某项，请使用空字符串或空数组，并写入 missing_information；不要省略该歌曲。
+3. 不要调用代码执行器创建附件，不要返回 sandbox 或 /mnt/data 下载链接；请把 JSONL 直接输出在聊天消息正文中。
+4. 不要输出 JSON 数组，不要在行尾加逗号，不要添加 Markdown 代码围栏或解释段落。
+5. 如果平台单次输出长度不足，可分两轮：第一轮只输出本批前 25 行，用户回复“继续”后只输出剩余行。两轮都只能包含 JSONL。
+6. 如果无法确认某项，请使用空字符串或空数组，并写入 missing_information；不要省略该歌曲。
 
 规则：
 1. genres/moods/themes/scenarios 各 0-5 个，不确定就留空，不要凑数。
