@@ -129,6 +129,8 @@ async def run_import(args: argparse.Namespace) -> dict[str, Any]:
 
         if args.apply and published:
             records = [item.record for item in published]
+            for record in records:
+                record["tagging_mode"] = args.tagging_mode
             from tools.acquire_music import _quick_ingest_to_neo4j
             from services.ingest_queue import enqueue_songs
 
@@ -281,6 +283,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id", default="")
     parser.add_argument("--no-metadata", action="store_true")
     parser.add_argument("--no-lyrics", action="store_true")
+    parser.add_argument(
+        "--tagging-mode",
+        choices=("api", "deferred"),
+        default="api",
+        help=(
+            "api calls the configured LLM for lyric tags during enrichment; "
+            "deferred extracts vectors now and leaves tags for an offline review bundle"
+        ),
+    )
     parser.add_argument("--apply", action="store_true", help="publish ready rows and enqueue enrichment")
     rollback = parser.add_mutually_exclusive_group()
     rollback.add_argument("--rollback", metavar="RUN_REPORT", help="rollback one applied run")

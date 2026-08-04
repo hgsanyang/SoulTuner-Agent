@@ -851,11 +851,15 @@ async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
             "music_id": identity["music_id"],
             "title": identity["title"],
             "tagged": False,
+            "tagging_status": "pending",
             "embedding_dimensions": {},
             "warnings": [],
         }
 
-        if os.path.exists(lrc_path):
+        tagging_mode = str(song.get("tagging_mode") or "api").strip().lower()
+        if tagging_mode == "deferred":
+            song_result["tagging_status"] = "deferred"
+        elif os.path.exists(lrc_path):
             try:
                 tags = await _extract_lyrics_tags(basename, lrc_path)
                 if tags:
@@ -938,12 +942,16 @@ async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
                     if not tag_rows:
                         raise RuntimeError("catalog node was not found for tag update")
                     song_result["tagged"] = True
+                    song_result["tagging_status"] = "completed"
                     logger.info("[后台飞轮] 歌词标签入库: %s", identity["title"])
             except Exception as exc:
+                song_result["tagging_status"] = "failed"
                 message = f"tags: {type(exc).__name__}: {exc}"
                 song_result["warnings"].append(message)
                 warnings.append(f"{identity['music_id'] or identity['title']}: {message}")
                 logger.warning("[后台飞轮] 歌词标签提取失败 %s: %s", identity["title"], exc)
+        else:
+            song_result["tagging_status"] = "no_lyrics"
 
         if not os.path.exists(audio_path):
             failures.append(f"{identity['music_id'] or identity['title']}: audio file missing")

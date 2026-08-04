@@ -174,6 +174,49 @@ def test_flywheel_matches_catalog_by_stable_music_id(tmp_path, monkeypatch):
     assert all(params["music_id"] == "42" for _, params in client.calls)
 
 
+def test_flywheel_deferred_tagging_skips_llm_but_keeps_embeddings(tmp_path, monkeypatch):
+    audio = tmp_path / "track.flac"
+    lyric = tmp_path / "track.lrc"
+    audio.write_bytes(b"fLaC")
+    lyric.write_text("lyrics that would normally trigger the tag model", encoding="utf-8")
+
+    class FakeClient:
+        def execute_query(self, query, _params):
+            if "size(coalesce(s.m2d2_embedding" in query:
+                return [{"eid": "1", "m2d2": 768, "omar": 1024, "muq": 512}]
+            return [{"eid": "1"}]
+
+    monkeypatch.setattr("retrieval.neo4j_client.get_neo4j_client", FakeClient)
+    monkeypatch.setattr(
+        "tools.acquire_music._extract_lyrics_tags",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("LLM must not run")),
+    )
+    monkeypatch.setattr(
+        "tools.acquire_music._extract_embeddings",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result=EmbeddingExtraction(vectors={
+            "muq_embedding": [0.1] * 512,
+            "m2d2_embedding": [0.2] * 768,
+            "omar_embedding": [0.3] * 1024,
+        })),
+    )
+
+    result = asyncio.run(_background_flywheel([{
+        "song_id": "42",
+        "title": "Track",
+        "artist": "Artist",
+        "file_basename": "Track - Artist",
+        "ext": "flac",
+        "audio_path": str(audio),
+        "lrc_path": str(lyric),
+        "tagging_mode": "deferred",
+    }]))
+
+    assert result["failure_count"] == 0
+    assert result["songs"][0]["tagged"] is False
+    assert result["songs"][0]["tagging_status"] == "deferred"
+    assert result["songs"][0]["embedding_dimensions"]["muq"] == 512
+
+
 def test_flywheel_fails_when_required_retrieval_vector_is_missing(tmp_path, monkeypatch):
     audio = tmp_path / "track.flac"
     audio.write_bytes(b"fLaC")
