@@ -213,6 +213,25 @@ app.add_middleware(
 # 挂载静态音频/封面/歌词文件目录
 # Docker 内为 /app/data，本地开发为 Windows 路径
 from fastapi.staticfiles import StaticFiles
+
+
+def _register_audio_mimetypes() -> None:
+    """Teach Python's mimetypes table the audio types we actually serve.
+
+    StaticFiles derives Content-Type from that table, and on Windows it does not
+    know .flac or .opus — so a lossless file went out as
+    application/octet-stream. The mapping comes from services.audio_format so the
+    served header and the stored extension cannot drift apart.
+    """
+    import mimetypes
+
+    from services.audio_format import CONTAINERS
+
+    for suffix, mime, _lossless in CONTAINERS.values():
+        mimetypes.add_type(mime, suffix)
+
+
+_register_audio_mimetypes()
 from starlette.middleware.cors import CORSMiddleware as _StarletteCORS
 
 # StaticFiles 是独立的 ASGI sub-app，主 app 的 CORSMiddleware 不覆盖它。
@@ -2404,6 +2423,7 @@ async def retain_online_audio_endpoint(
                    OR ($music_id = '' AND $source_id = '' AND s.title = $title AND coalesce(s.artist, '') = $artist)
                 SET s.audio_retention = 'saved',
                     s.audio_status = 'cached',
+                    s.catalog_tier = 'library',
                     s.audio_url = coalesce(NULLIF(s.audio_url, ''), $audio_url),
                     s.updated_at = timestamp()
                 RETURN count(s) AS updated
@@ -2522,12 +2542,16 @@ async def retry_ingest_job(
 # ================================================================
 
 @app.get("/api/library-songs")
-async def get_library_songs(offset: int = 0, limit: int = 200):
-    """
-    查询 Neo4j 中所有 Song 节点（含 Artist 关联），返回曲库列表。
+async def get_library_songs(offset: int = 0, limit: int = 200, tier: str = "library"):
+    """查询 Neo4j 中的 Song 节点（含 Artist 关联），返回曲库列表。
+
+    ``tier`` 决定看哪一层：``library`` 是用户自己的曲库（默认），``candidate``
+    是推荐时联网抓来的临时缓存，``all`` 是两者。默认只给 library —— 用户没有
+    要求下载或入库的歌，不该混在"我的曲库"里充数。
     """
     try:
         from retrieval.neo4j_client import get_neo4j_client
+        from services.catalog_tier import candidate_predicate, tier_filter_clause
         from services.library_quality import (
             duplicate_key,
             missing_fields_for_song,
@@ -2536,8 +2560,10 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
         )
 
         client = get_neo4j_client()
+        # 不用 f-string：查询体里有 map 字面量 `{ key: ... }`，会被当成插值。
         query = """
         MATCH (s:Song)
+        __TIER_WHERE__
         OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
@@ -2578,6 +2604,7 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                s.metadata_source AS metadata_source,
                s.audio_retention AS audio_retention,
                s.audio_status AS audio_status,
+               s.catalog_tier AS catalog_tier,
                s.acquire_status AS acquire_status,
                s.release_year AS release_year,
                s.tag_source AS tag_source,
@@ -2591,11 +2618,28 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
         ORDER BY s.updated_at DESC
         SKIP $offset LIMIT $limit
         """
+        tier_clause = tier_filter_clause(tier)
+        query = query.replace("__TIER_WHERE__", f"WHERE {tier_clause}" if tier_clause else "")
         results = client.execute_query(query, {"offset": offset, "limit": limit})
 
-        # 获取总数
-        count_result = client.execute_query("MATCH (s:Song) RETURN count(s) AS total", {})
-        total = count_result[0]["total"] if count_result else 0
+        # 两层各自的总数：前端要能显示"曲库 N 首 / 临时候选 M 首"，
+        # 而不是把缓存算进曲库规模。
+        counts = client.execute_query(
+            f"""
+            MATCH (s:Song)
+            RETURN sum(CASE WHEN {candidate_predicate()} THEN 0 ELSE 1 END) AS library,
+                   sum(CASE WHEN {candidate_predicate()} THEN 1 ELSE 0 END) AS candidate
+            """,
+            {},
+        )
+        library_total = int((counts[0] if counts else {}).get("library") or 0)
+        candidate_total = int((counts[0] if counts else {}).get("candidate") or 0)
+        requested = str(tier or "library").strip().lower()
+        total = (
+            candidate_total if requested == "candidate"
+            else library_total + candidate_total if requested == "all"
+            else library_total
+        )
 
         songs = []
         for r in results:
@@ -2646,6 +2690,7 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "audio_retention": r.get("audio_retention", ""),
                 "audio_status": r.get("audio_status", ""),
                 "acquire_status": r.get("acquire_status", ""),
+                "catalog_tier": r.get("catalog_tier") or "",
                 "tag_source": r.get("tag_source", ""),
                 "tag_confidence_json": r.get("tag_confidence_json", ""),
                 "vector_coverage": vector_coverage,
@@ -2655,10 +2700,196 @@ async def get_library_songs(offset: int = 0, limit: int = 200):
                 "knowledge_cards": knowledge_cards,
             })
 
-        return {"success": True, "songs": songs, "total": total}
+        return {
+            "success": True,
+            "songs": songs,
+            "total": total,
+            "tier": requested,
+            "counts": {"library": library_total, "candidate": candidate_total},
+        }
     except Exception as e:
         logger.error(f"查询曲库失败: {e}")
         return {"success": False, "songs": [], "total": 0, "error": str(e)}
+
+
+@app.post("/api/netease/login/qr")
+async def netease_login_qr(raw_request: Request, _: None = Depends(require_admin_api_key)):
+    """开始扫码登录，返回二维码图片和轮询用的 key。
+
+    登录的是用户自己的网易云账号，用来读自己的日推/红心/歌单元数据。
+    会话 cookie 只存在后端，任何响应体都不会带它。
+    """
+    reject_shared_safe_action("netease login")
+    try:
+        from services.netease_account import start_qr_login
+
+        return await start_qr_login()
+    except Exception as exc:
+        logger.error("[netease] 扫码登录发起失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.get("/api/netease/login/check")
+async def netease_login_check(key: str, _: None = Depends(require_admin_api_key)):
+    """轮询扫码状态。确认后 cookie 落到后端，不回传给浏览器。"""
+    try:
+        from services.netease_account import check_qr_login
+
+        return await check_qr_login(key)
+    except Exception as exc:
+        logger.error("[netease] 扫码状态查询失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.get("/api/netease/account")
+async def netease_account(_: None = Depends(require_admin_api_key)):
+    """当前登录的是谁。只返回昵称和 id。"""
+    try:
+        from services.netease_account import account_status
+
+        return await account_status()
+    except Exception as exc:
+        logger.error("[netease] 账号状态查询失败: %s", exc, exc_info=True)
+        return {"logged_in": False, "error": str(exc)}
+
+
+@app.delete("/api/netease/account")
+async def netease_logout(raw_request: Request, _: None = Depends(require_admin_api_key)):
+    reject_shared_safe_action("netease logout")
+    try:
+        from services.netease_account import clear_cookie
+
+        return {"success": True, "cleared": clear_cookie()}
+    except Exception as exc:
+        logger.error("[netease] 退出登录失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
+
+
+@app.get("/api/netease/daily")
+async def netease_daily(limit: int = 30, _: None = Depends(require_admin_api_key)):
+    """日推 + 与本地曲库的对账结果。
+
+    纯元数据。没登录或代理挂了都返回空列表 —— 日推是补充源，不是基础设施，
+    上游 2024-04 起已归档只读，随时可能失效，不能让它拖垮推荐主流程。
+    """
+    try:
+        from services.netease_account import (
+            fetch_daily_songs,
+            is_logged_in,
+            match_against_library,
+        )
+
+        if not is_logged_in():
+            return {"success": True, "logged_in": False, "songs": [],
+                    "counts": {"total": 0, "in_library": 0, "in_candidates": 0, "missing": 0}}
+        songs = await fetch_daily_songs(limit=limit)
+        matched = match_against_library(songs)
+        return {"success": True, "logged_in": True, "songs": songs, **matched}
+    except Exception as exc:
+        logger.error("[netease] 日推获取失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc), "songs": []}
+
+
+@app.post("/api/library-songs/purge-candidates")
+async def purge_catalog_candidates(
+    raw_request: Request,
+    dry_run: bool = True,
+    _: None = Depends(require_admin_api_key),
+):
+    """删除已过期、且用户从未操作过的联网临时候选节点。
+
+    默认 ``dry_run=True`` 只报数不动数据 —— 删节点不可撤销，必须先让用户看到
+    要删什么。喜欢/收藏/不喜欢/跳过/听过任意一条都算用户动过，一律保留。
+    """
+    reject_shared_safe_action("purge catalog candidates")
+    from api.runtime_context import reject_developer_catalog_mutation
+
+    reject_developer_catalog_mutation(raw_request)
+    from services.catalog_tier import RatingLedgerUnavailable
+
+    try:
+        from retrieval.neo4j_client import get_neo4j_client
+        from services.catalog_tier import (
+            load_rated_identities,
+            purgeable_predicate,
+            unprotected,
+        )
+
+        # 逐首评价存在 SQLite，且完全不写 Neo4j 关系，所以图上的
+        # LIKES/SKIPPED/... 检查看不到它。先把受保护身份从账本读出来，
+        # 读不到就整个拒绝删除 —— "查不了"不等于"没有要保护的"。
+        protected_ids, protected_keys = load_rated_identities()
+
+        client = get_neo4j_client()
+        where = purgeable_predicate()
+        rows = [
+            dict(row)
+            for row in client.execute_query(
+                f"""
+                MATCH (s:Song) WHERE {where}
+                RETURN elementId(s) AS eid,
+                       s.title AS title,
+                       coalesce(s.artist, '') AS artist,
+                       coalesce(toString(s.music_id), '') AS music_id
+                ORDER BY s.updated_at DESC
+                """,
+                {},
+            )
+        ]
+        # 归一化的 title+artist 兜底身份在 Python 里比对：把同一套归一规则
+        # 再用 Cypher 写一遍，等于给"同一首歌"留两个会各自漂移的定义。
+        deletable = unprotected(rows, protected_ids, protected_keys)
+        eligible = len(deletable)
+        protected_here = len(rows) - eligible
+
+        if dry_run:
+            return {
+                "success": True,
+                "dry_run": True,
+                "eligible": eligible,
+                "protected_by_rating": protected_here,
+                "sample": [
+                    {"title": row.get("title"), "artist": row.get("artist")}
+                    for row in deletable[:50]
+                ],
+            }
+
+        removed = 0
+        if deletable:
+            # 按 elementId 精确删除，并重新套一遍 purgeable 谓词：列举与删除之间
+            # 状态可能变化（例如用户刚点了喜欢）。
+            deleted = client.execute_query(
+                f"""
+                MATCH (s:Song)
+                WHERE elementId(s) IN $eids AND {where}
+                WITH s LIMIT 5000
+                DETACH DELETE s
+                RETURN count(s) AS n
+                """,
+                {"eids": [row["eid"] for row in deletable]},
+            )
+            removed = int((deleted[0] if deleted else {}).get("n") or 0)
+        logger.info(
+            "[catalog-tier] 清理临时候选 %d 个，因逐首评价保留 %d 个",
+            removed,
+            protected_here,
+        )
+        return {
+            "success": True,
+            "dry_run": False,
+            "deleted": removed,
+            "eligible": eligible,
+            "protected_by_rating": protected_here,
+        }
+    except RatingLedgerUnavailable as exc:
+        logger.error("逐首评价账本不可读，拒绝清理: %s", exc)
+        return {
+            "success": False,
+            "error": "无法读取逐首评价记录，已拒绝清理（不确定要保护什么时不删）",
+        }
+    except Exception as exc:
+        logger.error("清理临时候选失败: %s", exc, exc_info=True)
+        return {"success": False, "error": str(exc)}
 
 
 @app.patch("/api/library-songs/tags")

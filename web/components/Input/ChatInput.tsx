@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useState, useRef, useLayoutEffect, FormEvent, KeyboardEvent } from 'react';
 import { useLang } from '@/context/LanguageContext';
 import { theme } from '@/styles/theme';
 
@@ -13,7 +13,12 @@ interface ChatInputProps {
   isMobile?: boolean;
 }
 
+// 点一下就填进输入框。以前这三条只是个声明，整个文件没有第二处引用——
+// placeholder 里的例句浏览器从不支持 Tab 补全，所以"想要那句话"的唯一出路
+// 是让它可点。
 const quickPrompts = ['晨跑的鼓点', '办公室保持专注', '串联周末的晚风'];
+
+const MAX_ROWS = 6;
 
 export default function ChatInput({
   onSubmit,
@@ -25,13 +30,41 @@ export default function ChatInput({
 }: ChatInputProps) {
   const { t } = useLang();
   const [value, setValue] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
+  // 高度跟着内容走。先归零再读 scrollHeight，否则删字时高度只增不减。
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const lineHeight = 24;
+    el.style.height = `${Math.min(el.scrollHeight, lineHeight * MAX_ROWS)}px`;
+  }, [value]);
+
+  const submit = () => {
     if (value.trim() && !disabled) {
       onSubmit(value.trim());
       setValue('');
     }
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    submit();
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 输入法组字期间的 Enter 是在选词，不是发送。isComposing 不判会让中文
+    // 用户每打一个词就误发一次。
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+    if (e.shiftKey) return;      // 换行交给 textarea 自己
+    e.preventDefault();
+    submit();
+  };
+
+  const useQuickPrompt = (prompt: string) => {
+    setValue(prompt);
+    textareaRef.current?.focus();
   };
 
   const handleAbort = (e: React.MouseEvent) => {
@@ -99,22 +132,31 @@ export default function ChatInput({
               `}</style>
             </div>
           )}
-          <input
-            type="text"
+          {/* textarea 而不是 input：input 在物理上装不下换行符，之前底下那句
+              "Shift + Enter 换行"承诺的是这个元素做不到的能力。 */}
+          <textarea
+            ref={textareaRef}
+            rows={1}
             value={value}
             onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder={isLoading ? t('搜索中...输入新问题可直接切换') : placeholder}
             disabled={disabled}
             style={{
               flex: 1,
               padding: '0.65rem 0',
               fontSize: '1.05rem',
+              lineHeight: '24px',
               minHeight: '40px',
+              maxHeight: `${24 * MAX_ROWS}px`,
               border: 'none',
               backgroundColor: 'transparent',
               color: theme.colors.text.primary,
               outline: 'none',
               opacity: disabled ? 0.5 : 1,
+              resize: 'none',
+              overflowY: 'auto',
+              fontFamily: 'inherit',
             }}
           />
 
@@ -176,7 +218,45 @@ export default function ChatInput({
           )}
         </div>
       </div>
-      {!isMobile && (
+      {/* 空输入框时给几个能点的例子。placeholder 里的例句点不了也补不了，
+          想用只能自己重打一遍——这才是"提示没用"的真正原因。 */}
+      {!value && !isLoading && !disabled && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: '0.4rem',
+          justifyContent: 'center', marginTop: '0.1rem',
+        }}>
+          {quickPrompts.map(prompt => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => useQuickPrompt(prompt)}
+              style={{
+                padding: '0.3rem 0.75rem',
+                borderRadius: theme.borderRadius.full,
+                border: `1px solid ${theme.colors.border.default}`,
+                background: 'rgba(255,255,255,0.04)',
+                color: theme.colors.text.secondary,
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s, color 0.2s',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.10)';
+                e.currentTarget.style.color = theme.colors.text.primary;
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                e.currentTarget.style.color = theme.colors.text.secondary;
+              }}
+            >
+              {t(prompt)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 只在正在搜索、或输入框还空着的时候提示。第一次有用，第一百次是噪音。 */}
+      {!isMobile && (isLoading || !value) && (
         <span
           style={{
             fontSize: '0.78rem',
@@ -185,7 +265,7 @@ export default function ChatInput({
             marginTop: '0.2rem',
           }}
         >
-          {isLoading ? t('点击 ■ 中止搜索，或直接输入新问题') : t('提示：直接输入自然语言，Shift + Enter 换行')}
+          {isLoading ? t('点击 ■ 中止搜索，或直接输入新问题') : t('Enter 发送，Shift + Enter 换行')}
         </span>
       )}
     </form>

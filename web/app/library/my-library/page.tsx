@@ -12,12 +12,16 @@ import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { useRouter } from 'next/navigation';
-import { fetchLibrarySongs, deleteSongFromLibrary, retainOnlineAudio, updateLibrarySongTags, LibrarySong } from '@/lib/api';
+import { fetchLibrarySongs, deleteSongFromLibrary, retainOnlineAudio, updateLibrarySongTags, purgeCatalogCandidates, LibrarySong, CatalogTier } from '@/lib/api';
 
 export default function MyLibraryPage() {
   const { t } = useLang();
     const [songs, setSongs] = useState<LibrarySong[]>([]);
     const [total, setTotal] = useState(0);
+    // 曲库 vs 临时候选。推荐时联网抓来的缓存不算"我的曲库"，默认不显示。
+    const [tier, setTier] = useState<CatalogTier>('library');
+    const [tierCounts, setTierCounts] = useState({ library: 0, candidate: 0 });
+    const [purging, setPurging] = useState(false);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
     const [sourceFilter, setSourceFilter] = useState('all');
@@ -44,13 +48,43 @@ export default function MyLibraryPage() {
 
     const loadSongs = useCallback(async () => {
         setLoading(true);
-        const data = await fetchLibrarySongs(0, 500);
+        const data = await fetchLibrarySongs(0, 500, tier);
         setSongs(data.songs);
         setTotal(data.total);
+        setTierCounts(data.counts);
         setLoading(false);
-    }, []);
+    }, [tier]);
 
     useEffect(() => { loadSongs(); }, [loadSongs]);
+
+    const runPurge = async () => {
+        // 两步：先干跑拿到数量给用户看，确认后才真删。删节点不可撤销。
+        setPurging(true);
+        const preview = await purgeCatalogCandidates(true);
+        if (!preview.success) {
+            setPurging(false);
+            showToast(`❌ ${preview.error || t('清理失败')}`);
+            return;
+        }
+        const eligible = preview.eligible || 0;
+        if (eligible === 0) {
+            setPurging(false);
+            showToast(t('没有可清理的临时候选（还在缓存期内或你操作过的都会保留）'));
+            return;
+        }
+        if (!window.confirm(t('将删除 {v0} 条已过期且从未被你操作过的临时候选，此操作不可撤销。继续？', { v0: eligible }))) {
+            setPurging(false);
+            return;
+        }
+        const result = await purgeCatalogCandidates(false);
+        setPurging(false);
+        if (result.success) {
+            showToast(t('✅ 已清理 {v0} 条临时候选', { v0: result.deleted || 0 }));
+            loadSongs();
+        } else {
+            showToast(`❌ ${result.error || t('清理失败')}`);
+        }
+    };
 
     useEffect(() => {
         if (!selectedSong) return;
@@ -297,9 +331,49 @@ export default function MyLibraryPage() {
                     <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 600, letterSpacing: '0.05em', color: theme.colors.text.muted }}>{t('知识图谱')}</p>
                     <h1 style={{ margin: '0.2rem 0', fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.02em' }}>{t('我的曲库')}</h1>
                     <p style={{ margin: 0, fontSize: '0.9rem', color: theme.colors.text.secondary }}>
-                        {loading ? t('加载中...') : t('图谱中共有 {v0} 首歌曲', { v0: total })}
+                        {loading ? t('加载中...') : t('曲库 {v0} 首 · 临时候选 {v1} 首', { v0: tierCounts.library, v1: tierCounts.candidate })}
                     </p>
                 </div>
+            </div>
+
+            {/* 曲库 / 临时候选。联网推荐时后台抓来的缓存单独一层，不混进曲库规模。 */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                {([
+                    { key: 'library' as CatalogTier, label: t('我的曲库'), count: tierCounts.library },
+                    { key: 'candidate' as CatalogTier, label: t('临时候选'), count: tierCounts.candidate },
+                    { key: 'all' as CatalogTier, label: t('全部'), count: tierCounts.library + tierCounts.candidate },
+                ]).map(option => {
+                    const active = tier === option.key;
+                    return (
+                        <button
+                            key={option.key}
+                            onClick={() => { setTier(option.key); setSelectedKeys(new Set()); setSelectedSong(null); }}
+                            style={{
+                                padding: '0.4rem 0.9rem', borderRadius: theme.borderRadius.sm,
+                                border: `1px solid ${active ? theme.colors.primary.accent : theme.colors.border.default}`,
+                                background: active ? 'rgba(29,185,84,0.16)' : 'rgba(255,255,255,0.04)',
+                                color: active ? theme.colors.primary.accent : theme.colors.text.secondary,
+                                cursor: 'pointer', fontSize: '0.8rem', fontWeight: active ? 700 : 500,
+                            }}
+                        >
+                            {option.label} {option.count}
+                        </button>
+                    );
+                })}
+                {tier === 'candidate' && (
+                    <>
+                        <span style={{ fontSize: '0.76rem', color: theme.colors.text.muted, maxWidth: '46rem' }}>
+                            {t('这些是推荐时联网抓来、为了能立刻试听而临时缓存的歌，你没有下载或入库过。MP3 超过缓存期会自动释放，节点保留在这一层。')}
+                        </span>
+                        <button onClick={runPurge} disabled={purging} style={{
+                            padding: '0.4rem 0.8rem', borderRadius: theme.borderRadius.sm,
+                            border: '1px solid rgba(240,96,96,0.5)', background: 'rgba(240,96,96,0.08)',
+                            color: '#f06060', cursor: purging ? 'not-allowed' : 'pointer', fontSize: '0.78rem',
+                        }}>
+                            {purging ? t('清理中...') : t('清理已过期的临时候选')}
+                        </button>
+                    </>
+                )}
             </div>
 
             {/* Search and filters */}

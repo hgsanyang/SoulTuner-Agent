@@ -467,7 +467,9 @@ export default function RecommendationsPage() {
 
       {/* 右侧按钮组 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        {/* 曲库诊断（开发工具入口） */}
+        {/* 曲库诊断：开发工具，只在开发者模式显示。以前它无条件渲染，
+            日常模式下也挂在那儿——模式开关存在，这个控件却不理它。 */}
+        {interactionMode === 'developer' && (
         <button
           onClick={() => setDiagnosticsOpen(true)}
           title={t("曲库诊断（开发工具）")}
@@ -487,6 +489,7 @@ export default function RecommendationsPage() {
           </svg>
           {t('诊断')}
         </button>
+        )}
         {/* 返回推荐卡片按钮（仅在对话视图时显示） */}
         {hasMessages && !showWelcome && (
           <button
