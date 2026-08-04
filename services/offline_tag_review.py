@@ -51,20 +51,31 @@ def make_task(record: Mapping[str, Any], *, lyrics_chars: int = MAX_LYRICS_CHARS
     }
 
 
-def build_review_prompt(tasks: Iterable[Mapping[str, Any]]) -> str:
+def build_review_prompt(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    result_filename: str = "results/result-001.jsonl",
+) -> str:
     rows = [dict(task) for task in tasks]
-    return """你是音乐目录标签审校员。请对下面每首歌进行联网检索，并结合提供的元数据与歌词片段生成结构化标签。
+    return f"""你是音乐目录标签审校员。请对下面每首歌进行联网检索，并结合提供的元数据与歌词片段生成结构化标签。
+
+本批输出与保存要求：
+1. 本文件共有 {len(rows)} 首歌，必须返回 {len(rows)} 行；每首歌恰好一行 JSON。
+2. 推荐保存为 `{result_filename}`，编码为 UTF-8。
+3. 不要输出 JSON 数组，不要在行尾加逗号，不要添加 Markdown 代码围栏或解释段落。
+4. 如果无法确认某项，请使用空字符串或空数组，并写入 missing_information；不要省略该歌曲。
 
 规则：
 1. genres/moods/themes/scenarios 各 0-5 个，不确定就留空，不要凑数。
 2. 区分原曲与 Live、重制、翻唱；年份优先原始发行年份，无法确认就留空。
 3. 事实信息必须附公开来源 URL；仅从歌词推断的情绪/主题可将 evidence_basis 写为 lyrics。
-4. 不要修改 task_id、music_id、title、artist。
-5. 只返回 JSONL：每行一个 JSON 对象，不要 Markdown 代码块或解释段落。
-6. 可以在 taxonomy_feedback 中提出标签新增、合并、歧义意见，但它不会自动写入标签体系。
+4. 网易云歌曲页可用于确认曲目身份、歌手和专辑，但不能单独证明流派、地区、成就等事实；这些字段应尽量补充歌手官网、唱片公司、权威媒体或资料库来源。找不到可靠来源就留空并说明。
+5. 不要修改 task_id、music_id、title、artist。
+6. 只返回 JSONL：每行一个 JSON 对象，不要 Markdown 代码块或解释段落。
+7. 可以在 taxonomy_feedback 中提出标签新增、合并、歧义意见，但它不会自动写入标签体系。
 
 每行输出结构：
-{"task_id":"...","music_id":"...","title":"...","artist":"...","genres":[],"moods":[],"themes":[],"scenarios":[],"language":"","region":"","vibe":"","evidence_urls":[],"evidence_basis":"web|lyrics|metadata|mixed","decision_reason":"","missing_information":[],"taxonomy_feedback":{"suggested_additions":[],"suggested_merges":[],"uncertain_fields":[]}}
+{{"task_id":"...","music_id":"...","title":"...","artist":"...","genres":[],"moods":[],"themes":[],"scenarios":[],"language":"","region":"","vibe":"","evidence_urls":[],"evidence_basis":"web|lyrics|metadata|mixed","decision_reason":"","missing_information":[],"taxonomy_feedback":{{"suggested_additions":[],"suggested_merges":[],"uncertain_fields":[]}}}}
 
 待处理任务：
 """ + "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n"

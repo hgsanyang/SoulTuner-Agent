@@ -9,7 +9,7 @@ from services.offline_tag_review import (
     read_jsonl,
     validate_result,
 )
-from scripts.export_catalog_tag_review import export_runs
+from scripts.export_catalog_tag_review import export_runs, export_tasks
 
 
 def _record(tmp_path):
@@ -31,9 +31,11 @@ def test_task_is_stable_and_prompt_requests_jsonl(tmp_path):
 
     assert first == second
     assert first["lyrics_excerpt"] == "first line\nsecond line"
-    prompt = build_review_prompt([first])
+    prompt = build_review_prompt([first], result_filename="results/result-007.jsonl")
     assert "只返回 JSONL" in prompt
     assert first["task_id"] in prompt
+    assert "results/result-007.jsonl" in prompt
+    assert "必须返回 1 行" in prompt
 
 
 def test_validate_result_caps_tags_and_ignores_model_confidence(tmp_path):
@@ -97,3 +99,28 @@ def test_export_runs_combines_reports_and_deduplicates_tasks(tmp_path):
     assert summary["run_ids"] == ["run-0", "run-1"]
     assert summary["tasks"] == 1
     assert summary["prompt_files"] == 1
+    assert (tmp_path / "bundle" / "RESULTS_README.md").exists()
+
+
+def test_export_caps_web_prompt_batches_at_fifty(tmp_path):
+    tasks = [
+        {
+            "task_id": f"tag-{index}",
+            "music_id": str(index),
+            "title": f"Track {index}",
+            "artist": "Artist",
+        }
+        for index in range(51)
+    ]
+
+    summary = export_tasks(tasks, tmp_path / "bundle", batch_size=999)
+
+    assert summary["batch_size"] == 50
+    assert summary["prompt_files"] == 2
+    assert summary["expected_results"] == [
+        {"prompt": "prompt-001.md", "result": "results/result-001.jsonl", "rows": 50},
+        {"prompt": "prompt-002.md", "result": "results/result-002.jsonl", "rows": 1},
+    ]
+    readme = (tmp_path / "bundle" / "RESULTS_README.md").read_text(encoding="utf-8")
+    assert "result-001.jsonl" in readme
+    assert "应有行数" in readme
