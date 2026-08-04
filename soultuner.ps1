@@ -3,12 +3,27 @@ param(
     [string]$Action = "up",
 
     [ValidateSet("cpu", "gpu")]
-    [string]$Profile = "cpu"
+    [string]$Profile
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
+
+# Profile resolution: an explicit -Profile wins; otherwise SOULTUNER_PROFILE from
+# .env; otherwise cpu. Hardcoding gpu as the repo default would break every
+# CPU-only clone, so a machine with a GPU opts in once in its own .env instead.
+function Resolve-Profile {
+    param([string]$Explicit)
+
+    if ($Explicit) { return $Explicit }
+    $fromEnv = (Get-ProjectEnvValue "SOULTUNER_PROFILE" "cpu").Trim().ToLowerInvariant()
+    if ($fromEnv -notin @("cpu", "gpu")) {
+        Write-Host "SOULTUNER_PROFILE='$fromEnv' 不是 cpu/gpu，按 cpu 处理"
+        return "cpu"
+    }
+    return $fromEnv
+}
 
 function Invoke-ProjectPython {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
@@ -179,6 +194,9 @@ function Assert-Neo4jEditionMatchesVolume {
     }
 }
 
+$Profile = Resolve-Profile $Profile
+Write-Host "Profile: $Profile"
+
 switch ($Action) {
     "up" {
         Assert-Neo4jEditionMatchesVolume
@@ -203,6 +221,14 @@ switch ($Action) {
             docker compose @ComposeFiles --profile rag up -d qdrant
             Assert-LastNativeCommand "Starting optional Qdrant knowledge sidecar"
         }
+        if ($Profile -eq "gpu") {
+            # --build is required, not tidiness: `up` happily reuses an existing
+            # CPU image and the overlay's cu124 build arg is then never applied,
+            # so `up gpu` silently produces a CPU container.
+            Write-Host "Building backend/ingest-worker with the CUDA overlay..."
+            docker compose @ComposeFiles build backend ingest-worker
+            Assert-LastNativeCommand "Building CUDA images"
+        }
         docker compose @ComposeFiles --profile $Profile up -d --remove-orphans neo4j searxng netease backend
         Assert-LastNativeCommand "Starting core Docker services"
         if ($UseGraphZep) {
@@ -214,6 +240,13 @@ switch ($Action) {
         if ($Profile -eq "gpu") {
             docker compose @ComposeFiles --profile gpu up -d ingest-worker
             Assert-LastNativeCommand "Starting GPU ingestion worker"
+            # Asked for GPU, so prove it arrived — on BOTH services. Checking
+            # only the backend leaves the exact case that costs most: the
+            # long-running worker quietly extracting every vector on CPU.
+            docker compose @ComposeFiles exec -T backend python scripts/assert_cuda.py
+            Assert-LastNativeCommand "backend CUDA self-check"
+            docker compose @ComposeFiles exec -T ingest-worker python scripts/assert_cuda.py
+            Assert-LastNativeCommand "ingest-worker CUDA self-check"
         }
         Write-Host "Frontend: http://localhost:3003"
         Write-Host "Backend:  http://localhost:8501"
@@ -243,7 +276,15 @@ switch ($Action) {
     }
     "ingest" {
         if ($Profile -eq "gpu") {
-            docker compose --profile gpu run --rm ingest-worker python scripts/ingest_worker.py
+            # Without -f docker-compose.gpu.yml the gpu *profile* selects a
+            # service built from the CPU base and given no device — the profile
+            # and the overlay are different mechanisms and both are needed.
+            $IngestFiles = @("-f", "docker-compose.yml", "-f", "docker-compose.gpu.yml")
+            docker compose @IngestFiles build ingest-worker
+            Assert-LastNativeCommand "Building CUDA ingestion image"
+            docker compose @IngestFiles --profile gpu run --rm ingest-worker python scripts/assert_cuda.py
+            Assert-LastNativeCommand "ingest-worker CUDA self-check"
+            docker compose @IngestFiles --profile gpu run --rm ingest-worker python scripts/ingest_worker.py
             Assert-LastNativeCommand "Running GPU ingestion"
         } else {
             Invoke-ProjectPython scripts/ingest_worker.py
