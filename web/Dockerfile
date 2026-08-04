@@ -12,8 +12,13 @@ RUN npm ci
 
 COPY . .
 
-# 构建时需要的环境变量（API 地址在运行时可覆盖）
+# 构建时需要的环境变量。
+# NEXT_PUBLIC_API_URL 是浏览器侧用的：浏览器跑在宿主机上，所以是 localhost。
+# BACKEND_INTERNAL_URL 是服务端 rewrite 用的：容器里的 localhost 指向前端容器
+# 自己，必须走 compose 服务名。**必须在这里设**——next.config 的 rewrites 会被
+# next build 冻进 .next/routes-manifest.json，运行时再给环境变量已经晚了。
 ENV NEXT_PUBLIC_API_URL=http://localhost:8501
+ENV BACKEND_INTERNAL_URL=http://backend:8501
 RUN npm run build
 
 # ---- Stage 2: 运行 ----

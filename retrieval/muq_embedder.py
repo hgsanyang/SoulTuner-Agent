@@ -7,6 +7,7 @@ huggingface_hub version, so this module loads config + state dict manually.
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -121,20 +122,56 @@ def get_muq_model():
             config: dict[str, Any] = json.load(fh)
         config = _rewrite_config_to_local_snapshots(config)
 
-        model = MuQMuLan(config=config)
         state_path = _download(MUQ_REPO_ID, "pytorch_model.bin")
-        state = torch.load(state_path, map_location="cpu", weights_only=False)
-        missing, unexpected = model.load_state_dict(state, strict=False)
+        legacy = os.getenv("MUSIC_MUQ_LEGACY_LOADER", "").strip().lower() in {"1", "true", "yes"}
+
+        if legacy:
+            # The pre-2026-08 sequence: a full fp32 model and a full fp32 state
+            # dict alive at the same time. Opt-in only — it is the path that
+            # cannot load in a 4.7 GB container.
+            model = MuQMuLan(config=config)
+            state = torch.load(state_path, map_location="cpu", weights_only=False)
+            missing, unexpected = model.load_state_dict(state, strict=False)
+            del state
+            model = model.to(device)
+            if _use_fp16(device):
+                model = model.half()
+        else:
+            # Three things keep only one copy of the weights in memory:
+            #   mmap        the checkpoint stays on disk until a tensor is read
+            #   assign      parameters are rebound to those tensors rather than
+            #               copied into freshly allocated ones
+            #   to(dtype)   the cast happens during the transfer, so no full
+            #               fp32 copy lands on the GPU either
+            # Numbers and the stage-by-stage measurement are in
+            # codex_doc/SoulTuner-Agent/reports/MUQ_LOW_MEMORY_LOADER_2026-08.md
+            try:
+                state = torch.load(state_path, map_location="cpu", mmap=True, weights_only=True)
+            except Exception as exc:
+                # Deliberately not falling back to a full read. That is the path
+                # this function exists to avoid, and taking it automatically
+                # would turn a clear failure here into an OOM kill later, in a
+                # different process, with no indication of the cause.
+                raise RuntimeError(
+                    f"MuQ low-memory load failed ({type(exc).__name__}) for "
+                    f"{os.path.basename(state_path)}. The checkpoint may hold "
+                    "non-tensor objects, which cannot be memory-mapped. "
+                    "Set MUSIC_MUQ_LEGACY_LOADER=1 to use the full-read loader, "
+                    "which needs roughly 5.3 GB of CPU RAM."
+                ) from exc
+
+            model = MuQMuLan(config=config)
+            missing, unexpected = model.load_state_dict(state, strict=False, assign=True)
+            del state
+            gc.collect()
+            model = model.to(device=device, dtype=torch.float16 if _use_fp16(device) else torch.float32)
+
         if missing or unexpected:
             logger.warning(
                 "[MuQ-MuLan] state dict loaded with missing=%s unexpected=%s",
                 len(missing),
                 len(unexpected),
             )
-
-        model = model.to(device)
-        if _use_fp16(device):
-            model = model.half()
         model.eval()
         _MUQ_MODEL = model
         logger.info("[MuQ-MuLan] Loaded successfully; fp16=%s", _use_fp16(device))

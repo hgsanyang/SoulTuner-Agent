@@ -3,13 +3,19 @@ services:
     build:
       context: .
       args:
-        TORCH_VERSION: "2.5.1"
+        TORCH_VERSION: "2.6.0"
+        TORCHVISION_VERSION: "0.21.0"
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+        # 国内镜像。官方源实测在第 1757 秒读超时，构建失败（exit 2）。
+        # 已验证该镜像有 cp312/linux_x86_64 的 torch/torchaudio 2.6.0 与
+        # torchvision 0.21.0。
+        TORCH_FIND_LINKS: https://mirrors.aliyun.com/pytorch-wheels/cu124/
     environment:
       DENSE_TEXT_AUDIO_BACKEND: muq
       MUQ_MULAN_FP16: "true"
       MUSIC_M2D_MODEL_WARMUP: "false"
       MUSIC_M2D_TEXT_WARMUP: "false"
+      MUSIC_REQUIRE_CUDA: "1"
     deploy:
       resources:
         reservations:
@@ -21,5 +27,17 @@ services:
     build:
       context: .
       args:
-        TORCH_VERSION: "2.5.1"
+        TORCH_VERSION: "2.6.0"
+        TORCHVISION_VERSION: "0.21.0"
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+        # 国内镜像。官方源实测在第 1757 秒读超时，构建失败（exit 2）。
+        # 已验证该镜像有 cp312/linux_x86_64 的 torch/torchaudio 2.6.0 与
+        # torchvision 0.21.0。
+        TORCH_FIND_LINKS: https://mirrors.aliyun.com/pytorch-wheels/cu124/
+    environment:
+      # Fail loudly rather than quietly extracting vectors on CPU: a silent
+      # fallback here looks like "ingestion is just slow" for hours.
+      MUSIC_REQUIRE_CUDA: "1"
+    # No deploy block here on purpose: docker-compose.yml already reserves a
+    # device for this service, and compose *appends* list entries rather than
+    # replacing them — repeating it asks for two GPUs on a one-GPU machine.

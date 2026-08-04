@@ -29,8 +29,8 @@ async def process_one() -> bool:
     job_id = payload.get("job_id", job_path.stem)
     try:
         logger.info("[IngestWorker] processing job=%s songs=%s", job_id, len(songs))
-        await _background_flywheel(songs)
-        complete_job(job_path)
+        result = await _background_flywheel(songs)
+        complete_job(job_path, result=result)
         logger.info("[IngestWorker] completed job=%s", job_id)
     except Exception as exc:
         fail_job(job_path, str(exc))

@@ -94,6 +94,7 @@ def _load_job(path: Path, status: str) -> dict[str, Any]:
         "songs": payload.get("songs") or [],
         "song_count": len(payload.get("songs") or []),
         "error": payload.get("error", ""),
+        "result": payload.get("result") or {},
         "valid": valid,
         "validation_error": validation_error,
         "updated_at": int(stat.st_mtime * 1000),
@@ -153,8 +154,14 @@ def claim_next_job() -> tuple[Path, dict[str, Any]] | None:
     return None
 
 
-def complete_job(job_path: Path) -> None:
+def complete_job(job_path: Path, result: Mapping[str, Any] | None = None) -> None:
+    """Move a job to done and persist its enrichment result for auditability."""
     _ensure_dirs()
+    if result is not None:
+        payload = json.loads(job_path.read_text(encoding="utf-8"))
+        payload["result"] = dict(result)
+        payload["completed_at"] = int(time.time() * 1000)
+        job_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     job_path.replace(DONE_DIR / job_path.name)
 
 

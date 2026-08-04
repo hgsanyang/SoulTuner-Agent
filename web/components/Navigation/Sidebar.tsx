@@ -62,6 +62,19 @@ const navGroups: NavGroup[] = [
     subtitle: '你的专属收藏',
     items: [
       {
+        href: '/library/daily',
+        label: '每日推荐',
+        description: '网易云日推对账',
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+        ),
+      },
+      {
         href: '/library/pending',
         label: '待入库',
         description: '新获取待确认',
@@ -245,11 +258,14 @@ export default function Sidebar({ isMobile = false, isOpen = true, onClose }: Si
               boxShadow: `0 4px 12px rgba(29, 185, 84, 0.4)`,
             }}
           >
-            MA
+            ST
           </div>
           <div>
-            <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: theme.colors.text.primary, letterSpacing: '-0.02em' }}>Music Agent</p>
-            <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>AI Powered Studio</span>
+            {/* 产品名统一为 SoulTuner：标签页标题、README 早就是它，只有这里
+                还写着 Music Agent。副标说明它做什么，"AI Powered Studio"
+                放在任何 AI 产品上都成立，等于没说。 */}
+            <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: theme.colors.text.primary, letterSpacing: '-0.02em' }}>SoulTuner</p>
+            <span style={{ fontSize: '0.75rem', color: theme.colors.text.muted }}>{t('基于自然语言的音乐推荐')}</span>
           </div>
         </div>
         <ProfileSwitcher />
