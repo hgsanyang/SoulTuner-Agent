@@ -229,6 +229,80 @@ def test_empty_help_is_unusable_not_a_pass():
     assert code == 4
 
 
+# ── 下面四条锁的是"调用方真正能传什么" ─────────────────────────────────────
+# 上面那批测试全部直接给函数传 `--model`。但 argparse 的 `--flags` 是 nargs="+"，
+# 它把 `--model` 读成下一个选项而不是值，所以 shell 只能传裸名。检查器却按
+# `startswith("--")` 过滤，两边永远对不上：每次调用检查 0 个参数并报 OK。
+# 这个空门在云端实例开始计费之后才暴露，而它本可以被下面任意一条测试拦住。
+
+
+def test_bare_names_are_what_the_shell_can_pass_and_must_be_checked():
+    code, report = check_flags(
+        "sft", ["model", "dataset", "seed"], help_reader=lambda _: HELP
+    )
+    assert code == 0
+    assert report["checked"] == ["--dataset", "--model", "--seed"]
+
+
+def test_a_nonexistent_flag_fails_even_when_passed_bare():
+    """空门的证否测试：编一个任何 ms-swift 都没有的名字，必须失败。"""
+    code, report = check_flags(
+        "sft", ["definitely_not_a_real_flag_xyz"], help_reader=lambda _: HELP
+    )
+    assert code == 10
+    assert "--definitely_not_a_real_flag_xyz" in report["missing"]
+
+
+def test_an_empty_flag_list_is_unusable_not_a_pass():
+    """检查 0 个参数不是"全部通过"，是配置坏了。"""
+    code, report = check_flags("sft", [], help_reader=lambda _: HELP)
+    assert code == 4
+    assert any("no flags were configured" in p for p in report["problems"])
+    code, _ = check_flags("sft", ["", "-", "--"], help_reader=lambda _: HELP)
+    assert code == 4
+
+
+def test_the_training_script_passes_flags_in_a_form_the_checker_accepts():
+    """把两个文件绑在一起：脚本怎么写的，就用那个形式跑一遍检查器。
+
+    这条测试存在的理由是上一版两边各自"看着都对"——脚本传带横线的名字，
+    检查器也只认带横线的——但中间隔着 argparse，谁都没真的跑通过一次。
+    """
+    import shlex
+
+    script = (
+        Path(__file__).resolve().parents[2] / "data" / "sft" / "train_planner_student.sh"
+    ).read_text(encoding="utf-8")
+
+    # 把续行拼成单行，再用 shlex 切 —— 不用正则去猜 shell 的换行规则。
+    joined = script.replace("\\\n", " ")
+    lines = [ln for ln in joined.splitlines() if "check_swift_flags" in ln]
+    assert lines, "训练脚本里找不到 check_swift_flags 调用"
+
+    for line in lines:
+        tokens = shlex.split(line)
+        assert "--flags" in tokens, f"调用缺少 --flags: {line[:80]}"
+        names = tokens[tokens.index("--flags") + 1:]
+        assert names, "--flags 后面一个参数都没有"
+        # argparse 会把带横线的项吃成选项，脚本必须传裸名
+        dashed = [n for n in names if n.startswith("-")]
+        assert not dashed, f"这些名字带了横线，argparse 会当成选项而不是值: {dashed}"
+        code, report = check_flags("sft", names, help_reader=lambda _: HELP)
+        assert report["checked"], "脚本传的参数被过滤成空了"
+        assert code in (0, 10), f"检查器无法处理脚本的调用形式: {report['problems']}"
+
+
+def test_training_code_and_dataset_generator_are_recorded_separately():
+    """A harness-only fix must not require regenerating an unchanged dataset."""
+    script = (
+        Path(__file__).resolve().parents[2] / "data" / "sft" / "train_planner_student.sh"
+    ).read_text(encoding="utf-8")
+    assert 'git_succeeds("cat-file", "-e", f"{generator_commit}^{{commit}}")' in script
+    assert 'git_succeeds("merge-base", "--is-ancestor", generator_commit, git_sha)' in script
+    assert '"dataset_generator_commit": generator_commit' in script
+    assert "generator_commit != git_sha" not in script
+
+
 # ------------------------------------------------------------ infer output ---
 
 CLEAN = json.dumps(
