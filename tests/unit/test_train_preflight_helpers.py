@@ -27,8 +27,38 @@ V4 = Path(__file__).resolve().parents[2] / "data" / "sft" / "v4"
 
 def _write_split(root: Path, name: str, rows: int) -> dict:
     path = root / f"{name}.jsonl"
+    decision = json.dumps(
+        {
+            "request_kind": "recommendation",
+            "response_mode": "answer",
+            "tool_names": ["graph"],
+        }
+    )
     path.write_text(
-        "".join(json.dumps({"messages": [], "i": i}) + "\n" for i in range(rows)),
+        "".join(
+            json.dumps(
+                {
+                    "messages": [
+                        {"role": "system", "content": "return PlannerDecisionV3"},
+                        {"role": "user", "content": f"request {name} {i}"},
+                        {"role": "assistant", "content": decision},
+                    ],
+                    "meta": {
+                        "seed_source": "curated_seed",
+                        "episode_id": f"{name}-{i}",
+                        "turn_id": 0,
+                        "request_kind": "recommendation",
+                        "trajectory_kind": "single_turn",
+                        "observation_origin": "none",
+                        "teacher": {"model": "fixture", "version": "1"},
+                        "reviewer": {"model": "fixture", "version": "1"},
+                        "reviewer_verdict": "accept",
+                    },
+                }
+            )
+            + "\n"
+            for i in range(rows)
+        ),
         encoding="utf-8",
     )
     return {
@@ -64,6 +94,19 @@ def frozen_build(tmp_path: Path) -> tuple[Path, dict]:
                 "shared_templates": 0,
                 "max_near_dupe_jaccard": 0.16,
             },
+            "release_gates": {
+                "overall_vs_teacher_pp": -3.0,
+                "per_kind_max_regression_pp": 3.0,
+                "schema_validity": 1.0,
+                "lane_authority_violations": 0,
+                "sealed_vs_regression_max_gap_pp": 8.0,
+            },
+        },
+        "validator": {
+            "tool": "scripts/validate_sft_dataset.py",
+            "commit": "e9eb3fa",
+            "hard_findings": 0,
+            "report_path": "dataset_gate.json",
         },
     }
     path = tmp_path / "MANIFEST.json"
