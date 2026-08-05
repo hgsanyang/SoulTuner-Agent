@@ -61,27 +61,12 @@ _FLAG = re.compile(r"(--[A-Za-z0-9][A-Za-z0-9_-]*)")
 
 
 def _run_help(subcommand: str) -> str:
-    executable = shutil.which("swift")
-    if not executable:
-        raise FileNotFoundError("`swift` is not on PATH")
-    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [executable, subcommand, "--help"],
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
-    # argparse writes --help to stdout; some wrappers use stderr. Take both.
-    help_text = f"{completed.stdout}\n{completed.stderr}"
-
-    # ms-swift 4.4's ``swift sft`` wrapper first runs a tiny parser used only
-    # to discover ``--tuner_backend``. Passing ``--help`` makes that parser
-    # exit before ``sft_main`` builds the real training parser, so the wrapper
-    # advertises only two flags and makes every useful flag look unsupported.
-    # Query the installed pipeline entry point when that shallow-help shape is
-    # detected. This is the same parser the command invokes after bootstrap;
-    # it does not load a model or use the GPU.
-    if subcommand == "sft" and len(parse_supported_flags(help_text)) <= 2:
+    # ms-swift 4.4's ``swift sft`` wrapper always runs a tiny bootstrap parser
+    # before ``sft_main``. Its help output changes with environment variables
+    # such as NPROC_PER_NODE and never describes the complete training CLI.
+    # Ask the installed pipeline parser directly for SFT. This remains a
+    # help-only operation: it neither loads a model nor initializes the GPU.
+    if subcommand == "sft":
         completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
             [
                 sys.executable,
@@ -94,8 +79,20 @@ def _run_help(subcommand: str) -> str:
             timeout=300,
             check=False,
         )
-        help_text = f"{completed.stdout}\n{completed.stderr}"
-    return help_text
+        return f"{completed.stdout}\n{completed.stderr}"
+
+    executable = shutil.which("swift")
+    if not executable:
+        raise FileNotFoundError("`swift` is not on PATH")
+    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [executable, subcommand, "--help"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    # argparse writes --help to stdout; some wrappers use stderr. Take both.
+    return f"{completed.stdout}\n{completed.stderr}"
 
 
 def parse_supported_flags(help_text: str) -> set[str]:
