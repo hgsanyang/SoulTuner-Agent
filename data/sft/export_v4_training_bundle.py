@@ -14,6 +14,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def export_bundle(manifest: Path, output: Path) -> dict:
+    manifest = manifest if manifest.is_absolute() else PROJECT_ROOT / manifest
+    output = output if output.is_absolute() else PROJECT_ROOT / output
     code, report = check_manifest(manifest, root=PROJECT_ROOT)
     if code != EXIT_OK:
         raise ValueError(f"manifest is not training-ready: {report['problems'][:5]}")

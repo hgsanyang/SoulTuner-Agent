@@ -1,6 +1,11 @@
+import json
+from pathlib import Path
+import tarfile
+
 from data.sft.benchmark_planner_endpoint import summarise
 from data.sft.check_planner_release import check_release
 from data.sft.compare_planner_scores import compare, compare_split_gap
+from data.sft import export_v4_training_bundle
 
 
 def _score(value: float = 1.0) -> dict:
@@ -135,3 +140,33 @@ def test_frozen_release_gate_checks_clarification_when_the_split_has_support():
 
     assert not report["passed"]
     assert any("sealed.clarification_recall" in finding for finding in report["findings"])
+
+
+def test_bundle_export_resolves_relative_paths_from_project_root(tmp_path, monkeypatch):
+    private_dir = tmp_path / "data" / "teacher" / "private" / "v4"
+    private_dir.mkdir(parents=True)
+    split_path = private_dir / "train.jsonl"
+    split_path.write_text("{}\n", encoding="utf-8")
+    manifest_path = private_dir / "MANIFEST.json"
+    manifest_path.write_text(
+        json.dumps({"splits": {"train": {"path": "data/teacher/private/v4/train.jsonl"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(export_v4_training_bundle, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        export_v4_training_bundle,
+        "check_manifest",
+        lambda manifest, root: (export_v4_training_bundle.EXIT_OK, {"problems": []}),
+    )
+
+    report = export_v4_training_bundle.export_bundle(
+        Path("data/teacher/private/v4/MANIFEST.json"),
+        Path("data/teacher/private/v4/export.tar.gz"),
+    )
+
+    archive_path = tmp_path / report["archive"] if not Path(report["archive"]).is_absolute() else Path(report["archive"])
+    with tarfile.open(archive_path, "r:gz") as archive:
+        assert archive.getnames() == [
+            "data/teacher/private/v4/MANIFEST.json",
+            "data/teacher/private/v4/train.jsonl",
+        ]
