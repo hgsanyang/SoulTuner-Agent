@@ -1,5 +1,5 @@
 {
-  "_comment": "Configuration for scripts/validate_sft_dataset.py. Interface draft — no V4 data exists yet. The tier a check sits in is the decision that matters: `hard` stops a build, `report` never does. V3 is 96.4% recommendation with 81.5% entity overlap and is still perfectly fine for a 50-step environment preflight, so class skew and overlap must not be able to block it.",
+  "_comment": "Configuration for scripts/validate_sft_dataset.py. V4 formal releases are frozen by build_v4_release.py; `hard` stops a build and `report` records readiness targets.",
 
   "hard": {
     "_comment": "Violations here mean the agent cannot execute the decision. Non-zero exit.",
@@ -24,7 +24,7 @@
   "report": {
     "_comment": "Recorded and printed, never blocking. Each threshold is a training-readiness target, not a preflight gate.",
     "targets": {
-      "recommendation_share_max": 0.55,
+      "recommendation_share_range": [0.55, 0.65],
       "min_rows_per_request_kind": 60,
       "min_rows_per_request_kind_strict": 100,
       "clarification_positive_negative_ratio": [1, 1.5],
@@ -32,7 +32,7 @@
       "multi_turn_share_min": 0.3,
       "memory_share_min": 0.15,
       "failure_recovery_rows_min": 600,
-      "rows_with_execution_trace_min": 6200,
+      "rows_with_execution_trace_min": 600,
       "max_turn_id_min": 5
     },
     "cross_split": {

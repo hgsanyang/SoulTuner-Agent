@@ -34,6 +34,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from data.sft.v4_contract import row_contract_errors
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = PROJECT_ROOT / "data" / "sft" / "v4" / "MANIFEST.schema.json"
 
@@ -55,6 +57,24 @@ def count_rows(path: Path) -> int:
         return sum(1 for line in handle if line.strip())
 
 
+def validate_jsonl_rows(path: Path) -> tuple[int, list[dict[str, Any]]]:
+    invalid = []
+    total = 0
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            total += 1
+            try:
+                row = json.loads(line)
+                errors = row_contract_errors(row)
+            except Exception as exc:
+                errors = [f"row: {type(exc).__name__}: {exc}"]
+            if errors:
+                invalid.append({"line": line_number, "errors": errors})
+    return total, invalid
+
+
 def schema_errors(manifest: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     try:
         from jsonschema import Draft202012Validator
@@ -74,6 +94,7 @@ def check_manifest(
     root: Path = PROJECT_ROOT,
     expect_train: Path | None = None,
     expect_val: Path | None = None,
+    expect_sealed: Path | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Return ``(exit_code, report)``. Never raises on bad input."""
 
@@ -134,7 +155,13 @@ def check_manifest(
             report["problems"].append(f"splits/{name}: file not found at {path}")
             continue
         entry["actual_sha256"] = sha256_file(path)
-        entry["actual_rows"] = count_rows(path)
+        entry["actual_rows"], invalid_rows = validate_jsonl_rows(path)
+        entry["invalid_contract_rows"] = len(invalid_rows)
+        entry["contract_examples"] = invalid_rows[:5]
+        if invalid_rows:
+            report["problems"].append(
+                f"splits/{name}: {len(invalid_rows)} row(s) fail the V4 provenance or execution contract"
+            )
         if entry["actual_sha256"] != entry["recorded_sha256"]:
             report["problems"].append(
                 f"splits/{name}: sha256 mismatch "
@@ -161,10 +188,20 @@ def check_manifest(
         if value not in (0, None):
             report["problems"].append(f"sealed_policy/measured/{field} = {value}, must be 0")
 
-    for label, expected in (("train", expect_train), ("val", expect_val)):
+    validator = manifest.get("validator") or {}
+    if validator.get("hard_findings") not in (0,):
+        report["problems"].append(
+            f"validator/hard_findings = {validator.get('hard_findings')!r}, must be 0"
+        )
+
+    for label, expected in (
+        ("train", expect_train),
+        ("val", expect_val),
+        ("sealed", expect_sealed),
+    ):
         if expected is None:
             continue
-        split_name = "train" if label == "train" else "regression"
+        split_name = {"train": "train", "val": "regression", "sealed": "sealed"}[label]
         entry = report["splits"].get(split_name) or {}
         resolved = entry.get("resolved_path")
         if resolved is None:
@@ -190,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--expect-train", type=Path)
     parser.add_argument("--expect-val", type=Path)
+    parser.add_argument("--expect-sealed", type=Path)
     parser.add_argument("--json", dest="json_out", type=Path)
     args = parser.parse_args(argv)
 
@@ -199,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
         root=args.root,
         expect_train=args.expect_train,
         expect_val=args.expect_val,
+        expect_sealed=args.expect_sealed,
     )
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

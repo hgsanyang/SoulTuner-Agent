@@ -63,7 +63,10 @@ KIND_LANES: dict[str, set[str]] = {
     "library": {"library"},
 }
 KIND_REQUIRED_ANY: dict[str, set[str]] = {
-    "recommendation": {"graph", "dense"},
+    # A catalog-gap recovery may intentionally use the web lane on its own
+    # after both local anchors have proved insufficient. Requiring a local
+    # lane here made that safe recovery impossible to represent.
+    "recommendation": {"graph", "dense", "web"},
     "information": {"graph", "web"},
     "acquisition": {"ingest"},
     "library": {"library"},
@@ -99,6 +102,8 @@ class PlannerDecisionV3(_Strict):
             return self
         if has_text:
             raise ValueError("clarification text only allowed when response_mode=clarify")
+        if ("dense" in lanes) != bool(self.acoustic_queries):
+            raise ValueError("dense lane and acoustic_queries must be selected together")
         if self.request_kind == "conversation":
             if lanes:
                 raise ValueError("conversation must carry no tool lanes")
@@ -130,13 +135,18 @@ def v3_to_legacy_intent(decision: PlannerDecisionV3) -> IntentType:
         return "acquire_music"
     if kind == "library":
         return "recommend_by_favorites"
-    if kind == "information":
-        return "web_search"
     lanes = set(decision.tool_names)
+    if kind == "information":
+        # V2 conflates request kind with retrieval lane. Pick the legacy label
+        # that can compile the selected lane, then restore the V3 request mode
+        # on the resulting ToolPlan.
+        return "web_search" if "web" in lanes else "graph_search"
     if "graph" in lanes and "dense" in lanes:
         return "hybrid_search"
     if "dense" in lanes:
         return "vector_search"
+    if "web" in lanes:
+        return "web_search"
     return "graph_search"
 
 
@@ -237,8 +247,71 @@ def migrate_v3_to_v2(decision: PlannerDecisionV3) -> PlannerDecisionV2:
     )
 
 
+def compile_v3_to_tool_plan(decision: PlannerDecisionV3):
+    """Compile every V3 lane into the executable ToolPlan 1.1 protocol.
+
+    Graph, dense and web still reuse the mature legacy compiler.  ``library``
+    and ``ingest`` cannot take that route because V2 has no representation for
+    either lane; dropping them made valid V3 targets look executable while the
+    requested tool never ran.
+    """
+    from schemas.planner_decision import compile_to_query_plan
+    from schemas.tool_plan import ToolCall, ToolName, ToolPlan
+
+    legacy_plan = compile_to_query_plan(migrate_v3_to_v2(decision))
+    base = legacy_plan.tool_plan
+    if decision.response_mode == "clarify" or decision.request_kind == "conversation":
+        return base
+    if decision.request_kind == "library":
+        return ToolPlan(
+            version="1.1",
+            origin="legacy_compiler",
+            request_mode="library",
+            tool_calls=[
+                ToolCall(
+                    id="library_read",
+                    name=ToolName.READ_LIBRARY,
+                    arguments={"collection": "liked", "query": decision.decision_summary},
+                    reason="read the user's library without mutating it",
+                )
+            ],
+            decision_summary=decision.decision_summary,
+            max_replans=0,
+        )
+    if decision.request_kind == "acquisition":
+        calls = list(base.tool_calls if base else [])
+        dependencies = [call.id for call in calls]
+        calls.append(
+            ToolCall(
+                id="ingest_preview",
+                name=ToolName.STAGE_INGEST,
+                arguments={
+                    "candidate_source_ids": [],
+                    "preserve_audio": False,
+                    "reason": decision.decision_summary,
+                    "mode": "preview",
+                },
+                depends_on=dependencies,
+                reason="stage a reversible ingest preview after discovery",
+            )
+        )
+        return ToolPlan(
+            version="1.1",
+            origin="legacy_compiler",
+            request_mode="acquisition",
+            tool_calls=calls,
+            decision_summary=decision.decision_summary,
+            max_replans=1,
+        )
+    if base is None:
+        raise ValueError("compiled V3 decision has no ToolPlan")
+    return base.model_copy(update={"request_mode": decision.request_kind})
+
+
 def compile_v3_to_query_plan(decision: PlannerDecisionV3):
-    """V3 -> MusicQueryPlan by reusing the V2 compiler (one compiler, no drift)."""
+    """V3 -> MusicQueryPlan with a lossless ToolPlan 1.1 compilation."""
     from schemas.planner_decision import compile_to_query_plan
 
-    return compile_to_query_plan(migrate_v3_to_v2(decision))
+    plan = compile_to_query_plan(migrate_v3_to_v2(decision))
+    plan.tool_plan = compile_v3_to_tool_plan(decision)
+    return plan

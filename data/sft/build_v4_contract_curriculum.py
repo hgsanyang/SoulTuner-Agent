@@ -62,6 +62,18 @@ TOPICS = (
     "语言不通时仍然会被声音打动",
     "专辑顺序是否会改变理解",
 )
+CONVERSATION_ANGLES = (
+    "从个人经历的角度",
+    "从声音记忆的角度",
+    "从情绪调节的角度",
+    "从文化背景的角度",
+    "从现场与录音差异的角度",
+    "从歌词叙事的角度",
+    "从习惯形成的角度",
+    "从人与人分享音乐的角度",
+    "从年龄变化的角度",
+    "从注意力与环境的角度",
+)
 
 LIBRARY_TEMPLATES = (
     "在我的{collection}里查找和 {artist} 有关的歌。",
@@ -85,6 +97,12 @@ ACQUISITION_TEMPLATES = (
     "查找《{song}》的 {artist} 原版，只做可撤销的入库预演。",
     "请发现并暂存 {artist}《{song}》，排除现场和翻唱版本。",
     "将 {artist} 的《{song}》加入待入库，但现在不要执行不可逆操作。",
+)
+ACQUISITION_QUALIFIERS = (
+    "优先正式录音室版本",
+    "核对歌手与专辑信息",
+    "排除同名翻唱和现场版",
+    "保留原始音质，不做不必要转码",
 )
 
 INFORMATION_TEMPLATES = (
@@ -201,9 +219,13 @@ def build_rows(
 
     for index in range(requested["conversation"]):
         topic = TOPICS[index % len(TOPICS)]
+        angle = CONVERSATION_ANGLES[
+            (index // len(TOPICS)) % len(CONVERSATION_ANGLES)
+        ]
         query = CONVERSATION_TEMPLATES[
-            (index // len(TOPICS)) % len(CONVERSATION_TEMPLATES)
-        ].format(topic=topic)
+            (index // (len(TOPICS) * len(CONVERSATION_ANGLES)))
+            % len(CONVERSATION_TEMPLATES)
+        ].format(topic=f"{topic}（{angle}）")
         decision = PlannerDecisionV3(
             request_kind="conversation",
             response_mode="answer",
@@ -215,9 +237,11 @@ def build_rows(
 
     for index in range(requested["library"]):
         artist = artists[index % len(artists)]
-        collection, action = COLLECTIONS[index % len(COLLECTIONS)]
+        collection, action = COLLECTIONS[
+            (index // len(artists)) % len(COLLECTIONS)
+        ]
         query = LIBRARY_TEMPLATES[
-            (index // max(1, len(artists))) % len(LIBRARY_TEMPLATES)
+            (index // (len(artists) * len(COLLECTIONS))) % len(LIBRARY_TEMPLATES)
         ].format(collection=collection, action=action, artist=artist)
         decision = PlannerDecisionV3(
             request_kind="library",
@@ -232,9 +256,13 @@ def build_rows(
 
     for index in range(requested["acquisition"]):
         artist, song = song_pairs[index % len(song_pairs)]
+        qualifier = ACQUISITION_QUALIFIERS[
+            (index // len(song_pairs)) % len(ACQUISITION_QUALIFIERS)
+        ]
         query = ACQUISITION_TEMPLATES[
-            (index // max(1, len(song_pairs))) % len(ACQUISITION_TEMPLATES)
-        ].format(artist=artist, song=song)
+            (index // (len(song_pairs) * len(ACQUISITION_QUALIFIERS)))
+            % len(ACQUISITION_TEMPLATES)
+        ].format(artist=artist, song=song) + f"；{qualifier}。"
         decision = PlannerDecisionV3(
             request_kind="acquisition",
             response_mode="answer",

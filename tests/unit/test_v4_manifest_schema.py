@@ -68,6 +68,18 @@ def manifest() -> dict:
                 "shared_templates": 0,
                 "max_near_dupe_jaccard": 0.41,
             },
+            "release_gates": {
+                "overall_vs_teacher_pp": -3.0,
+                "per_kind_max_regression_pp": 3.0,
+                "schema_validity": 1.0,
+                "lane_authority_violations": 0,
+                "sealed_vs_regression_max_gap_pp": 8.0,
+            },
+        },
+        "validator": {
+            "tool": "scripts/validate_sft_dataset.py",
+            "commit": "626ee9c",
+            "hard_findings": 0,
         },
     }
 
@@ -99,7 +111,9 @@ def test_the_sealed_episode_namespace_must_be_prefixed(validator, manifest):
     assert list(validator.iter_errors(manifest))
 
 
-@pytest.mark.parametrize("field", ["generator_commit", "dataset_version", "sealed_policy"])
+@pytest.mark.parametrize(
+    "field", ["generator_commit", "dataset_version", "sealed_policy", "validator"]
+)
 def test_provenance_fields_are_not_optional(validator, manifest, field):
     """A dataset that cannot say which commit built it cannot be regenerated."""
     del manifest[field]
@@ -108,6 +122,11 @@ def test_provenance_fields_are_not_optional(validator, manifest, field):
 
 def test_all_three_splits_are_required(validator, manifest):
     del manifest["splits"]["sealed"]
+    assert list(validator.iter_errors(manifest))
+
+
+def test_release_gates_are_frozen_before_scoring(validator, manifest):
+    del manifest["sealed_policy"]["release_gates"]
     assert list(validator.iter_errors(manifest))
 
 

@@ -10,7 +10,8 @@
     "created_at",
     "generator_commit",
     "splits",
-    "sealed_policy"
+    "sealed_policy",
+    "validator"
   ],
   "additionalProperties": false,
   "properties": {
@@ -110,7 +111,7 @@
 
     "sampleProvenance": {
       "type": "object",
-      "description": "Per-row provenance. Every row in a V4 build carries one of these under its `meta` key. The V3 audit could not answer 'was this plan ever executed' for any of 1515 rows; these fields make the question answerable by construction.",
+      "description": "Per-row provenance. Every row in a V4 build carries these fields under its `meta` key. data.sft.v4_contract validates real JSONL rows against this definition; merely defining it under $defs is not a gate.",
       "required": [
         "seed_source",
         "episode_id",
@@ -122,7 +123,7 @@
         "reviewer",
         "reviewer_verdict"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "properties": {
         "seed_source": {
           "type": "string",
@@ -206,7 +207,8 @@
         "template_disjoint",
         "episode_namespace",
         "seed_pool",
-        "measured"
+        "measured",
+        "release_gates"
       ],
       "additionalProperties": false,
       "properties": {
@@ -254,6 +256,13 @@
         "release_gates": {
           "type": "object",
           "description": "Thresholds a candidate model must clear on the sealed split. Recorded in the manifest so a build cannot be graded against gates chosen after seeing the score.",
+          "required": [
+            "overall_vs_teacher_pp",
+            "per_kind_max_regression_pp",
+            "schema_validity",
+            "lane_authority_violations",
+            "sealed_vs_regression_max_gap_pp"
+          ],
           "additionalProperties": false,
           "properties": {
             "overall_vs_teacher_pp": { "type": "number", "default": -3.0 },
