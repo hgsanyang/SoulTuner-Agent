@@ -231,15 +231,13 @@ def test_empty_help_is_unusable_not_a_pass():
     assert code == 4
 
 
-def test_sft_shallow_wrapper_help_falls_through_to_the_real_pipeline_parser():
-    shallow = "usage: sft.py [-h] [--tuner_backend TUNER_BACKEND]"
+def test_sft_help_always_uses_the_real_pipeline_parser():
     complete = "usage: sft [-h] [--model MODEL] [--dataset DATASET]"
     calls = []
 
     def fake_run(argv, **kwargs):
         calls.append(argv)
-        output = shallow if len(calls) == 1 else complete
-        return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
+        return subprocess.CompletedProcess(argv, 0, stdout=complete, stderr="")
 
     with (
         patch("data.sft.check_swift_flags.shutil.which", return_value="/bin/swift"),
@@ -247,9 +245,8 @@ def test_sft_shallow_wrapper_help_falls_through_to_the_real_pipeline_parser():
     ):
         help_text = _run_help("sft")
 
-    assert len(calls) == 2
-    assert calls[0] == ["/bin/swift", "sft", "--help"]
-    assert "from swift.pipelines import sft_main; sft_main()" in calls[1]
+    assert len(calls) == 1
+    assert "from swift.pipelines import sft_main; sft_main()" in calls[0]
     assert {"--model", "--dataset"} <= parse_supported_flags(help_text)
 
 
