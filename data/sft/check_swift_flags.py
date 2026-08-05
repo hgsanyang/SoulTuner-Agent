@@ -13,10 +13,16 @@ free, needs no GPU, and answers the question exactly. When a flag is missing it
 prints the alias this repo knows about so the operator changes one line instead
 of bisecting a crash.
 
-Exit codes: 0 all flags accepted, 4 the CLI could not be queried, 10 a flag is
-not accepted by this ms-swift build.
+Exit codes: 0 all flags accepted, 4 the CLI could not be queried or the flag
+list was empty, 10 a flag is not accepted by this ms-swift build.
 
-    python -m data.sft.check_swift_flags --subcommand sft --flags --model --tuner_type
+Flag names are accepted with or without leading dashes and normalised
+internally. That is not cosmetic: argparse cannot take ``--model`` as a *value*
+for ``--flags`` — it reads it as the next option — so the caller has to pass
+bare names, while the help text lists dashed ones. Matching one form against the
+other is how this gate silently checked nothing.
+
+    python -m data.sft.check_swift_flags --subcommand sft --flags model tuner_type
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -65,11 +72,44 @@ def _run_help(subcommand: str) -> str:
         check=False,
     )
     # argparse writes --help to stdout; some wrappers use stderr. Take both.
-    return f"{completed.stdout}\n{completed.stderr}"
+    help_text = f"{completed.stdout}\n{completed.stderr}"
+
+    # ms-swift 4.4's ``swift sft`` wrapper first runs a tiny parser used only
+    # to discover ``--tuner_backend``. Passing ``--help`` makes that parser
+    # exit before ``sft_main`` builds the real training parser, so the wrapper
+    # advertises only two flags and makes every useful flag look unsupported.
+    # Query the installed pipeline entry point when that shallow-help shape is
+    # detected. This is the same parser the command invokes after bootstrap;
+    # it does not load a model or use the GPU.
+    if subcommand == "sft" and len(parse_supported_flags(help_text)) <= 2:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [
+                sys.executable,
+                "-c",
+                "from swift.pipelines import sft_main; sft_main()",
+                "--help",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        help_text = f"{completed.stdout}\n{completed.stderr}"
+    return help_text
 
 
 def parse_supported_flags(help_text: str) -> set[str]:
     return set(_FLAG.findall(help_text or ""))
+
+
+def normalize_flags(flags: Iterable[str]) -> set[str]:
+    """Accept ``model`` or ``--model``; compare in the dashed form the help uses.
+
+    The caller cannot pass dashed names — argparse would read them as options —
+    but the help text only ever lists dashed ones. Normalising here is what makes
+    the two sides comparable at all.
+    """
+    return {f"--{item.strip().lstrip('-')}" for item in flags if item.strip().strip("-")}
 
 
 def check_flags(
@@ -80,11 +120,20 @@ def check_flags(
 ) -> tuple[int, dict]:
     report: dict = {
         "subcommand": subcommand,
-        "checked": sorted({f for f in flags if f.startswith("--")}),
+        "checked": sorted(normalize_flags(flags)),
         "supported": [],
         "missing": {},
         "problems": [],
     }
+    # An empty list is a configuration failure, never a pass. The previous
+    # version filtered on `startswith("--")` while the caller could only pass
+    # bare names, so every invocation checked zero flags and reported OK — a
+    # flag that does not exist in any ms-swift build sailed through.
+    if not report["checked"]:
+        report["problems"].append(
+            "no flags were configured to check; refusing to report a passing gate"
+        )
+        return EXIT_UNUSABLE, report
     try:
         help_text = help_reader(subcommand)
     except Exception as exc:  # noqa: BLE001 - any failure here means "cannot ask"
