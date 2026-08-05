@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://soultuner.local/schemas/sft-v4-manifest.json",
+  "title": "SFT V4 dataset manifest",
+  "description": "Describes one frozen V4 dataset build. Interface only — this file does not generate data. The V3 audit (2026-07-29) found that provenance was unrecorded (0 of 1515 rows carried a trace) and that the eval split shared 81.5% of its artists with train. Both are recorded here as required, machine-checkable fields so the next build cannot be shipped without answering them.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "dataset_version",
+    "created_at",
+    "generator_commit",
+    "splits",
+    "sealed_policy"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "manifest_version": {
+      "const": "1.0",
+      "description": "Schema version of this manifest, not of the data."
+    },
+    "dataset_version": {
+      "type": "string",
+      "pattern": "^v4\\.[0-9]+\\.[0-9]+$",
+      "description": "Frozen build identity. Rolling back means selecting an earlier value, never editing a JSONL in place."
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "generator_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "Commit of the repo that produced the build. Without it a dataset cannot be regenerated."
+    },
+    "notes": { "type": "string" },
+
+    "splits": {
+      "type": "object",
+      "description": "Three splits with different jobs. `regression` is the existing V3-era eval kept for continuity; it shares entities with train and therefore cannot measure generalisation. `sealed` is the only split allowed to gate a release.",
+      "required": ["train", "regression", "sealed"],
+      "additionalProperties": false,
+      "properties": {
+        "train": { "$ref": "#/$defs/split" },
+        "regression": { "$ref": "#/$defs/split" },
+        "sealed": { "$ref": "#/$defs/split" }
+      }
+    },
+
+    "sealed_policy": { "$ref": "#/$defs/sealedPolicy" },
+
+    "validator": {
+      "type": "object",
+      "description": "Which gate produced the recorded verdict.",
+      "required": ["tool", "commit", "hard_findings"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "const": "scripts/validate_sft_dataset.py" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+        "hard_findings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Must be 0 for a build intended for full training. A non-zero value is allowed only for a build explicitly marked preflight-only."
+        },
+        "report_path": { "type": "string" }
+      }
+    }
+  },
+
+  "$defs": {
+    "split": {
+      "type": "object",
+      "required": ["path", "sha256", "rows", "counts_by_request_kind", "counts_by_trajectory"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "rows": { "type": "integer", "minimum": 1 },
+        "counts_by_request_kind": {
+          "type": "object",
+          "description": "Per-class row counts. The V3 eval had 1 sample in three of five classes, where one sample is worth 100 percentage points and a 3pp gate is unmeasurable. Recording the counts makes that visible before training rather than after.",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "propertyNames": {
+            "enum": ["recommendation", "information", "acquisition", "library", "conversation"]
+          }
+        },
+        "counts_by_trajectory": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "propertyNames": { "$ref": "#/$defs/trajectoryKind" }
+        },
+        "min_rows_per_request_kind": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Smallest class size, i.e. the split's measurement resolution. 100/this = percentage points per sample."
+        }
+      }
+    },
+
+    "trajectoryKind": {
+      "type": "string",
+      "enum": [
+        "single_turn",
+        "multi_turn_inheritance",
+        "memory_vs_current_request",
+        "clarification_positive",
+        "clarification_negative",
+        "failure_recovery",
+        "library_state",
+        "acquisition",
+        "conversation"
+      ]
+    },
+
+    "sampleProvenance": {
+      "type": "object",
+      "description": "Per-row provenance. Every row in a V4 build carries one of these under its `meta` key. The V3 audit could not answer 'was this plan ever executed' for any of 1515 rows; these fields make the question answerable by construction.",
+      "required": [
+        "seed_source",
+        "episode_id",
+        "turn_id",
+        "request_kind",
+        "trajectory_kind",
+        "observation_origin",
+        "teacher",
+        "reviewer",
+        "reviewer_verdict"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "seed_source": {
+          "type": "string",
+          "enum": ["real_user_query", "curated_seed", "template_expansion"],
+          "description": "Where the user turn came from. A build whose seeds are all template_expansion is measuring its own templates."
+        },
+        "episode_id": { "type": "string", "minLength": 1 },
+        "turn_id": { "type": "integer", "minimum": 0 },
+        "trace_id": {
+          "type": ["string", "null"],
+          "description": "Execution trace this row was derived from. Required for production and controlled-harness executions."
+        },
+        "execution_environment": {
+          "type": "string",
+          "enum": ["production", "controlled_harness"],
+          "description": "Distinguishes real product traffic from deterministic fault injection. It is omitted when no tool observation exists."
+        },
+        "request_kind": {
+          "enum": ["recommendation", "information", "acquisition", "library", "conversation"]
+        },
+        "trajectory_kind": { "$ref": "#/$defs/trajectoryKind" },
+        "observation_origin": {
+          "type": "string",
+          "enum": ["none", "real_execution", "harness_execution", "teacher_authored"],
+          "description": "`none` is a single-shot planner row. `real_execution` is product traffic. `harness_execution` is an actual ToolPlan run with controlled fault injection. Teacher-authored failures are forbidden."
+        },
+        "teacher": { "$ref": "#/$defs/modelRef" },
+        "reviewer": { "$ref": "#/$defs/modelRef" },
+        "reviewer_verdict": { "enum": ["accept", "accept_with_edit", "reject"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "observation_origin": { "const": "real_execution" } }, "required": ["observation_origin"] },
+          "then": {
+            "required": ["trace_id", "execution_environment"],
+            "properties": {
+              "trace_id": { "type": "string", "minLength": 1 },
+              "execution_environment": { "const": "production" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "observation_origin": { "const": "harness_execution" } }, "required": ["observation_origin"] },
+          "then": {
+            "required": ["trace_id", "execution_environment"],
+            "properties": {
+              "trace_id": { "type": "string", "minLength": 1 },
+              "execution_environment": { "const": "controlled_harness" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "trajectory_kind": { "const": "failure_recovery" } }, "required": ["trajectory_kind"] },
+          "then": {
+            "properties": {
+              "observation_origin": {
+                "enum": ["real_execution", "harness_execution"]
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "modelRef": {
+      "type": "object",
+      "required": ["model", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string" },
+        "version": { "type": "string" },
+        "vendor": { "type": "string" }
+      }
+    },
+
+    "sealedPolicy": {
+      "type": "object",
+      "description": "The disjointness the sealed split must satisfy, recorded as measured values rather than as an intention. The V3 eval satisfied episode disjointness and still shared 81.5% of its artists with train.",
+      "required": [
+        "entity_disjoint",
+        "template_disjoint",
+        "episode_namespace",
+        "seed_pool",
+        "measured"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entity_disjoint": {
+          "const": true,
+          "description": "artist / song / album sets share nothing with train. Not negotiable: a sealed set that reuses train entities cannot distinguish learning from memorising."
+        },
+        "template_disjoint": {
+          "const": true,
+          "description": "Entity-blind normalised query forms share nothing with train."
+        },
+        "episode_namespace": {
+          "type": "string",
+          "pattern": "^sealed_",
+          "description": "Episode ids are prefixed so a cross-split join is impossible by accident."
+        },
+        "seed_pool": {
+          "type": "string",
+          "description": "Identifier of the seed batch. Must differ from every seed pool listed for train."
+        },
+        "measured": {
+          "type": "object",
+          "description": "What the validator actually observed. Intent is not evidence.",
+          "required": [
+            "shared_episodes",
+            "shared_artists",
+            "shared_songs",
+            "shared_templates",
+            "max_near_dupe_jaccard"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "shared_episodes": { "const": 0 },
+            "shared_artists": { "const": 0 },
+            "shared_songs": { "const": 0 },
+            "shared_templates": { "const": 0 },
+            "max_near_dupe_jaccard": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.6,
+              "description": "Highest character 5-gram Jaccard between any sealed row and any train row. 0.6 is the ceiling; V3's eval peaked at 0.84."
+            }
+          }
+        },
+        "release_gates": {
+          "type": "object",
+          "description": "Thresholds a candidate model must clear on the sealed split. Recorded in the manifest so a build cannot be graded against gates chosen after seeing the score.",
+          "additionalProperties": false,
+          "properties": {
+            "overall_vs_teacher_pp": { "type": "number", "default": -3.0 },
+            "per_kind_max_regression_pp": { "type": "number", "default": 5.0 },
+            "schema_validity": { "const": 1.0 },
+            "lane_authority_violations": { "const": 0 },
+            "sealed_vs_regression_max_gap_pp": {
+              "type": "number",
+              "default": 8.0,
+              "description": "Guards against the failure the V3 eval could not see: strong on familiar entities, collapsing on unseen ones."
+            }
+          }
+        }
+      }
+    }
+  }
+}

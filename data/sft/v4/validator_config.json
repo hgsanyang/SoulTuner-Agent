@@ -1,0 +1,83 @@
+{
+  "_comment": "Configuration for scripts/validate_sft_dataset.py. Interface draft — no V4 data exists yet. The tier a check sits in is the decision that matters: `hard` stops a build, `report` never does. V3 is 96.4% recommendation with 81.5% entity overlap and is still perfectly fine for a 50-step environment preflight, so class skew and overlap must not be able to block it.",
+
+  "hard": {
+    "_comment": "Violations here mean the agent cannot execute the decision. Non-zero exit.",
+    "checks": [
+      "assistant_not_json",
+      "schema_invalid",
+      "dense_lane_without_query",
+      "query_with_no_dense_lane",
+      "acoustic_query_not_english"
+    ],
+    "_schema_owned": [
+      "clarify_without_question",
+      "clarify_calls_tools",
+      "conversation_calls_tools",
+      "missing_required_lane",
+      "lane_outside_kind",
+      "ingest_outside_acquisition"
+    ],
+    "_schema_owned_comment": "Already enforced by PlannerDecisionV3._enforce_invariants, so they surface as schema_invalid. Listed here for the reader, NOT re-implemented — a duplicated check that can never fire reads like coverage and is worse than no check."
+  },
+
+  "report": {
+    "_comment": "Recorded and printed, never blocking. Each threshold is a training-readiness target, not a preflight gate.",
+    "targets": {
+      "recommendation_share_max": 0.55,
+      "min_rows_per_request_kind": 60,
+      "min_rows_per_request_kind_strict": 100,
+      "clarification_positive_negative_ratio": [1, 1.5],
+      "clarification_distinct_tropes_min": 6,
+      "multi_turn_share_min": 0.3,
+      "memory_share_min": 0.15,
+      "failure_recovery_rows_min": 600,
+      "rows_with_execution_trace_min": 6200,
+      "max_turn_id_min": 5
+    },
+    "cross_split": {
+      "regression": {
+        "_comment": "Continuity split. Entity overlap with train is expected and acceptable — it measures regression, not generalisation.",
+        "shared_episodes_max": 0,
+        "shared_exact_inputs_max": 0,
+        "entity_overlap_max": null
+      },
+      "sealed": {
+        "_comment": "The only split allowed to gate a release. Every value here is enforced, not advisory.",
+        "shared_episodes_max": 0,
+        "shared_exact_inputs_max": 0,
+        "shared_templates_max": 0,
+        "shared_artists_max": 0,
+        "shared_songs_max": 0,
+        "near_dupe_jaccard_max": 0.6
+      }
+    }
+  },
+
+  "privacy": {
+    "_comment": "The validator's output is meant to be pasteable into a shared report.",
+    "findings_carry": ["check", "split", "episode_id:turn_id", "machine_facts"],
+    "findings_never_carry": ["user_query_text", "assistant_payload_text", "pydantic_error_input"]
+  },
+
+  "v3_baseline_2026_07_29": {
+    "_comment": "Measured, for comparison. Recorded so a future build can be judged against a number rather than a memory.",
+    "train_rows": 1289,
+    "eval_rows": 226,
+    "system_prompt_variants": 1,
+    "hard_findings": 11,
+    "hard_findings_breakdown": {
+      "dense_lane_without_query": 7,
+      "acoustic_query_not_english": 4
+    },
+    "recommendation_share": 0.964,
+    "min_rows_per_request_kind_eval": 1,
+    "shared_episodes": 0,
+    "shared_templates": 0,
+    "eval_artist_mentions_seen_in_train": 0.815,
+    "eval_song_mentions_seen_in_train": 0.784,
+    "max_near_dupe_jaccard": 0.842,
+    "rows_with_execution_trace": 0,
+    "failure_recovery_rows": 0
+  }
+}
