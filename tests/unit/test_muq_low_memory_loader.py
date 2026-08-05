@@ -12,12 +12,29 @@ contract — which is exactly the thing that would regress.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 
 import pytest
 
-import retrieval.muq_embedder as muq
+
+# requirements-ci.txt deliberately omits the multi-gigabyte PyTorch runtime.
+# These tests replace every tensor/model/GPU collaborator, so importing the
+# module only needs the three torch attributes patched below. Keep the stub
+# local to this import; other tests must still see that torch is unavailable.
+if importlib.util.find_spec("torch") is None:
+    torch_stub = types.ModuleType("torch")
+    torch_stub.load = lambda *args, **kwargs: None
+    torch_stub.float16 = object()
+    torch_stub.float32 = object()
+    sys.modules["torch"] = torch_stub
+    try:
+        import retrieval.muq_embedder as muq
+    finally:
+        sys.modules.pop("torch", None)
+else:
+    import retrieval.muq_embedder as muq
 
 
 class FakeTensor:
