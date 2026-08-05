@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-650+_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-CI_passing-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -121,8 +121,8 @@ your sentence
 └──────────────────────┬───────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────┐
-│  Hybrid retrieval                                 │
-│  graph ＋ vector ＋ web supplement → fuse → rank  │
+│  Retrieval and catalog expansion                  │
+│  graph ＋ MuQ vector → fuse → optional web fill   │
 └──────────────────────┬───────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────┐
@@ -164,10 +164,14 @@ services/    memory gateway, feedback events, ranking policy, service clients
 schemas/     Pydantic contracts (state, query plan, feedback events)
 llms/        provider registry and prompts
 api/         FastAPI layer
-data/        data pipeline and distillation datasets
+data/        data pipeline and planner distillation harness
 web/         Next.js frontend
 tests/       unit tests + outcome-oriented evaluation
 ```
+
+The planner can be distilled into a local student model. The public repository
+ships the reproducible harness, while private training data stays outside Git;
+see [data/sft/README.md](data/sft/README.md).
 
 ---
 

@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+"""Check the ms-swift flags this repo passes actually exist on the installed CLI.
+
+Every flag name in ``train_planner_student.sh`` was written against a version of
+ms-swift nobody here can run: there is no ms-swift in the local conda env, so a
+renamed argument is invisible until the cloud instance is already billing. Two
+of them are known to move between releases — ``--train_type`` vs
+``--tuner_type`` for LoRA selection, and whether ``--enable_thinking`` is
+accepted by ``sft`` or only by ``infer``.
+
+Rather than guess, this asks the installed CLI. ``swift <subcommand> --help`` is
+free, needs no GPU, and answers the question exactly. When a flag is missing it
+prints the alias this repo knows about so the operator changes one line instead
+of bisecting a crash.
+
+Exit codes: 0 all flags accepted, 4 the CLI could not be queried, 10 a flag is
+not accepted by this ms-swift build.
+
+    python -m data.sft.check_swift_flags --subcommand sft --flags --model --tuner_type
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Callable, Iterable
+
+EXIT_OK = 0
+EXIT_UNUSABLE = 4
+EXIT_UNKNOWN_FLAG = 10
+
+# Names that are known to differ between ms-swift releases. If the configured
+# flag is rejected, these are printed as the candidates to try -- they are NOT
+# substituted automatically, because silently training with a different argument
+# than the script says is exactly the failure this file exists to prevent.
+KNOWN_ALIASES: dict[str, tuple[str, ...]] = {
+    "--tuner_type": ("--train_type", "--sft_type"),
+    "--train_type": ("--tuner_type", "--sft_type"),
+    "--enable_thinking": ("--template_kwargs", "--model_kwargs"),
+    "--target_modules": ("--lora_target_modules",),
+    "--tuner_backend": (),
+    "--freeze_vit": ("--freeze_vision_tower",),
+    "--freeze_aligner": ("--freeze_projector",),
+    "--create_checkpoint_symlink": (),
+    "--result_path": ("--result_dir",),
+    "--max_new_tokens": ("--max_tokens",),
+}
+
+_FLAG = re.compile(r"(--[A-Za-z0-9][A-Za-z0-9_-]*)")
+
+
+def _run_help(subcommand: str) -> str:
+    executable = shutil.which("swift")
+    if not executable:
+        raise FileNotFoundError("`swift` is not on PATH")
+    completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [executable, subcommand, "--help"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    # argparse writes --help to stdout; some wrappers use stderr. Take both.
+    return f"{completed.stdout}\n{completed.stderr}"
+
+
+def parse_supported_flags(help_text: str) -> set[str]:
+    return set(_FLAG.findall(help_text or ""))
+
+
+def check_flags(
+    subcommand: str,
+    flags: Iterable[str],
+    *,
+    help_reader: Callable[[str], str] = _run_help,
+) -> tuple[int, dict]:
+    report: dict = {
+        "subcommand": subcommand,
+        "checked": sorted({f for f in flags if f.startswith("--")}),
+        "supported": [],
+        "missing": {},
+        "problems": [],
+    }
+    try:
+        help_text = help_reader(subcommand)
+    except Exception as exc:  # noqa: BLE001 - any failure here means "cannot ask"
+        report["problems"].append(f"could not run `swift {subcommand} --help`: {exc}")
+        return EXIT_UNUSABLE, report
+
+    supported = parse_supported_flags(help_text)
+    if not supported:
+        report["problems"].append(
+            f"`swift {subcommand} --help` produced no recognisable flags; "
+            "the CLI may have failed to import"
+        )
+        return EXIT_UNUSABLE, report
+
+    report["supported_count"] = len(supported)
+    for flag in report["checked"]:
+        if flag in supported:
+            report["supported"].append(flag)
+        else:
+            report["missing"][flag] = [
+                alias for alias in KNOWN_ALIASES.get(flag, ()) if alias in supported
+            ]
+    if report["missing"]:
+        report["problems"].append(
+            f"{len(report['missing'])} flag(s) are not accepted by this ms-swift build"
+        )
+        return EXIT_UNKNOWN_FLAG, report
+    return EXIT_OK, report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--subcommand", default="sft")
+    parser.add_argument("--flags", nargs="+", required=True)
+    parser.add_argument("--json", dest="json_out", type=Path)
+    args = parser.parse_args(argv)
+
+    code, report = check_flags(args.subcommand, args.flags)
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    if code == EXIT_OK:
+        print(
+            f"SWIFT FLAGS OK: `swift {args.subcommand}` accepts all "
+            f"{len(report['checked'])} configured flag(s)"
+        )
+        return EXIT_OK
+    print(f"SWIFT FLAGS FAIL ({args.subcommand}):")
+    for problem in report["problems"]:
+        print(f"  - {problem}")
+    for flag, aliases in (report.get("missing") or {}).items():
+        hint = f" -> this build accepts {aliases}" if aliases else " (no known alias present)"
+        print(f"  - {flag} is not accepted{hint}")
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

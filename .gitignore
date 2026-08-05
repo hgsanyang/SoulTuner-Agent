@@ -104,6 +104,12 @@ data/knowledge_cache/
 data/**/*.json
 !data/music_database.json
 
+# V4 的这两个是接口定义(schema + 门禁配置)，不是数据；tests/unit 会读它们，
+# 漏提交会让全新 clone 直接测试失败。按文件名逐个放行，不放行整个目录 ——
+# 以后落到 data/sft/v4/ 的真实数据文件仍然要被上面那条规则挡住。
+!data/sft/v4/MANIFEST.schema.json
+!data/sft/v4/validator_config.json
+
 # Pipeline 运行时产物
 data/pipeline/ingest_progress.json
 data/pipeline/gemini_prompts/gemini_result.json

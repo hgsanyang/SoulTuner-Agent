@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-650+_passed-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-CI_passing-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -121,8 +121,8 @@ MUSIC_DATA_PATH=../data
 └──────────────────────┬───────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────┐
-│  混合检索                                         │
-│  图谱召回 ＋ 向量召回 ＋ 联网补充  →  融合 → 排序   │
+│  本地检索与曲库扩展                                │
+│  图谱召回 ＋ MuQ 向量召回 → 融合 → 按需联网补充    │
 └──────────────────────┬───────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────┐
@@ -164,10 +164,12 @@ services/    记忆网关、反馈事件、排序策略、外部服务客户端
 schemas/     Pydantic 契约（状态、查询计划、反馈事件）
 llms/        Provider 注册表与 Prompts
 api/         FastAPI 接口层
-data/        数据管线与蒸馏训练集
+data/        数据管线与 Planner 蒸馏 harness
 web/         Next.js 前端
 tests/       单元测试 + 结果导向评测
 ```
+
+Planner 支持蒸馏为本地学生模型。公开仓库只提供可复现的训练 harness，私有训练数据不会进入 Git；详见 [data/sft/README.md](data/sft/README.md)。
 
 ---
 

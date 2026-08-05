@@ -1,37 +1,68 @@
-# data/sft/
+# Planner distillation harness
 
-Planner 蒸馏训练数据。格式为 JSONL，每行一个 ChatML `messages` 对象。
+This directory contains the public contracts, validators and launch scripts for
+distilling SoulTuner's LLM planner. Private conversations and frozen training
+JSONL files are intentionally excluded from Git.
 
-## 当前在用（Planner V3）
+## Output contract
 
-| 文件 | 条数 | 说明 |
-|------|------|------|
-| `train_v3_chatml.jsonl` | 1289 | 冻结训练集 |
-| `eval_v3_chatml.jsonl` | 226 | 冻结验证集 |
-| `pilot_episodes_1200.jsonl` | 1128 | 原始 episode 种子（按比例生成） |
+The student emits one strict `PlannerDecisionV3` object. A deterministic
+compiler turns it into executable `ToolPlan 1.1` calls for graph, dense audio,
+web discovery, library reads and reversible ingest previews. Tool observations
+remain input context; they are never mixed into the assistant target as a
+second JSON protocol.
 
-训练/验证是**按 episode 切分**而不是按单轮切分——同一段多轮对话的不同轮次必须留在同一侧，否则模型在验证集上看到的是自己训练过的上下文，分数会虚高。
+## Data gates
 
-## 已废弃
+A formal release must include three immutable splits:
 
-`planner_sft_data.jsonl`（600 条）、`train_chatml.jsonl`、`eval_chatml.jsonl` 是早期单轮种子，缺少真实对话上下文，**不要再用来训练**，保留仅为复现历史结果。
+- `train`: teacher-reviewed planning trajectories;
+- `regression`: continuity checks for known behaviours;
+- `sealed`: independently reviewed, entity- and template-disjoint cases that
+  are never used for training or checkpoint selection. Its recommendation
+  slice also covers single-turn requests, multi-turn inheritance, memory/current
+  conflicts, necessary clarification and over-clarification traps.
 
-## Planner V3 闸门数据
+Every row carries provenance. `MANIFEST.json` records row counts, SHA-256
+digests, the generator commit and measured split overlap. Formal training stops
+before using a GPU if the manifest, row contract or fingerprints do not match.
 
-- `reviews/v3_ambiguous_review.jsonl`：71 条 V2→V3 争议样本的逐条裁决，保留原始 query、原决策、修订决策和理由。
-- `reviews/v3_resolved_trainable.jsonl`：64 条人工复核后解除隔离的争议样本。
-- `curated_v3_gap_seeds.jsonl`：conversation、acquisition、library 各 8 条人工策划契约种子。
-- 7 条过度澄清样本由强 teacher 重新采集后全部通过严格 V3 schema；私有结果不进入 Git。
+The local private corpus can be rebuilt with:
 
-最终冻结集共 1515 条，按 seed family 切分为 1289/226；episode、seed family、query 三种交叉泄漏均为 0。
-
-这些文件都带有 `source_type`、`data_purpose` 和 `training_eligible`。审计输入由 SHA-256 冻结，不允许在源文件变化后继续机械套用旧裁决。
-
-重新生成：
-
-```powershell
-python -m data.sft.review_v3_ambiguous --source data/teacher/private/ambiguous_samples.jsonl
-python -m data.sft.generate_v3_gap_seeds
+```bash
+python -m data.sft.build_v4_release
+python -m data.sft.verify_frozen_manifest \
+  --manifest data/teacher/private/v4/frozen-v4.0.0/MANIFEST.json
 ```
 
-`read_library` 与 `stage_ingest` 从 ToolPlan `1.1` 起可用。后者只生成 shadow 预演，不写队列；主图的 `TOOL_PLAN_EXECUTION_ENABLED` 仍保持关闭。
+## 9B / 35B comparison
+
+The reference comparison uses `Qwen/Qwen3.5-9B` and
+`Qwen/Qwen3.6-35B-A3B` with the same data, seed and LoRA settings. Runs are
+sequential so they do not distort each other's memory use or throughput.
+
+```bash
+MANIFEST_FILE=<manifest> \
+TRAIN_FILE=<train.jsonl> \
+VAL_FILE=<regression.jsonl> \
+SEALED_FILE=<sealed.jsonl> \
+bash data/sft/run_planner_contrast.sh
+```
+
+This command performs environment and 50-step preflights only. Set
+`RUN_FULL=1` only after both preflights pass. The harness verifies installed
+ms-swift flags, AMD ROCm availability, clean code provenance, fresh logs,
+non-zero finite loss, adapter artifacts, complete predictions and strict V3
+schema compliance.
+
+After training, `check_planner_release.py` applies the thresholds frozen before
+training, while `compare_planner_scores.py` compares 9B and 35B overall and by
+request kind. `benchmark_planner_endpoint.py` measures schema validity and p50 /
+p95 latency against an OpenAI-compatible local endpoint. Planner quality,
+end-to-end recommendation quality and served latency remain separate gates.
+
+## Historical files
+
+Earlier V2/V3 datasets and review artifacts remain for reproducibility. They
+are not formal V4 training inputs unless a new manifest explicitly names and
+fingerprints them.

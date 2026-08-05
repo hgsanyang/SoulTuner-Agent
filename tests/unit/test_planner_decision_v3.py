@@ -8,10 +8,12 @@ from schemas.planner_decision import PlannerDecisionV2, compile_to_query_plan
 from schemas.planner_decision_v3 import (
     PlannerDecisionV3,
     compile_v3_to_query_plan,
+    compile_v3_to_tool_plan,
     migrate_v2_to_v3,
     migrate_v3_to_v2,
     v3_to_legacy_intent,
 )
+from schemas.tool_plan import ToolName
 
 
 def test_valid_v3_decisions():
@@ -50,9 +52,9 @@ def test_clarify_is_an_action_not_a_kind():
 
 
 def test_request_kind_requires_capable_lane():
-    # web alone cannot serve a recommendation (needs a local recall lane)
-    with pytest.raises(ValueError):
-        PlannerDecisionV3(request_kind="recommendation", tool_names=["web"])
+    # web alone is valid after the catalog-gap detector proves local recall is
+    # insufficient; it still remains an explicit planner choice.
+    PlannerDecisionV3(request_kind="recommendation", tool_names=["web"])
     # dense (acoustic) cannot answer a factual question
     with pytest.raises(ValueError):
         PlannerDecisionV3(request_kind="information", tool_names=["dense"])
@@ -60,6 +62,17 @@ def test_request_kind_requires_capable_lane():
         PlannerDecisionV3(request_kind="recommendation")  # no lanes at all
     with pytest.raises(ValueError):
         PlannerDecisionV3(request_kind="conversation", tool_names=["dense"])
+
+
+def test_dense_lane_and_acoustic_queries_are_locked_together():
+    with pytest.raises(ValueError):
+        PlannerDecisionV3(request_kind="recommendation", tool_names=["dense"])
+    with pytest.raises(ValueError):
+        PlannerDecisionV3(
+            request_kind="recommendation",
+            tool_names=["graph"],
+            acoustic_queries=["warm restrained acoustic music"],
+        )
 
 
 def test_web_search_migration_is_flagged_ambiguous():
@@ -140,3 +153,51 @@ def test_legacy_intent_recovered_from_lanes():
                                                  acoustic_queries=["x"])) == "hybrid_search"
     assert v3_to_legacy_intent(PlannerDecisionV3(request_kind="information",
                                                  tool_names=["web"])) == "web_search"
+    assert v3_to_legacy_intent(PlannerDecisionV3(request_kind="information",
+                                                 tool_names=["graph"])) == "graph_search"
+    assert v3_to_legacy_intent(PlannerDecisionV3(request_kind="recommendation",
+                                                 tool_names=["web"])) == "web_search"
+
+
+def test_v3_library_lane_survives_compilation():
+    decision = PlannerDecisionV3(
+        request_kind="library",
+        tool_names=["library"],
+        decision_summary="查看我收藏的陈奕迅歌曲",
+    )
+
+    tool_plan = compile_v3_to_tool_plan(decision)
+    query_plan = compile_v3_to_query_plan(decision)
+
+    assert tool_plan.version == "1.1"
+    assert tool_plan.request_mode == "library"
+    assert [call.name for call in tool_plan.tool_calls] == [ToolName.READ_LIBRARY]
+    assert query_plan.tool_plan == tool_plan
+
+
+def test_v3_acquisition_lane_stages_only_a_preview():
+    decision = PlannerDecisionV3(
+        request_kind="acquisition",
+        tool_names=["web", "ingest"],
+        decision_summary="发现正式版本后先进入待入库",
+    )
+
+    tool_plan = compile_v3_to_tool_plan(decision)
+    calls = {call.name: call for call in tool_plan.tool_calls}
+
+    assert tool_plan.version == "1.1"
+    assert tool_plan.request_mode == "acquisition"
+    assert ToolName.SEARCH_EXTERNAL_MUSIC in calls
+    assert ToolName.STAGE_INGEST in calls
+    assert calls[ToolName.STAGE_INGEST].arguments["mode"] == "preview"
+    assert calls[ToolName.STAGE_INGEST].arguments["preserve_audio"] is False
+
+
+def test_v3_allows_web_only_catalog_gap_recommendation():
+    decision = PlannerDecisionV3(
+        request_kind="recommendation",
+        tool_names=["web"],
+        decision_summary="local catalog is insufficient",
+    )
+
+    assert decision.tool_names == ["web"]
