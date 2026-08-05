@@ -395,3 +395,93 @@ def test_the_word_think_in_prose_is_not_a_thinking_block(tmp_path):
     assert not scan_row(row)
     code, _ = verify(_pred(tmp_path, [row]))
     assert code == 0
+
+
+# --------------------------------------------------------------- projection ---
+# 冻结的 train 分片里 lineage 不同形（5700 行两键 / 411 行三键）。Arrow struct 强类型，
+# datasets 从文件头推出两键结构后读到三键行就 cast 失败，训练在加载数据集时崩溃。
+# 训练只读 messages，所以派生一份只含 messages 的副本；冻结字节不动，manifest 仍成立。
+
+from data.sft.project_chatml import main as project_main  # noqa: E402
+
+
+def _chatml(tmp_path, rows):
+    path = tmp_path / "frozen.jsonl"
+    path.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
+    return path
+
+
+def _row(i, lineage):
+    return {
+        "messages": [
+            {"role": "user", "content": f"request {i}"},
+            {"role": "assistant", "content": '{"request_kind": "recommendation"}'},
+        ],
+        "meta": {"episode_id": f"e{i}"},
+        "lineage": lineage,
+    }
+
+
+def test_a_heterogeneous_lineage_survives_projection(tmp_path):
+    """真实形状：多数行两键，少数行三键。投影后两种行都在，且顺序不变。"""
+    source = _chatml(tmp_path, [
+        _row(0, {"builder": "b", "builder_version": "1"}),
+        _row(1, {"builder": "b", "builder_version": "1", "clarification_trope": "vague"}),
+        _row(2, {"builder": "b", "builder_version": "1"}),
+    ])
+    target = tmp_path / "projected.jsonl"
+    assert project_main(["--source", str(source), "--target", str(target)]) == 0
+
+    out = [json.loads(x) for x in target.read_text(encoding="utf-8").splitlines()]
+    assert len(out) == 3
+    assert all(set(r) == {"messages"} for r in out), "投影必须只保留 messages"
+    src = [json.loads(x) for x in source.read_text(encoding="utf-8").splitlines()]
+    assert [r["messages"] for r in out] == [r["messages"] for r in src], "对话内容或顺序变了"
+
+
+def test_the_frozen_source_is_never_modified(tmp_path):
+    """冻结文件的 SHA-256 必须原样不动，否则 manifest 立刻失效。"""
+    source = _chatml(tmp_path, [_row(0, {"builder": "b", "builder_version": "1"})])
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    project_main(["--source", str(source), "--target", str(tmp_path / "p.jsonl")])
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+
+
+def test_a_row_without_messages_fails_closed(tmp_path):
+    """少一行对话比加载报错糟得多，所以宁可失败也不静默跳过。"""
+    source = _chatml(tmp_path, [{"meta": {"episode_id": "no-messages"}}])
+    assert project_main(["--source", str(source), "--target", str(tmp_path / "p.jsonl")]) == 4
+
+
+def test_a_missing_source_is_not_a_pass(tmp_path):
+    assert project_main(["--source", str(tmp_path / "nope.jsonl"),
+                         "--target", str(tmp_path / "p.jsonl")]) == 4
+
+
+def test_the_report_records_both_digests(tmp_path):
+    source = _chatml(tmp_path, [_row(0, {"builder": "b", "builder_version": "1"})])
+    target = tmp_path / "p.jsonl"
+    report_path = tmp_path / "report.json"
+    project_main(["--source", str(source), "--target", str(target),
+                  "--json", str(report_path)])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert report["target_sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
+    assert report["rows"] == report["kept"] == 1
+
+
+def test_the_training_script_feeds_swift_the_projection_not_the_frozen_file():
+    """把脚本和投影绑在一起：swift 必须吃派生副本，manifest 必须校验原文件。
+
+    这条存在的理由和前面那条 flag 门的端到端测试一样——两边各自看着都对，
+    但没人验证过它们接得上。
+    """
+    script = (
+        Path(__file__).resolve().parents[2] / "data" / "sft" / "train_planner_student.sh"
+    ).read_text(encoding="utf-8")
+    assert '--dataset "$SWIFT_TRAIN_FILE"' in script
+    assert '--val_dataset "$SWIFT_VAL_FILE"' in script
+    assert '--expect-train "$TRAIN_FILE"' in script, "manifest 必须校验冻结原文件"
+    assert "data.sft.project_chatml" in script
