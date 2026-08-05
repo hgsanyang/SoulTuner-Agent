@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from data.sft.check_swift_flags import check_flags, parse_supported_flags
+from data.sft.check_swift_flags import _run_help, check_flags, parse_supported_flags
 from data.sft.verify_frozen_manifest import check_manifest
 from data.sft.verify_infer_output import scan_row, verify
 
@@ -227,6 +229,28 @@ def test_a_cli_that_cannot_be_queried_is_unusable_not_a_pass():
 def test_empty_help_is_unusable_not_a_pass():
     code, _ = check_flags("sft", ["--model"], help_reader=lambda _: "")
     assert code == 4
+
+
+def test_sft_shallow_wrapper_help_falls_through_to_the_real_pipeline_parser():
+    shallow = "usage: sft.py [-h] [--tuner_backend TUNER_BACKEND]"
+    complete = "usage: sft [-h] [--model MODEL] [--dataset DATASET]"
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        output = shallow if len(calls) == 1 else complete
+        return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
+
+    with (
+        patch("data.sft.check_swift_flags.shutil.which", return_value="/bin/swift"),
+        patch("data.sft.check_swift_flags.subprocess.run", side_effect=fake_run),
+    ):
+        help_text = _run_help("sft")
+
+    assert len(calls) == 2
+    assert calls[0] == ["/bin/swift", "sft", "--help"]
+    assert "from swift.pipelines import sft_main; sft_main()" in calls[1]
+    assert {"--model", "--dataset"} <= parse_supported_flags(help_text)
 
 
 # ── 下面四条锁的是"调用方真正能传什么" ─────────────────────────────────────

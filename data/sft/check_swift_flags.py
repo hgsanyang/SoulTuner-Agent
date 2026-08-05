@@ -32,6 +32,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -71,7 +72,30 @@ def _run_help(subcommand: str) -> str:
         check=False,
     )
     # argparse writes --help to stdout; some wrappers use stderr. Take both.
-    return f"{completed.stdout}\n{completed.stderr}"
+    help_text = f"{completed.stdout}\n{completed.stderr}"
+
+    # ms-swift 4.4's ``swift sft`` wrapper first runs a tiny parser used only
+    # to discover ``--tuner_backend``. Passing ``--help`` makes that parser
+    # exit before ``sft_main`` builds the real training parser, so the wrapper
+    # advertises only two flags and makes every useful flag look unsupported.
+    # Query the installed pipeline entry point when that shallow-help shape is
+    # detected. This is the same parser the command invokes after bootstrap;
+    # it does not load a model or use the GPU.
+    if subcommand == "sft" and len(parse_supported_flags(help_text)) <= 2:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [
+                sys.executable,
+                "-c",
+                "from swift.pipelines import sft_main; sft_main()",
+                "--help",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        help_text = f"{completed.stdout}\n{completed.stderr}"
+    return help_text
 
 
 def parse_supported_flags(help_text: str) -> set[str]:
