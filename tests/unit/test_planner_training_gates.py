@@ -170,3 +170,80 @@ def test_bundle_export_resolves_relative_paths_from_project_root(tmp_path, monke
             "data/teacher/private/v4/MANIFEST.json",
             "data/teacher/private/v4/train.jsonl",
         ]
+
+
+# --- 小样本类别：报告而不是硬门 ----------------------------------------------
+# regression 里 acquisition/library/conversation 各只有 1 条。n=1 时 per-kind
+# 指标只能是 0.0 或 1.0：判错一次直接卡住发布，判对也证明不了 3pp 的测量能力。
+# 这类类别改为 canary 报告；sealed 五类各 100 条，继续按统计硬门执行。
+
+def _frozen_manifest():
+    return {
+        "dataset_version": "v4.0.0",
+        "sealed_policy": {
+            "release_gates": {
+                "overall_vs_teacher_pp": -3.0,
+                "per_kind_max_regression_pp": 3.0,
+                "schema_validity": 1.0,
+                "lane_authority_violations": 0,
+                "sealed_vs_regression_max_gap_pp": 8.0,
+            }
+        },
+    }
+
+
+def _healthy(value: float = 1.0, *, supports: dict[str, int] | None = None) -> dict:
+    score = _score(value)
+    score["schema_valid"] = 1.0
+    score["compilable"] = 1.0
+    for kind, support in (supports or {}).items():
+        score.setdefault("by_request_kind", {}).setdefault(kind, {})
+        score["by_request_kind"][kind].update(
+            {"request_kind_acc": value, "lane_f1": value, "support": support}
+        )
+    return score
+
+
+def test_a_single_row_category_in_regression_is_a_canary_not_a_hard_gate():
+    regression = _healthy(supports={"acquisition": 1})
+    regression["by_request_kind"]["acquisition"]["lane_f1"] = 0.0   # n=1 判错一次
+    sealed = _healthy()
+
+    report = check_release(_frozen_manifest(), regression, sealed)
+
+    assert not any("acquisition" in f for f in report["findings"]), \
+        "n=1 的类别不该卡住发布"
+    assert any("acquisition" in c for c in report["low_support_canaries"]), \
+        "但必须报出来，不能装作没看见"
+
+
+def test_a_well_supported_regression_category_still_fails_hard():
+    regression = _healthy(supports={"recommendation": 218})
+    regression["by_request_kind"]["recommendation"]["lane_f1"] = 0.5
+    sealed = _healthy()
+
+    report = check_release(_frozen_manifest(), regression, sealed)
+
+    assert not report["passed"]
+    assert any("recommendation" in f and "support=218" in f for f in report["findings"])
+
+
+def test_sealed_is_always_a_hard_gate_regardless_of_support():
+    """sealed 是唯一允许卡发布的切分；即便某类支持数被误记成很小也不豁免。"""
+    sealed = _healthy(supports={"library": 3})
+    sealed["by_request_kind"]["library"]["request_kind_acc"] = 0.4
+    report = check_release(_frozen_manifest(), _healthy(), sealed)
+
+    assert not report["passed"]
+    assert any("sealed.library" in f for f in report["findings"])
+    assert not any("sealed.library" in c for c in report["low_support_canaries"])
+
+
+def test_the_report_states_every_category_support():
+    regression = _healthy(supports={"acquisition": 1, "recommendation": 218})
+    report = check_release(_frozen_manifest(), regression, _healthy())
+
+    supports = report["support_by_request_kind"]["regression"]
+    assert supports["acquisition"] == 1 and supports["recommendation"] == 218, \
+        "读报告的人必须能看到每类的样本量，否则无从判断一个数字值多少"
+    assert report["thresholds"]["min_support_for_statistical_gate"] == 20
