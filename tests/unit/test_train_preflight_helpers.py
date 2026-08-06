@@ -617,3 +617,151 @@ def test_the_runner_binds_the_commit_through_an_env_var_not_a_hardcoded_sha():
     shas = set(re.findall(r"\b[0-9a-f]{40}\b", script)) - {
         "48d87edc3fe52d52031cbb3ad78633fc5a4e54d4"}
     assert not shas, f"训练提交不该硬编码在脚本里: {shas}"
+
+
+# ------------------------------------------------- canonical prompt eval ---
+# 冻结分片的 system prompt 不一致：train/regression 是 662 字符的
+# STUDENT_SYSTEM_PROMPT_V3，sealed 是 77 字符的另一条。那是两条代码路径的意外，
+# 不是刻意的 prompt 鲁棒性设计。但 sealed 分数因此是"模型没见过的 prompt 下"的
+# 泛化，不是部署条件下的表现。派生一份换成 canonical prompt 的 eval 输入，
+# gold 一字不改，两个分数的差就是 prompt 敏感度。
+
+from data.sft.derive_canonical_prompt_eval import (  # noqa: E402
+    canonical_prompt,
+    main as derive_main,
+)
+
+LONG = "你是音乐智能体的决策器。" + "契约说明。" * 60
+SHORT = "你是 SoulTuner 的 Planner。"
+
+
+def _eval_row(i, system, extra=None):
+    row = {
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"帮我找歌 {i}"},
+            {"role": "assistant", "content": '{"request_kind": "recommendation"}'},
+        ],
+        "meta": {"episode_id": f"e{i}", "turn_id": 1},
+    }
+    if extra:
+        row["lineage"] = extra
+    return row
+
+
+def _jsonl(tmp_path, name, rows):
+    path = tmp_path / name
+    path.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
+    return path
+
+
+def test_the_sealed_prompt_is_replaced_and_the_gold_is_not(tmp_path):
+    """换的是问法，不是答案。assistant 一个字节都不能动。"""
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(i, LONG) for i in range(3)])
+    source = _jsonl(tmp_path, "sealed.jsonl", [
+        _eval_row(0, SHORT, {"builder": "b", "entity": "x"}),
+        _eval_row(1, SHORT, {"collector": "c", "seed_kind": "k"}),
+    ])
+    target = tmp_path / "sealed_canonical.jsonl"
+    assert derive_main(["--source", str(source), "--target", str(target),
+                        "--reference", str(reference)]) == 0
+
+    out = [json.loads(x) for x in target.read_text(encoding="utf-8").splitlines()]
+    src = [json.loads(x) for x in source.read_text(encoding="utf-8").splitlines()]
+    assert [r["messages"][0]["content"] for r in out] == [LONG, LONG]
+    assert [r["messages"][2] for r in out] == [r["messages"][2] for r in src], "gold 被改了"
+    assert [r["messages"][1] for r in out] == [r["messages"][1] for r in src], "user 被改了"
+    assert [r["meta"] for r in out] == [r["meta"] for r in src], "meta 丢了，打分就对不上"
+    assert [r["lineage"] for r in out] == [r["lineage"] for r in src]
+
+
+def test_meta_survives_because_scoring_aligns_on_it(tmp_path):
+    """score_student 用 meta.episode_id#turn_id 对齐 gold 与预测。
+    丢了它，两边各自退回按 user 文本哈希，覆盖率直接归零而不是报错。"""
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(0, LONG)])
+    source = _jsonl(tmp_path, "sealed.jsonl", [_eval_row(7, SHORT)])
+    target = tmp_path / "d.jsonl"
+    derive_main(["--source", str(source), "--target", str(target),
+                 "--reference", str(reference)])
+    out = json.loads(target.read_text(encoding="utf-8").splitlines()[0])
+    assert out["meta"] == {"episode_id": "e7", "turn_id": 1}
+
+
+def test_the_frozen_source_is_never_rewritten(tmp_path):
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(0, LONG)])
+    source = _jsonl(tmp_path, "sealed.jsonl", [_eval_row(0, SHORT)])
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    derive_main(["--source", str(source), "--target", str(tmp_path / "d.jsonl"),
+                 "--reference", str(reference)])
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+
+
+def test_deriving_onto_the_source_is_refused(tmp_path):
+    """目标就是冻结文件时必须拒绝——那会当场毁掉 manifest 身份。"""
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(0, LONG)])
+    source = _jsonl(tmp_path, "sealed.jsonl", [_eval_row(0, SHORT)])
+    assert derive_main(["--source", str(source), "--target", str(source),
+                        "--reference", str(reference)]) == 4
+
+
+def test_a_reference_with_two_prompts_has_no_canonical_answer(tmp_path):
+    """参考分片自己就有两种 prompt 时，选哪条都是掷硬币冒充测量，必须失败。"""
+    reference = _jsonl(tmp_path, "mixed.jsonl", [_eval_row(0, LONG), _eval_row(1, SHORT)])
+    source = _jsonl(tmp_path, "sealed.jsonl", [_eval_row(0, SHORT)])
+    assert derive_main(["--source", str(source), "--target", str(tmp_path / "d.jsonl"),
+                        "--reference", str(reference)]) == 4
+    with pytest.raises(ValueError, match="2 distinct system prompts"):
+        canonical_prompt(reference)
+
+
+def test_a_row_that_does_not_start_with_system_fails_closed(tmp_path):
+    """不能猜哪条是 system——猜错就是把 user 内容换成了 prompt。"""
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(0, LONG)])
+    bad = {"messages": [{"role": "user", "content": "hi"},
+                        {"role": "assistant", "content": "{}"}]}
+    source = _jsonl(tmp_path, "sealed.jsonl", [bad])
+    assert derive_main(["--source", str(source), "--target", str(tmp_path / "d.jsonl"),
+                        "--reference", str(reference)]) == 4
+
+
+def test_no_partial_file_survives_a_failure(tmp_path):
+    """半截的 eval 输入下一次跑起来看着完全正常，会静默只评一部分。"""
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(0, LONG)])
+    source = _jsonl(tmp_path, "sealed.jsonl", [_eval_row(0, SHORT),
+                                               {"messages": [{"role": "user", "content": "x"}]}])
+    target = tmp_path / "d.jsonl"
+    assert derive_main(["--source", str(source), "--target", str(target),
+                        "--reference", str(reference)]) == 4
+    assert not target.exists(), "失败后不该留下目标文件"
+    assert not list(tmp_path.glob("*.partial")), "临时文件必须清掉"
+
+
+def test_the_report_records_both_prompts_and_digests(tmp_path):
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(0, LONG)])
+    source = _jsonl(tmp_path, "sealed.jsonl", [_eval_row(0, SHORT), _eval_row(1, SHORT)])
+    target = tmp_path / "d.jsonl"
+    report_path = tmp_path / "r.json"
+    derive_main(["--source", str(source), "--target", str(target),
+                 "--reference", str(reference), "--json", str(report_path)])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["rows"] == 2
+    assert report["system_replaced"] == 2
+    assert report["system_already_canonical"] == 0
+    assert report["canonical_prompt_chars"] == len(LONG)
+    assert report["source_sha256"] != report["target_sha256"]
+    assert len(report["source_system_prompts"]) == 1
+
+
+def test_an_already_canonical_split_is_reported_as_such_not_replaced(tmp_path):
+    """regression 已经是 canonical prompt；派生它应当是恒等操作并如实说明。"""
+    reference = _jsonl(tmp_path, "train.jsonl", [_eval_row(0, LONG)])
+    source = _jsonl(tmp_path, "regression.jsonl", [_eval_row(0, LONG), _eval_row(1, LONG)])
+    target = tmp_path / "d.jsonl"
+    report_path = tmp_path / "r.json"
+    assert derive_main(["--source", str(source), "--target", str(target),
+                        "--reference", str(reference), "--json", str(report_path)]) == 0
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["system_already_canonical"] == 2
+    assert report["system_replaced"] == 0
