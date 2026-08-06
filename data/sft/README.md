@@ -35,6 +35,55 @@ python -m data.sft.verify_frozen_manifest \
   --manifest data/teacher/private/v4/frozen-v4.0.0/MANIFEST.json
 ```
 
+## Which prompt a sealed score is measured under
+
+The frozen splits do not agree on the system prompt. `train` and `regression`
+carry the full 662-character `STUDENT_SYSTEM_PROMPT_V3`; the frozen `sealed`
+split carries a 77-character one, because `build_v4_contract_curriculum`
+inherits the prompt from `train_rows[0]` while `collect_v4_sealed_teacher`
+hardcodes its own. Each side is internally uniform, which is what an accident
+looks like rather than a designed contrast.
+
+It is not a cosmetic difference. Measured on the 9B run, same adapter, same 500
+questions, same gold, prompt swapped:
+
+| | frozen 77-char | canonical 662-char |
+|---|---|---|
+| JSON parse rate | 0.0% | 100.0% |
+| `schema_valid` | 0.0 | 1.0 |
+| `lane_authority_violations` | 500 | 0 |
+
+Under the short prompt the model emits an invented schema — that prompt never
+names the contract fields, and it appears in none of the 8000 training rows. So
+a score taken there measures the prompt mismatch, not the student.
+
+**Rules:**
+
+- The **canonical release evaluation** runs on sealed derived by
+  `derive_canonical_prompt_eval.py`, which replaces only the system message and
+  carries gold, row order, `meta` and `lineage` through unchanged.
+- The **frozen sealed bytes are never rewritten**; SHA-256 stays
+  `325008e104f0502b7aec196bf553c7593b5bb297070f84d6863364629e13bbba`.
+- The short-prompt form is a `prompt_contract_stress` observation reported
+  alongside, and is **not** a model-quality release gate.
+- The derivation report records source/target/prompt SHA-256, the row count, and
+  explicit `gold_unchanged` / `row_order_preserved` findings.
+
+## Metrics that can be undefined rather than zero
+
+Two report fields exist because a metric read 0.0 where it had no meaning:
+
+- `lane_f1` is `null` with `lane_f1_status: not_applicable` for a category whose
+  gold never asks for a lane. `conversation` is such a category: every gold row
+  correctly wants no tools, so correct rows contribute nothing to tp/fp/fn and
+  the score is decided entirely by whichever row is wrong. Read
+  `tool_set_exact_match` there instead — it was 100/101 where the F1 said 0.0.
+- `clarification_precision` and `clarification_recall` carry separate supports
+  (`..._support`), because precision rests on how many cases were *predicted*
+  and recall on how many were in the *gold*. Below
+  `MIN_OPERATIONAL_SUPPORT` a metric is reported but not enforced — that floor
+  is an operating decision, **not** a claim that N rows resolve 3pp.
+
 ## 9B / 35B comparison
 
 The reference comparison uses `Qwen/Qwen3.5-9B` and

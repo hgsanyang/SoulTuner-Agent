@@ -43,6 +43,21 @@ def _lanes(decision) -> set[str]:
     return _normalized_tool_lanes(decision.tool_names)
 
 
+def _gold_lanes(raw: dict) -> set[str]:
+    """The lane set the gold asks for, read straight from the raw decision.
+
+    Deliberately does not validate the whole model: whether a category asks for
+    any lanes describes the evaluation set, so it must hold even for a row whose
+    prediction never parsed, and must not depend on the prediction at all.
+    """
+    names = [str(x) for x in (raw.get("tool_names") or [])]
+    if "request_kind" in raw:
+        return set(names)
+    from schemas.planner_decision import _normalized_tool_lanes
+
+    return _normalized_tool_lanes(names)
+
+
 def _decision_contract(raw: dict):
     if "request_kind" in raw:
         from schemas.planner_decision_v3 import (
@@ -55,6 +70,19 @@ def _decision_contract(raw: dict):
     from schemas.planner_decision import PlannerDecisionV2, compile_to_query_plan
 
     return PlannerDecisionV2, compile_to_query_plan, "intent"
+
+
+#: Status for a metric that has no meaning for the rows it was asked about,
+#: as distinct from a metric that was computed and came out badly. Consumers —
+#: check_planner_release in particular — must never coerce this to 0.0.
+NOT_APPLICABLE = "not_applicable"
+
+#: Below this many supporting rows a metric is reported but not enforced.
+#:
+#: This is an operational floor, not a statistical one: it is the point below
+#: which a percentage stops being worth acting on, and it does NOT license any
+#: claim about resolving a 3pp difference with confidence.
+MIN_OPERATIONAL_SUPPORT = 20
 
 
 def _row_keys(row: dict) -> list[str]:
@@ -160,6 +188,11 @@ def score(eval_path: Path, pred_path: Path) -> dict:
     for row in gold_rows:
         raw = json.loads(row["messages"][-1]["content"])
         kind = str(raw.get("request_kind") or raw.get("intent") or "unknown")
+        # Counted from the gold, before any prediction is looked at: whether this
+        # category asks for lanes is a property of the evaluation set. Counting it
+        # inside the scoring loop made it disappear whenever a prediction failed
+        # to parse, which is exactly when you most want to know what was asked.
+        gold_lanes = _gold_lanes(raw)
         by_kind.setdefault(
             kind,
             {
@@ -169,12 +202,23 @@ def score(eval_path: Path, pred_path: Path) -> dict:
                 "lane_tp": 0,
                 "lane_fp": 0,
                 "lane_fn": 0,
+                # A positive-lane F1 is only defined where the gold actually asks
+                # for lanes. Counting the rows and the labels separately keeps
+                # "this kind has no gold lanes at all" distinguishable from
+                # "this kind has gold lanes and the model missed them".
+                "lane_gold_positive_rows": 0,
+                "lane_gold_positive_labels": 0,
+                "tool_set_exact": 0,
             },
         )["rows"] += 1
+        if gold_lanes:
+            by_kind[kind]["lane_gold_positive_rows"] += 1
+            by_kind[kind]["lane_gold_positive_labels"] += len(gold_lanes)
     t = {k: 0 for k in ("schema_valid", "compilable", "intent_acc", "hard_lang", "hard_instr",
                          "artist", "song", "region", "metadata", "hyde_dense", "dense",
                          "clar_tp", "clar_fp", "clar_fn",
-                         "thinking_wrapped", "thinking_nonempty")}
+                         "thinking_wrapped", "thinking_nonempty",
+                         "tool_set_exact")}
     lane_tp = lane_fp = lane_fn = 0
 
     for position in matched:
@@ -242,6 +286,13 @@ def score(eval_path: Path, pred_path: Path) -> dict:
         kind_stats["lane_tp"] += len(gl & pl)
         kind_stats["lane_fp"] += len(pl - gl)
         kind_stats["lane_fn"] += len(gl - pl)
+        # Two empty sets agreeing is a correct answer, but it is not a true
+        # positive: counting it as one would make F1 depend on how many rows
+        # happen to want no tools. It is recorded as an exact match instead.
+        # (gold-positive counts live in the pre-pass over the gold, above.)
+        if gl == pl:
+            t["tool_set_exact"] += 1
+            kind_stats["tool_set_exact"] += 1
         if "dense" in gl:
             t["dense"] += 1
             if pred.acoustic_queries:
@@ -270,15 +321,33 @@ def score(eval_path: Path, pred_path: Path) -> dict:
             if kind_recall_denominator
             else 1.0
         )
+        # A positive-lane F1 needs at least one gold lane to be positive about.
+        # `conversation` has none — every gold row correctly asks for no tools —
+        # so tp/fp/fn are all zero for the rows that are right, and the whole
+        # category's F1 ends up decided by whichever single row is wrong. The
+        # measured value for that category was 0.0 while 100 of its 101 rows
+        # matched exactly. Reporting null with an explicit status says "this
+        # metric does not apply here", which is different from "it scored zero".
+        lane_measurable = values["lane_gold_positive_labels"] > 0
+        lane_f1 = (
+            round(2 * kind_precision * kind_recall / (kind_precision + kind_recall), 4)
+            if lane_measurable and (kind_precision + kind_recall)
+            else (None if not lane_measurable else 0.0)
+        )
         by_request_kind[kind] = {
             "rows": rows,
             "schema_valid": round(values["schema_valid"] / rows, 4) if rows else 0.0,
             "request_kind_acc": round(values["request_kind_correct"] / rows, 4) if rows else 0.0,
-            "lane_f1": (
-                round(2 * kind_precision * kind_recall / (kind_precision + kind_recall), 4)
-                if kind_precision + kind_recall
-                else 0.0
-            ),
+            "lane_f1": lane_f1,
+            "lane_f1_status": "measured" if lane_measurable else NOT_APPLICABLE,
+            "lane_gold_positive_rows": values["lane_gold_positive_rows"],
+            "lane_gold_positive_labels": values["lane_gold_positive_labels"],
+            # Defined for every category, including the ones where the right
+            # answer is an empty tool set. Denominator is the category's full
+            # gold count, so an unparseable prediction counts as a miss.
+            "tool_set_exact_match": round(values["tool_set_exact"] / rows, 4) if rows else 0.0,
+            "tool_set_exact_match_numerator": values["tool_set_exact"],
+            "tool_set_exact_match_denominator": rows,
         }
 
     return {
@@ -301,10 +370,24 @@ def score(eval_path: Path, pred_path: Path) -> dict:
         "region_match": rate("region"),
         "metadata_exact_match": rate("metadata"),
         "lane_f1": round(2 * prec * rec / (prec + rec), 4) if (prec + rec) else 0.0,
+        "lane_gold_positive_rows": sum(
+            v["lane_gold_positive_rows"] for v in by_kind.values()
+        ),
+        "lane_gold_positive_labels": sum(
+            v["lane_gold_positive_labels"] for v in by_kind.values()
+        ),
+        "tool_set_exact_match": rate("tool_set_exact"),
+        "tool_set_exact_match_numerator": t["tool_set_exact"],
+        "tool_set_exact_match_denominator": n,
         "clarification_precision": round(lp, 4),
         "clarification_recall": round(lr, 4),
         "clarification_gold_cases": t["clar_tp"] + t["clar_fn"],
         "clarification_predicted_cases": t["clar_tp"] + t["clar_fp"],
+        # Precision and recall do not share a denominator, so they do not share
+        # a support either. Judging both by the gold count let a precision built
+        # on 5 predictions be enforced as though it rested on 3 gold rows.
+        "clarification_precision_support": t["clar_tp"] + t["clar_fp"],
+        "clarification_recall_support": t["clar_tp"] + t["clar_fn"],
         "over_clarification_rate": round(t["clar_fp"] / n, 4) if n else 0.0,
         "lane_authority_violations": n - t["compilable"],
         "hyde_present_when_dense": rate("hyde_dense", t["dense"]),
