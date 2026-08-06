@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 EXIT_OK = 0
@@ -47,17 +49,27 @@ def project(source: Path, target: Path) -> dict:
         for chunk in iter(lambda: raw.read(1 << 20), b""):
             digest_src.update(chunk)
 
-    with source.open(encoding="utf-8") as fin, target.open("w", encoding="utf-8") as fout:
-        for line in fin:
-            line = line.strip()
-            if not line:
-                continue
-            rows += 1
-            record = json.loads(line)
-            if KEPT not in record:
-                raise ValueError(f"row {rows} has no '{KEPT}' key; refusing to project")
-            fout.write(json.dumps({KEPT: record[KEPT]}, ensure_ascii=False) + "\n")
-            kept += 1
+    # 先写临时文件再原子替换：中途失败（磁盘满、配额、进程被杀）不会在目标路径
+    # 留下一个半截文件，而半截的投影下一次运行看起来完全正常——那是最坏的失败方式。
+    staging = target.with_suffix(target.suffix + ".partial")
+    try:
+        with source.open(encoding="utf-8") as fin, staging.open("w", encoding="utf-8") as fout:
+            for line in fin:
+                line = line.strip()
+                if not line:
+                    continue
+                rows += 1
+                record = json.loads(line)
+                if KEPT not in record:
+                    raise ValueError(f"row {rows} has no '{KEPT}' key; refusing to project")
+                fout.write(json.dumps({KEPT: record[KEPT]}, ensure_ascii=False) + "\n")
+                kept += 1
+            fout.flush()
+            os.fsync(fout.fileno())
+        os.replace(staging, target)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
 
     digest_dst = hashlib.sha256(target.read_bytes()).hexdigest()
     return {
@@ -70,30 +82,71 @@ def project(source: Path, target: Path) -> dict:
     }
 
 
+def _nonblank(path: Path) -> Iterator[str]:
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                yield line
+
+
 def verify(source: Path, target: Path) -> list[str]:
-    """Every conversation survived, in order, unchanged."""
+    """Every conversation survived, in order, unchanged.
+
+    Both sides are iterated as *valid rows*, never as raw lines. Zipping the raw
+    lines and skipping blanks on one side only consumes a row from the other and
+    silently shifts every later comparison by one — the check would then pass
+    while reporting on the wrong pairs.
+    """
     problems: list[str] = []
-    with source.open(encoding="utf-8") as fsrc, target.open(encoding="utf-8") as fdst:
-        index = 0
-        for src_line, dst_line in zip(fsrc, fdst):
-            if not src_line.strip():
-                continue
-            index += 1
-            src_messages = json.loads(src_line).get(KEPT)
-            dst_record = json.loads(dst_line)
-            if set(dst_record) != {KEPT}:
-                problems.append(f"row {index}: projection carries extra keys {sorted(dst_record)}")
-                break
-            if dst_record[KEPT] != src_messages:
-                problems.append(f"row {index}: '{KEPT}' differs from the source")
-                break
-        remaining_src = sum(1 for line in fsrc if line.strip())
-        remaining_dst = sum(1 for _ in fdst)
-        if remaining_src or remaining_dst:
-            problems.append(
-                f"row counts diverge: {remaining_src} extra source rows, "
-                f"{remaining_dst} extra projected rows"
-            )
+    src_rows = _nonblank(source)
+    dst_rows = _nonblank(target)
+    index = 0
+    for src_line, dst_line in zip(src_rows, dst_rows):
+        index += 1
+        src_messages = json.loads(src_line).get(KEPT)
+        dst_record = json.loads(dst_line)
+        if set(dst_record) != {KEPT}:
+            problems.append(f"row {index}: projection carries extra keys {sorted(dst_record)}")
+            break
+        if dst_record[KEPT] != src_messages:
+            problems.append(f"row {index}: '{KEPT}' differs from the source")
+            break
+
+    extra_src = sum(1 for _ in src_rows)
+    extra_dst = sum(1 for _ in dst_rows)
+    if extra_src or extra_dst:
+        problems.append(
+            f"row counts diverge after {index} matched rows: "
+            f"{extra_src} extra source rows, {extra_dst} extra projected rows"
+        )
+    return problems
+
+
+def load_check(target: Path, expect_rows: int) -> list[str]:
+    """Load the projection with the installed `datasets` — the thing training uses.
+
+    This is the gate the whole projection exists for. Row counts and digests were
+    all green on the frozen split that could not be loaded at all; only actually
+    handing the file to `datasets` proves the training run will get past the
+    dataset stage.
+    """
+    problems: list[str] = []
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        return [f"datasets is not importable, cannot prove the projection loads: {exc}"]
+
+    try:
+        dataset = load_dataset("json", data_files=str(target), split="train")
+    except Exception as exc:  # noqa: BLE001 - any loader failure is the finding
+        return [f"datasets could not load the projection: {type(exc).__name__}: {exc}"]
+
+    if dataset.num_rows != expect_rows:
+        problems.append(
+            f"datasets loaded {dataset.num_rows} rows, projection wrote {expect_rows}"
+        )
+    if dataset.column_names != [KEPT]:
+        problems.append(f"loaded columns are {dataset.column_names}, expected ['{KEPT}']")
     return problems
 
 
@@ -102,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--json", dest="json_out", type=Path)
+    parser.add_argument("--skip-load-check", action="store_true",
+                        help="跳过 datasets 真加载（仅用于没装 datasets 的环境自检）")
     args = parser.parse_args(argv)
 
     if not args.source.is_file():
@@ -115,6 +170,9 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_BAD_INPUT
 
     problems = verify(args.source, args.target)
+    if not problems and not args.skip_load_check:
+        problems = load_check(args.target, report["kept"])
+        report["load_checked"] = not problems
     report["problems"] = problems
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
