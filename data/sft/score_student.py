@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -56,61 +57,107 @@ def _decision_contract(raw: dict):
     return PlannerDecisionV2, compile_to_query_plan, "intent"
 
 
-def _user_key(row: dict) -> str:
-    """Stable alignment key = hash of the user message (uniquely identifies the
-    sample); prefer explicit meta.episode_id#turn_id when the infer output kept it."""
+def _row_keys(row: dict) -> list[str]:
+    """Every identifier this row can be matched by, most specific first.
+
+    One key per row is not enough, because the two sides do not carry the same
+    fields. Gold rows come from the frozen split and carry
+    ``meta.episode_id``/``turn_id``; ``swift infer --result_path`` writes
+    ``{dataset, labels, logprobs, messages, response}`` and drops ``meta``
+    entirely. Keying each side by "meta if present, else user text" therefore
+    keys gold by episode and predictions by text, and the two never meet.
+
+    That failure is silent, which is what makes it dangerous: nothing raises,
+    every gold row simply reports as missing, and each metric divides a zero
+    numerator by the full gold count. The report reads 0.0 across the board —
+    indistinguishable from a model that learned nothing. Measured on a 20-row
+    smoke test: coverage 0.0, matched 0/20, every score 0.0, on an adapter whose
+    predictions were in fact well-formed.
+
+    Returning the full key set and matching on any intersection removes the
+    dependency on both sides having chosen the same scheme.
+    """
+    keys: list[str] = []
     meta = row.get("meta") or {}
     if meta.get("episode_id") is not None and meta.get("turn_id") is not None:
-        return f"{meta['episode_id']}#{meta['turn_id']}"
+        keys.append(f"{meta['episode_id']}#{meta['turn_id']}")
     for m in row.get("messages") or []:
         if m.get("role") == "user":
-            return "u:" + " ".join(str(m.get("content") or "").split())
-    return ""
+            keys.append("u:" + " ".join(str(m.get("content") or "").split()))
+            break
+    return keys
+
+
+#: A chat template that injects an empty ``<think></think>`` pair produces a
+#: response that is not JSON, even though the model emitted no reasoning at all.
+#: Stripping the wrapper is not the same as ignoring thinking: the payload is
+#: parsed, and the block's contents are reported so a real leak stays visible.
+_THINK_BLOCK = re.compile(
+    r"^\s*<\s*think(?:ing)?\s*>(.*?)<\s*/\s*think(?:ing)?\s*>\s*", re.IGNORECASE | re.DOTALL
+)
+
+
+def _split_thinking(raw: str) -> tuple[str, str]:
+    """Return (payload, thinking_content). Absent a block, payload is unchanged."""
+    match = _THINK_BLOCK.match(raw or "")
+    if not match:
+        return raw or "", ""
+    return raw[match.end():], match.group(1)
 
 
 def score(eval_path: Path, pred_path: Path) -> dict:
     golds = [json.loads(line) for line in eval_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     preds = [json.loads(line) for line in pred_path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    gold_by_key: dict[str, dict] = {}
+    # Gold rows are held as a list and indexed by every identifier they carry, so
+    # one row indexed under two keys is still one row in the denominator.
+    gold_rows = [g for g in golds if _row_keys(g)]
+    gold_empty_key = len(golds) - len(gold_rows)
+    gold_index: dict[str, int] = {}
     gold_duplicate = 0
-    gold_empty_key = 0
-    for g in golds:
-        k = _user_key(g)
-        if not k:
-            gold_empty_key += 1
-            continue
-        if k in gold_by_key:
-            gold_duplicate += 1  # would silently overwrite otherwise
-        gold_by_key[k] = g
-    pred_by_key: dict[str, dict] = {}
+    for position, g in enumerate(gold_rows):
+        # Counted per row, not per key: a row that collides on both its episode id
+        # and its user text is one unidentifiable row, not two problems.
+        clashed = False
+        for k in _row_keys(g):
+            prior = gold_index.get(k)
+            if prior is not None and prior != position:
+                clashed = True
+            else:
+                gold_index[k] = position
+        if clashed:
+            gold_duplicate += 1
+
+    pred_for: dict[int, dict] = {}
     duplicate = 0
+    extra = 0
     for p in preds:
-        k = _user_key(p)
-        if not k or k in pred_by_key:
+        position = next((gold_index[k] for k in _row_keys(p) if k in gold_index), None)
+        if position is None:
+            extra += 1
+        elif position in pred_for:
             duplicate += 1
         else:
-            pred_by_key[k] = p
-    matched = sorted(set(gold_by_key) & set(pred_by_key))
-    missing = sorted(set(gold_by_key) - set(pred_by_key))
-    extra = sorted(set(pred_by_key) - set(gold_by_key))
+            pred_for[position] = p
+
+    matched = sorted(pred_for)
     coverage = {
-        "gold": len(gold_by_key),
-        "pred": len(pred_by_key),
+        "gold": len(gold_rows),
+        "pred": len(preds),
         "matched": len(matched),
-        "missing": len(missing),
+        "missing": len(gold_rows) - len(matched),
         "duplicate": duplicate,
-        "extra": len(extra),
+        "extra": extra,
         "gold_duplicate": gold_duplicate,
         "gold_empty_key": gold_empty_key,
-        "coverage": round(len(matched) / len(gold_by_key), 4) if gold_by_key else 0.0,
-        "complete": (len(missing) == 0 and duplicate == 0 and len(extra) == 0
+        "coverage": round(len(matched) / len(gold_rows), 4) if gold_rows else 0.0,
+        "complete": (len(matched) == len(gold_rows) and duplicate == 0 and extra == 0
                      and gold_duplicate == 0 and gold_empty_key == 0),
     }
 
-    n = len(gold_by_key)  # denominator is ALWAYS the full gold set — misses count as failures
+    n = len(gold_rows)  # denominator is ALWAYS the full gold set — misses count as failures
     by_kind: dict[str, dict[str, int]] = {}
-    for key, row in gold_by_key.items():
+    for row in gold_rows:
         raw = json.loads(row["messages"][-1]["content"])
         kind = str(raw.get("request_kind") or raw.get("intent") or "unknown")
         by_kind.setdefault(
@@ -126,16 +173,23 @@ def score(eval_path: Path, pred_path: Path) -> dict:
         )["rows"] += 1
     t = {k: 0 for k in ("schema_valid", "compilable", "intent_acc", "hard_lang", "hard_instr",
                          "artist", "song", "region", "metadata", "hyde_dense", "dense",
-                         "clar_tp", "clar_fp", "clar_fn")}
+                         "clar_tp", "clar_fp", "clar_fn",
+                         "thinking_wrapped", "thinking_nonempty")}
     lane_tp = lane_fp = lane_fn = 0
 
-    for k in matched:
-        gold_raw = json.loads(gold_by_key[k]["messages"][-1]["content"])
+    for position in matched:
+        gold_raw = json.loads(gold_rows[position]["messages"][-1]["content"])
         decision_model, compiler, decision_field = _decision_contract(gold_raw)
         gold = decision_model.model_validate(gold_raw)
         gold_kind = str(getattr(gold, decision_field))
         kind_stats = by_kind[gold_kind]
-        raw = pred_by_key[k].get("prediction") or pred_by_key[k].get("response") or ""
+        prediction = pred_for[position]
+        emitted = prediction.get("prediction") or prediction.get("response") or ""
+        raw, thinking = _split_thinking(emitted)
+        if raw != emitted:
+            t["thinking_wrapped"] += 1
+            if thinking.strip():
+                t["thinking_nonempty"] += 1
         gold_clar = (
             gold.response_mode == "clarify"
             if hasattr(gold, "response_mode")
@@ -255,6 +309,11 @@ def score(eval_path: Path, pred_path: Path) -> dict:
         "lane_authority_violations": n - t["compilable"],
         "hyde_present_when_dense": rate("hyde_dense", t["dense"]),
         "dense_cases": t["dense"],
+        # Reported, never silently absorbed. An empty wrapper is a chat-template
+        # artifact; a non-empty one means the model really did emit reasoning,
+        # and that is a finding about the run rather than a parsing detail.
+        "thinking_wrapped": t["thinking_wrapped"],
+        "thinking_nonempty": t["thinking_nonempty"],
         "by_request_kind": by_request_kind,
     }
 

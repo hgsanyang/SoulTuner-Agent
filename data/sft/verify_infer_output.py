@@ -99,13 +99,41 @@ def _reasoning_hits(row: dict[str, Any]) -> list[str]:
     return hits
 
 
+#: An *empty* `<think></think>` opening a response is how ms-swift puts a
+#: thinking-capable Qwen3 into non-thinking mode: `--enable_thinking false`
+#: prefills the pair so the model has nothing left to reason into. See the
+#: `--add_non_thinking_prefix` / `--no_add_non_thinking_prefix` flags on
+#: `swift infer`. The wrapper is therefore evidence that thinking was disabled,
+#: not evidence that it leaked, and failing on it rejects every correctly
+#: configured run.
+#:
+#: This is the same distinction `_reasoning_hits` already draws for the
+#: `reasoning_content` family, where an empty value is not counted. A block with
+#: any content in it is still a real leak and is still reported.
+NON_THINKING_PREFIX = re.compile(
+    r"^\s*<\s*think(?:ing)?\s*>\s*<\s*/\s*think(?:ing)?\s*>\s*", re.IGNORECASE
+)
+PREFIX_HIT = "non_thinking_prefix"
+
+
+def strip_non_thinking_prefix(text: str) -> tuple[str, bool]:
+    """Remove a leading *empty* thinking pair. Non-empty blocks are left alone."""
+    stripped = NON_THINKING_PREFIX.sub("", text, count=1)
+    return stripped, stripped != text
+
+
 def scan_row(row: dict[str, Any]) -> list[str]:
     """Names of every thinking signal present anywhere in the row."""
     hits = list(_reasoning_hits(row))
+    prefixed = False
     for text in _walk_strings(row):
+        cleaned, was_prefixed = strip_non_thinking_prefix(text)
+        prefixed = prefixed or was_prefixed
         for name, pattern in THINKING_PATTERNS:
-            if pattern.search(text):
+            if pattern.search(cleaned):
                 hits.append(name)
+    if prefixed:
+        hits.append(PREFIX_HIT)
     return sorted(set(hits))
 
 
@@ -157,16 +185,24 @@ def verify(path: Path, *, schema: str = "planner_v3") -> tuple[int, dict[str, An
         return EXIT_UNUSABLE, report
 
     report["rows"] = len(rows)
+    report["rows_with_non_thinking_prefix"] = 0
     counts: dict[str, int] = {}
     for index, row in enumerate(rows):
         hits = scan_row(row)
-        if hits:
+        if PREFIX_HIT in hits:
+            report["rows_with_non_thinking_prefix"] += 1
+        leaks = [hit for hit in hits if hit != PREFIX_HIT]
+        if leaks:
             report["rows_with_thinking"] += 1
             if len(report["offending_row_indexes"]) < 20:
                 report["offending_row_indexes"].append(index)
-            for hit in hits:
-                counts[hit] = counts.get(hit, 0) + 1
-        if _parses_as(extract_response(row), schema):
+        for hit in hits:
+            counts[hit] = counts.get(hit, 0) + 1
+        # The prefix is stripped before parsing for the same reason it is not a
+        # leak: `<think></think>{...}` is not JSON, so leaving it in would report
+        # a 0% schema parse rate for output that is in fact perfectly well formed.
+        payload, _ = strip_non_thinking_prefix(extract_response(row))
+        if _parses_as(payload, schema):
             report["rows_parsing_as_schema"] += 1
     report["hits_by_kind"] = dict(sorted(counts.items()))
     report["schema_parse_rate"] = round(

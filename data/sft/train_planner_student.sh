@@ -577,10 +577,32 @@ swift sft "${COMMON[@]}" \
   --dataloader_num_workers 4 \
   --output_dir "$OUTPUT_DIR"
 
-BEST="$OUTPUT_DIR/best"   # --create_checkpoint_symlink 通常生成 best/last 软链
+# ms-swift 4.4.2 把这次运行嵌在 $OUTPUT_DIR/v0-<时间戳>/ 下面，checkpoint 因此
+# 在第二层，不在第一层；而且 --create_checkpoint_symlink 没有生成 best/last 软链。
+# 原来的 -maxdepth 1 两样都找不到，于是训练跑完、权重好端端躺在盘上，脚本却报
+# "找不到 checkpoint" 退出 7 —— 全部推理与打分都不会执行。2026-08-06 的 9B 正式
+# 跑实测：checkpoint 在 v0-20260806-182015/ 里，第一层空空如也。
+# 按步数取最大，不用 sort -V 排路径：checkpoint-1500 必须排在 checkpoint-950 后面。
+# 排除 preflight 用锚定到 $OUTPUT_DIR 的路径，不用 '*preflight*'：后者是对整条
+# 路径做匹配，只要**任何一级祖先目录**名字里带 preflight 就会把全部 checkpoint
+# 排掉，脚本随即报"找不到 checkpoint"。RUN_ID 取名 preflight-xxx 就会踩中。
+PREFLIGHT_SUBTREE="$OUTPUT_DIR/preflight/*"
+BEST="$OUTPUT_DIR/best"   # --create_checkpoint_symlink 若真生成了 best/last 就用它
 if [ ! -e "$BEST" ]; then
-  BEST="$(find "$OUTPUT_DIR" -maxdepth 1 -type d -name 'checkpoint-*' |
-    sort -V | tail -1)"
+  # best/last 是**符号链接**，不是目录。-type d 匹配不到它们，搜索会静默落到
+  # "步数最大的 checkpoint"，于是打的是 last(epoch 3) 而不是 best(验证最优)。
+  # 2026-08-06 的 9B 实测：best -> checkpoint-1000，last -> checkpoint-1500，
+  # 而 eval_loss 在 epoch 2.0 触底后回升——选错的代价是拿次优权重当结果发布。
+  BEST="$(find "$OUTPUT_DIR" \( -type d -o -type l \) -name 'best' \
+    -not -path "$PREFLIGHT_SUBTREE" | head -1)"
+fi
+if [ -z "$BEST" ] || [ ! -e "$BEST" ]; then
+  LAST_STEP="$(find "$OUTPUT_DIR" -type d -name 'checkpoint-*' -not -path "$PREFLIGHT_SUBTREE" |
+    sed 's/.*checkpoint-//' | sort -n | tail -1)"
+  if [ -n "$LAST_STEP" ]; then
+    BEST="$(find "$OUTPUT_DIR" -type d -name "checkpoint-$LAST_STEP" \
+      -not -path "$PREFLIGHT_SUBTREE" | head -1)"
+  fi
 fi
 if [ -z "$BEST" ] || [ ! -e "$BEST" ]; then
   echo "FAIL: 训练完成但找不到 best 或 checkpoint-*"
