@@ -891,3 +891,22 @@ def test_an_ancestor_directory_named_preflight_does_not_hide_every_checkpoint(tm
     (out / "v0-x" / "checkpoint-1500").mkdir(parents=True)
     found = _run_discovery(_discovery_snippet(tmp_path), out)
     assert found.endswith("checkpoint-1500"), f"祖先目录带 preflight 就找不到了: {found!r}"
+
+
+def test_the_best_symlink_is_found_even_though_it_is_a_link_not_a_directory(tmp_path):
+    """ms-swift 把 best/last 生成为**符号链接**。用 -type d 找会静默漏掉它们，
+    搜索落到"步数最大的 checkpoint"——于是打分打的是 last(epoch 3)，
+    而不是协议要的 best(验证最优)。2026-08-06 的 9B 实测正是这个：
+    best -> checkpoint-1000，last -> checkpoint-1500，而 eval_loss 在
+    epoch 2.0 触底后回升，选错等于拿次优权重当结果发布。"""
+    out = tmp_path / "run"
+    (out / "v0-x" / "checkpoint-1000").mkdir(parents=True)
+    (out / "v0-x" / "checkpoint-1500").mkdir(parents=True)
+    try:
+        (out / "v0-x" / "best").symlink_to(out / "v0-x" / "checkpoint-1000",
+                                           target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this host cannot create symlinks")
+    found = _run_discovery(_discovery_snippet(tmp_path), out)
+    assert found.endswith("best"), f"符号链接形式的 best 没被找到，选成了 {found!r}"
+    assert Path(found).resolve().name == "checkpoint-1000", "best 应指向验证最优那个"

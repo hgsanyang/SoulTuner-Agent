@@ -589,7 +589,12 @@ swift sft "${COMMON[@]}" \
 PREFLIGHT_SUBTREE="$OUTPUT_DIR/preflight/*"
 BEST="$OUTPUT_DIR/best"   # --create_checkpoint_symlink 若真生成了 best/last 就用它
 if [ ! -e "$BEST" ]; then
-  BEST="$(find "$OUTPUT_DIR" -type d -name 'best' -not -path "$PREFLIGHT_SUBTREE" | head -1)"
+  # best/last 是**符号链接**，不是目录。-type d 匹配不到它们，搜索会静默落到
+  # "步数最大的 checkpoint"，于是打的是 last(epoch 3) 而不是 best(验证最优)。
+  # 2026-08-06 的 9B 实测：best -> checkpoint-1000，last -> checkpoint-1500，
+  # 而 eval_loss 在 epoch 2.0 触底后回升——选错的代价是拿次优权重当结果发布。
+  BEST="$(find "$OUTPUT_DIR" \( -type d -o -type l \) -name 'best' \
+    -not -path "$PREFLIGHT_SUBTREE" | head -1)"
 fi
 if [ -z "$BEST" ] || [ ! -e "$BEST" ]; then
   LAST_STEP="$(find "$OUTPUT_DIR" -type d -name 'checkpoint-*' -not -path "$PREFLIGHT_SUBTREE" |
