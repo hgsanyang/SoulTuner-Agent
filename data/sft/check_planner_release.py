@@ -11,6 +11,18 @@ from typing import Any
 OVERALL_METRICS = ("request_kind_acc", "lane_f1", "hyde_present_when_dense")
 CATEGORY_METRICS = ("request_kind_acc", "lane_f1")
 
+#: Below this many rows a per-kind metric is reported, not enforced.
+#:
+#: The gate asks whether a category regressed by more than 3pp. Answering that
+#: needs enough rows to resolve 3pp. regression currently holds one row each for
+#: acquisition, library and conversation — those metrics can only be 0.0 or 1.0,
+#: so a single miss fails the release and a pass proves nothing about the 3pp
+#: question. They are still valuable as "this known behaviour must keep working"
+#: canaries, and they are reported as exactly that.
+#:
+#: sealed is unaffected: five kinds, 100 rows each, always enforced.
+MIN_SUPPORT_FOR_STAT_GATE = 20
+
 
 def _minimum(value_pp: float) -> float:
     return 1.0 + value_pp / 100.0
@@ -24,6 +36,10 @@ def check_release(
     gates = manifest["sealed_policy"]["release_gates"]
     overall_minimum = _minimum(float(gates["overall_vs_teacher_pp"]))
     category_minimum = 1.0 - float(gates["per_kind_max_regression_pp"]) / 100.0
+    # 每类支持数低于这条线就不当统计结论。3pp 的判定要求样本量能分辨 3pp；
+    # n=1 只能给出 0.0 或 1.0，拿它当硬门既会误杀也证明不了什么。
+    canaries: list[str] = []
+    support_by_kind: dict[str, dict[str, int]] = {}
     max_split_gap = float(gates["sealed_vs_regression_max_gap_pp"]) / 100.0
     findings: list[str] = []
 
@@ -53,12 +69,28 @@ def check_release(
                         f"{overall_minimum:.4f}"
                     )
         for kind, values in sorted((score.get("by_request_kind") or {}).items()):
+            support = int(values.get("support") or values.get("rows") or 0)
+            support_by_kind.setdefault(split_name, {})[kind] = support
+            # regression 里 acquisition/library/conversation 各只有 1 条。n=1 时
+            # 指标只能取 0.0 或 1.0，判错一次就是 0.0 直接卡门，判对也证明不了
+            # 3pp 的测量能力。那种类别是"已知行为必须逐条通过"的 canary，不是
+            # 统计结论。sealed 五类各 100 条，继续按统计硬门执行。
+            statistical = split_name == "sealed" or support >= MIN_SUPPORT_FOR_STAT_GATE
             for metric in CATEGORY_METRICS:
                 value = values.get(metric)
-                if value is None or float(value) < category_minimum:
+                below = value is None or float(value) < category_minimum
+                if not below:
+                    continue
+                if statistical:
                     findings.append(
                         f"{split_name}.{kind}.{metric}={value!r} is below "
-                        f"{category_minimum:.4f}"
+                        f"{category_minimum:.4f} (support={support})"
+                    )
+                else:
+                    canaries.append(
+                        f"{split_name}.{kind}.{metric}={value!r} (support={support}, "
+                        f"below {category_minimum:.4f} but under the "
+                        f"{MIN_SUPPORT_FOR_STAT_GATE}-row statistical floor)"
                     )
 
     split_deltas: dict[str, float] = {}
@@ -77,9 +109,13 @@ def check_release(
             "overall_minimum": overall_minimum,
             "category_minimum": category_minimum,
             "max_sealed_vs_regression_gap": max_split_gap,
+            "min_support_for_statistical_gate": MIN_SUPPORT_FOR_STAT_GATE,
         },
         "sealed_minus_regression": split_deltas,
+        "support_by_request_kind": support_by_kind,
         "findings": findings,
+        # 不达标但样本量不足的类别：报告出来，但不声称具备 3pp 测量能力。
+        "low_support_canaries": canaries,
         "note": (
             "Planner contract gate only. Outcome holdout, MuQ attribute P@10 and "
             "served latency remain separate deployment gates."

@@ -1,0 +1,16 @@
+# AMD / ROCm 训练实例专用依赖。
+#
+# 刻意与应用的 requirements.txt 分开：那份会把 PyTorch 拉成 PyPI 的通用版本，
+# 覆盖掉云端定制的 ROCm 构建（torch 2.11.0+gitd0c8b1f / hip 7.2.53211）。
+# 这里只列训练本身缺、而基础镜像没有的包，逐个钉死版本。
+#
+# 安装（永远带 --no-deps 之外的显式确认，不要 -U）：
+#   pip install -r data/sft/requirements-amd.txt
+#
+# 装之前先 `pip install --dry-run -r ...` 确认它不会动 torch/triton。
+# 见 data/sft/check_training_deps.py：训练前门禁会核对下列版本，缺失即失败，
+# 且不允许脚本自动升级任何 ROCm 相关包。
+
+# Qwen3.5 用线性注意力，ms-swift 在这类模型上默认启用 padding-free /
+# sequence-parallel，缺这个包会在加载阶段 ImportError（35B-A3B 不需要）。
+flash-linear-attention==0.5.2

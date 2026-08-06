@@ -395,3 +395,225 @@ def test_the_word_think_in_prose_is_not_a_thinking_block(tmp_path):
     assert not scan_row(row)
     code, _ = verify(_pred(tmp_path, [row]))
     assert code == 0
+
+
+# --------------------------------------------------------------- projection ---
+# 冻结的 train 分片里 lineage 不同形（5700 行两键 / 411 行三键）。Arrow struct 强类型，
+# datasets 从文件头推出两键结构后读到三键行就 cast 失败，训练在加载数据集时崩溃。
+# 训练只读 messages，所以派生一份只含 messages 的副本；冻结字节不动，manifest 仍成立。
+
+from data.sft.project_chatml import main as project_main  # noqa: E402
+
+
+def _chatml(tmp_path, rows):
+    path = tmp_path / "frozen.jsonl"
+    path.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8"
+    )
+    return path
+
+
+def _row(i, lineage):
+    return {
+        "messages": [
+            {"role": "user", "content": f"request {i}"},
+            {"role": "assistant", "content": '{"request_kind": "recommendation"}'},
+        ],
+        "meta": {"episode_id": f"e{i}"},
+        "lineage": lineage,
+    }
+
+
+def test_a_heterogeneous_lineage_survives_projection(tmp_path):
+    """真实形状：多数行两键，少数行三键。投影后两种行都在，且顺序不变。"""
+    source = _chatml(tmp_path, [
+        _row(0, {"builder": "b", "builder_version": "1"}),
+        _row(1, {"builder": "b", "builder_version": "1", "clarification_trope": "vague"}),
+        _row(2, {"builder": "b", "builder_version": "1"}),
+    ])
+    target = tmp_path / "projected.jsonl"
+    assert project_main(["--source", str(source), "--target", str(target),
+                         "--skip-load-check"]) == 0
+
+    out = [json.loads(x) for x in target.read_text(encoding="utf-8").splitlines()]
+    assert len(out) == 3
+    assert all(set(r) == {"messages"} for r in out), "投影必须只保留 messages"
+    src = [json.loads(x) for x in source.read_text(encoding="utf-8").splitlines()]
+    assert [r["messages"] for r in out] == [r["messages"] for r in src], "对话内容或顺序变了"
+
+
+def test_the_frozen_source_is_never_modified(tmp_path):
+    """冻结文件的 SHA-256 必须原样不动，否则 manifest 立刻失效。"""
+    source = _chatml(tmp_path, [_row(0, {"builder": "b", "builder_version": "1"})])
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    project_main(["--source", str(source), "--target", str(tmp_path / "p.jsonl"),
+                 "--skip-load-check"])
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+
+
+def test_a_row_without_messages_fails_closed(tmp_path):
+    """少一行对话比加载报错糟得多，所以宁可失败也不静默跳过。"""
+    source = _chatml(tmp_path, [{"meta": {"episode_id": "no-messages"}}])
+    assert project_main(["--source", str(source), "--target", str(tmp_path / "p.jsonl"),
+                         "--skip-load-check"]) == 4
+
+
+def test_a_missing_source_is_not_a_pass(tmp_path):
+    assert project_main(["--source", str(tmp_path / "nope.jsonl"),
+                         "--target", str(tmp_path / "p.jsonl")]) == 4
+
+
+def test_the_report_records_both_digests(tmp_path):
+    source = _chatml(tmp_path, [_row(0, {"builder": "b", "builder_version": "1"})])
+    target = tmp_path / "p.jsonl"
+    report_path = tmp_path / "report.json"
+    project_main(["--source", str(source), "--target", str(target),
+                  "--json", str(report_path), "--skip-load-check"])
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert report["target_sha256"] == hashlib.sha256(target.read_bytes()).hexdigest()
+    assert report["rows"] == report["kept"] == 1
+
+
+def test_the_training_script_feeds_swift_the_projection_not_the_frozen_file():
+    """把脚本和投影绑在一起：swift 必须吃派生副本，manifest 必须校验原文件。
+
+    这条存在的理由和前面那条 flag 门的端到端测试一样——两边各自看着都对，
+    但没人验证过它们接得上。
+    """
+    script = (
+        Path(__file__).resolve().parents[2] / "data" / "sft" / "train_planner_student.sh"
+    ).read_text(encoding="utf-8")
+    assert '--dataset "$SWIFT_TRAIN_FILE"' in script
+    assert '--val_dataset "$SWIFT_VAL_FILE"' in script
+    assert '--expect-train "$TRAIN_FILE"' in script, "manifest 必须校验冻结原文件"
+    assert "data.sft.project_chatml" in script
+
+
+# --- 投影的三项加固：原子写入 / 空行不错位 / 真加载 -------------------------
+
+def test_a_blank_line_in_the_source_does_not_shift_the_comparison(tmp_path):
+    """原来 zip() 配的是原始行：源里一个空行会白白消耗掉目标的一行，
+    之后每一对都错位，而校验照样报通过。"""
+    from data.sft.project_chatml import verify
+
+    source = tmp_path / "src.jsonl"
+    source.write_text(
+        json.dumps({"messages": [{"role": "user", "content": "A"}], "lineage": {}}) + "\n"
+        + "\n"                                                    # ← 空行
+        + json.dumps({"messages": [{"role": "user", "content": "B"}], "lineage": {}}) + "\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "dst.jsonl"
+    assert project_main(["--source", str(source), "--target", str(target),
+                         "--skip-load-check"]) == 0
+    assert verify(source, target) == []
+
+    out = [json.loads(x) for x in target.read_text(encoding="utf-8").splitlines() if x.strip()]
+    assert [r["messages"][0]["content"] for r in out] == ["A", "B"]
+
+
+def test_a_shifted_projection_is_caught(tmp_path):
+    """证否：手工造一个错位的目标文件，校验必须发现。"""
+    from data.sft.project_chatml import verify
+
+    source = tmp_path / "src.jsonl"
+    source.write_text(
+        "".join(json.dumps({"messages": [{"role": "user", "content": c}]}) + "\n"
+                for c in "ABC"), encoding="utf-8")
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text(
+        "".join(json.dumps({"messages": [{"role": "user", "content": c}]}) + "\n"
+                for c in "BCA"), encoding="utf-8")
+    assert verify(source, bad), "错位的投影必须被发现"
+
+
+def test_no_partial_file_is_left_when_projection_fails(tmp_path):
+    """半截的投影下一次跑起来看着完全正常——那是最坏的失败方式。"""
+    source = tmp_path / "src.jsonl"
+    source.write_text(
+        json.dumps({"messages": [{"role": "user", "content": "ok"}]}) + "\n"
+        + json.dumps({"meta": {"no": "messages"}}) + "\n", encoding="utf-8")
+    target = tmp_path / "dst.jsonl"
+    assert project_main(["--source", str(source), "--target", str(target),
+                         "--skip-load-check"]) == 4
+    assert not target.exists(), "失败后不该留下目标文件"
+    assert list(tmp_path.glob("*.partial")) == [], "不该留下临时文件"
+
+
+def test_the_projection_is_actually_loadable_by_datasets(tmp_path):
+    """这条是整个投影存在的理由：SHA 和行数全绿的冻结文件恰恰是加载不了的那个。"""
+    pytest.importorskip("datasets")
+    from data.sft.project_chatml import load_check
+
+    source = tmp_path / "src.jsonl"
+    source.write_text(
+        json.dumps({"messages": [{"role": "user", "content": "A"}],
+                    "lineage": {"builder": "b", "builder_version": "1"}}) + "\n"
+        + json.dumps({"messages": [{"role": "user", "content": "B"}],
+                      "lineage": {"builder": "b", "builder_version": "1",
+                                  "clarification_trope": "vague"}}) + "\n",
+        encoding="utf-8")
+    target = tmp_path / "dst.jsonl"
+    assert project_main(["--source", str(source), "--target", str(target)]) == 0
+    assert load_check(target, 2) == []
+
+
+def test_the_load_check_reports_a_row_count_mismatch(tmp_path):
+    pytest.importorskip("datasets")
+    from data.sft.project_chatml import load_check
+
+    target = tmp_path / "dst.jsonl"
+    target.write_text(json.dumps({"messages": []}) + "\n", encoding="utf-8")
+    assert load_check(target, 999), "行数对不上必须报出来"
+
+
+# ------------------------------------------------------------ deps gate ------
+
+from data.sft.check_training_deps import collect, read_pins  # noqa: E402
+
+
+def test_pins_are_parsed_from_the_amd_requirements_file():
+    pins = read_pins(Path(__file__).resolve().parents[2] / "data" / "sft" / "requirements-amd.txt")
+    assert pins.get("flash-linear-attention") == "0.5.2", \
+        "AMD 依赖清单必须钉死 fla 版本——9B preflight 就是缺它才崩的"
+
+
+def test_a_missing_pinned_package_fails_and_says_what_to_do(tmp_path):
+    req = tmp_path / "r.txt"
+    req.write_text("definitely-not-installed-xyz==1.2.3\n", encoding="utf-8")
+    _, problems = collect(read_pins(req))
+    assert any("definitely-not-installed-xyz" in p for p in problems)
+    assert any("will not install or upgrade" in p for p in problems), \
+        "必须明说这个脚本不会自己装——自动升级会把 ROCm torch 换成 PyPI 版"
+
+
+def test_a_wrong_version_is_not_waved_through(tmp_path):
+    """装了但版本不对，比没装更危险：看起来一切正常。"""
+    req = tmp_path / "r.txt"
+    req.write_text("pytest==0.0.1\n", encoding="utf-8")
+    _, problems = collect(read_pins(req))
+    assert any("pytest is" in p and "expected 0.0.1" in p for p in problems)
+
+
+def test_an_empty_requirements_file_still_records_the_runtime(tmp_path):
+    req = tmp_path / "empty.txt"
+    req.write_text("# nothing pinned\n", encoding="utf-8")
+    report, _ = collect(read_pins(req))
+    assert "torch" in report["recorded"], "即使没有 pin，也必须记录运行时版本"
+
+
+def test_the_runner_binds_the_commit_through_an_env_var_not_a_hardcoded_sha():
+    """脚本不该知道自己未来的 SHA——那正是上一版每次修复都要手改守卫的原因。"""
+    import re
+    script = (
+        Path(__file__).resolve().parents[2] / "data" / "sft" / "run_planner_v4.sh"
+    ).read_text(encoding="utf-8")
+    assert 'EXPECTED_TRAINING_COMMIT:?' in script, "必须是必填环境变量"
+    assert 'RUN_FULL="${RUN_FULL:-0}"' in script, "RUN_FULL 必须默认 0"
+    for guard in ("HEAD is", "worktree is dirty", "is not an ancestor of the training code"):
+        assert guard in script, f"守卫缺失: {guard}"
+    # 不允许出现看起来像被硬编码的 40 位 commit（生成提交那个除外，它是数据身份）
+    shas = set(re.findall(r"\b[0-9a-f]{40}\b", script)) - {
+        "48d87edc3fe52d52031cbb3ad78633fc5a4e54d4"}
+    assert not shas, f"训练提交不该硬编码在脚本里: {shas}"

@@ -1,0 +1,197 @@
+#!/usr/bin/env python
+"""Project a frozen ChatML split down to the one column training reads.
+
+Why this exists: the frozen V4 train split carries provenance alongside the
+conversation, and ``lineage`` is not the same shape on every row — 5700 rows
+have ``{builder, builder_version}`` and 411 also carry ``clarification_trope``.
+Arrow structs are strongly typed, so ``datasets`` infers the two-key struct from
+the head of the file and then fails to cast the three-key rows:
+
+    TypeError: Couldn't cast array of type
+    struct<builder: string, builder_version: string, clarification_trope: string>
+    to {'builder': Value('string'), 'builder_version': Value('string')}
+
+The training run never reads those columns; ms-swift consumes ``messages``.
+Rewriting the frozen files to make the struct uniform would change their
+SHA-256 and invalidate the manifest that pins the dataset identity, so the
+frozen bytes stay exactly as audited and this writes a derived copy instead.
+
+The projection is checked, not assumed: row count must match and every row's
+``messages`` must be byte-identical to the source once re-serialised the same
+way. A projection that quietly dropped or reordered a conversation would be far
+worse than the load error it replaces, so it fails closed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+
+EXIT_OK = 0
+EXIT_BAD_INPUT = 4
+EXIT_MISMATCH = 6
+
+#: The only key ms-swift reads for a ChatML SFT dataset. Everything else in the
+#: frozen rows is provenance for offline audit.
+KEPT = "messages"
+
+
+def project(source: Path, target: Path) -> dict:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    rows = kept = 0
+    digest_src = hashlib.sha256()
+    with source.open("rb") as raw:
+        for chunk in iter(lambda: raw.read(1 << 20), b""):
+            digest_src.update(chunk)
+
+    # 先写临时文件再原子替换：中途失败（磁盘满、配额、进程被杀）不会在目标路径
+    # 留下一个半截文件，而半截的投影下一次运行看起来完全正常——那是最坏的失败方式。
+    staging = target.with_suffix(target.suffix + ".partial")
+    try:
+        with source.open(encoding="utf-8") as fin, staging.open("w", encoding="utf-8") as fout:
+            for line in fin:
+                line = line.strip()
+                if not line:
+                    continue
+                rows += 1
+                record = json.loads(line)
+                if KEPT not in record:
+                    raise ValueError(f"row {rows} has no '{KEPT}' key; refusing to project")
+                fout.write(json.dumps({KEPT: record[KEPT]}, ensure_ascii=False) + "\n")
+                kept += 1
+            fout.flush()
+            os.fsync(fout.fileno())
+        os.replace(staging, target)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
+
+    digest_dst = hashlib.sha256(target.read_bytes()).hexdigest()
+    return {
+        "source": str(source),
+        "source_sha256": digest_src.hexdigest(),
+        "target": str(target),
+        "target_sha256": digest_dst,
+        "rows": rows,
+        "kept": kept,
+    }
+
+
+def _nonblank(path: Path) -> Iterator[str]:
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                yield line
+
+
+def verify(source: Path, target: Path) -> list[str]:
+    """Every conversation survived, in order, unchanged.
+
+    Both sides are iterated as *valid rows*, never as raw lines. Zipping the raw
+    lines and skipping blanks on one side only consumes a row from the other and
+    silently shifts every later comparison by one — the check would then pass
+    while reporting on the wrong pairs.
+    """
+    problems: list[str] = []
+    src_rows = _nonblank(source)
+    dst_rows = _nonblank(target)
+    index = 0
+    for src_line, dst_line in zip(src_rows, dst_rows):
+        index += 1
+        src_messages = json.loads(src_line).get(KEPT)
+        dst_record = json.loads(dst_line)
+        if set(dst_record) != {KEPT}:
+            problems.append(f"row {index}: projection carries extra keys {sorted(dst_record)}")
+            break
+        if dst_record[KEPT] != src_messages:
+            problems.append(f"row {index}: '{KEPT}' differs from the source")
+            break
+
+    extra_src = sum(1 for _ in src_rows)
+    extra_dst = sum(1 for _ in dst_rows)
+    if extra_src or extra_dst:
+        problems.append(
+            f"row counts diverge after {index} matched rows: "
+            f"{extra_src} extra source rows, {extra_dst} extra projected rows"
+        )
+    return problems
+
+
+def load_check(target: Path, expect_rows: int) -> list[str]:
+    """Load the projection with the installed `datasets` — the thing training uses.
+
+    This is the gate the whole projection exists for. Row counts and digests were
+    all green on the frozen split that could not be loaded at all; only actually
+    handing the file to `datasets` proves the training run will get past the
+    dataset stage.
+    """
+    problems: list[str] = []
+    try:
+        from datasets import load_dataset
+    except ImportError as exc:
+        return [f"datasets is not importable, cannot prove the projection loads: {exc}"]
+
+    try:
+        dataset = load_dataset("json", data_files=str(target), split="train")
+    except Exception as exc:  # noqa: BLE001 - any loader failure is the finding
+        return [f"datasets could not load the projection: {type(exc).__name__}: {exc}"]
+
+    if dataset.num_rows != expect_rows:
+        problems.append(
+            f"datasets loaded {dataset.num_rows} rows, projection wrote {expect_rows}"
+        )
+    if dataset.column_names != [KEPT]:
+        problems.append(f"loaded columns are {dataset.column_names}, expected ['{KEPT}']")
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--target", type=Path, required=True)
+    parser.add_argument("--json", dest="json_out", type=Path)
+    parser.add_argument("--skip-load-check", action="store_true",
+                        help="跳过 datasets 真加载（仅用于没装 datasets 的环境自检）")
+    args = parser.parse_args(argv)
+
+    if not args.source.is_file():
+        print(f"PROJECTION FAIL: no such file: {args.source}")
+        return EXIT_BAD_INPUT
+
+    try:
+        report = project(args.source, args.target)
+    except (ValueError, json.JSONDecodeError) as exc:
+        print(f"PROJECTION FAIL: {exc}")
+        return EXIT_BAD_INPUT
+
+    problems = verify(args.source, args.target)
+    if not problems and not args.skip_load_check:
+        problems = load_check(args.target, report["kept"])
+        report["load_checked"] = not problems
+    report["problems"] = problems
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+    if problems:
+        print("PROJECTION FAIL:")
+        for problem in problems:
+            print(f"  - {problem}")
+        return EXIT_MISMATCH
+
+    print(
+        f"PROJECTION OK: {report['rows']} rows -> {args.target.name} "
+        f"(source sha256={report['source_sha256'][:16]})"
+    )
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

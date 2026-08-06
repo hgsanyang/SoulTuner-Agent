@@ -156,6 +156,23 @@ if [ -n "$MANIFEST_FILE" ]; then
 else
   echo "== 未提供 MANIFEST_FILE: 本次运行不受冻结数据集契约约束 (仅允许环境 preflight) =="
 fi
+
+# ---- ①f ChatML 投影 ---------------------------------------------------------
+# 冻结的 train 分片把溯源信息和对话放在一起，而 lineage 在不同行上形状不同
+# (5700 行 {builder,builder_version}，411 行多一个 clarification_trope)。
+# Arrow 的 struct 是强类型的，datasets 从文件头推断出两键结构后，读到三键的行
+# 就会 cast 失败，训练在加载数据集时崩溃、模型都没加载。
+#
+# 训练只读 messages。改写冻结文件会让 SHA-256 与 manifest 对不上，等于把已审计的
+# 数据身份改掉；所以冻结字节保持原样，这里派生一份只含 messages 的副本喂给 swift。
+# 投影会逐行校验：行数一致、每行 messages 与原文完全相同，不一致就退出。
+PROJECTED_TRAIN="$PREFLIGHT_DIR/train_chatml_projected.jsonl"
+PROJECTED_VAL="$PREFLIGHT_DIR/val_chatml_projected.jsonl"
+echo "== ChatML 投影 (冻结文件只读, 派生副本供 datasets 加载) =="
+python -m data.sft.project_chatml --source "$TRAIN_FILE" --target "$PROJECTED_TRAIN"   --json "$PREFLIGHT_DIR/projection_train.json"
+python -m data.sft.project_chatml --source "$VAL_FILE" --target "$PROJECTED_VAL"   --json "$PREFLIGHT_DIR/projection_val.json"
+SWIFT_TRAIN_FILE="$PROJECTED_TRAIN"
+SWIFT_VAL_FILE="$PROJECTED_VAL"
 if [ "${RUN_FULL:-0}" = "1" ] && [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "FAIL: formal training requires a clean tracked worktree; commit or revert code changes first"
   exit 6
@@ -361,8 +378,8 @@ python -m pip freeze > "$PREFLIGHT_DIR/pip-freeze.txt"
 COMMON=(
   --model "$MODEL"
   --tuner_type lora
-  --dataset "$TRAIN_FILE"
-  --val_dataset "$VAL_FILE"
+  --dataset "$SWIFT_TRAIN_FILE"
+  --val_dataset "$SWIFT_VAL_FILE"
   --torch_dtype bfloat16
   --enable_thinking false
   --freeze_vit true
