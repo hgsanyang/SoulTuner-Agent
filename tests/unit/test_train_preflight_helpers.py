@@ -619,6 +619,17 @@ def test_the_runner_binds_the_commit_through_an_env_var_not_a_hardcoded_sha():
     assert not shas, f"训练提交不该硬编码在脚本里: {shas}"
 
 
+def test_the_runner_can_bind_preverified_local_model_copies():
+    script = (
+        Path(__file__).resolve().parents[2] / "data" / "sft" / "run_planner_v4.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'MODEL_9B="${MODEL_9B:-Qwen/Qwen3.5-9B}"' in script
+    assert 'MODEL_35B="${MODEL_35B:-Qwen/Qwen3.6-35B-A3B}"' in script
+    assert 'run_one "$MODEL_9B" "qwen35-9b"' in script
+    assert 'run_one "$MODEL_35B" "qwen36-35b-a3b"' in script
+
+
 # ------------------------------------------------- canonical prompt eval ---
 # 冻结分片的 system prompt 不一致：train/regression 是 662 字符的
 # STUDENT_SYSTEM_PROMPT_V3，sealed 是 77 字符的另一条。那是两条代码路径的意外，
@@ -780,9 +791,13 @@ def test_the_training_script_delegates_all_post_train_scoring_to_the_guarded_eva
     )
 
     assert "bash data/sft/run_planner_eval.sh" in training
+    assert 'MODEL="$MODEL"' in training
     assert 'PROMPT_REFERENCE="$TRAIN_FILE"' in training
     assert 'FROZEN_SEALED_FILE="$SEALED_FILE"' in training
     assert 'EVAL_OUTPUT_DIR="$OUTPUT_DIR/evaluation"' in training
+    assert 'NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-3}"' in training
+    assert '--num_train_epochs "$NUM_TRAIN_EPOCHS"' in training
+    assert '"num_train_epochs": float(num_train_epochs)' in training
     assert "swift infer" not in training[training.index("# ---- ⑤可复现 infer"):], \
         "正式脚本不应绕过统一 evaluator 自己再拼 infer"
 
@@ -793,6 +808,7 @@ def test_the_training_script_delegates_all_post_train_scoring_to_the_guarded_eva
     assert reserve < infer < one_to_one < score, "必须先占新路径、再 infer、再验一对一、最后打分"
     assert '--temperature "$TEMPERATURE"' in evaluator
     assert '--seed "$SEED"' in evaluator
+    assert '--model "$MODEL"' in evaluator
 
 
 def test_canonical_sealed_is_the_release_input_and_frozen_sealed_is_only_stress():
@@ -809,6 +825,31 @@ def test_canonical_sealed_is_the_release_input_and_frozen_sealed_is_only_stress(
         "短 prompt 的预期 schema 失败只能记录，不能冒充 canonical 发布门"
 
 
+def test_release_evaluator_verifies_all_frozen_split_bytes_before_inference():
+    repo = Path(__file__).resolve().parents[2]
+    evaluator = (repo / "data/sft/run_planner_eval.sh").read_text(encoding="utf-8")
+
+    manifest = evaluator.index("python -m data.sft.verify_frozen_manifest")
+    regression = evaluator.index('run_infer regression "$REGRESSION_FILE" release')
+    assert manifest < regression
+    assert '--expect-train "$PROMPT_REFERENCE"' in evaluator
+    assert '--expect-val "$REGRESSION_FILE"' in evaluator
+    assert '--expect-sealed "$FROZEN_SEALED_FILE"' in evaluator
+    assert '--json "$EVAL_OUTPUT_DIR/manifest_check.json"' in evaluator
+
+
+def test_release_evaluator_persists_code_adapter_and_input_fingerprints():
+    repo = Path(__file__).resolve().parents[2]
+    evaluator = (repo / "data/sft/run_planner_eval.sh").read_text(encoding="utf-8")
+
+    assert '"$EVAL_OUTPUT_DIR/evaluation_identity.json"' in evaluator
+    assert '"evaluator_script_sha256"' in evaluator
+    assert '"weight_sha256"' in evaluator
+    assert '"config_sha256"' in evaluator
+    assert '"regression": file_record(regression)' in evaluator
+    assert '"frozen_sealed": file_record(frozen_sealed)' in evaluator
+
+
 def test_the_evaluator_refuses_a_nonempty_output_directory_before_running_swift(
     tmp_path, usable_bash
 ):
@@ -819,6 +860,9 @@ def test_the_evaluator_refuses_a_nonempty_output_directory_before_running_swift(
     repo = Path(__file__).resolve().parents[2]
     adapter = tmp_path / "adapter"
     adapter.mkdir()
+    # 脚本先校验适配器完整性(exit 4)，再校验输出目录(exit 8)。夹具必须过得了
+    # 前一道门，否则测的是别的守卫。
+    (adapter / "adapter_model.safetensors").write_bytes(bytes(1))
     regression = tmp_path / "regression.jsonl"
     regression.write_text("{}\n", encoding="utf-8")
     output = tmp_path / "eval"
@@ -830,6 +874,7 @@ def test_the_evaluator_refuses_a_nonempty_output_directory_before_running_swift(
         cwd=repo,
         env={
             **os.environ,
+            "MODEL": "unused/base-model",
             "ADAPTER": adapter.as_posix(),
             "REGRESSION_FILE": regression.as_posix(),
             "EVAL_OUTPUT_DIR": output.as_posix(),

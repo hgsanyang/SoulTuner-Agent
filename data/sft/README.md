@@ -69,9 +69,12 @@ a score taken there measures the prompt mismatch, not the student.
 - The derivation report records source/target/prompt SHA-256, the row count, and
   explicit `gold_unchanged` / `row_order_preserved` findings.
 - Formal post-train evaluation goes through `run_planner_eval.sh`; it locks
-  greedy decoding, refuses reused result paths, enforces one prediction per
-  input before scoring, gates on the canonical derivative, and records the
-  frozen short-prompt form separately as `prompt_contract_stress`.
+  the exact base model and greedy decoding, refuses reused result paths,
+  verifies the manifest against all three frozen split bytes, enforces one
+  prediction per input before scoring, gates on the canonical derivative, and
+  records the frozen short-prompt form separately as `prompt_contract_stress`.
+  `evaluation_identity.json` and each inference-contract report retain the
+  code, adapter, input and prediction fingerprints needed to audit the score.
 
 ## Metrics that can be undefined rather than zero
 
@@ -93,6 +96,12 @@ Two report fields exist because a metric read 0.0 where it had no meaning:
 The reference comparison uses `Qwen/Qwen3.5-9B` and
 `Qwen/Qwen3.6-35B-A3B` with the same data, seed and LoRA settings. Runs are
 sequential so they do not distort each other's memory use or throughput.
+`run_planner_v4.sh` accepts `MODEL_9B` / `MODEL_35B` overrides so a cloud
+window can bind a SHA-verified local-disk copy instead of cold-reading the
+persistent model cache; the default remains the ModelScope model id.
+`NUM_TRAIN_EPOCHS` is likewise explicit and is included in the preflight
+fingerprint (default `3`), so selecting two epochs does not require editing the
+launcher after the comparison has been reviewed.
 
 ```bash
 MANIFEST_FILE=<manifest> \

@@ -30,6 +30,7 @@ Exit codes: 0 clean, 4 unusable input, 8 the contract was broken.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -43,6 +44,14 @@ from data.sft.score_student import _row_keys  # noqa: E402  (path set above)
 EXIT_OK = 0
 EXIT_BAD_INPUT = 4
 EXIT_CONTRACT = 8
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _rows(path: Path) -> list[dict]:
@@ -102,8 +111,10 @@ def check_contract(input_path: Path, pred_path: Path) -> dict:
 
     return {
         "input": str(input_path),
+        "input_sha256": _sha256(input_path),
         "input_rows": len(inputs),
         "pred": str(pred_path),
+        "pred_sha256": _sha256(pred_path),
         "pred_rows": len(preds),
         "matched_inputs": len(seen),
         "repeated": repeated,

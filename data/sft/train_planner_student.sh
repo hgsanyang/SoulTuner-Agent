@@ -36,6 +36,7 @@ SEALED_FILE="${SEALED_FILE:-}"
 MANIFEST_FILE="${MANIFEST_FILE:-}"
 MODEL="${MODEL:-Qwen/Qwen3.6-35B-A3B}"
 MODEL_TAG="${MODEL_TAG:-$(printf '%s' "$MODEL" | tr -c 'A-Za-z0-9._-' '_')}"
+NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-3}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 PREFLIGHT_RUN_ID="${PREFLIGHT_RUN_ID:-$RUN_ID}"
 SEED="${SEED:-42}"
@@ -196,11 +197,11 @@ python -m data.sft.check_swift_flags --subcommand sft \
           create_checkpoint_symlink dataloader_num_workers
 python -m data.sft.check_swift_flags --subcommand infer \
   --json "$PREFLIGHT_DIR/swift_flags_infer.json" \
-  --flags adapters val_dataset enable_thinking max_new_tokens temperature seed result_path
+  --flags model adapters val_dataset enable_thinking max_new_tokens temperature seed result_path
 
 # 只允许在 AMD ROCm 训练实例运行，并落盘设备/依赖/数据指纹。
 python - "$TRAIN_FILE" "$VAL_FILE" "$SEALED_FILE" "$MODEL" "$MODEL_TAG" "$PREFLIGHT_DIR" "$RUN_RECORD" \
-        "$RUN_ID" "$SEED" "$MANIFEST_FILE" "$OUTPUT_DIR" <<'PY'
+        "$RUN_ID" "$SEED" "$MANIFEST_FILE" "$OUTPUT_DIR" "$NUM_TRAIN_EPOCHS" <<'PY'
 import hashlib
 import importlib.metadata as metadata
 import json
@@ -224,7 +225,8 @@ import torch
     seed,
     manifest_file,
     output_dir,
-) = sys.argv[1:12]
+    num_train_epochs,
+) = sys.argv[1:13]
 hip = getattr(torch.version, "hip", None)
 if not torch.cuda.is_available() or not hip:
     print(
@@ -294,6 +296,7 @@ if manifest_file:
 manifest = {
     "run_id": run_id,
     "seed": int(seed),
+    "num_train_epochs": float(num_train_epochs),
     "python": sys.version,
     "platform": platform.platform(),
     "torch": torch.__version__,
@@ -522,12 +525,16 @@ if [ "${RUN_FULL:-0}" != "1" ]; then
 fi
 
 # A full run is allowed only on the exact data that passed preflight.
-python - "$RUN_RECORD" "$TRAIN_FILE" "$VAL_FILE" "$SEALED_FILE" "$MANIFEST_FILE" "$MODEL" <<'PY'
+python - "$RUN_RECORD" "$TRAIN_FILE" "$VAL_FILE" "$SEALED_FILE" "$MANIFEST_FILE" "$MODEL" \
+  "$NUM_TRAIN_EPOCHS" <<'PY'
 import hashlib
 import json
 import sys
 
-record_path, train_file, val_file, sealed_file, manifest_file, model = sys.argv[1:7]
+(
+    record_path, train_file, val_file, sealed_file, manifest_file, model,
+    num_train_epochs,
+) = sys.argv[1:8]
 with open(record_path, encoding="utf-8") as handle:
     record = json.load(handle)
 
@@ -558,6 +565,12 @@ elif record.get("manifest_sha256"):
 if record.get("model") != model:
     print(f"FAIL: preflight 的 model={record.get('model')!r} 与本次 {model!r} 不同")
     sys.exit(6)
+if record.get("num_train_epochs") != float(num_train_epochs):
+    print(
+        "FAIL: preflight 的 num_train_epochs="
+        f"{record.get('num_train_epochs')!r} 与本次 {num_train_epochs!r} 不同"
+    )
+    sys.exit(6)
 print(
     "指纹一致: "
     f"train={record['train_sha256'][:12]} val={record['val_sha256'][:12]} "
@@ -569,7 +582,7 @@ PY
 # ---- ③全量训练 -------------------------------------------------------------
 echo "== 全量训练 =="
 swift sft "${COMMON[@]}" \
-  --num_train_epochs 3 \
+  --num_train_epochs "$NUM_TRAIN_EPOCHS" \
   --per_device_eval_batch_size 4 \
   --warmup_ratio 0.05 --weight_decay 0.01 \
   --logging_steps 5 --eval_steps 50 --save_steps 50 --save_total_limit 3 \
@@ -618,6 +631,7 @@ echo "== 训练完成. 最优 LoRA: $BEST =="
 # result path and rejects 452 predictions for 226 inputs before any scorer can
 # split or deduplicate them.  The release condition uses a canonical-prompt
 # derivative; the frozen 77-character prompt is reported only as a stress case.
+MODEL="$MODEL" \
 ADAPTER="$BEST" \
 REGRESSION_FILE="$VAL_FILE" \
 FROZEN_SEALED_FILE="$SEALED_FILE" \

@@ -25,7 +25,13 @@ FROZEN="${FROZEN:-data/teacher/private/v4/frozen-v4.0.0}"
 OUTPUT_ROOT="${OUTPUT_ROOT:?set OUTPUT_ROOT to a writable, ideally persistent directory}"
 VENV="${VENV:-/mnt/workspace/_venvs/soultuner-swift}"
 MODELSCOPE_CACHE="${MODELSCOPE_CACHE:?set MODELSCOPE_CACHE to the existing model cache}"
+MODEL_9B="${MODEL_9B:-Qwen/Qwen3.5-9B}"
+MODEL_35B="${MODEL_35B:-Qwen/Qwen3.6-35B-A3B}"
 SEED="${SEED:-42}"
+# Default 3 matches train_planner_student.sh. Two epochs is a reviewed choice for
+# the 35B contrast (the 9B validation loss bottomed at epoch 2 and rose through
+# epoch 3), so it is set explicitly by the caller rather than by editing a script.
+NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-3}"
 RUN_FULL="${RUN_FULL:-0}"
 # 记下调用方是否显式点了名：RUN_FULL=1 下"没选"和"选了 both"要给不同的提示，
 # 否则空变量会被默认值吞掉，报错说的是一件没发生的事。
@@ -118,12 +124,18 @@ run_one() {
   local out="$OUTPUT_ROOT/$BASE_RUN_ID/${tag}-${HEAD_SHA:0:12}/$run_id"
   mkdir -p "$out" || fail "cannot create output dir: $out"
 
+  # NUM_TRAIN_EPOCHS is passed explicitly rather than left to environment
+  # inheritance: it is a training parameter, and a reader of this function should
+  # be able to see every training parameter the runner sets. The preflight
+  # fingerprint also records it, so a preflight at 3 epochs cannot be followed by
+  # a full run at 2.
   MODEL="$model" \
   RUN_ID="$run_id" \
   OUTPUT_DIR="$out" \
   PREFLIGHT_DIR="$out/preflight" \
   TRAIN_FILE="$TRAIN_FILE" VAL_FILE="$VAL_FILE" SEALED_FILE="$SEALED_FILE" \
   MANIFEST_FILE="$MANIFEST" SEED="$SEED" RUN_FULL="$RUN_FULL" \
+  NUM_TRAIN_EPOCHS="$NUM_TRAIN_EPOCHS" \
     bash data/sft/train_planner_student.sh
   local rc=$?
   echo "exit($tag)=$rc"
@@ -131,10 +143,10 @@ run_one() {
 }
 
 case "$MODELS" in
-  9b)   run_one "Qwen/Qwen3.5-9B" "qwen35-9b" ;;
-  35b)  run_one "Qwen/Qwen3.6-35B-A3B" "qwen36-35b-a3b" ;;
-  both) run_one "Qwen/Qwen3.5-9B" "qwen35-9b"
-        run_one "Qwen/Qwen3.6-35B-A3B" "qwen36-35b-a3b" ;;
+  9b)   run_one "$MODEL_9B" "qwen35-9b" ;;
+  35b)  run_one "$MODEL_35B" "qwen36-35b-a3b" ;;
+  both) run_one "$MODEL_9B" "qwen35-9b"
+        run_one "$MODEL_35B" "qwen36-35b-a3b" ;;
   *)    fail "MODELS must be 9b, 35b or both (got '$MODELS')" ;;
 esac
 

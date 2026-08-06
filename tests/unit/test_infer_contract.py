@@ -10,6 +10,7 @@ refusal instead.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -61,7 +62,12 @@ def test_one_to_one_predictions_pass(tmp_path):
     src = _rows_file(tmp_path / "in.jsonl", episodes)
     pred = _rows_file(tmp_path / "pred.jsonl", episodes)
     assert contract_main(["--input", str(src), "--pred", str(pred)]) == 0
-    assert check_contract(src, pred)["one_to_one"] is True
+    report = check_contract(src, pred)
+    assert report["one_to_one"] is True
+    assert len(report["input_sha256"]) == 64
+    assert len(report["pred_sha256"]) == 64
+    assert report["input_sha256"] == hashlib.sha256(src.read_bytes()).hexdigest()
+    assert report["pred_sha256"] == hashlib.sha256(pred.read_bytes()).hexdigest()
 
 
 def test_a_short_prediction_file_is_refused(tmp_path):
