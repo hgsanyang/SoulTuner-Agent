@@ -801,3 +801,93 @@ def test_a_prefix_followed_by_a_real_leak_still_fails(tmp_path):
     both = "<think>\n\n</think>\n\n<think>再想想</think>" + CLEAN
     code, _ = verify(_pred(tmp_path, [{"response": both}]))
     assert code == 9
+
+
+# --------------------------------------------------- checkpoint discovery ---
+# ms-swift 4.4.2 把运行嵌在 $OUTPUT_DIR/v0-<时间戳>/ 里，checkpoint 在第二层，
+# 而且没有生成 best/last 软链。原来的 -maxdepth 1 两样都找不到：训练跑完、权重
+# 好端端在盘上，脚本却报"找不到 checkpoint"退出 7，推理和打分一步都不执行。
+# 2026-08-06 的 9B 正式跑实测就是这个布局。
+
+def _discovery_snippet(tmp_path: Path) -> Path:
+    """把脚本里真正那段发现逻辑抠出来跑，而不是在测试里重写一遍。"""
+    script = (Path(__file__).resolve().parents[2] / "data" / "sft"
+              / "train_planner_student.sh").read_text(encoding="utf-8")
+    start = script.index('BEST="$OUTPUT_DIR/best"')
+    end = script.index('echo "== 训练完成', start)
+    body = script[start:end]
+    # 去掉那段自带的 "找不到就 exit 7"，测试要看的是 BEST 的取值
+    body = body.replace("exit 7", ":")
+    path = tmp_path / "discover.sh"
+    path.write_text(body + '\necho "$BEST"\n', encoding="utf-8", newline="\n")
+    return path
+
+
+def _run_discovery(snippet: Path, output_dir: Path) -> str:
+    # 继承真实环境：把 PATH 削成 /usr/bin:/bin 在 Windows 的 Git Bash 下根本起不来。
+    # errors="replace"：bash 的报错在 GBK 控制台上不是合法 UTF-8，解码异常会把
+    # 真正的失败原因盖掉，让测试看起来是别的毛病。
+    import os
+    import shutil
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash is not available on this host")
+    # shutil.which 而不是裸 "bash"：PATH 上第一个 bash 可能是 WSL 的，
+    # 它读不了 C:/ 形式的路径，脚本会以"文件不存在"失败——看起来像发现逻辑坏了。
+    env = {**os.environ, "OUTPUT_DIR": output_dir.as_posix()}
+    result = subprocess.run(
+        [bash, snippet.as_posix()],
+        capture_output=True, encoding="utf-8", errors="replace", env=env,
+    )
+    out = (result.stdout or "").strip()
+    return out.splitlines()[-1] if out else ""
+
+
+def test_checkpoints_nested_under_the_swift_run_dir_are_found(tmp_path):
+    out = tmp_path / "run"
+    (out / "v0-20260806-182015" / "checkpoint-1500").mkdir(parents=True)
+    (out / "v0-20260806-182015" / "checkpoint-1450").mkdir(parents=True)
+    found = _run_discovery(_discovery_snippet(tmp_path), out)
+    assert found.endswith("checkpoint-1500"), f"没找到嵌套的 checkpoint: {found!r}"
+
+
+def test_the_highest_step_wins_numerically_not_lexically(tmp_path):
+    """checkpoint-1500 必须排在 checkpoint-950 后面。按字符串排会选错。"""
+    out = tmp_path / "run"
+    for step in (950, 1000, 1500):
+        (out / "v0-x" / f"checkpoint-{step}").mkdir(parents=True)
+    found = _run_discovery(_discovery_snippet(tmp_path), out)
+    assert found.endswith("checkpoint-1500"), f"选错了 checkpoint: {found!r}"
+
+
+def test_the_preflight_checkpoint_is_never_selected_as_the_trained_adapter(tmp_path):
+    """preflight 只有 50 步。拿它当训练产物去打分，会把冒烟测试的权重报成正式结果。"""
+    out = tmp_path / "run"
+    (out / "preflight" / "v0-y" / "checkpoint-50").mkdir(parents=True)
+    (out / "v0-x" / "checkpoint-1500").mkdir(parents=True)
+    found = _run_discovery(_discovery_snippet(tmp_path), out)
+    # 判据是"不在 preflight 子树里"，不是"路径里没有 preflight 这个词"——
+    # pytest 的临时目录以测试名命名，本身就含这个词。
+    assert "/preflight/" not in found, f"选到了 preflight 的权重: {found!r}"
+    assert found.endswith("checkpoint-1500")
+
+
+def test_a_real_best_symlink_still_wins_when_swift_makes_one(tmp_path):
+    out = tmp_path / "run"
+    (out / "v0-x" / "checkpoint-1500").mkdir(parents=True)
+    (out / "v0-x" / "best").mkdir(parents=True)
+    found = _run_discovery(_discovery_snippet(tmp_path), out)
+    assert found.endswith("best"), f"有 best 就该用 best: {found!r}"
+
+
+def test_an_ancestor_directory_named_preflight_does_not_hide_every_checkpoint(tmp_path):
+    """排除 preflight 必须锚定到 OUTPUT_DIR，不能对整条路径做 '*preflight*' 匹配。
+
+    只要任何一级祖先目录名字里带 preflight（比如 RUN_ID 取成 preflight-2026…），
+    未锚定的过滤会把全部 checkpoint 排掉，脚本随即报"训练完成但找不到 checkpoint"
+    并退出 —— 权重明明好端端在盘上。
+    """
+    out = tmp_path / "preflight-20260806T101010Z" / "run"
+    (out / "v0-x" / "checkpoint-1500").mkdir(parents=True)
+    found = _run_discovery(_discovery_snippet(tmp_path), out)
+    assert found.endswith("checkpoint-1500"), f"祖先目录带 preflight 就找不到了: {found!r}"
