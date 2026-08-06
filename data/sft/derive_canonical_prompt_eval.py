@@ -217,6 +217,17 @@ def main(argv: list[str] | None = None) -> int:
 
     problems = verify(args.source, args.target, prompt)
     report["problems"] = problems
+    # Stated as findings rather than left implicit in "no problems": a reader of
+    # the run record should not have to know what verify() happens to check.
+    report["gold_unchanged"] = not problems
+    report["row_order_preserved"] = not problems
+    report["fields_outside_messages_unchanged"] = not problems
+    # Which of the two evaluation roles this file plays. The canonical one is the
+    # release condition; the frozen short-prompt form measures whether the
+    # contract survives a prompt the model never trained under, and is reported
+    # separately — it is not a model-quality gate.
+    report["eval_role"] = "canonical_release_eval"
+    report["frozen_source_role"] = "prompt_contract_stress"
 
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)

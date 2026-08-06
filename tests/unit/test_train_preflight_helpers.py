@@ -828,12 +828,10 @@ def _run_discovery(snippet: Path, output_dir: Path) -> str:
     # errors="replace"：bash 的报错在 GBK 控制台上不是合法 UTF-8，解码异常会把
     # 真正的失败原因盖掉，让测试看起来是别的毛病。
     import os
-    import shutil
-    bash = shutil.which("bash")
-    if not bash:
-        pytest.skip("bash is not available on this host")
-    # shutil.which 而不是裸 "bash"：PATH 上第一个 bash 可能是 WSL 的，
-    # 它读不了 C:/ 形式的路径，脚本会以"文件不存在"失败——看起来像发现逻辑坏了。
+    from tests.unit.conftest import _BASH, _BASH_REASON
+    if _BASH is None:
+        pytest.skip(f"shell-script tests need a usable bash: {_BASH_REASON}")
+    bash = _BASH
     env = {**os.environ, "OUTPUT_DIR": output_dir.as_posix()}
     result = subprocess.run(
         [bash, snippet.as_posix()],
@@ -910,3 +908,4 @@ def test_the_best_symlink_is_found_even_though_it_is_a_link_not_a_directory(tmp_
     found = _run_discovery(_discovery_snippet(tmp_path), out)
     assert found.endswith("best"), f"符号链接形式的 best 没被找到，选成了 {found!r}"
     assert Path(found).resolve().name == "checkpoint-1000", "best 应指向验证最优那个"
+
