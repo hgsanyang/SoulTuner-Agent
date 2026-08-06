@@ -765,3 +765,39 @@ def test_an_already_canonical_split_is_reported_as_such_not_replaced(tmp_path):
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["system_already_canonical"] == 2
     assert report["system_replaced"] == 0
+
+
+# ------------------------------------------- non-thinking prefix vs leak ---
+# `--enable_thinking false` 不是"不输出 think 标签"，而是**预填一对空的**
+# <think></think>，让模型没有地方可以思考。见 `swift infer` 的
+# --add_non_thinking_prefix / --no_add_non_thinking_prefix。
+# 所以那对空标签是"关掉成功"的证据，不是泄漏；对它判失败会让每一次配置正确的
+# 运行都过不了门。真实数据实测：20/20 行都带这个前缀。
+
+def test_the_empty_non_thinking_prefix_is_not_treated_as_a_leak(tmp_path):
+    code, report = verify(_pred(tmp_path, [{"response": "<think>\n\n</think>\n\n" + CLEAN}] * 3))
+    assert code == 0, "空前缀是关掉思考的机制，不该判失败"
+    assert report["rows_with_thinking"] == 0
+    assert report["rows_with_non_thinking_prefix"] == 3, "但必须如实计数"
+
+
+def test_the_prefix_is_stripped_before_measuring_schema_parse_rate(tmp_path):
+    """`<think></think>{...}` 不是合法 JSON。不剥掉，解析率会报成 0%，
+    而输出其实完全良好 —— 发布门要求 schema_validity 等于 1.0。"""
+    _, report = verify(_pred(tmp_path, [{"response": "<think>\n\n</think>\n\n" + CLEAN}] * 4))
+    assert report["schema_parse_rate"] == 1.0
+
+
+def test_a_thinking_block_with_content_still_fails(tmp_path):
+    """区分必须只放过空的那一种，否则这道门就白设了。"""
+    leak = "<think>用户大概想要安静的音乐</think>\n" + CLEAN
+    code, report = verify(_pred(tmp_path, [{"response": leak}]))
+    assert code == 9, "有内容的 think 块是真泄漏"
+    assert report["rows_with_thinking"] == 1
+
+
+def test_a_prefix_followed_by_a_real_leak_still_fails(tmp_path):
+    """两者同时出现时，泄漏不能被前缀掩护过去。"""
+    both = "<think>\n\n</think>\n\n<think>再想想</think>" + CLEAN
+    code, _ = verify(_pred(tmp_path, [{"response": both}]))
+    assert code == 9
