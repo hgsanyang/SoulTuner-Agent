@@ -35,6 +35,8 @@ jobs:
         run: |
           bash -n data/sft/train_planner_student.sh
           bash -n data/sft/run_planner_contrast.sh
+          bash -n data/sft/run_planner_v4.sh
+          bash -n data/sft/run_planner_eval.sh
 
       - name: Run Unit Tests
         run: |

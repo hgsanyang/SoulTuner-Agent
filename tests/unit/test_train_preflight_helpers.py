@@ -767,6 +767,84 @@ def test_an_already_canonical_split_is_reported_as_such_not_replaced(tmp_path):
     assert report["system_replaced"] == 0
 
 
+# --------------------------------------------------- formal evaluator wiring ---
+
+def test_the_training_script_delegates_all_post_train_scoring_to_the_guarded_evaluator():
+    """D7 不能只是有一个无人调用的 helper；正式 runner 必须真的经过它。"""
+    repo = Path(__file__).resolve().parents[2]
+    training = (repo / "data" / "sft" / "train_planner_student.sh").read_text(
+        encoding="utf-8"
+    )
+    evaluator = (repo / "data" / "sft" / "run_planner_eval.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "bash data/sft/run_planner_eval.sh" in training
+    assert 'PROMPT_REFERENCE="$TRAIN_FILE"' in training
+    assert 'FROZEN_SEALED_FILE="$SEALED_FILE"' in training
+    assert 'EVAL_OUTPUT_DIR="$OUTPUT_DIR/evaluation"' in training
+    assert "swift infer" not in training[training.index("# ---- ⑤可复现 infer"):], \
+        "正式脚本不应绕过统一 evaluator 自己再拼 infer"
+
+    reserve = evaluator.index("check_infer_contract --reserve")
+    infer = evaluator.index("swift infer", reserve)
+    one_to_one = evaluator.index("check_infer_contract", infer)
+    score = evaluator.index("score_student", one_to_one)
+    assert reserve < infer < one_to_one < score, "必须先占新路径、再 infer、再验一对一、最后打分"
+    assert '--temperature "$TEMPERATURE"' in evaluator
+    assert '--seed "$SEED"' in evaluator
+
+
+def test_canonical_sealed_is_the_release_input_and_frozen_sealed_is_only_stress():
+    repo = Path(__file__).resolve().parents[2]
+    evaluator = (repo / "data" / "sft" / "run_planner_eval.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '--source "$FROZEN_SEALED_FILE"' in evaluator
+    assert '--reference "$PROMPT_REFERENCE"' in evaluator
+    assert 'run_infer sealed_canonical "$CANONICAL_SEALED" release' in evaluator
+    assert 'run_infer sealed_prompt_contract_stress "$FROZEN_SEALED_FILE" stress' in evaluator
+    assert '--sealed "$EVAL_OUTPUT_DIR/sealed_canonical_score.json"' in evaluator
+    assert "score_args+=(--no-strict)" in evaluator, \
+        "短 prompt 的预期 schema 失败只能记录，不能冒充 canonical 发布门"
+
+
+def test_the_evaluator_refuses_a_nonempty_output_directory_before_running_swift(
+    tmp_path, usable_bash
+):
+    """旧输出和新输出混在一起，正是 452/226 这类污染必须排除的来源。"""
+    import os
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[2]
+    adapter = tmp_path / "adapter"
+    adapter.mkdir()
+    regression = tmp_path / "regression.jsonl"
+    regression.write_text("{}\n", encoding="utf-8")
+    output = tmp_path / "eval"
+    output.mkdir()
+    (output / "old.jsonl").write_text("{}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [usable_bash, (repo / "data" / "sft" / "run_planner_eval.sh").as_posix()],
+        cwd=repo,
+        env={
+            **os.environ,
+            "ADAPTER": adapter.as_posix(),
+            "REGRESSION_FILE": regression.as_posix(),
+            "EVAL_OUTPUT_DIR": output.as_posix(),
+            "EVAL_SCOPE": "regression",
+        },
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=60,
+    )
+    assert result.returncode == 8
+    assert "must be new or empty" in result.stdout
+    assert "swift" not in result.stderr.casefold()
+
+
 # ------------------------------------------- non-thinking prefix vs leak ---
 # `--enable_thinking false` 不是"不输出 think 标签"，而是**预填一对空的**
 # <think></think>，让模型没有地方可以思考。见 `swift infer` 的
@@ -908,4 +986,3 @@ def test_the_best_symlink_is_found_even_though_it_is_a_link_not_a_directory(tmp_
     found = _run_discovery(_discovery_snippet(tmp_path), out)
     assert found.endswith("best"), f"符号链接形式的 best 没被找到，选成了 {found!r}"
     assert Path(found).resolve().name == "checkpoint-1000", "best 应指向验证最优那个"
-

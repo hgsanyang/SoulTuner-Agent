@@ -196,7 +196,7 @@ python -m data.sft.check_swift_flags --subcommand sft \
           create_checkpoint_symlink dataloader_num_workers
 python -m data.sft.check_swift_flags --subcommand infer \
   --json "$PREFLIGHT_DIR/swift_flags_infer.json" \
-  --flags adapters val_dataset enable_thinking max_new_tokens result_path
+  --flags adapters val_dataset enable_thinking max_new_tokens temperature seed result_path
 
 # 只允许在 AMD ROCm 训练实例运行，并落盘设备/依赖/数据指纹。
 python - "$TRAIN_FILE" "$VAL_FILE" "$SEALED_FILE" "$MODEL" "$MODEL_TAG" "$PREFLIGHT_DIR" "$RUN_RECORD" \
@@ -613,45 +613,18 @@ echo "== 训练完成. 最优 LoRA: $BEST =="
 # ---- ④合并 (可选, 便于部署) -------------------------------------------------
 # swift export --adapters "$BEST" --merge_lora true
 
-# ---- ⑤在 eval 上出预测 → ⑥确定性打分 ---------------------------------------
-echo "== 生成 eval 预测 =="
-# max_new_tokens 1024: 512 truncates the longer PlannerDecisionV3 payloads, and a
-# truncated JSON scores as a schema failure, which reads as a model regression.
-swift infer \
-  --adapters "$BEST" \
-  --val_dataset "$VAL_FILE" \
-  --enable_thinking false \
-  --max_new_tokens 1024 \
-  --result_path "$OUTPUT_DIR/eval_predictions.jsonl"
-
-# ⑤b thinking 关闭的**运行时证据**。grep '<think>' 会漏掉只剩闭合标签、
-#    reasoning_content 旁路字段、以及 ◁think▷ 全角分隔符这三种泄漏方式。
-echo "== 验证真实 infer 输出不含 think 块 =="
-python -m data.sft.verify_infer_output \
-  --pred "$OUTPUT_DIR/eval_predictions.jsonl" \
-  --schema planner_v3 \
-  --json "$OUTPUT_DIR/infer_thinking_check.json"
-
-echo "== 打分 (V3 schema/request kind/通道F1/澄清精确率/字段匹配, 强制100%覆盖) =="
-python -m data.sft.score_student \
-  --eval "$VAL_FILE" \
-  --pred "$OUTPUT_DIR/eval_predictions.jsonl" \
-  --json "$OUTPUT_DIR/eval_score.json"
-
-echo "== 密封集最终评测（训练与选 checkpoint 均未读取该 split） =="
-swift infer \
-  --adapters "$BEST" \
-  --val_dataset "$SEALED_FILE" \
-  --enable_thinking false \
-  --max_new_tokens 1024 \
-  --result_path "$OUTPUT_DIR/sealed_predictions.jsonl"
-python -m data.sft.verify_infer_output \
-  --pred "$OUTPUT_DIR/sealed_predictions.jsonl" \
-  --schema planner_v3 \
-  --json "$OUTPUT_DIR/sealed_thinking_check.json"
-python -m data.sft.score_student \
-  --eval "$SEALED_FILE" \
-  --pred "$OUTPUT_DIR/sealed_predictions.jsonl" \
-  --json "$OUTPUT_DIR/sealed_score.json"
+# ---- ⑤可复现 infer → ⑥canonical sealed + 压力测试 + release gate ------------
+# The evaluator owns all inference guards.  In particular, it refuses a reused
+# result path and rejects 452 predictions for 226 inputs before any scorer can
+# split or deduplicate them.  The release condition uses a canonical-prompt
+# derivative; the frozen 77-character prompt is reported only as a stress case.
+ADAPTER="$BEST" \
+REGRESSION_FILE="$VAL_FILE" \
+FROZEN_SEALED_FILE="$SEALED_FILE" \
+PROMPT_REFERENCE="$TRAIN_FILE" \
+MANIFEST_FILE="$MANIFEST_FILE" \
+EVAL_OUTPUT_DIR="$OUTPUT_DIR/evaluation" \
+SEED="$SEED" \
+bash data/sft/run_planner_eval.sh
 
 echo "== HyDE 质量另用文搜音尺子: python -m tests.eval.evaluate_alignment_attribute =="

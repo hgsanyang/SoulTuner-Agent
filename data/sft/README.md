@@ -68,6 +68,10 @@ a score taken there measures the prompt mismatch, not the student.
   alongside, and is **not** a model-quality release gate.
 - The derivation report records source/target/prompt SHA-256, the row count, and
   explicit `gold_unchanged` / `row_order_preserved` findings.
+- Formal post-train evaluation goes through `run_planner_eval.sh`; it locks
+  greedy decoding, refuses reused result paths, enforces one prediction per
+  input before scoring, gates on the canonical derivative, and records the
+  frozen short-prompt form separately as `prompt_contract_stress`.
 
 ## Metrics that can be undefined rather than zero
 
