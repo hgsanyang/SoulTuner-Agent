@@ -1,4 +1,5 @@
 import json
+import pytest
 from pathlib import Path
 import tarfile
 
@@ -247,3 +248,67 @@ def test_the_report_states_every_category_support():
     assert supports["acquisition"] == 1 and supports["recommendation"] == 218, \
         "读报告的人必须能看到每类的样本量，否则无从判断一个数字值多少"
     assert report["thresholds"]["min_support_for_statistical_gate"] == 20
+
+
+# --- 正式训练安全门：一个实例窗口只训一个模型 --------------------------------
+
+def _run_gate(env_extra: dict) -> tuple[int, str]:
+    """跑真实脚本，看它到底怎么反应——不是读源码里的字符串。"""
+    import os
+    import shutil
+    import subprocess
+
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("bash is not available on this host")
+
+    repo = Path(__file__).resolve().parents[2]
+    env = {
+        **os.environ,
+        "EXPECTED_TRAINING_COMMIT": "0" * 40,   # 故意不匹配：守卫应更早退出
+        "OUTPUT_ROOT": "/tmp/does-not-matter",
+        "MODELSCOPE_CACHE": "/tmp",
+        **env_extra,
+    }
+    # as_posix()：Windows 的反斜杠路径传给 Git Bash 会被当成转义吃掉。
+    proc = subprocess.run(
+        [bash, (repo / "data" / "sft" / "run_planner_v4.sh").as_posix()],
+        capture_output=True, text=True, env=env, cwd=repo, timeout=120,
+    )
+    return proc.returncode, (proc.stdout + proc.stderr)
+
+
+def test_full_training_refuses_to_run_both_models_in_one_window():
+    """两个 3-epoch run 加推理评测塞进一个窗口，第二个多半在窗口耗尽时被腰斩，
+    留下一个看起来完整、实际只训了一部分的目录。"""
+    code, out = _run_gate({"RUN_FULL": "1", "MODELS": "both"})
+    assert code != 0
+    assert "refuses MODELS=both" in out
+
+
+def test_full_training_will_not_default_to_both():
+    """没点名不能落到默认值——默认值恰好是被禁的那个。"""
+    code, out = _run_gate({"RUN_FULL": "1"})
+    assert code != 0
+    assert "requires an explicit MODELS" in out
+
+
+def test_full_training_rejects_an_unknown_model_name():
+    code, out = _run_gate({"RUN_FULL": "1", "MODELS": "qwen-something"})
+    assert code != 0
+    assert "qwen-something" in out
+
+
+def test_preflight_may_still_run_both_models():
+    """50 步很便宜，preflight 不受这道门约束；它应当走到后面的 HEAD 检查才失败。"""
+    code, out = _run_gate({"RUN_FULL": "0", "MODELS": "both"})
+    assert code != 0
+    assert "refuses MODELS=both" not in out
+    assert "HEAD is" in out, "应当是被 HEAD 守卫拦下，而不是被安全门拦下"
+
+
+def test_full_training_with_one_model_passes_the_safety_gate():
+    code, out = _run_gate({"RUN_FULL": "1", "MODELS": "9b"})
+    assert "MODELS" not in out.split("FAIL:")[-1] or "HEAD is" in out, \
+        "点名单模型后应当越过安全门，由身份守卫接手"
+    assert "HEAD is" in out

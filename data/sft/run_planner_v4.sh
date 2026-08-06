@@ -6,11 +6,13 @@
 # 变量：调用方声明要跑哪个提交，脚本只负责核对，不知道也不猜自己的 SHA。
 #
 # 用法：
-#   EXPECTED_TRAINING_COMMIT=<sha> bash data/sft/run_planner_v4.sh            # 两个模型串行
-#   EXPECTED_TRAINING_COMMIT=<sha> MODELS=9b bash data/sft/run_planner_v4.sh  # 只跑 9B
+#   EXPECTED_TRAINING_COMMIT=<sha> bash data/sft/run_planner_v4.sh                     # preflight，两模型串行
+#   EXPECTED_TRAINING_COMMIT=<sha> MODELS=9b bash data/sft/run_planner_v4.sh            # preflight，只跑 9B
+#   EXPECTED_TRAINING_COMMIT=<sha> RUN_FULL=1 MODELS=9b bash data/sft/run_planner_v4.sh # 正式训练，必须点名
 #
-# RUN_FULL 默认 0。正式训练必须显式 RUN_FULL=1，且脚本会为每个模型重新跑一遍
-# 50-step preflight——那不是浪费，是把本次运行的环境和数据指纹绑进记录里。
+# RUN_FULL 默认 0。正式训练必须显式 RUN_FULL=1 **并且**显式 MODELS=9b|35b——
+# 一个实例窗口只训一个模型。脚本会为每个模型重新跑一遍 50-step preflight，
+# 那不是浪费，是把本次运行的环境和数据指纹绑进记录里。
 set -uo pipefail
 
 fail() { echo "FAIL: $*" >&2; exit 3; }
@@ -25,10 +27,34 @@ VENV="${VENV:-/mnt/workspace/_venvs/soultuner-swift}"
 MODELSCOPE_CACHE="${MODELSCOPE_CACHE:?set MODELSCOPE_CACHE to the existing model cache}"
 SEED="${SEED:-42}"
 RUN_FULL="${RUN_FULL:-0}"
+# 记下调用方是否显式点了名：RUN_FULL=1 下"没选"和"选了 both"要给不同的提示，
+# 否则空变量会被默认值吞掉，报错说的是一件没发生的事。
+MODELS_EXPLICIT=1
+[ -n "${MODELS:-}" ] || MODELS_EXPLICIT=0
 MODELS="${MODELS:-both}"
 BASE_RUN_ID="${BASE_RUN_ID:-planner-v4-$(date -u +%Y%m%dT%H%M%SZ)}"
 
 cd "$REPO" || fail "cannot enter repo: $REPO"
+
+# ---- 正式训练安全门 ---------------------------------------------------------
+# RUN_FULL=1 必须显式点名一个模型。`MODELS=both` 在正式训练下被拒绝：
+# 一次完整对照是两个各约 3 epoch 的 run 加上推理评测，塞进一个实例窗口意味着
+# 第二个模型大概率在窗口耗尽时被腰斩——而被腰斩的 35B 会留下一个看起来完整、
+# 实际只训了一部分的目录。preflight 不受影响，50 步串行两个模型很便宜。
+if [ "$RUN_FULL" = "1" ]; then
+  case "$MODELS" in
+    9b|35b) : ;;
+    both)
+      if [ "$MODELS_EXPLICIT" = "0" ]; then
+        fail "RUN_FULL=1 requires an explicit MODELS=9b or MODELS=35b; it will not
+      default to running both in one window"
+      fi
+      fail "RUN_FULL=1 refuses MODELS=both; run one model per instance window
+      (MODELS=9b then MODELS=35b, each with its own BASE_RUN_ID)" ;;
+    *)
+      fail "RUN_FULL=1 requires MODELS=9b or MODELS=35b explicitly (got '$MODELS')" ;;
+  esac
+fi
 
 # ---- 身份 -------------------------------------------------------------------
 HEAD_SHA="$(git rev-parse HEAD)"
