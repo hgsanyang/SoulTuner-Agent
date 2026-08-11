@@ -71,7 +71,7 @@ python prepare_adapter_release.py \
   --base-model Qwen/Qwen3.6-35B-A3B
 ```
 
-发布前把 `MODEL_CARD_TEMPLATE.md` 的占位内容补齐并保存为发布目录的 `README.md`，再加入 Apache-2.0 `LICENSE`、上游与本项目归属说明 `NOTICE`。基座采用 Apache-2.0；adapter 的最终许可证还必须同时满足训练数据授权。
+发布前把 `MODEL_CARD_TEMPLATE.md` 复制为发布目录的 `README.md`，把 `NOTICE_TEMPLATE` 复制为 `NOTICE`，再加入 Apache-2.0 `LICENSE`。模板已经包含本次训练身份和聚合指标；正式公开前仍需确认 adapter 许可证同时满足训练数据授权。
 
 ## 从模型 Hub 下载
 
