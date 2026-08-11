@@ -77,14 +77,30 @@ python prepare_adapter_release.py \
 
 ### ModelScope（国内与创空间优先）
 
-先在网页创建基座镜像/adapter 对应的模型仓库，然后在 GPU 服务器执行：
+正式 LoRA Adapter 已发布在：
+
+- ModelScope：<https://modelscope.cn/models/hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA>
+- 模型 ID：`hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA`
+
+在 GPU 服务器执行下面的脚本即可下载官方基座、下载 Adapter，并核对 Adapter SHA-256：
 
 ```bash
 python -m pip install -U modelscope
-modelscope download --model Qwen/Qwen3.6-35B-A3B \
-  --local_dir /models/qwen3.6-35b-a3b
-modelscope download --model YOUR_NAME/SoulTuner-Planner-V4.2-35B-LoRA \
-  --local_dir /models/soultuner-v4.2-adapter
+bash download_modelscope_assets.sh
+```
+
+默认下载到当前目录的 `models/`。可通过 `SOULTUNER_MODEL_ROOT` 修改位置。等价的手动命令是：
+
+```bash
+python -m pip install -U modelscope
+modelscope download Qwen/Qwen3.6-35B-A3B \
+  --repo-type model --revision master \
+  --local-dir /models/qwen3.6-35b-a3b
+modelscope download hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA \
+  --repo-type model --revision master \
+  --local-dir /models/soultuner-v4.2-adapter
+cd /models/soultuner-v4.2-adapter
+sha256sum --check SHA256SUMS
 ```
 
 ModelScope 已提供 `Qwen/Qwen3.6-35B-A3B` 官方模型页，因此创空间可以直接从国内 Hub 拉取基座和 SoulTuner adapter。生产环境应固定 revision/commit，并在启动前核对 SHA-256。
