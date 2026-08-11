@@ -1,0 +1,19 @@
+SoulTuner Planner V4.2 35B LoRA
+Copyright 2026 SoulTuner contributors
+
+This release contains only the SoulTuner PEFT/LoRA adapter. It does not contain
+the Qwen3.6-35B-A3B base weights.
+
+Base model:
+  Qwen/Qwen3.6-35B-A3B
+  Copyright Qwen Team
+  License: Apache License 2.0
+  https://huggingface.co/Qwen/Qwen3.6-35B-A3B
+
+SoulTuner training identity:
+  Code commit: 7c543bb6f66ffba8fcc25dfd74ee157a1e424c55
+  Manifest SHA-256: 4ebaeeadcc843389efdbeb66cdebc2aef6014680f76074a621e6d2d9283c228c
+  Best checkpoint: checkpoint-450
+
+Private training, resume, and sealed-evaluation artifacts are intentionally
+excluded from this public-release layout.

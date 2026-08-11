@@ -90,6 +90,26 @@ Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu`.
 
 To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / VLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
 
+### Self-host the trained SoulTuner 35B Planner
+
+The repository includes a standalone 35B deployment package: [deploy/self_hosted_35b](deploy/self_hosted_35b). It keeps the Planner behind an OpenAI-compatible endpoint, so the application switches between Qwen3.7 Plus and the fine-tuned SoulTuner model without changing retrieval, memory, ranking, or frontend code.
+
+| Profile | Where it runs | Local GPU requirement |
+|---|---|---|
+| Qwen3.7 Plus API | current laptop or any CPU host | none; an RTX 4070 is sufficient for the rest of the app |
+| SoulTuner V4.2 35B | your GPU server or managed GPU workspace | the 35B base and LoRA adapter stay on the inference server |
+| Safe demo | anywhere | none |
+
+```powershell
+cd deploy/self_hosted_35b
+python -m pip install -r requirements.txt
+$env:DASHSCOPE_API_KEY="your key"
+$env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
+python app.py
+```
+
+On a suitable GPU server, download the official `Qwen/Qwen3.6-35B-A3B` base plus the published SoulTuner LoRA adapter, start the endpoint, and select **SoulTuner V4.2 35B** in the same dropdown. The package README covers hardware sizing, hub publishing/downloading, endpoint startup, and the measured Planner results. The verified environment used an AMD MI308X, but the deployment contract itself is hardware-neutral.
+
 <details>
 <summary>Other common commands</summary>
 

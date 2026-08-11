@@ -1,1 +1,2 @@
 * text=auto
+deploy/self_hosted_35b/*.sh text eol=lf
