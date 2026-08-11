@@ -1,1 +1,2 @@
 * text=auto
+deploy/modelscope_space/*.sh text eol=lf

@@ -90,6 +90,26 @@ Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu`.
 
 To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / VLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
 
+### Deploy the trained SoulTuner Planner
+
+The repository includes a standalone Creation Space package with a single model dropdown: [deploy/modelscope_space](deploy/modelscope_space). No application code changes are needed when switching modes.
+
+| Profile | Where it runs | Local GPU requirement |
+|---|---|---|
+| Qwen3.7 Plus API | current laptop / CPU Space | none; an RTX 4070 is sufficient for the rest of the app |
+| SoulTuner V4.2 35B | AMD MI308X Space or remote endpoint | the 35B weights stay on the server |
+| Safe demo | anywhere | none |
+
+```powershell
+cd deploy/modelscope_space
+python -m pip install -r requirements.txt
+$env:DASHSCOPE_API_KEY="your key"
+$env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
+python app.py
+```
+
+After an AMD Space is available, start the verified `checkpoint-450` endpoint and select **SoulTuner V4.2 35B** in the same dropdown. See the package README for the exact endpoint variables and measured Planner results.
+
 <details>
 <summary>Other common commands</summary>
 
