@@ -81,11 +81,13 @@ python prepare_adapter_release.py \
 
 ```bash
 python -m pip install -U modelscope
+modelscope download --model Qwen/Qwen3.6-35B-A3B \
+  --local_dir /models/qwen3.6-35b-a3b
 modelscope download --model YOUR_NAME/SoulTuner-Planner-V4.2-35B-LoRA \
   --local_dir /models/soultuner-v4.2-adapter
 ```
 
-官方基座若已在 ModelScope 有可信镜像，可同样下载到 `/models/qwen3.6-35b-a3b`；否则从上游 Hugging Face 下载。生产环境应固定 revision/commit，并在启动前核对 SHA-256。
+ModelScope 已提供 `Qwen/Qwen3.6-35B-A3B` 官方模型页，因此创空间可以直接从国内 Hub 拉取基座和 SoulTuner adapter。生产环境应固定 revision/commit，并在启动前核对 SHA-256。
 
 ### Hugging Face
 
