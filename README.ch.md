@@ -90,27 +90,27 @@ MUSIC_DATA_PATH=../data
 
 想换模型厂商（SiliconFlow / Google / 火山 / 本地 SGLang、VLLM、Ollama），改 `MAIN_LLM_PROVIDER` 和 `MODEL_NAME` 并填对应 Key 即可，也可以启动后在前端「系统设置」里改。
 
-### 部署训练后的 SoulTuner Planner
+### 自托管训练后的 SoulTuner 35B Planner
 
-仓库已提供独立的创空间部署包：[deploy/modelscope_space](deploy/modelscope_space)。页面只有一个模型下拉框，切换模型不改业务代码：
+仓库已提供独立的 35B 自托管部署包：[deploy/self_hosted_35b](deploy/self_hosted_35b)。Planner 通过 OpenAI 兼容端点接入；在 Qwen3.7 Plus 与微调后的 SoulTuner 模型之间切换时，检索、记忆、排序和前端代码都不用修改。
 
 | 档位 | 运行位置 | 本地显卡要求 |
 |---|---|---|
-| Qwen3.7 Plus API | 当前电脑 / CPU 创空间 | 不加载大模型，RTX 4070 足够运行其余服务 |
-| SoulTuner V4.2 35B | AMD MI308X 创空间或远程端点 | 35B 权重留在服务器 |
+| Qwen3.7 Plus API | 当前电脑或任意 CPU 主机 | 不加载大模型，RTX 4070 足够运行其余服务 |
+| SoulTuner V4.2 35B | 自有 GPU 服务器或托管 GPU 工作区 | 35B 基座与 LoRA adapter 留在推理服务器 |
 | 安全演示 | 任意环境 | 无 |
 
 当前电脑直接这样启动：
 
 ```powershell
-cd deploy/modelscope_space
+cd deploy/self_hosted_35b
 python -m pip install -r requirements.txt
 $env:DASHSCOPE_API_KEY="你的 Key"
 $env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
 python app.py
 ```
 
-获得 AMD 创空间后，在服务器启动已验证的 `checkpoint-450`，再从同一个下拉框选择 **SoulTuner V4.2 35B**。端点变量、完整步骤和训练表现见部署包 README。
+在合适的 GPU 服务器上下载官方 `Qwen/Qwen3.6-35B-A3B` 基座与发布后的 SoulTuner LoRA adapter，启动端点，再从同一个下拉框选择 **SoulTuner V4.2 35B**。部署包 README 已包含硬件规格、模型发布与下载、服务启动和训练表现。已验证环境是 AMD MI308X，但部署接口本身不绑定某个云平台或某个 GPU 品牌。
 
 <details>
 <summary>其它常用命令</summary>

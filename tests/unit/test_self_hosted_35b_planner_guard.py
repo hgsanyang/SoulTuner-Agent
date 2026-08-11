@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from deploy.modelscope_space.planner_guard import (
+from deploy.self_hosted_35b.planner_guard import (
     build_safe_plan,
     guard_candidate,
     parse_candidate_content,

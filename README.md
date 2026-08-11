@@ -90,25 +90,25 @@ Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu`.
 
 To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / VLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
 
-### Deploy the trained SoulTuner Planner
+### Self-host the trained SoulTuner 35B Planner
 
-The repository includes a standalone Creation Space package with a single model dropdown: [deploy/modelscope_space](deploy/modelscope_space). No application code changes are needed when switching modes.
+The repository includes a standalone 35B deployment package: [deploy/self_hosted_35b](deploy/self_hosted_35b). It keeps the Planner behind an OpenAI-compatible endpoint, so the application switches between Qwen3.7 Plus and the fine-tuned SoulTuner model without changing retrieval, memory, ranking, or frontend code.
 
 | Profile | Where it runs | Local GPU requirement |
 |---|---|---|
-| Qwen3.7 Plus API | current laptop / CPU Space | none; an RTX 4070 is sufficient for the rest of the app |
-| SoulTuner V4.2 35B | AMD MI308X Space or remote endpoint | the 35B weights stay on the server |
+| Qwen3.7 Plus API | current laptop or any CPU host | none; an RTX 4070 is sufficient for the rest of the app |
+| SoulTuner V4.2 35B | your GPU server or managed GPU workspace | the 35B base and LoRA adapter stay on the inference server |
 | Safe demo | anywhere | none |
 
 ```powershell
-cd deploy/modelscope_space
+cd deploy/self_hosted_35b
 python -m pip install -r requirements.txt
 $env:DASHSCOPE_API_KEY="your key"
 $env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
 python app.py
 ```
 
-After an AMD Space is available, start the verified `checkpoint-450` endpoint and select **SoulTuner V4.2 35B** in the same dropdown. See the package README for the exact endpoint variables and measured Planner results.
+On a suitable GPU server, download the official `Qwen/Qwen3.6-35B-A3B` base plus the published SoulTuner LoRA adapter, start the endpoint, and select **SoulTuner V4.2 35B** in the same dropdown. The package README covers hardware sizing, hub publishing/downloading, endpoint startup, and the measured Planner results. The verified environment used an AMD MI308X, but the deployment contract itself is hardware-neutral.
 
 <details>
 <summary>Other common commands</summary>

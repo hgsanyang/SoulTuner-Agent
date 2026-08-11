@@ -1,4 +1,4 @@
-"""Model choices shared by the Creation Space UI and deployment docs."""
+"""Model choices shared by the self-hosted UI and deployment docs."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ PROFILE_SAFE = "safe"
 
 PROFILE_LABELS = {
     PROFILE_QWEN: "Qwen3.7 Plus（云端，4070 可用）",
-    PROFILE_SOULTUNER: "SoulTuner V4.2 35B（AMD 创空间）",
+    PROFILE_SOULTUNER: "SoulTuner V4.2 35B（自托管）",
     PROFILE_SAFE: "安全演示（无需模型）",
 }
 

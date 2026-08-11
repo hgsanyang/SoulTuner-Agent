@@ -1,4 +1,4 @@
-"""Gradio entrypoint for the public ModelScope Creation Space."""
+"""Gradio entrypoint for the self-hosted SoulTuner 35B Planner demo."""
 
 from __future__ import annotations
 
@@ -26,9 +26,10 @@ from prompt_v42 import STUDENT_SYSTEM_PROMPT_V4_2
 def _runtime_status(profile: str | None = None) -> str:
     has_kfd = os.path.exists("/dev/kfd")
     rocminfo = shutil.which("rocminfo")
-    gpu_line = "未检测到 /dev/kfd（安全演示模式）"
+    nvidia_smi = shutil.which("nvidia-smi")
+    gpu_line = "未检测到本机 GPU（可使用远程端点或安全演示）"
     if has_kfd:
-        gpu_line = "已检测到 AMD ROCm 设备"
+        gpu_line = "已检测到 ROCm GPU"
         if rocminfo:
             try:
                 output = subprocess.run(
@@ -45,6 +46,21 @@ def _runtime_status(profile: str | None = None) -> str:
                     gpu_line += "：" + " / ".join(dict.fromkeys(names))
             except (OSError, subprocess.SubprocessError):
                 pass
+    elif nvidia_smi:
+        try:
+            output = subprocess.run(
+                [nvidia_smi, "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=4,
+                check=False,
+            ).stdout
+            names = [line.strip() for line in output.splitlines() if line.strip()]
+            gpu_line = "已检测到 CUDA GPU"
+            if names:
+                gpu_line += "：" + " / ".join(dict.fromkeys(names))
+        except (OSError, subprocess.SubprocessError):
+            pass
     selected = profile or default_profile()
     config, _ = resolve_profile(selected)
     mode = PROFILE_LABELS.get(selected, selected)
@@ -123,7 +139,7 @@ ABOUT = """
 在页面上切换一次模型即可，无需修改业务代码：
 
 1. **Qwen3.7 Plus**：4070 或无本地大模型环境时直接使用云端 API；
-2. **SoulTuner V4.2 35B**：获得 AMD 创空间后接入训练好的 endpoint；
+2. **SoulTuner V4.2 35B**：接入自托管或托管 GPU 上的训练模型 endpoint；
 3. **安全演示**：不调用模型，仍可展示 Graph / Dense 路由。
 
 两种模型输出都经过相同的结构校验、Lane 角色检查与确定性编译。`brief_reason` 是不超过 80 字的公开依据，不是隐藏思维链。
@@ -133,7 +149,7 @@ ABOUT = """
 with gr.Blocks(title="SoulTuner · Evidence-first Music Planner") as demo:
     gr.Markdown(
         "# SoulTuner · 证据优先音乐检索规划器\n"
-        "AMD MI308X 训练的 35B Planner 候选 + 确定性安全守卫 + Graph/Dense 分工。"
+        "领域微调的 35B Planner 候选 + 确定性安全守卫 + Graph/Dense 分工。"
     )
     with gr.Row():
         with gr.Column(scale=3):

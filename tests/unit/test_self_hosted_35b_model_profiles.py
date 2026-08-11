@@ -7,10 +7,10 @@ from pathlib import Path
 MODULE_PATH = (
     Path(__file__).resolve().parents[2]
     / "deploy"
-    / "modelscope_space"
+    / "self_hosted_35b"
     / "model_profiles.py"
 )
-SPEC = importlib.util.spec_from_file_location("soultuner_space_model_profiles", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location("soultuner_self_hosted_profiles", MODULE_PATH)
 assert SPEC and SPEC.loader
 profiles = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(profiles)
@@ -23,7 +23,7 @@ def test_4070_profile_is_one_dropdown_value(monkeypatch) -> None:
     assert profiles.resolve_profile(profiles.PROFILE_QWEN)[0]["model"] == "qwen3.7-plus"
 
 
-def test_35b_profile_uses_creation_space_endpoint(monkeypatch) -> None:
+def test_35b_profile_uses_self_hosted_endpoint(monkeypatch) -> None:
     monkeypatch.setenv("SOULTUNER_PLANNER_ENDPOINT", "https://example/v1/chat/completions")
     config, _ = profiles.resolve_profile(profiles.PROFILE_SOULTUNER)
     assert config["endpoint"] == "https://example/v1/chat/completions"
