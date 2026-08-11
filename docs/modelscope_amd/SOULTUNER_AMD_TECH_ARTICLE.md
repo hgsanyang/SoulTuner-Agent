@@ -421,7 +421,9 @@ SOULTUNER_PLANNER_ENDPOINT=https://<your-endpoint>/planner/v5
 SOULTUNER_PLANNER_TOKEN=<secret>
 ```
 
-Token 只放创空间 Secret，不进入代码仓库。端点固定 12 秒超时；出错即降级。
+如果直接使用训练模型的 OpenAI-compatible 服务，端点为 `https://<host>/v1/chat/completions`。Token 只放创空间 Secret，不进入代码仓库。超时由 `SOULTUNER_PLANNER_TIMEOUT` 配置；35B 冷启动阶段建议 180 秒，出错即降级。
+
+本次在 AMD MI308X 上恢复 `checkpoint-450` 后完成了真实部署验证：服务身份回读为 `soultuner-planner-v4.2-35b`，公开请求“我今天心情很差，想听一些温暖、治愈但不要太吵的歌”经热启动端到端耗时 24.56 秒，候选通过 Policy Guard，最终编译为 Graph 0.25 / Dense 0.75，非空 thinking 为 0。该结果用于证明部署链路可运行，不包含私有 sealed 样本。
 
 > 配图建议 2：创空间主页，左侧输入“我心情很差”，右侧显示 `dense_primary` 与 Graph 0.25 / Dense 0.75。
 > 配图建议 3：人为构造一个遗漏 Dense 的候选，展示“候选被拒绝，已回退到确定性安全计划”。
