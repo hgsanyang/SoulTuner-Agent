@@ -1,6 +1,12 @@
 from copy import deepcopy
 
-from deploy.modelscope_space.planner_guard import build_safe_plan, guard_candidate
+import pytest
+
+from deploy.modelscope_space.planner_guard import (
+    build_safe_plan,
+    guard_candidate,
+    parse_candidate_content,
+)
 
 
 def _candidate(user_text, context=None):
@@ -82,3 +88,20 @@ def test_valid_candidate_is_accepted():
     accepted, findings = guard_candidate("低音更重、鼓点更大的歌", candidate)
     assert accepted["source"] == "model_candidate_guarded"
     assert findings == ["模型候选通过结构与策略守卫"]
+
+
+def test_empty_thinking_wrapper_is_removed_before_json_parse():
+    assert parse_candidate_content('<think>\n\n</think>\n{"task_mode":"recommendation"}') == {
+        "task_mode": "recommendation"
+    }
+
+
+def test_non_empty_thinking_is_rejected():
+    with pytest.raises(ValueError, match="non-empty"):
+        parse_candidate_content('<think>private reasoning</think>{"task_mode":"recommendation"}')
+
+
+def test_json_fence_is_supported():
+    assert parse_candidate_content('```json\n{"task_mode":"recommendation"}\n```') == {
+        "task_mode": "recommendation"
+    }

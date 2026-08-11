@@ -19,7 +19,7 @@ from model_profiles import (
     profile_choices,
     resolve_profile,
 )
-from planner_guard import format_route_markdown, guard_candidate
+from planner_guard import format_route_markdown, guard_candidate, parse_candidate_content
 from prompt_v42 import STUDENT_SYSTEM_PROMPT_V4_2
 
 
@@ -34,7 +34,13 @@ def _runtime_status(profile: str | None = None) -> str:
                 output = subprocess.run(
                     [rocminfo], capture_output=True, text=True, timeout=4, check=False
                 ).stdout
-                names = [line.split(":", 1)[1].strip() for line in output.splitlines() if "Marketing Name:" in line]
+                names = [
+                    name
+                    for line in output.splitlines()
+                    if "Marketing Name:" in line
+                    and (name := line.split(":", 1)[1].strip())
+                    and "intel" not in name.casefold()
+                ]
                 if names:
                     gpu_line += "：" + " / ".join(dict.fromkeys(names))
             except (OSError, subprocess.SubprocessError):
@@ -88,14 +94,11 @@ def _call_candidate(
         if protocol == "openai" and isinstance(payload, dict):
             choices = payload.get("choices") or []
             content = choices[0].get("message", {}).get("content", "") if choices else ""
-            content = str(content).strip()
-            if content.startswith("```"):
-                content = content.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-            payload = json.loads(content)
+            payload = parse_candidate_content(str(content))
         elif isinstance(payload, dict) and isinstance(payload.get("decision"), dict):
             payload = payload["decision"]
         return (payload if isinstance(payload, dict) else None), f"{profile_note}调用成功"
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
         return None, f"候选端点失败：{type(exc).__name__}"
 
 

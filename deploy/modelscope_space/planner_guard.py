@@ -75,6 +75,25 @@ REASON_CODES = {
     "no_retrieval_needed",
 }
 
+_EMPTY_THINKING_PREFIX = re.compile(r"\A<think>\s*</think>\s*", re.DOTALL)
+_JSON_FENCE = re.compile(r"\A```(?:json)?\s*(.*?)\s*```\Z", re.DOTALL | re.IGNORECASE)
+
+
+def parse_candidate_content(content: str) -> dict[str, Any]:
+    """Parse one public JSON candidate while rejecting non-empty thinking."""
+    text = str(content or "").strip()
+    if text.startswith("<think>"):
+        text, count = _EMPTY_THINKING_PREFIX.subn("", text, count=1)
+        if count != 1:
+            raise ValueError("model returned non-empty or unterminated thinking")
+    fenced = _JSON_FENCE.fullmatch(text)
+    if fenced:
+        text = fenced.group(1).strip()
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError("model candidate must be a JSON object")
+    return payload
+
 MOODS = {
     "开心": "开心",
     "快乐": "快乐",
