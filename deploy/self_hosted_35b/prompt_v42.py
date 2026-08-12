@@ -1,4 +1,8 @@
-"""Frozen compact student prompt used by the V4.2 35B adapter."""
+"""Frozen prompt and conditioning format used by the V4.2 35B adapter."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
 
 STUDENT_SYSTEM_PROMPT_V4_2 = """你是音乐推荐系统的证据优先决策器。只输出一个合法 JSON 对象，不输出 Markdown、对象外解释、隐藏思维过程或额外字段。
 {
@@ -26,3 +30,59 @@ reason_codes 只可取：explicit_entity、explicit_catalog_filter、taggable_ge
 6. dialogue information 必须 graph=required；library_guidance/chat 的 lane 全 off 且无检索字段。
 7. clarify 时 lane 全 off、acoustic_queries 为空、clarification 非空，并使用 unresolved_reference、contradictory_constraints 或 underspecified_request。
 8. brief_reason 只说明用户证据如何决定 lane，不编造事实。当前输入优先于长期画像；画像不得升级为 hard 约束。"""
+
+
+def _memory_items(value: str | Iterable[str] | None) -> list[str]:
+    """Normalize memory facts without changing their order."""
+
+    if value is None:
+        return []
+    raw_items = value.splitlines() if isinstance(value, str) else value
+    cleaned = [str(item).strip() for item in raw_items if str(item).strip()]
+    return list(dict.fromkeys(cleaned))
+
+
+def format_student_user_message(
+    current_input: str,
+    *,
+    profile_snapshot: str = "",
+    retrieved_memories: str | Iterable[str] | None = None,
+    chat_history: str = "",
+    previous_plan: str = "",
+    reference_title: str = "",
+    reference_artist: str = "",
+) -> str:
+    """Serialize runtime context using the same section order as SFT.
+
+    A resolved result anchor is represented inside dialogue history instead of
+    introducing a new top-level section that the student never saw in
+    training.  The deterministic guard still receives the structured anchor
+    separately.
+    """
+
+    parts: list[str] = []
+    profile = str(profile_snapshot or "").strip()
+    if profile and profile != "无":
+        parts.append(f"[用户画像] {profile}")
+
+    memories = _memory_items(retrieved_memories)
+    if memories:
+        parts.append("[长期记忆] " + "；".join(memories))
+
+    history_parts: list[str] = []
+    history = str(chat_history or "").strip()
+    if history:
+        history_parts.append(history)
+    title = str(reference_title or "").strip()
+    artist = str(reference_artist or "").strip()
+    if title:
+        display = title + (f" — {artist}" if artist else "")
+        history_parts.append(f"[上轮推荐结果] 1. {display}")
+    if history_parts:
+        parts.append("[对话历史]\n" + "\n".join(history_parts))
+
+    previous = str(previous_plan or "").strip()
+    if previous:
+        parts.append(f"[上轮检索计划] {previous}")
+    parts.append(f"[当前输入] {str(current_input or '').strip()}")
+    return "\n".join(parts)

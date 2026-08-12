@@ -109,6 +109,14 @@ class GlobalSettings(BaseSettings):
         validation_alias="PLANNER_QUALITY_MODE",
         description="Planner 显式质量模式：teacher 使用强模型采集高质量数据；fast 用于 demo/快速评测",
     )
+    intent_planner_contract: str = Field(
+        default="auto",
+        validation_alias="INTENT_PLANNER_CONTRACT",
+        description=(
+            "Planner 输出契约：auto 根据本地模型名识别 SoulTuner V4.2；"
+            "legacy 使用 MusicQueryPlan；v42 强制使用受守卫的紧凑 lane-policy 契约"
+        ),
+    )
 
     # --- HyDE 声学描述生成专用 LLM（本地模式专用；API 模式已内联，此字段留空）---
     hyde_llm_provider: str = Field(
@@ -573,6 +581,7 @@ def save_user_settings(s: GlobalSettings, keys: list[str] | None = None):
     _PERSISTABLE = {
         "llm_default_provider", "llm_default_model",
         "intent_llm_provider", "intent_llm_model", "intent_llm_fast_model", "planner_quality_mode",
+        "intent_planner_contract",
         "intent_temperature",
         "dst_clarification_confidence_threshold",
         "hyde_llm_provider", "hyde_llm_model",

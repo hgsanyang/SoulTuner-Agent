@@ -20,7 +20,7 @@ from model_profiles import (
     resolve_profile,
 )
 from planner_guard import format_route_markdown, guard_candidate, parse_candidate_content
-from prompt_v42 import STUDENT_SYSTEM_PROMPT_V4_2
+from prompt_v42 import STUDENT_SYSTEM_PROMPT_V4_2, format_student_user_message
 
 
 def _runtime_status(profile: str | None = None) -> str:
@@ -78,17 +78,25 @@ def _call_candidate(
 
     protocol = str(config["protocol"])
     if protocol == "openai":
-        user_context = {"current_input": user_text, **context}
         request_payload = {
             "model": str(config["model"]),
             "messages": [
                 {"role": "system", "content": STUDENT_SYSTEM_PROMPT_V4_2},
-                {"role": "user", "content": json.dumps(user_context, ensure_ascii=False)},
+                {
+                    "role": "user",
+                    "content": format_student_user_message(
+                        user_text,
+                        reference_title=str(context.get("reference_title") or ""),
+                        reference_artist=str(context.get("reference_artist") or ""),
+                    ),
+                },
             ],
             "temperature": 0,
             "max_tokens": 1024,
             "stream": False,
             "enable_thinking": False,
+            "response_format": {"type": "json_object"},
+            "chat_template_kwargs": {"enable_thinking": False},
         }
     else:
         request_payload = {"current_input": user_text, "context": context}

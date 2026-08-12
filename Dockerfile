@@ -59,6 +59,10 @@ COPY services/ ./services/
 COPY tools/ ./tools/
 COPY scripts/ ./scripts/
 COPY data/pipeline/ ./data/pipeline/
+# The V4.2 prompt and deterministic guard are shared by the self-hosted
+# endpoint and the production Agent adapter.
+COPY deploy/self_hosted_35b/prompt_v42.py ./deploy/self_hosted_35b/prompt_v42.py
+COPY deploy/self_hosted_35b/planner_guard.py ./deploy/self_hosted_35b/planner_guard.py
 
 # 数据目录（运行时通过 volume 挂载实际数据）
 RUN mkdir -p /app/data

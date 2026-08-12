@@ -48,3 +48,26 @@ def test_planner_cache_key_includes_profile_context():
     first = PlannerResultCache.make_key(chat_history="上一轮：日语", **common)
     second = PlannerResultCache.make_key(chat_history="上一轮：中文", **common)
     assert first != second
+
+
+def test_planner_cache_key_includes_resolved_reference_context():
+    common = {
+        "user_input": "再来一首类似的",
+        "user_preferences": "喜欢 city pop",
+        "chat_history": "",
+        "previous_plan": "",
+        "graphzep_facts": "",
+        "provider": "vllm",
+        "model_name": "soultuner-planner-v4.2-35b",
+        "current_date": "2026-08-13",
+        "planner_contract": "v42",
+    }
+    first = PlannerResultCache.make_key(
+        reference_context={"reference_title": "Plastic Love", "reference_artist": "竹内玛利亚"},
+        **common,
+    )
+    second = PlannerResultCache.make_key(
+        reference_context={"reference_title": "Stay With Me", "reference_artist": "松原美纪"},
+        **common,
+    )
+    assert first != second

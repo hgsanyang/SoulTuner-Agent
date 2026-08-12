@@ -2,10 +2,12 @@
 
 This module intentionally has no third-party dependencies so the public demo,
 the Gallery notebook, and unit tests all share the same fail-closed behavior.
-The fine-tuned 35B model is treated as a *candidate* planner.  A candidate is
-accepted only when its task type and required retrieval lanes agree with facts
-that can be derived deterministically from the request.  Otherwise this module
-returns a bounded, auditable fallback plan.
+The fine-tuned 35B model is treated as a *candidate* planner. A candidate is
+accepted only when its task type agrees with deterministic facts and its lane
+choices stay inside explicit safety bounds. The deterministic parser defines
+minimum obligations; it does not pretend that a small keyword list can fully
+classify every musical description. Otherwise this module returns a bounded,
+auditable fallback plan.
 
 ``brief_reason`` is a short public explanation.  It is not hidden chain of
 thought and execution never parses it.
@@ -438,6 +440,183 @@ def _candidate_findings(candidate: Mapping[str, Any]) -> list[str]:
         or any(not isinstance(query, str) for query in acoustic_queries)
     ):
         findings.append("candidate.acoustic_queries 非法")
+    elif any(not query.strip() for query in acoustic_queries):
+        findings.append("candidate.acoustic_queries 包含空字符串")
+
+    if isinstance(policy, Mapping):
+        dense_mode = policy.get("dense", "off")
+        graph_mode = policy.get("graph", "off")
+        if dense_mode == "required" and not (
+            isinstance(acoustic_queries, list) and 1 <= len(acoustic_queries) <= 4
+        ):
+            findings.append("dense=required 时必须提供 1 至 4 条 acoustic_queries")
+
+        hints = candidate.get("hints")
+        if isinstance(hints, Mapping) and any(hints.get(key) for key in ("mood", "scenario", "genre")):
+            if graph_mode == "off":
+                findings.append("hints 非空时 graph 不得为 off")
+
+        response_mode = candidate.get("response_mode", "answer")
+        if response_mode == "clarify":
+            if any(policy.get(lane, "off") != "off" for lane in ("graph", "dense", "web")):
+                findings.append("clarify 时所有检索通道必须为 off")
+            if acoustic_queries:
+                findings.append("clarify 时 acoustic_queries 必须为空")
+            clarification = candidate.get("clarification")
+            if not isinstance(clarification, str) or not clarification.strip():
+                findings.append("clarify 时 clarification 必须非空")
+
+        if candidate.get("task_mode") == "recommendation" and response_mode == "answer":
+            if graph_mode == "off" and dense_mode == "off":
+                findings.append("recommendation 至少启用 graph 或 dense")
+
+        if candidate.get("task_mode") == "dialogue" and candidate.get("dialogue_mode") in {
+            "chat",
+            "library_guidance",
+        }:
+            retrieval_values = [
+                candidate.get("hard"),
+                candidate.get("soft"),
+                candidate.get("hints"),
+                candidate.get("metadata"),
+                acoustic_queries,
+            ]
+
+            def has_payload(value: Any) -> bool:
+                if isinstance(value, Mapping):
+                    return any(has_payload(item) for item in value.values())
+                if isinstance(value, list):
+                    return any(has_payload(item) for item in value)
+                return value not in {None, "", False}
+
+            if any(has_payload(value) for value in retrieval_values):
+                findings.append("普通对话或产品指导不得携带检索字段")
+    return findings
+
+
+def _mapping_has_payload(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return any(_mapping_has_payload(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_mapping_has_payload(item) for item in value)
+    return value not in {None, "", False}
+
+
+def _candidate_graph_evidence(candidate: Mapping[str, Any], *, strong: bool) -> bool:
+    hard = candidate.get("hard", {})
+    hints = candidate.get("hints", {})
+    metadata = candidate.get("metadata", {})
+    evidence = candidate.get("evidence", {})
+    reason_codes = set(evidence.get("reason_codes", [])) if isinstance(evidence, Mapping) else set()
+
+    hard_evidence = isinstance(hard, Mapping) and any(
+        _mapping_has_payload(hard.get(field)) for field in ("artist", "song", "language", "region")
+    )
+    catalog_metadata = isinstance(metadata, Mapping) and any(
+        _mapping_has_payload(metadata.get(field))
+        for field in ("era", "release_year_from", "release_year_to")
+    )
+    genres = isinstance(hints, Mapping) and _mapping_has_payload(hints.get("genre"))
+    if strong:
+        return bool(hard_evidence or catalog_metadata or genres)
+
+    tag_hints = isinstance(hints, Mapping) and any(
+        _mapping_has_payload(hints.get(field)) for field in ("mood", "scenario", "genre")
+    )
+    graph_reasons = {
+        "explicit_entity",
+        "explicit_catalog_filter",
+        "taggable_genre",
+        "taggable_mood",
+        "taggable_scenario",
+    }
+    return bool(hard_evidence or catalog_metadata or tag_hints or reason_codes & graph_reasons)
+
+
+def _candidate_dense_evidence(candidate: Mapping[str, Any]) -> bool:
+    acoustic_queries = candidate.get("acoustic_queries", [])
+    evidence = candidate.get("evidence", {})
+    soft = candidate.get("soft", {})
+    reason_codes = set(evidence.get("reason_codes", [])) if isinstance(evidence, Mapping) else set()
+    reference_songs = evidence.get("reference_songs", []) if isinstance(evidence, Mapping) else []
+    dense_reasons = {
+        "subjective_affective_goal",
+        "acoustic_timbre_or_instrument",
+        "acoustic_rhythm_or_dynamics",
+        "acoustic_production_or_space",
+        "metaphorical_vibe",
+        "reference_track_similarity",
+        "resolved_context_reference",
+    }
+    semantic_soft = isinstance(soft, Mapping) and any(
+        _mapping_has_payload(soft.get(field)) for field in ("goal", "trajectory", "vibe", "avoid")
+    )
+    return bool(
+        isinstance(acoustic_queries, list)
+        and acoustic_queries
+        and (reason_codes & dense_reasons or reference_songs or semantic_soft)
+    )
+
+
+def _lane_policy_findings(
+    safe: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> list[str]:
+    """Check lane obligations without making the keyword parser an oracle."""
+
+    safe_policy = safe["lane_policy"]
+    candidate_policy = candidate.get("lane_policy", {})
+    findings: list[str] = []
+
+    # External access is a side-effect boundary. It is enabled only when the
+    # deterministic parser independently finds a freshness/external request.
+    if candidate_policy.get("web") != safe_policy["web"]:
+        findings.append(
+            f"模型 web 角色为 {candidate_policy.get('web')}，安全边界要求 {safe_policy['web']}"
+        )
+
+    safe_dense = safe_policy["dense"]
+    candidate_dense = candidate_policy.get("dense")
+    dense_evidence = _candidate_dense_evidence(candidate)
+    strong_graph_evidence = _candidate_graph_evidence(candidate, strong=True)
+    safe_reason_codes = set(safe.get("evidence", {}).get("reason_codes", []))
+    generic_dense_fallback = safe_reason_codes == {"metaphorical_vibe"}
+    if safe_dense == "required" and candidate_dense != "required":
+        # The keyword parser deliberately has no global artist/song dictionary.
+        # When its only reason for Dense is the generic unknown-request fallback,
+        # a model candidate may replace that fallback with a concrete catalog
+        # entity or date/genre constraint. Graph lookup is bounded and carries no
+        # external side effect, so this is a safe semantic refinement.
+        catalog_refinement = bool(
+            generic_dense_fallback
+            and candidate_policy.get("graph") == "required"
+            and strong_graph_evidence
+        )
+        if not catalog_refinement:
+            findings.append("模型遗漏确定性规则要求的 dense 通道")
+    elif safe_dense == "off" and candidate_dense == "required" and not dense_evidence:
+        findings.append("模型启用 dense 但未提供可核验的听感、声学或参考曲证据")
+
+    safe_graph = safe_policy["graph"]
+    candidate_graph = candidate_policy.get("graph")
+    graph_evidence = _candidate_graph_evidence(candidate, strong=False)
+    if safe_graph == "required":
+        if candidate_graph == "off":
+            findings.append("模型遗漏确定性规则要求的 graph 通道")
+        elif candidate_graph == "optional" and not (
+            candidate_dense == "required" and dense_evidence
+        ):
+            findings.append("模型降低 graph 角色但未提供可核验的 dense 主通道证据")
+    elif safe_graph == "optional":
+        if candidate_graph == "off":
+            findings.append("模型遗漏确定性规则要求的 graph 辅助通道")
+        elif candidate_graph == "required" and not strong_graph_evidence:
+            findings.append("模型将 graph 升为 required 但缺少实体、类型或年代约束")
+    elif candidate_graph == "optional" and not graph_evidence:
+        findings.append("模型启用 graph 辅助通道但未提供标签或目录证据")
+    elif candidate_graph == "required" and not strong_graph_evidence:
+        findings.append("模型启用 graph 必选通道但缺少实体、类型或年代约束")
+
     return findings
 
 
@@ -462,12 +641,15 @@ def guard_candidate(
             findings.append("模型回答/澄清决策与安全边界冲突")
 
         candidate_policy = candidate.get("lane_policy", {})
-        for lane, safe_mode in safe["lane_policy"].items():
-            candidate_mode = candidate_policy.get(lane)
-            if candidate_mode != safe_mode:
-                findings.append(
-                    f"模型 {lane} 角色为 {candidate_mode}，安全边界要求 {safe_mode}"
-                )
+        if safe["task_mode"] == "recommendation" and safe["response_mode"] == "answer":
+            findings.extend(_lane_policy_findings(safe, candidate))
+        else:
+            for lane, safe_mode in safe["lane_policy"].items():
+                candidate_mode = candidate_policy.get(lane)
+                if candidate_mode != safe_mode:
+                    findings.append(
+                        f"模型 {lane} 角色为 {candidate_mode}，安全边界要求 {safe_mode}"
+                    )
         if safe["task_mode"] == "dialogue" and safe.get("dialogue_mode") in {"chat", "library_guidance"}:
             if any(candidate_policy.get(lane, "off") != "off" for lane in ("graph", "dense", "web")):
                 findings.append("普通对话或产品指导不允许携带检索通道")

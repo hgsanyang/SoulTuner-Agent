@@ -8,20 +8,20 @@ from pathlib import Path
 SPACE = Path(__file__).resolve().parents[2] / "deploy" / "modelscope_space"
 sys.path.insert(0, str(SPACE))
 
-RUNTIME_SPEC = importlib.util.spec_from_file_location(
-    "space_planner_runtime", SPACE / "planner_runtime.py"
-)
+RUNTIME_SPEC = importlib.util.spec_from_file_location("space_planner_runtime", SPACE / "planner_runtime.py")
 assert RUNTIME_SPEC and RUNTIME_SPEC.loader
 runtime = importlib.util.module_from_spec(RUNTIME_SPEC)
 RUNTIME_SPEC.loader.exec_module(runtime)
 
-RETRIEVAL_SPEC = importlib.util.spec_from_file_location(
-    "space_retrieval_demo", SPACE / "retrieval_demo.py"
-)
+RETRIEVAL_SPEC = importlib.util.spec_from_file_location("space_retrieval_demo", SPACE / "retrieval_demo.py")
 assert RETRIEVAL_SPEC and RETRIEVAL_SPEC.loader
 retrieval = importlib.util.module_from_spec(RETRIEVAL_SPEC)
 RETRIEVAL_SPEC.loader.exec_module(retrieval)
 
+READINESS_SPEC = importlib.util.spec_from_file_location("space_amd_readiness", SPACE / "amd_readiness.py")
+assert READINESS_SPEC and READINESS_SPEC.loader
+readiness = importlib.util.module_from_spec(READINESS_SPEC)
+READINESS_SPEC.loader.exec_module(readiness)
 
 def test_space_card_text_has_theme_independent_contrast() -> None:
     source = (SPACE / "app.py").read_text(encoding="utf-8")
@@ -44,3 +44,47 @@ def test_public_catalog_and_hybrid_retrieval() -> None:
 def test_subjective_acoustics_are_dense_only() -> None:
     plan = runtime.safe_plan("我希望 bass 更重、鼓声更大一些")
     assert plan["lane_policy"] == {"graph": "off", "dense": "required", "web": "off"}
+
+
+def test_amd_readiness_fails_closed_without_rocm(monkeypatch) -> None:
+    monkeypatch.setattr(
+        readiness,
+        "runtime_capabilities",
+        lambda: {"device": "CPU", "accelerator": "none"},
+    )
+    report = readiness.readiness_report(require_rocm=True, probe_adapter=False, probe_endpoint=False)
+    assert report["ready"] is False
+    assert report["findings"] == ["ROCm/HIP GPU is required but was not detected"]
+
+
+def test_amd_readiness_accepts_rocm(monkeypatch) -> None:
+    monkeypatch.setattr(
+        readiness,
+        "runtime_capabilities",
+        lambda: {"device": "AMD GPU", "accelerator": "ROCm/HIP"},
+    )
+    report = readiness.readiness_report(require_rocm=True, probe_adapter=False, probe_endpoint=False)
+    assert report["ready"] is True
+    assert report["findings"] == []
+
+
+def test_amd_readiness_checks_adapter_files(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        readiness,
+        "runtime_capabilities",
+        lambda: {"device": "AMD GPU", "accelerator": "ROCm/HIP"},
+    )
+    monkeypatch.setenv("SOULTUNER_ADAPTER_DIR", str(tmp_path))
+    report = readiness.readiness_report(require_rocm=True, probe_adapter=True, probe_endpoint=False)
+    assert report["ready"] is False
+    assert report["findings"] == [
+        "missing adapter file: adapter_config.json",
+        "missing adapter file: adapter_model.safetensors",
+    ]
+
+
+def test_space_endpoint_is_private_by_default_and_requires_public_auth() -> None:
+    script = (SPACE / "start_amd_35b.sh").read_text(encoding="utf-8")
+    assert 'SOULTUNER_PLANNER_HOST:-127.0.0.1' in script
+    assert '"${HOST}" == "0.0.0.0"' in script
+    assert "SOULTUNER_SERVE_API_KEY" in script

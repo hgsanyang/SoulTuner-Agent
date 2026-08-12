@@ -62,7 +62,7 @@ def test_candidate_omitting_required_dense_is_rejected():
     accepted, findings = guard_candidate("我心情很差，想听治愈的歌", candidate)
     assert accepted["source"] == "deterministic_guard"
     assert accepted["lane_policy"]["dense"] == "required"
-    assert any("安全边界要求 required" in finding for finding in findings)
+    assert any("要求的 dense 通道" in finding for finding in findings)
 
 
 def test_candidate_cannot_upgrade_optional_graph_to_required():
@@ -71,7 +71,59 @@ def test_candidate_cannot_upgrade_optional_graph_to_required():
     accepted, findings = guard_candidate("我心情很差，想听治愈的歌", candidate)
     assert accepted["source"] == "deterministic_guard"
     assert accepted["lane_policy"]["graph"] == "optional"
-    assert any("安全边界要求 optional" in finding for finding in findings)
+    assert any("缺少实体、类型或年代约束" in finding for finding in findings)
+
+
+def test_candidate_can_add_graph_for_a_catalog_filter_missed_by_keyword_parser():
+    candidate = _candidate("想听低音更重、鼓点更大的中文歌")
+    candidate["hard"]["language"] = "中文"
+    candidate["lane_policy"]["graph"] = "required"
+    candidate["evidence"]["reason_codes"].append("explicit_catalog_filter")
+    accepted, findings = guard_candidate("想听低音更重、鼓点更大的中文歌", candidate)
+    assert accepted["source"] == "model_candidate_guarded"
+    assert accepted["lane_policy"]["graph"] == "required"
+    assert findings == ["模型候选通过结构与策略守卫"]
+
+
+def test_candidate_can_add_dense_and_keep_catalog_graph_as_secondary():
+    candidate = _candidate("周末小聚想听轻松明亮的中文流行")
+    candidate["lane_policy"] = {"graph": "optional", "dense": "required", "web": "off"}
+    candidate["acoustic_queries"] = ["轻松明亮、适合周末小聚的听感"]
+    candidate["evidence"]["reason_codes"].append("subjective_affective_goal")
+    accepted, findings = guard_candidate("周末小聚想听轻松明亮的中文流行", candidate)
+    assert accepted["source"] == "model_candidate_guarded"
+    assert accepted["execution"]["profile"] == "dense_primary"
+    assert findings == ["模型候选通过结构与策略守卫"]
+
+
+def test_model_can_refine_generic_dense_fallback_into_explicit_catalog_graph():
+    candidate = _candidate("来点 Radiohead 90 年代的作品")
+    candidate["lane_policy"] = {"graph": "required", "dense": "off", "web": "off"}
+    candidate["hard"]["artist"] = ["Radiohead"]
+    candidate["metadata"]["release_year_from"] = 1990
+    candidate["metadata"]["release_year_to"] = 1999
+    candidate["acoustic_queries"] = []
+    candidate["evidence"]["reason_codes"] = [
+        "explicit_entity",
+        "explicit_catalog_filter",
+    ]
+
+    accepted, findings = guard_candidate("来点 Radiohead 90 年代的作品", candidate)
+
+    assert accepted["source"] == "model_candidate_guarded"
+    assert accepted["lane_policy"] == {"graph": "required", "dense": "off", "web": "off"}
+    assert findings == ["模型候选通过结构与策略守卫"]
+
+
+def test_candidate_cannot_enable_web_without_deterministic_freshness_evidence():
+    candidate = _candidate("想听适合跑步的摇滚")
+    candidate["lane_policy"]["web"] = "required"
+    candidate["metadata"]["external_knowledge_required"] = True
+    candidate["evidence"]["reason_codes"].append("freshness_or_external")
+    accepted, findings = guard_candidate("想听适合跑步的摇滚", candidate)
+    assert accepted["source"] == "deterministic_guard"
+    assert accepted["lane_policy"]["web"] == "off"
+    assert any("模型 web 角色" in finding for finding in findings)
 
 
 def test_candidate_with_thinking_field_is_rejected():

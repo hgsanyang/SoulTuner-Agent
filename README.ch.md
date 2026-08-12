@@ -110,7 +110,7 @@ $env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
 python app.py
 ```
 
-在合适的 GPU 服务器上下载官方 `Qwen/Qwen3.6-35B-A3B` 基座与发布后的 SoulTuner LoRA adapter，启动端点，再从同一个下拉框选择 **SoulTuner V4.2 35B**。部署包 README 已包含硬件规格、模型发布与下载、服务启动和训练表现。已验证环境是 AMD MI308X，但部署接口本身不绑定某个云平台或某个 GPU 品牌。
+在合适的 GPU 服务器上，从所选模型仓库分别下载官方 `Qwen/Qwen3.6-35B-A3B` 基座与 SoulTuner PEFT adapter，启动端点，再选择 **SoulTuner V4.2 35B**。通用部署包支持本地路径、Hugging Face 兼容仓库和任意 OpenAI 兼容推理端点；特定平台镜像放在独立适配目录。部署包 README 已包含硬件规格、完整 Agent 接入、完整性校验、服务启动和实测推理数据。已验证环境是 AMD MI308X，但应用契约不绑定某个云平台或 GPU 品牌。
 
 完整服务也提供 AMD ROCm Compose 覆盖层。它保留原有 CPU 和 NVIDIA CUDA
 档位，同时使用 AMD 官方 PyTorch 镜像与 ROCm 设备映射：
