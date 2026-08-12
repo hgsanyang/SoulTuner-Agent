@@ -1,0 +1,41 @@
+# AMD ROCm image for the SoulTuner backend and offline ingest worker.
+# Kept separate from the CPU/CUDA Dockerfile so pip never replaces the
+# validated ROCm PyTorch stack with CPU or CUDA wheels.
+ARG ROCM_PYTORCH_IMAGE=rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0
+FROM ${ROCM_PYTORCH_IMAGE}
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libsndfile1 ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/soultuner-requirements.txt
+RUN sed -E '/^(torch|torchaudio|torchvision)([<>=].*)?$/d' \
+    /tmp/soultuner-requirements.txt > /tmp/soultuner-requirements-rocm.txt \
+    && python -m pip install --no-cache-dir -r /tmp/soultuner-requirements-rocm.txt \
+    && python -m pip install --no-cache-dir \
+       timm einops nnAudio "transformers>=4.50,<5" sentence-transformers librosa omar-rq==0.2.1
+
+COPY config/ ./config/
+COPY agent/ ./agent/
+COPY api/ ./api/
+COPY llms/ ./llms/
+COPY retrieval/ ./retrieval/
+COPY schemas/ ./schemas/
+COPY services/ ./services/
+COPY tools/ ./tools/
+COPY scripts/ ./scripts/
+COPY data/pipeline/ ./data/pipeline/
+
+RUN mkdir -p /app/data \
+    && python -m pip check \
+    && python scripts/assert_cuda.py --report
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8501
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD curl -f http://localhost:8501/health || exit 1
+CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8501"]

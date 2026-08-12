@@ -110,6 +110,16 @@ python app.py
 
 On a suitable GPU server, download the official `Qwen/Qwen3.6-35B-A3B` base plus the [published SoulTuner LoRA adapter](https://modelscope.cn/models/hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA), start the endpoint, and select **SoulTuner V4.2 35B** in the same dropdown. The package provides `download_modelscope_assets.sh` for downloading both model parts and verifying the adapter SHA-256. Its README covers hardware sizing, endpoint startup, and the measured Planner results. The verified environment used an AMD MI308X, but the deployment contract itself is hardware-neutral.
 
+The complete service also has an AMD ROCm overlay. It preserves the existing
+CPU and NVIDIA CUDA profiles while using the official AMD PyTorch image and
+ROCm device mapping:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.amd.yml --profile gpu up -d --build
+```
+
+See [AMD_ROCM_DEPLOYMENT.md](docs/AMD_ROCM_DEPLOYMENT.md) for host requirements and verification.
+
 <details>
 <summary>Other common commands</summary>
 

@@ -1,0 +1,45 @@
+# AMD ROCm overlay. Start with:
+# docker compose -f docker-compose.yml -f docker-compose.amd.yml --profile gpu up -d
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.amd
+      args:
+        ROCM_PYTORCH_IMAGE: ${ROCM_PYTORCH_IMAGE:-rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0}
+    environment:
+      DENSE_TEXT_AUDIO_BACKEND: muq
+      MUQ_MULAN_FP16: "true"
+      MUSIC_M2D_MODEL_WARMUP: "false"
+      MUSIC_M2D_TEXT_WARMUP: "false"
+      MUSIC_REQUIRE_ACCELERATOR: "1"
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    ipc: host
+    security_opt:
+      - seccomp=unconfined
+
+  ingest-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.amd
+      args:
+        ROCM_PYTORCH_IMAGE: ${ROCM_PYTORCH_IMAGE:-rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0}
+    environment:
+      MUSIC_REQUIRE_ACCELERATOR: "1"
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    ipc: host
+    security_opt:
+      - seccomp=unconfined
+    # The base file reserves an NVIDIA device for the legacy GPU profile.
+    # Reset that reservation before adding ROCm character devices above.
+    deploy: !reset {}
