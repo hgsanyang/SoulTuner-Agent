@@ -44,17 +44,20 @@ CSS = """
   border-radius: 999px; margin: 8px 8px 0 0; font-size: 13px; }
 .st-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .st-card { padding: 18px; border-radius: 18px; border: 1px solid #d9eee4;
-  background: linear-gradient(145deg, #ffffff, #f4fbf7); box-shadow: 0 8px 30px rgba(7,50,35,.07); }
+  background: linear-gradient(145deg, #ffffff, #f4fbf7); color: #102a20 !important;
+  box-shadow: 0 8px 30px rgba(7,50,35,.07); }
 .st-rank { width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 10px;
-  background: #0d8d5d; color: white; font-weight: 700; margin-right: 9px; }
-.st-card h3 { display: inline; font-size: 17px; }
-.st-meta { color: #587066; font-size: 13px; margin: 9px 0; }
+  background: #0d8d5d; color: white !important; font-weight: 700; margin-right: 9px; }
+.st-card h3 { display: inline; color: #102a20 !important; font-size: 17px; font-weight: 750; }
+.st-meta { color: #405f52 !important; font-size: 13px; margin: 9px 0; }
 .st-tag { display: inline-block; padding: 3px 8px; margin: 2px; border-radius: 999px;
-  background: #e2f7ed; color: #096743; font-size: 12px; }
-.st-reason { color: #263b32; line-height: 1.65; font-size: 14px; min-height: 45px; }
-.st-scores { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 11px; color: #375247; font-size: 12px; }
-.st-score { padding: 4px 8px; border-radius: 8px; background: white; border: 1px solid #dcece4; }
-.st-audio { margin-top: 12px; color: #71857c; font-size: 12px; }
+  background: #e2f7ed; color: #096743 !important; font-size: 12px; }
+.st-reason { color: #1d342a !important; line-height: 1.65; font-size: 14px; min-height: 45px; }
+.st-scores { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 11px;
+  color: #315647 !important; font-size: 12px; }
+.st-score { padding: 4px 8px; border-radius: 8px; background: #f8fcfa;
+  border: 1px solid #bcd9cc; color: #315647 !important; font-weight: 600; }
+.st-audio { margin-top: 12px; color: #536f62 !important; font-size: 12px; }
 .st-empty { padding: 48px 24px; text-align: center; border-radius: 18px; color: #60756b;
   border: 1px dashed #b7d9c8; background: #f7fcf9; }
 .st-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
