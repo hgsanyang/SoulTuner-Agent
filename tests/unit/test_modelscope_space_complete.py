@@ -23,6 +23,13 @@ retrieval = importlib.util.module_from_spec(RETRIEVAL_SPEC)
 RETRIEVAL_SPEC.loader.exec_module(retrieval)
 
 
+def test_space_card_text_has_theme_independent_contrast() -> None:
+    source = (SPACE / "app.py").read_text(encoding="utf-8")
+    assert ".st-card h3" in source
+    assert "color: #102a20 !important" in source
+    assert "color: #315647 !important" in source
+
+
 def test_public_catalog_and_hybrid_retrieval() -> None:
     assert len(retrieval.load_catalog()) == 120
     query = "90年代英文摇滚，但整体要温暖一点"
