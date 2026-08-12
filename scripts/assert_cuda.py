@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Refuse to run on CPU when the caller asked for GPU.
+"""Refuse to run on CPU when the caller asked for GPU acceleration.
 
 The failure this exists to prevent has no symptom. A container built with CUDA
 wheels but started without a device reservation imports torch fine, reports
@@ -9,7 +9,8 @@ hours, or until someone thinks to check.
 
 Two ways in:
 
-    MUSIC_REQUIRE_CUDA=1 python scripts/assert_cuda.py     # exit 1 if no GPU
+    MUSIC_REQUIRE_ACCELERATOR=1 python scripts/assert_cuda.py  # exit 1 if no GPU
+    MUSIC_REQUIRE_CUDA=1 python scripts/assert_cuda.py     # legacy alias
     python scripts/assert_cuda.py --report                 # print, never fail
 
 Only the first fails, and only when something explicitly asked for GPU. A CPU
@@ -49,9 +50,9 @@ def cuda_report() -> dict:
         )
     elif not available:
         reason = (
-            f"PyTorch 带 CUDA {build} 但看不到设备。"
-            "多半是 compose 服务缺 deploy.resources.reservations.devices，"
-            "或宿主机没装 NVIDIA Container Toolkit。"
+            f"PyTorch 带 GPU 运行时（CUDA={build}, HIP={hip}）但看不到设备。"
+            "NVIDIA 请检查 compose 设备预约与 Container Toolkit；"
+            "AMD 请检查 /dev/kfd、/dev/dri、video/render 组和 ROCm 驱动。"
         )
     else:
         reason = ""
@@ -74,21 +75,29 @@ def main() -> int:
     args = parser.parse_args()
 
     report = cuda_report()
-    required = os.getenv("MUSIC_REQUIRE_CUDA", "").strip().lower() in {"1", "true", "yes"}
+    required_value = os.getenv(
+        "MUSIC_REQUIRE_ACCELERATOR", os.getenv("MUSIC_REQUIRE_CUDA", "")
+    )
+    required = required_value.strip().lower() in {"1", "true", "yes"}
 
     if report["ok"]:
-        print(f"CUDA OK: torch {report['torch']} (cu{report['cuda_build']}) "
+        runtime = (
+            f"ROCm/HIP {report['hip_build']}"
+            if report["hip_build"]
+            else f"CUDA {report['cuda_build']}"
+        )
+        print(f"GPU OK: torch {report['torch']} ({runtime}) "
               f"-> {report['device_count']} device(s): {', '.join(report['devices'])}")
         return 0
 
-    line = f"CUDA 不可用: {report['reason']}"
+    line = f"GPU 加速不可用: {report['reason']}"
     if args.report or not required:
         # Not an error unless GPU was asked for. A CPU deployment is valid.
         print(line + ("" if required else "  (未设置 MUSIC_REQUIRE_CUDA，按 CPU 运行)"))
         return 0
 
     print(f"FAIL: {line}", file=sys.stderr)
-    print("      设置了 MUSIC_REQUIRE_CUDA=1 却拿不到 GPU —— 拒绝以 CPU 静默降级运行。",
+    print("      设置了 MUSIC_REQUIRE_ACCELERATOR=1 却拿不到 GPU —— 拒绝以 CPU 静默降级运行。",
           file=sys.stderr)
     return 1
 

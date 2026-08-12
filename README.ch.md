@@ -112,6 +112,15 @@ python app.py
 
 在合适的 GPU 服务器上下载官方 `Qwen/Qwen3.6-35B-A3B` 基座与发布后的 SoulTuner LoRA adapter，启动端点，再从同一个下拉框选择 **SoulTuner V4.2 35B**。部署包 README 已包含硬件规格、模型发布与下载、服务启动和训练表现。已验证环境是 AMD MI308X，但部署接口本身不绑定某个云平台或某个 GPU 品牌。
 
+完整服务也提供 AMD ROCm Compose 覆盖层。它保留原有 CPU 和 NVIDIA CUDA
+档位，同时使用 AMD 官方 PyTorch 镜像与 ROCm 设备映射：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.amd.yml --profile gpu up -d --build
+```
+
+主机要求与运行时验证见 [AMD_ROCM_DEPLOYMENT.md](docs/AMD_ROCM_DEPLOYMENT.md)。
+
 <details>
 <summary>其它常用命令</summary>
 

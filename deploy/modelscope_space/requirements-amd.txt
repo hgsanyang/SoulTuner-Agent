@@ -1,0 +1,6 @@
+# Install this file only inside the ModelScope AMD/ROCm image.
+modelscope>=1.26
+ms-swift>=3.8
+transformers>=4.55
+peft>=0.17
+safetensors>=0.5
