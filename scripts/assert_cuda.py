@@ -81,10 +81,11 @@ def main() -> int:
     required = required_value.strip().lower() in {"1", "true", "yes"}
 
     if report["ok"]:
+        hip_build = report.get("hip_build")
         runtime = (
-            f"ROCm/HIP {report['hip_build']}"
-            if report["hip_build"]
-            else f"CUDA {report['cuda_build']}"
+            f"ROCm/HIP {hip_build}"
+            if hip_build
+            else f"CUDA {report.get('cuda_build')}"
         )
         print(f"GPU OK: torch {report['torch']} ({runtime}) "
               f"-> {report['device_count']} device(s): {', '.join(report['devices'])}")
