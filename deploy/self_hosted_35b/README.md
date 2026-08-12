@@ -73,6 +73,18 @@ python prepare_adapter_release.py \
 
 发布前把 `MODEL_CARD_TEMPLATE.md` 复制为发布目录的 `README.md`，把 `NOTICE_TEMPLATE` 复制为 `NOTICE`，再加入 Apache-2.0 `LICENSE`。模板已经包含本次训练身份和聚合指标；正式公开前仍需确认 adapter 许可证同时满足训练数据授权。
 
+公开开关前可对下载到本地或训练实例上的发布目录执行白名单审计：
+
+```bash
+python audit_public_adapter_repo.py /path/to/SoulTuner-Planner-V4.2-35B-LoRA \
+  --expected-adapter-sha256 9a3d2cb5bc2eee3dfc9f7c76c5350509d075aad11b61ddee3b9af2ad90ac272e \
+  --expected-adapter-size 90018600
+```
+
+脚本拒绝额外文件、断点恢复状态、私有目录、错误基座身份或 SHA 不一致。通过审计并
+确认训练数据授权允许发布 adapter 后，可以将 ModelScope 模型切换为公开；无需等待
+`AMD_Dev` 组织审核。若授权仍需核实，模型保持私有也不妨碍在训练实例上继续推理实验。
+
 ## 从模型 Hub 下载
 
 ### ModelScope（国内与创空间优先）
