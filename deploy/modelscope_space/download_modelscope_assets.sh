@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download the official base plus the published SoulTuner LoRA adapter.
+# Optional ModelScope-specific downloader for the platform deployment profile.
 set -euo pipefail
 
 base_repo="${SOULTUNER_BASE_REPO:-Qwen/Qwen3.6-35B-A3B}"

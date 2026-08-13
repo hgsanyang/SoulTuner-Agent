@@ -151,6 +151,13 @@ services:
       HF_HUB_DISABLE_XET: ${HF_HUB_DISABLE_XET:-1}
       # 本地模型推理（可选，通过宿主机暴露的 vLLM 端口）
       VLLM_BASE_URL: ${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+      VLLM_API_KEY: ${VLLM_API_KEY:-fake_key}
+      MAIN_LLM_PROVIDER: ${MAIN_LLM_PROVIDER:-dashscope}
+      INTENT_LLM_PROVIDER: ${INTENT_LLM_PROVIDER:-dashscope}
+      INTENT_LLM_MODEL: ${INTENT_LLM_MODEL:-qwen3.7-plus}
+      INTENT_PLANNER_CONTRACT: ${INTENT_PLANNER_CONTRACT:-auto}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # 音乐数据：挂载宿主机的音频/封面/歌词目录
       - ${MUSIC_DATA_PATH:-./data}:/app/data

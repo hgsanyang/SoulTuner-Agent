@@ -25,6 +25,7 @@ class PlannerPayload:
     chat_history: str
     previous_plan: str
     current_date: str
+    retrieved_memories: str = ""
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -33,6 +34,7 @@ class PlannerPayload:
             "chat_history": self.chat_history,
             "previous_plan": self.previous_plan,
             "current_date": self.current_date,
+            "retrieved_memories": self.retrieved_memories,
         }
 
 

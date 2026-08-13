@@ -2,6 +2,7 @@ import asyncio
 
 from agent.music_graph import (
     MusicRecommendationGraph,
+    _planner_reference_context,
     _schedule_recommended_knowledge_backfill,
     _state_user_id,
 )
@@ -36,6 +37,30 @@ def test_planner_cache_key_is_user_scoped():
         **base,
         user_id="bob",
     )
+
+
+def test_planner_reference_context_is_injected_only_for_reference_requests():
+    state = {
+        "last_result_titles": ["Dreams"],
+        "last_result_artists": ["Fleetwood Mac"],
+    }
+    assert _planner_reference_context("我想听爵士", state) == {}
+    assert _planner_reference_context("再来一首类似的", state) == {
+        "reference_title": "Dreams",
+        "reference_artist": "Fleetwood Mac",
+    }
+
+
+def test_planner_reference_context_resolves_an_explicit_ordinal():
+    state = {
+        "last_result_titles": ["Dreams", "Landslide"],
+        "last_result_artists": ["Fleetwood Mac", "Fleetwood Mac"],
+    }
+    assert _planner_reference_context("我要和第2首相似的歌", state) == {
+        "reference_title": "Landslide",
+        "reference_artist": "Fleetwood Mac",
+    }
+    assert _planner_reference_context("刚才那首很好", state) == {}
 
 
 def test_exposure_query_is_user_scoped_not_song_global():

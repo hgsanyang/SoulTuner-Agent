@@ -24,6 +24,7 @@ from .adapters import (
     plan_with_local_structured_output,
     plan_with_sglang,
 )
+from .v42_adapter import V42_PROMPT_VERSION, plan_with_v42_contract, uses_v42_contract
 
 logger = get_logger(__name__)
 LOCAL_PROVIDERS = {"sglang", "vllm", "ollama"}
@@ -55,16 +56,32 @@ class PlannerResultCache:
         provider: str,
         model_name: str,
         current_date: str,
+        planner_contract: str = "",
+        reference_context: dict[str, str] | None = None,
         user_id: str = "",
     ) -> str:
         profile_context = json.dumps(
-            [user_preferences, chat_history, previous_plan, graphzep_facts],
+            [
+                user_preferences,
+                chat_history,
+                previous_plan,
+                graphzep_facts,
+                reference_context or {},
+            ],
             ensure_ascii=False,
             separators=(",", ":"),
         )
         profile_hash = hashlib.sha256(profile_context.encode("utf-8")).hexdigest()
         material = "\0".join(
-            [user_input.strip(), profile_hash, provider, model_name, current_date, user_id]
+            [
+                user_input.strip(),
+                profile_hash,
+                provider,
+                model_name,
+                current_date,
+                planner_contract,
+                user_id,
+            ]
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
@@ -112,6 +129,7 @@ class IntentPlanner:
         previous_plan: str,
         graphzep_facts: str = "",
         user_id: str = "local_admin",
+        reference_context: dict[str, str] | None = None,
     ) -> MusicQueryPlan:
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
             return MusicQueryPlan.model_validate({
@@ -135,6 +153,8 @@ class IntentPlanner:
             or settings.intent_llm_model
             or settings.llm_default_model
         )
+        planner_contract = str(settings.intent_planner_contract or "auto").strip().lower()
+        v42_enabled = uses_v42_contract(provider, model_name, planner_contract)
         current_date = str(date.today())
         cache_key = self._cache.make_key(
             user_input=user_input,
@@ -145,6 +165,8 @@ class IntentPlanner:
             provider=provider,
             model_name=model_name,
             current_date=current_date,
+            planner_contract=planner_contract,
+            reference_context=reference_context,
             user_id=user_id,
         )
         cached = self._cache.get(cache_key)
@@ -164,10 +186,25 @@ class IntentPlanner:
             chat_history=context["chat_history"],
             previous_plan=previous_plan,
             current_date=current_date,
+            retrieved_memories=context["graphzep_facts"],
         )
         logger.info("[IntentPlanner] provider=%s model=%s", provider, model_name)
 
-        if provider == "sglang":
+        guard_findings: list[str] = []
+        if v42_enabled:
+            plan, guard_findings = await plan_with_v42_contract(
+                llm,
+                payload,
+                max_tokens=settings.intent_max_tokens,
+                timeout=settings.llm_timeout,
+                api_key=settings.vllm_api_key if provider == "vllm" else settings.sglang_api_key,
+                reference_context=reference_context,
+            )
+            logger.info(
+                "[IntentPlanner] V4.2 guard: %s",
+                "; ".join(guard_findings),
+            )
+        elif provider == "sglang":
             plan = await plan_with_sglang(
                 llm,
                 LOCAL_PLANNER_PROMPT,
@@ -217,7 +254,11 @@ class IntentPlanner:
                     "provider": provider,
                     "model": model_name,
                     "temperature": settings.intent_temperature,
-                    "prompt_version": UNIFIED_PLANNER_PROMPT_VERSION,
+                    "prompt_version": (
+                        V42_PROMPT_VERSION if v42_enabled else UNIFIED_PLANNER_PROMPT_VERSION
+                    ),
+                    "planner_contract": "v42" if v42_enabled else "legacy",
+                    "guard_findings": guard_findings,
                     "planner_quality_mode": settings.planner_quality_mode,
                 },
             )

@@ -5,6 +5,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import date
 from typing import Dict, Any
 
@@ -28,6 +29,7 @@ from agent.catalog_gap import CatalogGapDecision, analyze_catalog_gap, interleav
 from agent.explanation import emit_fast_explanation
 from agent.intent.delta_planner import IntentDeltaPlanner
 from agent.intent.planner import IntentPlanner
+from agent.intent.v42_adapter import uses_v42_contract
 from agent.netease_query import (
     artist_matches,
     build_netease_query_plan,
@@ -61,6 +63,7 @@ from schemas.query_plan import MusicQueryPlan
 from schemas.tool_plan import ToolPlan, tool_plan_alignment_issues
 from schemas.dialog_state import (
     ClarificationRequest,
+    UNRESOLVED_REFERENCE_CUES,
     apply_dialog_state_to_plan,
     apply_plan_delta_operations,
     apply_plan_delta_with_report,
@@ -85,6 +88,51 @@ def _state_user_id(state: MusicAgentState) -> str:
         or metadata.get("user_id")
         or settings.default_user_id
     ).strip() or settings.default_user_id
+
+
+def _planner_reference_context(
+    user_input: str,
+    dialog_state: dict[str, Any],
+) -> dict[str, str]:
+    """Resolve only an unambiguous result anchor for the V4.2 planner guard."""
+
+    raw_titles = dialog_state.get("last_result_titles") or []
+    raw_artists = dialog_state.get("last_result_artists") or []
+    anchors = [
+        (str(title).strip(), str(raw_artists[index]).strip() if index < len(raw_artists) else "")
+        for index, title in enumerate(raw_titles)
+        if str(title).strip()
+    ]
+    if not anchors:
+        return {}
+
+    text = str(user_input or "")
+    index: int | None = None
+    ordinal_match = re.search(r"第\s*(\d{1,2})\s*首", text)
+    if ordinal_match:
+        requested = int(ordinal_match.group(1)) - 1
+        if 0 <= requested < len(anchors):
+            index = requested
+    elif len(anchors) == 1 and any(cue.casefold() in text.casefold() for cue in UNRESOLVED_REFERENCE_CUES):
+        index = 0
+    else:
+        chinese_ordinals = {
+            "第一首": 0,
+            "第二首": 1,
+            "第三首": 2,
+            "第四首": 3,
+            "第五首": 4,
+        }
+        for marker, requested in chinese_ordinals.items():
+            if marker in text and requested < len(anchors):
+                index = requested
+                break
+    if index is None:
+        return {}
+    return {
+        "reference_title": anchors[index][0],
+        "reference_artist": anchors[index][1],
+    }
 
 
 def _schedule_recommended_knowledge_backfill(recommendations: Any, *, context: str) -> None:
@@ -407,7 +455,16 @@ class MusicRecommendationGraph:
             # semantic state from regexes when an explicit session state is absent.
             previous_dialog_state = state.get("dialog_state") or {}
             _profile_text = self._load_user_profile_for_prompt(user_id)
-            if is_followup_turn(user_input, previous_dialog_state):
+            _planner_provider = (
+                settings.intent_llm_provider or settings.llm_default_provider or ""
+            ).lower()
+            _planner_model = settings.intent_llm_model or settings.llm_default_model or ""
+            _v42_planner_active = uses_v42_contract(
+                _planner_provider,
+                _planner_model,
+                settings.intent_planner_contract,
+            )
+            if is_followup_turn(user_input, previous_dialog_state) and not _v42_planner_active:
                 try:
                     plan_delta = await self.intent_delta_planner.plan(
                         user_input=user_input,
@@ -548,12 +605,9 @@ class MusicRecommendationGraph:
             logger.info(f"--- [步骤 1] 统一意图分析与检索规划 (Structured Output) | 🤖 {_intent_provider} / {_intent_model_name} ---")
 
             # ── 统一构建用户偏好上下文（用户画像 + MemoryGateway 长期记忆）──
-            _graphzep = state.get("graphzep_facts", "")
             _pref_parts = []
             if _profile_text:
                 _pref_parts.append(f"【用户画像】{_profile_text}")
-            if _graphzep and _graphzep != "暂无用户长期记忆":
-                _pref_parts.append(f"【长期记忆】{_graphzep}")
             _combined_preferences = "\n".join(_pref_parts) if _pref_parts else "无"
 
             plan = await self.intent_planner.plan(
@@ -563,6 +617,10 @@ class MusicRecommendationGraph:
                 previous_plan=_previous_plan_text,
                 graphzep_facts=state.get("graphzep_facts", ""),
                 user_id=user_id,
+                reference_context=_planner_reference_context(
+                    user_input,
+                    previous_dialog_state,
+                ),
             )
             if plan.intent_type == "clarification":
                 params = plan.parameters or {}

@@ -108,7 +108,7 @@ $env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
 python app.py
 ```
 
-On a suitable GPU server, download the official `Qwen/Qwen3.6-35B-A3B` base plus the [published SoulTuner LoRA adapter](https://modelscope.cn/models/hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA), start the endpoint, and select **SoulTuner V4.2 35B** in the same dropdown. The package provides `download_modelscope_assets.sh` for downloading both model parts and verifying the adapter SHA-256. Its README covers hardware sizing, endpoint startup, and the measured Planner results. The verified environment used an AMD MI308X, but the deployment contract itself is hardware-neutral.
+On a suitable GPU server, download the official `Qwen/Qwen3.6-35B-A3B` base and the SoulTuner PEFT adapter from your chosen model registry, start the endpoint, and select **SoulTuner V4.2 35B**. The generic package supports local paths, Hugging Face-compatible registries, and any OpenAI-compatible inference endpoint; platform-specific mirrors live in separate adapter directories. Its README covers hardware sizing, integrity checks, endpoint startup, production Agent wiring, and measured inference results. The verified environment used an AMD MI308X, but the application contract is hardware- and cloud-neutral.
 
 The complete service also has an AMD ROCm overlay. It preserves the existing
 CPU and NVIDIA CUDA profiles while using the official AMD PyTorch image and

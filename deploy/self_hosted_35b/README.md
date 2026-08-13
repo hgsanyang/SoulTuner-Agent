@@ -1,174 +1,196 @@
-# SoulTuner V4.2 35B 自托管部署
+# Self-host the SoulTuner V4.2 35B Planner
 
-这个目录只解决一件事：把训练后的 SoulTuner Planner 作为私有或自托管服务接入主项目。它不绑定 ModelScope 创空间，也不绑定 AMD、NVIDIA 或某一家云厂商。
+This package connects the fine-tuned SoulTuner Planner to the complete
+SoulTuner Agent. It is not a separate recommendation product: LangGraph,
+Neo4j, dense audio retrieval, controlled web discovery, long-term memory,
+feedback, ranking, and the Next.js frontend remain in the main application.
 
-主工程的 LangGraph、Neo4j、Dense 音频检索、联网发现、长期记忆、反馈与前端保持不变；模型只负责提出 `PlannerDecisionV5` 候选，`planner_guard.py` 再做结构校验、Lane 角色检查和确定性编译。
+The model proposes a compact `PlannerDecisionV5`. `planner_guard.py` validates
+that proposal, enforces hard lane boundaries, and deterministically compiles it
+into the existing `MusicQueryPlan` / `ToolPlan` interface before any retrieval
+tool can run.
 
 ```text
-SoulTuner 前端 / Agent
-        │
-        ├─ Qwen3.7 Plus API
-        │
-        └─ SoulTuner V4.2 35B OpenAI-compatible endpoint
-                          │
-                          └─ Qwen3.6-35B-A3B base + SoulTuner LoRA adapter
+SoulTuner frontend and LangGraph Agent
+             |
+             +-- hosted general-model API
+             |
+             `-- OpenAI-compatible SoulTuner Planner endpoint
+                          |
+                          `-- Qwen3.6-35B-A3B + SoulTuner PEFT adapter
 ```
 
-## 一次切换模型
+## What runs where
 
-| 页面选择 | 模型运行位置 | 当前电脑需要什么 |
+| Profile | Model location | Client GPU requirement |
 |---|---|---|
-| `Qwen3.7 Plus（云端，4070 可用）` | DashScope | API Key，不加载 35B |
-| `SoulTuner V4.2 35B（自托管）` | 自有 GPU 服务器或托管 GPU 工作区 | 只访问 HTTPS 端点 |
-| `安全演示（无需模型）` | 本机确定性规则 | 无 Key、无 GPU |
+| Hosted API | provider endpoint | none |
+| SoulTuner V4.2 35B | private GPU server or managed GPU workspace | none; only HTTPS access is required |
+| Deterministic demo | application process | none |
 
-本机启动 UI：
+The verified BF16 base files occupy about 72 GB before KV cache and runtime
+workspace. Allow at least about 96 GB usable GPU memory; a 192 GB accelerator is
+comfortable. A 12 GB RTX 4070 can run the application client but cannot host
+this BF16 model. Quantized variants require a fresh accuracy and safety
+evaluation and are not the default release path.
 
-```powershell
-cd deploy/self_hosted_35b
-python -m pip install -r requirements.txt
-$env:DASHSCOPE_API_KEY="你的 DashScope Key"
-$env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
-python app.py
-```
+## Publish only the adapter
 
-打开 `http://127.0.0.1:7860`。RTX 4070 只运行应用和客户端，不承载 35B 权重。
-
-## 硬件边界
-
-官方 BF16 基座文件约 72 GB；推理还需要 KV cache、临时张量和运行时空间。因此原生 BF16 自托管建议至少约 96 GB 可用显存/HBM，192 GB 单卡环境最宽松。本项目已经在 AMD MI308X 192 GB 上完成端点验证，但同一 OpenAI 兼容接口也可以由其他满足显存和软件兼容条件的服务器提供。
-
-12 GB RTX 4070 不能直接承载这个 BF16 基座。4-bit 量化可能显著减小权重，但当前训练评测没有验证量化后的 Planner 指标，所以它是后续优化项，不作为默认部署路径。
-
-## 推荐的模型发布结构
-
-不要把 72 GB 基座重复上传到 SoulTuner 仓库。发布 **LoRA adapter** 即可，使用者分别下载官方基座和 SoulTuner adapter：
+Do not copy the 72 GB base model into the SoulTuner repository. Publish a clean
+PEFT adapter and let each inference host download the official base separately:
 
 ```text
 SoulTuner-Planner-V4.2-35B-LoRA/
-├── adapter_model.safetensors
-├── adapter_config.json
-├── README.md
-├── LICENSE
-├── NOTICE
-└── SHA256SUMS
+|-- adapter_model.safetensors
+|-- adapter_config.json
+|-- README.md
+|-- LICENSE
+|-- NOTICE
+`-- SHA256SUMS
 ```
 
-公开模型仓库不要包含 `optimizer.pt`、`scheduler.pt`、`rng_state*.pth`、`trainer_state.json`、私有训练集、regression/sealed 原文或任何访问令牌。这些文件只属于私有断点恢复与审计归档。
+GitHub contains code, documentation, model cards, and registry links—not model
+weights. A Hugging Face-compatible registry is the portable default for the
+international community; regional registries can mirror the same immutable
+adapter revision from their platform-specific deployment directory.
 
-推荐发布位置：
-
-1. **ModelScope 模型库**：面向国内下载和后续创空间，作为主发布源；
-2. **Hugging Face Hub**：作为国际镜像和标准 PEFT 分发源；
-3. **GitHub**：只放代码、文档、模型卡和 Hub 链接，不放模型权重。
-
-`prepare_adapter_release.py` 会从私有 checkpoint 创建一个干净发布副本，并把训练机绝对路径改成公开基座 ID；它不会修改原 checkpoint：
+Create a release copy without changing the private checkpoint:
 
 ```bash
 python prepare_adapter_release.py \
-  --checkpoint /private/path/checkpoint-450 \
-  --output /private/path/SoulTuner-Planner-V4.2-35B-LoRA \
+  --checkpoint /private/checkpoint-450 \
+  --output /private/SoulTuner-Planner-V4.2-35B-LoRA \
   --base-model Qwen/Qwen3.6-35B-A3B
 ```
 
-发布前把 `MODEL_CARD_TEMPLATE.md` 复制为发布目录的 `README.md`，把 `NOTICE_TEMPLATE` 复制为 `NOTICE`，再加入 Apache-2.0 `LICENSE`。模板已经包含本次训练身份和聚合指标；正式公开前仍需确认 adapter 许可证同时满足训练数据授权。
-
-## 从模型 Hub 下载
-
-### ModelScope（国内与创空间优先）
-
-正式 LoRA Adapter 已发布在：
-
-- ModelScope：<https://modelscope.cn/models/hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA>
-- 模型 ID：`hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA`
-
-在 GPU 服务器执行下面的脚本即可下载官方基座、下载 Adapter，并核对 Adapter SHA-256：
+Add `MODEL_CARD_TEMPLATE.md` as `README.md`, `NOTICE_TEMPLATE` as `NOTICE`,
+and the selected license. Before making the repository public, confirm every
+training-data source permits adapter publication and run the fail-closed audit:
 
 ```bash
-python -m pip install -U modelscope
-bash download_modelscope_assets.sh
+python audit_public_adapter_repo.py /private/SoulTuner-Planner-V4.2-35B-LoRA \
+  --expected-adapter-sha256 9a3d2cb5bc2eee3dfc9f7c76c5350509d075aad11b61ddee3b9af2ad90ac272e \
+  --expected-adapter-size 90018600
 ```
 
-默认下载到当前目录的 `models/`。可通过 `SOULTUNER_MODEL_ROOT` 修改位置。等价的手动命令是：
+The audit rejects optimizer/resume state, private paths, evaluation rows,
+unknown files, an incorrect base identity, and a mismatched adapter digest.
 
-```bash
-python -m pip install -U modelscope
-modelscope download Qwen/Qwen3.6-35B-A3B \
-  --repo-type model --revision master \
-  --local-dir /models/qwen3.6-35b-a3b
-modelscope download hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA \
-  --repo-type model --revision master \
-  --local-dir /models/soultuner-v4.2-adapter
-cd /models/soultuner-v4.2-adapter
-sha256sum --check SHA256SUMS
-```
+## Download model assets
 
-ModelScope 已提供 `Qwen/Qwen3.6-35B-A3B` 官方模型页，因此创空间可以直接从国内 Hub 拉取基座和 SoulTuner adapter。生产环境应固定 revision/commit，并在启动前核对 SHA-256。
-
-### Hugging Face
-
-```bash
-python -m pip install -U "huggingface_hub[hf_xet]"
-hf download Qwen/Qwen3.6-35B-A3B --local-dir /models/qwen3.6-35b-a3b
-hf download YOUR_NAME/SoulTuner-Planner-V4.2-35B-LoRA \
-  --local-dir /models/soultuner-v4.2-adapter
-```
-
-模型 Hub 是权重分发位置；你的电脑不需要先完整下载再转传。可以直接在训练实例上生成干净 adapter 发布目录并上传，创空间或下一台 GPU 服务器再从 Hub 拉取。
-
-## 启动 35B 端点
+Use local directories when the assets are already present:
 
 ```bash
 export SOULTUNER_BASE_MODEL=/models/qwen3.6-35b-a3b
 export SOULTUNER_ADAPTER=/models/soultuner-v4.2-adapter
-export SOULTUNER_SERVE_API_KEY='replace-with-a-random-secret'
+```
+
+For a Hugging Face-compatible registry:
+
+```bash
+python -m pip install -U "huggingface_hub[hf_xet]"
+export SOULTUNER_ADAPTER_REPO=YOUR_ORG/SoulTuner-Planner-V4.2-35B-LoRA
+export SOULTUNER_BASE_REVISION=PINNED_BASE_COMMIT
+export SOULTUNER_ADAPTER_REVISION=PINNED_ADAPTER_COMMIT
+bash download_huggingface_assets.sh
+```
+
+Production deployments must pin immutable revisions and verify `SHA256SUMS`.
+The platform-specific directory documents optional regional download mirrors.
+
+## Start an authenticated endpoint
+
+Install a ROCm- or CUDA-compatible PyTorch environment, `ms-swift`, and vLLM,
+then run:
+
+```bash
+export SOULTUNER_BASE_MODEL=/models/qwen3.6-35b-a3b
+export SOULTUNER_ADAPTER=/models/soultuner-v4.2-adapter
+export SOULTUNER_SERVE_API_KEY="$(openssl rand -hex 32)"
 bash start_35b_endpoint.sh
 ```
 
-脚本使用 `swift deploy`，默认在 `0.0.0.0:8000` 提供 OpenAI 兼容接口，关闭 thinking、temperature=0、max_new_tokens=1024。先使用训练与评测已验证的原生后端；其他后端或量化方式需要重新做相同评测后再作为默认值。
+The default bind address is `127.0.0.1:8000`. The script refuses an
+unauthenticated `0.0.0.0` endpoint. Use TLS termination, a VPN, a private
+network, or an SSH tunnel—never expose an unauthenticated inference port.
 
-服务端只应通过 HTTPS、VPN 或私网暴露。不要把 8000 端口和无鉴权服务直接公开到互联网。
+The validated defaults are BF16 LoRA, vLLM, thinking disabled,
+`temperature=0`, `max_model_len=4096`, `gpu_memory_utilization=0.90`,
+`max_num_seqs=16`, and prefix caching enabled. The corresponding environment
+variables are documented in `start_35b_endpoint.sh`.
 
-## 让应用切到 35B
+## Connect the complete SoulTuner Agent
 
-在运行 `app.py` 或主应用的机器上配置：
+The standalone Gradio file in this folder is only a small endpoint diagnostic.
+For the real product, configure the main application and keep every retrieval,
+memory, ranking, and frontend service unchanged:
 
-```bash
-export SOULTUNER_MODEL_PROFILE=soultuner-v4.2-35b
-export SOULTUNER_PLANNER_ENDPOINT=https://your-host/v1/chat/completions
-export SOULTUNER_PLANNER_MODEL=soultuner-planner-v4.2-35b
-export SOULTUNER_PLANNER_PROTOCOL=openai
-export SOULTUNER_PLANNER_TOKEN='same-secret'
-export SOULTUNER_PLANNER_TIMEOUT=60
-python app.py
+```env
+INTENT_LLM_PROVIDER=vllm
+INTENT_LLM_MODEL=soultuner-planner-v4.2-35b
+INTENT_PLANNER_CONTRACT=v42
+VLLM_BASE_URL=https://planner.example.com/v1
+VLLM_API_KEY=replace-with-the-endpoint-secret
 ```
 
-切回 API 只需把 `SOULTUNER_MODEL_PROFILE` 改成 `qwen3.7-plus`。超时、非 JSON、schema 不合法、任务冲突或缺少必需 Lane 时都会降级到安全计划。
+Then start the normal Docker Compose application. To return to a hosted model,
+change the intent provider/model/contract settings; no business-logic code
+changes are required.
 
-## 已完成训练表现
+From the repository root, the standard application command remains:
 
-这些数据来自同一固定评分器；只陈述领域 Planner 的结构化任务表现，不代表通用模型能力排名。
+```bash
+docker compose up -d --build
+```
 
-| 指标 | Regression 412 | Canonical sealed 500 |
+The Planner endpoint can run on another GPU host; Compose only needs the URL
+and secret above. Keeping the model service separate also lets the web, Agent,
+Neo4j, Qdrant, and memory services scale or restart independently.
+
+## Measure before tuning
+
+`benchmark_endpoint.py` uses five public representative requests. Reports
+contain anonymous case IDs, aggregate contract/guard rates, latency, throughput,
+and token counts—never private regression/sealed rows or raw model responses.
+
+```bash
+export SOULTUNER_PLANNER_API_KEY="$SOULTUNER_SERVE_API_KEY"
+python benchmark_endpoint.py \
+  --endpoint http://127.0.0.1:8000/v1/chat/completions \
+  --model soultuner-planner-v4.2-35b \
+  --repeat 3 --concurrency 4 \
+  --json benchmark-results/vllm-c4.json
+```
+
+Use `run_benchmark_sweep.sh` for concurrency 1/4/8/16. Change one runtime
+variable at a time. AITER, SGLang, FP8, or 4-bit variants become defaults only
+after the same contract, guard, latency, throughput, and memory checks pass.
+The measured MI308X profile and its limits are recorded in
+[`INFERENCE_BENCHMARK.md`](INFERENCE_BENCHMARK.md).
+
+## Aggregate Planner evaluation
+
+These metrics use one fixed evaluator and measure the SoulTuner structured
+planning contract, not general model ability. Private evaluation rows are not
+redistributed.
+
+| Metric | Regression 412 | Canonical sealed 500 |
 |---|---:|---:|
 | Schema valid | 99.51% | 99.40% |
 | Compilable | 99.51% | 99.20% |
 | Intent / route | 99.03% | 95.60% |
 | Lane policy satisfaction | 91.75% | 86.80% |
 | Lane role exact match | 78.88% | 76.20% |
-| Required lane recall | — | 89.98% |
+| Required lane recall | - | 89.98% |
 | HyDE present when Dense | 98.88% | 84.44% |
 
-`Lane policy satisfaction` 检查必需通道是否打开、禁止通道是否关闭；`Lane role exact match` 更严格，要求 Graph、Dense、Web 的 `required / optional / off` 三个角色逐项完全一致。
+`Lane policy satisfaction` verifies required lanes are enabled and prohibited
+lanes are disabled. `Lane role exact match` additionally requires Graph, Dense,
+and Web to match `required / optional / off` exactly.
 
-## 与完整 SoulTuner 项目的关系
+## Privacy boundary
 
-本目录是可独立运行的 Planner 接入切片，不替代完整系统：
-
-- **Graph**：Neo4j 中的歌曲、艺人、标签与关系约束；
-- **Dense**：音频/语义向量相似度与听感召回；
-- **Web**：本地库不足时的受控发现；
-- **Memory**：用户偏好、会话状态和可撤销反馈；
-- **Data flywheel**：经用户授权和人工审核的失败样本进入独立候选池，再经过版本化数据准入与离线评测。
-
-公开部署只展示获得授权的元数据和示例，不应把私有歌库、用户记忆或训练评测数据打包进镜像。
+Do not place private music libraries, user memory, raw feedback, training rows,
+regression/sealed prompts, optimizer state, resume files, absolute private
+paths, or credentials in an image or public model repository. Only authorized,
+reviewed, and versioned examples may enter the data flywheel.
