@@ -149,6 +149,42 @@ def test_slate_best_worst_must_come_from_the_slate(client):
         assert resp.json().get("success") is True
 
 
+def test_note_only_slate_feedback_records_no_verdict(client):
+    """The user typed a sentence and hit submit without picking a rating.
+
+    That must persist as `overall=None` — "said something, gave no verdict" — and
+    NOT be laundered into a neutral judgement, which would drag every offline
+    average toward the middle and invent an opinion the user never expressed.
+    """
+    api, tmp_path, fl = client
+    _write_exposure(fl, tmp_path)
+    resp = api.post("/api/slate-feedback", json={
+        "exposure_id": "exp1", "rating": "unrated",
+        "note": "太多口水歌了，想要冷门一点的",
+        "timezone": "Asia/Shanghai",
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json().get("success") is True
+
+    rows = fl.load_slate_feedback_canonical()
+    written = [r for r in rows if r.get("exposure_id") == "exp1"]
+    assert len(written) == 1
+    assert written[0].get("note") == "太多口水歌了，想要冷门一点的"
+
+    from schemas.feedback_events import slate_overall
+    assert slate_overall(written[0]) is None
+
+
+def test_unknown_slate_rating_is_still_rejected(client):
+    """Adding `unrated` must not turn the rating field into a free-text column."""
+    api, tmp_path, fl = client
+    _write_exposure(fl, tmp_path)
+    resp = api.post("/api/slate-feedback", json={
+        "exposure_id": "exp1", "rating": "sorta_ok", "timezone": "Asia/Shanghai",
+    })
+    assert resp.status_code == 422
+
+
 def test_final_exposure_supersedes_provisional(client):
     """The provisional record written before songs stream must be superseded by
     the final one (same exposure_id), so feedback attributes to the real slate."""

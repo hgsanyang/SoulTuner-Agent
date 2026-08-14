@@ -673,7 +673,7 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
             dialog_state=request.dialog_state,
             client_context={
                 "timezone": request.timezone,
-                "session_id": request.session_id,
+                "session_id": runtime_context.session_id,
                 "scene": request.scene,
                 "device": request.device,
             },
@@ -1139,6 +1139,11 @@ EVENT_TEMPLATES = {
 SUPPORTED_USER_EVENTS = set(EVENT_TEMPLATES) | {"unsave"}
 
 SUPPORTED_SLATE_RATINGS = {
+    # Free-text-only feedback: the user said something but gave no verdict on the
+    # slate. Deliberately absent from SLATE_RATING_TO_OVERALL so `overall` stays
+    # None — "unknown" must not be laundered into a neutral judgement, which would
+    # drag every offline average toward the middle.
+    "unrated",
     "great",
     "partial",
     "off",

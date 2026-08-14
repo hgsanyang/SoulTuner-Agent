@@ -16,8 +16,11 @@ Stage 4 升级（V2）：
   await build_context(sources, budget=2000) → 截断后的文本
 """
 
+import hashlib
 import logging
-from typing import Dict, Optional, Tuple
+import time
+from dataclasses import dataclass
+from typing import Callable, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +38,21 @@ def estimate_tokens(text: str) -> int:
     return int(chinese_chars * 1.5 + remaining * 0.4)
 
 
+TokenCounter = Callable[[str], int]
+
+
+def _count_tokens(text: str, token_counter: Optional[TokenCounter] = None) -> int:
+    """Count tokens with an injected model tokenizer, falling back to estimation."""
+    return max(0, int((token_counter or estimate_tokens)(text or "")))
+
+
 # ---- 上下文源优先级 ----
 # 数字越小优先级越高
 PRIORITY_USER_INPUT = 0        # 用户当前输入（不可截断）
-PRIORITY_GRAPHZEP_FACTS = 1    # 长期记忆（高优先级）
-PRIORITY_CHAT_HISTORY = 2      # 最近对话历史
-PRIORITY_RETRIEVAL = 3         # 检索结果
+PRIORITY_CHAT_HISTORY = 1      # 当前会话状态、纠正与否定
+PRIORITY_EXPLICIT_PROFILE = 2  # 用户主动设置的明确画像
+PRIORITY_GRAPHZEP_FACTS = 3    # 当前场景相关的长期记忆（兼容旧字段名）
+PRIORITY_RETRIEVAL = 4         # 检索结果
 
 # ---- LLM 压缩触发阈值 ----
 LLM_COMPRESS_RATIO = 1.5       # 超出分配预算的倍数阈值
@@ -50,41 +62,124 @@ LLM_COMPRESS_RATIO = 1.5       # 超出分配预算的倍数阈值
 # 每轮对话结束后，异步预压缩对话历史并缓存，
 # 下次请求直接读取，消除 17s 阻塞等待。
 #
-# 结构：{ user_id: (compressed_text, original_token_count) }
-#   compressed_text     —— 压缩后的摘要
-#   original_token_count —— 压缩时原始历史的 token 数
-#                          （用于判断缓存是否过期：如果下次进来的历史 token 数
-#                            比缓存时少，说明前端重置了历史，缓存作废）
+# 缓存按 user_id + conversation_id + history_fingerprint 隔离。
+# 命中时还会校验 covered_message_ids 是当前历史的精确前缀；摘要之后新增的
+# 对话必须以原文拼回 Prompt，避免旧摘要吞掉本轮纠正或否定。
 # ============================================================
-_compress_cache: Dict[str, Tuple[str, int]] = {}
+COMPRESSION_CACHE_VERSION = "gssc-summary-v2"
+COMPRESSION_CACHE_TTL_SECONDS = 60 * 60
 
 
-def get_cached_compression(user_id: str, current_token_count: int) -> Optional[str]:
+@dataclass(frozen=True)
+class CompressionCacheEntry:
+    user_id: str
+    conversation_id: str
+    history_fingerprint: str
+    summary: str
+    covered_message_ids: Tuple[str, ...]
+    last_message_id: str
+    generated_at: float
+    original_token_count: int
+    schema_version: str = COMPRESSION_CACHE_VERSION
+
+
+@dataclass(frozen=True)
+class CompressionCacheHit:
+    entry: CompressionCacheEntry
+    uncovered_text: str
+
+
+_compress_cache: Dict[Tuple[str, str, str], CompressionCacheEntry] = {}
+
+
+def _history_lines(chat_history_text: str) -> Tuple[str, ...]:
+    """将历史稳定拆分为可做前缀校验的消息行。"""
+    return tuple(chat_history_text.splitlines())
+
+
+def _message_ids(lines: Tuple[str, ...]) -> Tuple[str, ...]:
+    return tuple(
+        hashlib.sha256(f"{index}\0{line}".encode("utf-8")).hexdigest()[:20]
+        for index, line in enumerate(lines)
+    )
+
+
+def _history_fingerprint(lines: Tuple[str, ...]) -> str:
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def clear_compression_cache() -> None:
+    """清空进程内摘要缓存；主要用于测试和显式会话重置。"""
+    _compress_cache.clear()
+
+
+def get_cached_compression(
+    user_id: str,
+    conversation_id: str,
+    chat_history_text: str,
+    *,
+    now: Optional[float] = None,
+) -> Optional[CompressionCacheHit]:
     """
     读取预压缩缓存。
 
-    只有在「当前历史 token 数 >= 缓存时原始 token 数」时才视为有效缓存：
-    - >=  说明历史在原来基础上增长了（多了新一轮对话），缓存仍有代表性
-    - <   说明前端重置了历史（用户刷新页面），缓存无效，重新压缩
+    只有同一用户、同一会话且摘要覆盖的消息 ID 是当前历史的精确前缀时命中。
+    TTL、摘要版本、任一前缀内容变化都会使缓存失效。
     """
-    cached = _compress_cache.get(user_id)
-    if cached is None:
+    if not user_id or not conversation_id:
         return None
-    compressed_text, original_tokens = cached
-    if current_token_count >= original_tokens:
+
+    current_time = time.time() if now is None else now
+    current_lines = _history_lines(chat_history_text)
+    current_ids = _message_ids(current_lines)
+    scoped_entries = [
+        entry
+        for entry in _compress_cache.values()
+        if entry.user_id == user_id and entry.conversation_id == conversation_id
+    ]
+    scoped_entries.sort(key=lambda entry: len(entry.covered_message_ids), reverse=True)
+
+    for entry in scoped_entries:
+        if entry.schema_version != COMPRESSION_CACHE_VERSION:
+            continue
+        if current_time - entry.generated_at > COMPRESSION_CACHE_TTL_SECONDS:
+            _compress_cache.pop(
+                (entry.user_id, entry.conversation_id, entry.history_fingerprint), None
+            )
+            continue
+        covered = entry.covered_message_ids
+        if len(current_ids) < len(covered) or current_ids[: len(covered)] != covered:
+            continue
+        uncovered_text = "\n".join(current_lines[len(covered) :])
         logger.info(
-            f"[GSSC-Cache] 命中预压缩缓存 (user={user_id}): "
-            f"original={original_tokens} tokens → compressed={estimate_tokens(compressed_text)} tokens"
+            "[GSSC-Cache] 命中会话摘要缓存 (user=%s, conversation=%s, "
+            "covered=%s, appended=%s)",
+            user_id,
+            conversation_id[:12],
+            len(covered),
+            len(current_ids) - len(covered),
         )
-        return compressed_text
-    else:
-        # 缓存过期（历史被重置），清除
-        logger.info(f"[GSSC-Cache] 缓存过期 (user={user_id})，历史已重置，清除缓存")
-        _compress_cache.pop(user_id, None)
-        return None
+        return CompressionCacheHit(entry=entry, uncovered_text=uncovered_text)
+
+    # 同一会话出现非前缀历史，说明会话被重置或改写，立即清除旧摘要。
+    if scoped_entries:
+        for entry in scoped_entries:
+            _compress_cache.pop(
+                (entry.user_id, entry.conversation_id, entry.history_fingerprint), None
+            )
+        logger.info(
+            "[GSSC-Cache] 会话历史不是缓存前缀，已清除 (user=%s, conversation=%s)",
+            user_id,
+            conversation_id[:12],
+        )
+    return None
 
 
-async def pre_compress_and_cache(user_id: str, chat_history_text: str) -> None:
+async def pre_compress_and_cache(
+    user_id: str,
+    chat_history_text: str,
+    conversation_id: str = "",
+) -> None:
     """
     ★ 在每轮对话结束后异步调用（asyncio.create_task），
     预压缩本轮对话历史，写入缓存供下次请求直接使用。
@@ -92,6 +187,10 @@ async def pre_compress_and_cache(user_id: str, chat_history_text: str) -> None:
     调用时机：与 extract_preferences_node 并行执行，
     在推荐解释生成完毕、返回响应之后触发。
     """
+    if not conversation_id:
+        logger.info("[GSSC-Cache] 缺少 conversation_id，跳过摘要缓存")
+        return
+
     original_tokens = estimate_tokens(chat_history_text)
 
     # 只有历史足够长（> 1500 tokens）时才预压缩，短历史直接截断即可
@@ -106,7 +205,26 @@ async def pre_compress_and_cache(user_id: str, chat_history_text: str) -> None:
     )
     compressed = await _llm_compress_chat_history(chat_history_text)
     if compressed:
-        _compress_cache[user_id] = (compressed, original_tokens)
+        lines = _history_lines(chat_history_text)
+        message_ids = _message_ids(lines)
+        fingerprint = _history_fingerprint(lines)
+        entry = CompressionCacheEntry(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            history_fingerprint=fingerprint,
+            summary=compressed,
+            covered_message_ids=message_ids,
+            last_message_id=message_ids[-1] if message_ids else "",
+            generated_at=time.time(),
+            original_token_count=original_tokens,
+        )
+        for key, cached_entry in list(_compress_cache.items()):
+            if (
+                cached_entry.user_id == user_id
+                and cached_entry.conversation_id == conversation_id
+            ):
+                _compress_cache.pop(key, None)
+        _compress_cache[(user_id, conversation_id, fingerprint)] = entry
         logger.info(
             f"[GSSC-Cache] 预压缩完成并写入缓存 (user={user_id}): "
             f"{original_tokens} → {estimate_tokens(compressed)} tokens"
@@ -116,33 +234,133 @@ async def pre_compress_and_cache(user_id: str, chat_history_text: str) -> None:
 
 
 
+def _truncate_text_to_budget(
+    text: str,
+    max_tokens: int,
+    *,
+    from_end: bool,
+    token_counter: Optional[TokenCounter] = None,
+) -> str:
+    """Truncate one text block against either an exact or estimated token budget."""
+    if max_tokens <= 0 or not text:
+        return ""
+    if _count_tokens(text, token_counter) <= max_tokens:
+        return text
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        candidate = text[-mid:] if from_end else text[:mid]
+        if _count_tokens(candidate, token_counter) <= max_tokens:
+            low = mid
+        else:
+            high = mid - 1
+    return text[-low:] if from_end else text[:low]
+
+
 class ContextSource:
     """一个上下文源"""
-    def __init__(self, name: str, content: str, priority: int, min_tokens: int = 0):
+    def __init__(
+        self,
+        name: str,
+        content: str,
+        priority: int,
+        min_tokens: int = 0,
+        preserve: str = "head",
+        token_counter: Optional[TokenCounter] = None,
+    ):
         self.name = name
         self.content = content
         self.priority = priority
         self.min_tokens = min_tokens  # 最少保留的 token 数（0=可完全截断）
-        self.estimated_tokens = estimate_tokens(content)
+        self.preserve = preserve
+        self.token_counter = token_counter
+        self.estimated_tokens = _count_tokens(content, token_counter)
 
     def truncate_to(self, max_tokens: int) -> str:
-        """按行截断内容到指定 Token 数（传统兜底方式）"""
+        """按行截断内容；会话历史保留最新内容，其他源默认保留开头。"""
+        if max_tokens <= 0:
+            return ""
         if self.estimated_tokens <= max_tokens:
             return self.content
 
+        marker = "... (较早内容已截断)" if self.preserve == "tail" else "... (已截断)"
+        marker_tokens = _count_tokens(marker, self.token_counter)
+        content_budget = max(0, max_tokens - marker_tokens)
         lines = self.content.split("\n")
+        indexed_lines = list(reversed(lines)) if self.preserve == "tail" else lines
         result = []
         used = 0
-        for line in lines:
-            line_tokens = estimate_tokens(line)
-            if used + line_tokens > max_tokens:
-                if result:
-                    result.append("... (已截断)")
+        for line in indexed_lines:
+            line_tokens = _count_tokens(line, self.token_counter)
+            if used + line_tokens > content_budget:
+                if not result:
+                    result.append(
+                        _truncate_text_to_budget(
+                            line,
+                            content_budget,
+                            from_end=self.preserve == "tail",
+                            token_counter=self.token_counter,
+                        )
+                    )
                 break
             result.append(line)
             used += line_tokens
+        if self.preserve == "tail":
+            result.reverse()
+            result.insert(0, marker)
+        else:
+            result.append(marker)
+        rendered = "\n".join(part for part in result if part)
+        # Line separators and markers are real tokens too. Enforce the final
+        # boundary with the same counter used for allocation.
+        if _count_tokens(rendered, self.token_counter) > max_tokens:
+            rendered = _truncate_text_to_budget(
+                rendered,
+                max_tokens,
+                from_end=self.preserve == "tail",
+                token_counter=self.token_counter,
+            )
+        return rendered
 
-        return "\n".join(result)
+
+def _render_cached_history(
+    hit: CompressionCacheHit,
+    budget: int,
+    token_counter: Optional[TokenCounter] = None,
+) -> str:
+    """摘要只代表已覆盖前缀；摘要后的新增轮次优先以原文保留。"""
+    if not hit.uncovered_text:
+        return _truncate_text_to_budget(
+            hit.entry.summary,
+            budget,
+            from_end=False,
+            token_counter=token_counter,
+        )
+
+    recent_marker = "【摘要后新增对话】"
+    summary_marker = "【较早对话摘要】"
+    marker_budget = _count_tokens(recent_marker + summary_marker, token_counter)
+    content_budget = max(0, budget - marker_budget)
+    recent = ContextSource(
+        "uncovered_history",
+        hit.uncovered_text,
+        PRIORITY_CHAT_HISTORY,
+        preserve="tail",
+        token_counter=token_counter,
+    ).truncate_to(content_budget)
+    remaining = max(0, content_budget - _count_tokens(recent, token_counter))
+    summary = _truncate_text_to_budget(
+        hit.entry.summary,
+        remaining,
+        from_end=False,
+        token_counter=token_counter,
+    )
+    parts = []
+    if summary:
+        parts.append(f"{summary_marker}\n{summary}")
+    if recent:
+        parts.append(f"{recent_marker}\n{recent}")
+    return "\n".join(parts)
 
 
 async def _llm_compress_chat_history(chat_history: str) -> str:
@@ -189,12 +407,15 @@ async def _llm_compress_chat_history(chat_history: str) -> str:
 
 
 async def build_context(
+    explicit_profile: str = "",
     graphzep_facts: str = "",
     chat_history: str = "",
     retrieval_context: str = "",
     user_input: str = "",
     total_budget: int = 0,
     user_id: str = "local_admin",
+    conversation_id: str = "",
+    token_counter: Optional[TokenCounter] = None,
 ) -> Dict[str, str]:
     """
     GSSC 四阶段上下文构建（V2 异步版）
@@ -204,14 +425,16 @@ async def build_context(
     调用 LLM 生成摘要来替代硬截断，减少信息损失。
 
     Args:
-        graphzep_facts: GraphZep 长期记忆文本
+        explicit_profile: 用户主动设置的明确画像，优先级高于长期记忆
+        graphzep_facts: 自研 MemoryGateway 召回的长期记忆文本（兼容旧字段名）
         chat_history: 格式化的对话历史文本
         retrieval_context: 检索结果文本（可选）
         user_input: 用户当前输入（不截断）
         total_budget: 总 Token 预算（不含 system prompt 和 user_input）
 
     Returns:
-        dict: {"graphzep_facts": ..., "chat_history": ..., "retrieval_context": ...}
+        dict: {"explicit_profile": ..., "graphzep_facts": ...,
+               "chat_history": ..., "retrieval_context": ...}
               各字段已按优先级截断到预算内
     """
     # ---- 读取预算配置 ----
@@ -225,12 +448,22 @@ async def build_context(
     # ---- Stage 1: Gather（收集所有上下文源） ----
     sources = []
 
+    if explicit_profile:
+        sources.append(ContextSource(
+            name="explicit_profile",
+            content=explicit_profile,
+            priority=PRIORITY_EXPLICIT_PROFILE,
+            min_tokens=100,
+            token_counter=token_counter,
+        ))
+
     if graphzep_facts and graphzep_facts != "暂无用户长期记忆":
         sources.append(ContextSource(
             name="graphzep_facts",
             content=graphzep_facts,
             priority=PRIORITY_GRAPHZEP_FACTS,
-            min_tokens=100,  # 至少保留 100 token 的记忆
+            min_tokens=100,
+            token_counter=token_counter,
         ))
 
     if chat_history:
@@ -238,7 +471,9 @@ async def build_context(
             name="chat_history",
             content=chat_history,
             priority=PRIORITY_CHAT_HISTORY,
-            min_tokens=200,  # 至少保留最近 2-3 轮对话
+            min_tokens=200,
+            preserve="tail",
+            token_counter=token_counter,
         ))
 
     if retrieval_context:
@@ -247,10 +482,12 @@ async def build_context(
             content=retrieval_context,
             priority=PRIORITY_RETRIEVAL,
             min_tokens=0,  # 可以完全省略
+            token_counter=token_counter,
         ))
 
     if not sources:
         return {
+            "explicit_profile": explicit_profile,
             "graphzep_facts": graphzep_facts,
             "chat_history": chat_history,
             "retrieval_context": retrieval_context,
@@ -264,6 +501,7 @@ async def build_context(
         # 总量在预算内，无需截断
         logger.info(f"[GSSC] 上下文总量 {total_estimated} tokens ≤ 预算 {total_budget}，无需截断")
         return {
+            "explicit_profile": explicit_profile,
             "graphzep_facts": graphzep_facts,
             "chat_history": chat_history,
             "retrieval_context": retrieval_context,
@@ -273,20 +511,23 @@ async def build_context(
 
     # ---- Stage 3: Structure（分配预算） ----
     # 先保证每个源的 min_tokens，剩余按优先级分配
-    min_total = sum(s.min_tokens for s in sources)
-    remaining_budget = total_budget - min_total
-
+    remaining_budget = total_budget
     allocations: Dict[str, int] = {}
+    # Guarantee minima in priority order without ever oversubscribing a tiny budget.
     for src in sources:
-        # 基础配额 = min_tokens
-        # 额外配额 = 剩余预算按优先级倒序分配（优先级高的先分配）
-        extra_needed = max(0, src.estimated_tokens - src.min_tokens)
+        guaranteed = min(src.min_tokens, src.estimated_tokens, remaining_budget)
+        allocations[src.name] = guaranteed
+        remaining_budget -= guaranteed
+    # Then let higher-priority sources consume the remaining budget first.
+    for src in sources:
+        extra_needed = max(0, src.estimated_tokens - allocations[src.name])
         extra_allocated = min(extra_needed, remaining_budget)
-        allocations[src.name] = src.min_tokens + extra_allocated
+        allocations[src.name] += extra_allocated
         remaining_budget -= extra_allocated
 
     # ---- Stage 4: Compress（智能压缩 — V2 升级） ----
     result = {
+        "explicit_profile": explicit_profile,
         "graphzep_facts": graphzep_facts,
         "chat_history": chat_history,
         "retrieval_context": retrieval_context,
@@ -303,9 +544,17 @@ async def build_context(
             and src.estimated_tokens > budget * LLM_COMPRESS_RATIO
         ):
             # ★ 先查预压缩缓存（上一轮结束后异步预计算的结果）
-            cached = get_cached_compression(user_id, src.estimated_tokens)
+            cached = get_cached_compression(
+                user_id,
+                conversation_id,
+                chat_history,
+            )
             if cached is not None:
-                result[src.name] = cached
+                result[src.name] = _render_cached_history(
+                    cached,
+                    budget,
+                    token_counter=token_counter,
+                )
                 logger.info(
                     "[GSSC] chat_history: 使用预压缩缓存，跳过 LLM 调用 "
                     "(节省 ~15-20s)"
@@ -327,21 +576,23 @@ async def build_context(
         result[src.name] = truncated
         logger.info(
             f"[GSSC] {src.name}: 按行截断 {src.estimated_tokens} → "
-            f"{estimate_tokens(truncated)} tokens (预算: {budget})"
+            f"{_count_tokens(truncated, token_counter)} tokens (预算: {budget})"
         )
 
     # ---- Token Tracking Report（结构化追踪日志） ----
     # 用于性能分析和面试展示：压缩前 vs 压缩后的 Token 对比
     _track_token_savings(
         before={
-            "graphzep_facts": estimate_tokens(graphzep_facts),
-            "chat_history": estimate_tokens(chat_history),
-            "retrieval_context": estimate_tokens(retrieval_context),
+            "explicit_profile": _count_tokens(explicit_profile, token_counter),
+            "graphzep_facts": _count_tokens(graphzep_facts, token_counter),
+            "chat_history": _count_tokens(chat_history, token_counter),
+            "retrieval_context": _count_tokens(retrieval_context, token_counter),
         },
         after={
-            "graphzep_facts": estimate_tokens(result.get("graphzep_facts", "")),
-            "chat_history": estimate_tokens(result.get("chat_history", "")),
-            "retrieval_context": estimate_tokens(result.get("retrieval_context", "")),
+            "explicit_profile": _count_tokens(result.get("explicit_profile", ""), token_counter),
+            "graphzep_facts": _count_tokens(result.get("graphzep_facts", ""), token_counter),
+            "chat_history": _count_tokens(result.get("chat_history", ""), token_counter),
+            "retrieval_context": _count_tokens(result.get("retrieval_context", ""), token_counter),
         },
         budget=total_budget,
     )
