@@ -72,6 +72,9 @@ class MusicAgentState(TypedDict, total=False):
     # GraphZep 记忆上下文（新增）
     graphzep_facts: str           # 兼容字段：从 MemoryGateway 召回的长期记忆文本
     graphzep_group_id: str        # 当前会话的 group ID
+    memory_context: Dict[str, Any]  # MemoryGateway 的结构化召回与审计轨迹
+    assembled_context: Dict[str, Any]  # 本轮模型实际允许读取的统一结构化上下文
+    prompt_context: Dict[str, str]  # Planner 与普通对话共享的预算后文本视图
 
     # 歌单相关（新增）
     playlist_candidates: List[Dict[str, Any]]  # 歌单候选歌曲

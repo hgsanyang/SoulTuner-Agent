@@ -76,6 +76,7 @@ from schemas.dialog_state import (
 )
 from schemas.refinement import build_refinement_suggestions
 from services.llm_feedback_logger import build_planning_feedback, log_planning_feedback
+from services.assembled_context_runtime import assemble_prompt_context
 
 logger = get_logger(__name__)
 
@@ -604,23 +605,35 @@ class MusicRecommendationGraph:
             _intent_provider = (settings.intent_llm_provider or settings.llm_default_provider or '?').lower()
             logger.info(f"--- [步骤 1] 统一意图分析与检索规划 (Structured Output) | 🤖 {_intent_provider} / {_intent_model_name} ---")
 
-            # ── 统一构建用户偏好上下文（用户画像 + MemoryGateway 长期记忆）──
-            _pref_parts = []
-            if _profile_text:
-                _pref_parts.append(f"【用户画像】{_profile_text}")
-            _combined_preferences = "\n".join(_pref_parts) if _pref_parts else "无"
+            # Planner 与普通对话统一读取同一份确定性装配、预算后上下文。
+            _bundle = await assemble_prompt_context(
+                user_input=user_input,
+                user_id=user_id,
+                session_id=str(state.get("session_id") or ""),
+                chat_history=history_text,
+                explicit_profile=_profile_text,
+                long_memory=state.get("graphzep_facts", ""),
+                memory_context=state.get("memory_context") or {},
+                dialog_state=previous_dialog_state,
+                previous_plan=_previous_plan_text,
+                listening_context=(state.get("metadata") or {}).get("listening_context") or {},
+            )
 
             plan = await self.intent_planner.plan(
                 user_input=user_input,
-                user_preferences=_combined_preferences,
-                chat_history=history_text,
+                user_preferences=_bundle.planner_preferences,
+                chat_history=_bundle.chat_history,
                 previous_plan=_previous_plan_text,
-                graphzep_facts=state.get("graphzep_facts", ""),
+                # Long-term memory is already included in the assembler's
+                # bounded planner view.  Never pass the unbounded source again.
+                graphzep_facts="",
                 user_id=user_id,
                 reference_context=_planner_reference_context(
                     user_input,
                     previous_dialog_state,
                 ),
+                conversation_id=str(state.get("session_id") or ""),
+                context_preassembled=True,
             )
             if plan.intent_type == "clarification":
                 params = plan.parameters or {}
@@ -670,6 +683,7 @@ class MusicRecommendationGraph:
                     "final_response": clarification.question,
                     "step_count": state.get("step_count", 0) + 1,
                     "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                    **_bundle.state_payload(),
                 }
             dialog_state, dialog_delta = apply_plan_delta_with_report(previous_dialog_state, plan, user_input)
             plan = apply_dialog_state_to_plan(plan, dialog_state)
@@ -700,8 +714,8 @@ class MusicRecommendationGraph:
             retrieval_plan_dict["_tool_plan"] = tool_plan_dict
             retrieval_plan_dict["_tool_plan_alignment_issues"] = tool_plan_alignment_issues(plan)
             retrieval_plan_dict["_intent_type"] = plan.intent_type
-            retrieval_plan_dict["_graphzep_facts"] = state.get("graphzep_facts", "")
-            retrieval_plan_dict["_user_profile"] = _profile_text  # 画像文本供 HyDE 参考
+            retrieval_plan_dict["_graphzep_facts"] = _bundle.chat_memory
+            retrieval_plan_dict["_user_profile"] = _bundle.assembled.explicit_profile
             retrieval_plan_dict["_user_id"] = user_id
             retrieval_plan_dict["_session_id"] = str(state.get("session_id") or "")
 
@@ -733,6 +747,7 @@ class MusicRecommendationGraph:
                 "refinement_options": [option.model_dump() for option in refinement.options],
                 "step_count": state.get("step_count", 0) + 1,
                 "timings": _record_timing(state, "intent_ms", _time.time() - _t0),
+                **_bundle.state_payload(),
             }
 
         except Exception as e:
@@ -1934,19 +1949,27 @@ class MusicRecommendationGraph:
                 | get_llm()
                 | StrOutputParser()
             )
-            # [P3] GSSC Token budget management
-            from retrieval.gssc_context_builder import build_context
-            _ctx = await build_context(
-                graphzep_facts=state.get("graphzep_facts", "暂无用户长期记忆"),
-                chat_history=history_text,
-                total_budget=0,
-                user_id=_state_user_id(state),
-            )
+            _prompt_context = state.get("prompt_context") or {}
+            _assembled_payload = state.get("assembled_context") or {}
+            if not _prompt_context:
+                _bundle = await assemble_prompt_context(
+                    user_input=user_message,
+                    user_id=_state_user_id(state),
+                    session_id=str(state.get("session_id") or ""),
+                    chat_history=history_text,
+                    explicit_profile=self._load_user_profile_for_prompt(_state_user_id(state)),
+                    long_memory=state.get("graphzep_facts", "暂无用户长期记忆"),
+                    memory_context=state.get("memory_context") or {},
+                    dialog_state=state.get("dialog_state") or {},
+                    listening_context=(state.get("metadata") or {}).get("listening_context") or {},
+                )
+                _prompt_context = _bundle.state_payload()["prompt_context"]
+                _assembled_payload = _bundle.assembled.model_dump(mode="json")
 
             response_content = await chain.ainvoke({
-                "chat_history": _ctx["chat_history"],
+                "chat_history": _prompt_context.get("chat_history", ""),
                 "user_message": user_message,
-                "graphzep_facts": _ctx["graphzep_facts"],
+                "graphzep_facts": _prompt_context.get("chat_memory", "暂无可用用户记忆"),
             })
 
             logger.info("生成聊天回复")
@@ -1960,7 +1983,9 @@ class MusicRecommendationGraph:
 
             return {
                 "final_response": response_content,
-                "step_count": state.get("step_count", 0) + 1
+                "step_count": state.get("step_count", 0) + 1,
+                "prompt_context": _prompt_context,
+                "assembled_context": _assembled_payload,
             }
 
         except Exception as e:
@@ -2647,7 +2672,13 @@ class MusicRecommendationGraph:
                 _ctx_mgr = _HisMgr()
                 _raw_history = state.get("chat_history", [])
                 _history_str = _ctx_mgr.format_chat_history(_raw_history)
-                asyncio.create_task(pre_compress_and_cache(user_id, _history_str))
+                asyncio.create_task(
+                    pre_compress_and_cache(
+                        user_id,
+                        _history_str,
+                        conversation_id=str(state.get("session_id") or ""),
+                    )
+                )
                 logger.info("[GSSC-Cache] 历史预压缩任务已投递到后台")
             except Exception as _cache_e:
                 logger.warning(f"[GSSC-Cache] 投递预压缩任务失败（不影响主流程）: {_cache_e}")

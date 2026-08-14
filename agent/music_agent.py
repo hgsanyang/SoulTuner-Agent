@@ -6,17 +6,31 @@
 import asyncio
 import os
 import time
+import uuid
 from typing import Dict, Any, Optional, List
 
 
 from config.logging_config import get_logger, safe_query
 from config.settings import settings
 from agent.music_graph import MusicRecommendationGraph
+from agent.session_identity import checkpoint_thread_id, resolve_conversation_id
 from schemas.music_state import MusicAgentState
 from services.feedback_logger import log_exposure
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
 logger = get_logger(__name__)
+
+
+def _history_message_id(
+    conversation_id: str,
+    index: int,
+    role: str,
+    content: str,
+) -> str:
+    import hashlib
+
+    material = f"{conversation_id}\0{index}\0{role}\0{content}".encode("utf-8")
+    return "history-" + hashlib.sha256(material).hexdigest()[:24]
 
 
 def _listening_context(client_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -77,6 +91,8 @@ class MusicRecommendationAgent:
             包含推荐结果的字典
         """
         request_started = time.perf_counter()
+        request_id = str(uuid.uuid4())
+        conversation_id = resolve_conversation_id(client_context)
         try:
             logger.info(f"开始处理音乐推荐请求: {safe_query(query)}")
 
@@ -84,18 +100,23 @@ class MusicRecommendationAgent:
             # 将历史记录中的字典转换为 BaseMessage 以适配 LangGraph 规范
             formatted_history: List[BaseMessage] = []
             if chat_history:
-                for msg in chat_history:
+                for index, msg in enumerate(chat_history):
                     role = msg.get("role", "")
                     content = msg.get("content", "")
+                    message_id = _history_message_id(
+                        conversation_id, index, role, content
+                    )
                     if role == "user":
-                        formatted_history.append(HumanMessage(content=content))
+                        formatted_history.append(
+                            HumanMessage(content=content, id=message_id)
+                        )
                     elif role == "assistant":
-                        formatted_history.append(AIMessage(content=content))
+                        formatted_history.append(AIMessage(content=content, id=message_id))
 
             initial_state: MusicAgentState = {
                 "user_id": user_id,
                 # 抑制按会话作用域；没有会话时检索层退回时间窗。
-                "session_id": str((client_context or {}).get("session_id") or ""),
+                "session_id": conversation_id,
                 "input": query,
                 "chat_history": formatted_history,
                 "user_preferences": user_preferences or {},
@@ -110,7 +131,12 @@ class MusicRecommendationAgent:
                 "playlist": None,
                 "step_count": 0,
                 "error_log": [],
-                "metadata": {"user_id": user_id},
+                "metadata": {
+                    "request_id": request_id,
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "listening_context": _listening_context(client_context),
+                },
                 "timings": {},
                 "retrieval_meta": {},
                 "tool_plan": {},
@@ -123,12 +149,10 @@ class MusicRecommendationAgent:
                 "recursion_limit": 50
             }
             # MemorySaver Checkpoint: 传入 thread_id 实现对话状态持久化
-            thread_id = ""
+            thread_id = checkpoint_thread_id(user_id, conversation_id)
             if getattr(self.graph, 'checkpointer', None):
-                import uuid
-                thread_id = config.get("configurable", {}).get("thread_id", str(uuid.uuid4()))
                 config["configurable"] = {"thread_id": thread_id}
-                logger.info(f"[Checkpoint] thread_id={thread_id}")
+                logger.info("[Checkpoint] stable thread_id=%s", thread_id[:20])
             result = await self.app.ainvoke(initial_state, config=config)
             timings = dict(result.get("timings") or {})
             timings["agent_total_ms"] = round((time.perf_counter() - request_started) * 1000, 3)
@@ -187,7 +211,7 @@ class MusicRecommendationAgent:
                     log_exposure(
                         query=query,
                         user_id=user_id,
-                        request_id=thread_id,
+                        request_id=request_id,
                         recommendations=recommendations_for_log,
                         intent_type=result.get("intent_type", ""),
                         retrieval_meta=result.get("retrieval_meta", {}),
@@ -219,6 +243,8 @@ class MusicRecommendationAgent:
                 "clarification_options": result.get("clarification_options", []),
                 "intent_confidence": result.get("intent_confidence", 1.0),
                 "refinement_options": result.get("refinement_options", []),
+                "request_id": request_id,
+                "conversation_id": conversation_id,
             }
 
         except Exception as e:
@@ -262,6 +288,7 @@ class MusicRecommendationAgent:
 
         # 为本次请求生成唯一 ID，用于隔离并发请求的流式队列
         _request_id = str(_uuid.uuid4())
+        _conversation_id = resolve_conversation_id(client_context)
         # Derive the listening context ONCE: the provisional and final exposure
         # writes share an id, so deriving it twice would stamp two different
         # timestamps on what is one moment of listening.
@@ -274,13 +301,18 @@ class MusicRecommendationAgent:
             # 构建对话历史
             formatted_history: List[BaseMessage] = []
             if chat_history:
-                for msg in chat_history:
+                for index, msg in enumerate(chat_history):
                     role = msg.get("role", "")
                     content = msg.get("content", "")
+                    message_id = _history_message_id(
+                        _conversation_id, index, role, content
+                    )
                     if role == "user":
-                        formatted_history.append(HumanMessage(content=content))
+                        formatted_history.append(
+                            HumanMessage(content=content, id=message_id)
+                        )
                     elif role == "assistant":
-                        formatted_history.append(AIMessage(content=content))
+                        formatted_history.append(AIMessage(content=content, id=message_id))
 
             # 创建本次请求专属的队列，并注册到 graph 的队列表中
             # generate_explanation 节点通过 state.metadata.request_id 找到对应的队列
@@ -289,7 +321,7 @@ class MusicRecommendationAgent:
 
             initial_state: MusicAgentState = {
                 "user_id": user_id,
-                "session_id": str((client_context or {}).get("session_id") or ""),
+                "session_id": _conversation_id,
                 "input": query,
                 "chat_history": formatted_history,
                 "user_preferences": user_preferences or {},
@@ -304,7 +336,12 @@ class MusicRecommendationAgent:
                 "playlist": None,
                 "step_count": 0,
                 "error_log": [],
-                "metadata": {"request_id": _request_id, "user_id": user_id},
+                "metadata": {
+                    "request_id": _request_id,
+                    "conversation_id": _conversation_id,
+                    "user_id": user_id,
+                    "listening_context": _exposure_context,
+                },
                 "timings": {},
                 "retrieval_meta": {},
                 "tool_plan": {},
@@ -315,9 +352,9 @@ class MusicRecommendationAgent:
             config = {"recursion_limit": 50}
             # MemorySaver Checkpoint: 传入 thread_id 实现对话状态持久化
             if getattr(self.graph, 'checkpointer', None):
-                thread_id = _request_id  # 复用 request_id 作为 thread_id
+                thread_id = checkpoint_thread_id(user_id, _conversation_id)
                 config["configurable"] = {"thread_id": thread_id}
-                logger.info(f"[Checkpoint] stream thread_id={thread_id[:8]}")
+                logger.info("[Checkpoint] stream stable thread_id=%s", thread_id[:20])
 
             # 后台任务运行 LangGraph
             result_holder = {}
@@ -479,6 +516,7 @@ class MusicRecommendationAgent:
                 "type": "complete",
                 "success": True,
                 "exposure_id": _request_id,
+                "conversation_id": _conversation_id,
                 "retrieval_meta": result.get("retrieval_meta", {}),
                 "dialog_state": result.get("dialog_state", {}),
                 "dialog_delta": result.get("dialog_delta", {}),

@@ -59,6 +59,7 @@ class PlannerResultCache:
         planner_contract: str = "",
         reference_context: dict[str, str] | None = None,
         user_id: str = "",
+        conversation_id: str = "",
     ) -> str:
         profile_context = json.dumps(
             [
@@ -81,6 +82,7 @@ class PlannerResultCache:
                 current_date,
                 planner_contract,
                 user_id,
+                conversation_id,
             ]
         )
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
@@ -130,6 +132,8 @@ class IntentPlanner:
         graphzep_facts: str = "",
         user_id: str = "local_admin",
         reference_context: dict[str, str] | None = None,
+        conversation_id: str = "",
+        context_preassembled: bool = False,
     ) -> MusicQueryPlan:
         if os.getenv("MUSIC_MOCK_MODE", "0").lower() in {"1", "true", "yes"}:
             return MusicQueryPlan.model_validate({
@@ -156,37 +160,58 @@ class IntentPlanner:
         planner_contract = str(settings.intent_planner_contract or "auto").strip().lower()
         v42_enabled = uses_v42_contract(provider, model_name, planner_contract)
         current_date = str(date.today())
+        if context_preassembled:
+            bounded_preferences = user_preferences
+            bounded_history = chat_history
+            # The canonical assembler has already merged and budgeted long-term
+            # memory into ``user_preferences``.  Do not let the raw memory text
+            # influence either the prompt cache key or a later provider path.
+            bounded_graphzep_facts = ""
+        else:
+            context = await build_context(
+                explicit_profile=user_preferences,
+                graphzep_facts=graphzep_facts,
+                chat_history=chat_history,
+                total_budget=0,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_input=user_input,
+            )
+            preference_parts = []
+            if context.get("explicit_profile"):
+                preference_parts.append(context["explicit_profile"])
+            if context.get("graphzep_facts") and context["graphzep_facts"] != "暂无用户长期记忆":
+                preference_parts.append(context["graphzep_facts"])
+            bounded_preferences = "\n".join(preference_parts) or "无"
+            bounded_history = context["chat_history"]
+            bounded_graphzep_facts = context.get("graphzep_facts", "")
+
         cache_key = self._cache.make_key(
             user_input=user_input,
-            user_preferences=user_preferences,
-            chat_history=chat_history,
+            user_preferences=bounded_preferences,
+            chat_history=bounded_history,
             previous_plan=previous_plan,
-            graphzep_facts=graphzep_facts,
+            graphzep_facts=bounded_graphzep_facts,
             provider=provider,
             model_name=model_name,
             current_date=current_date,
             planner_contract=planner_contract,
             reference_context=reference_context,
             user_id=user_id,
+            conversation_id=conversation_id,
         )
         cached = self._cache.get(cache_key)
         if cached is not None:
             logger.info("[IntentPlanner] cache hit provider=%s model=%s", provider, model_name)
             return cached
 
-        context = await build_context(
-            graphzep_facts=graphzep_facts,
-            chat_history=chat_history,
-            total_budget=0,
-            user_id=user_id,
-        )
         payload = PlannerPayload(
             user_input=user_input,
-            user_preferences=user_preferences,
-            chat_history=context["chat_history"],
+            user_preferences=bounded_preferences,
+            chat_history=bounded_history,
             previous_plan=previous_plan,
             current_date=current_date,
-            retrieved_memories=context["graphzep_facts"],
+            retrieved_memories=bounded_graphzep_facts,
         )
         logger.info("[IntentPlanner] provider=%s model=%s", provider, model_name)
 

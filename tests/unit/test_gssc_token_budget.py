@@ -7,18 +7,19 @@
 3. 各源保证 min_tokens 保底
 4. estimate_tokens 对中英混合文本的估算合理性
 """
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from retrieval.gssc_context_builder import (
-    estimate_tokens,
     ContextSource,
-    PRIORITY_GRAPHZEP_FACTS,
     PRIORITY_CHAT_HISTORY,
+    PRIORITY_GRAPHZEP_FACTS,
     PRIORITY_RETRIEVAL,
+    estimate_tokens,
 )
 
 
@@ -72,6 +73,25 @@ class TestContextSource:
         assert estimate_tokens(result) <= 60  # 允许少量溢出
 
     def test_priority_ordering(self):
-        """优先级排序：GraphZep > ChatHistory > Retrieval"""
-        assert PRIORITY_GRAPHZEP_FACTS < PRIORITY_CHAT_HISTORY
-        assert PRIORITY_CHAT_HISTORY < PRIORITY_RETRIEVAL
+        """优先级排序：当前会话 > 长期记忆 > 检索结果。"""
+        assert PRIORITY_CHAT_HISTORY < PRIORITY_GRAPHZEP_FACTS
+        assert PRIORITY_GRAPHZEP_FACTS < PRIORITY_RETRIEVAL
+
+    def test_chat_history_truncation_keeps_latest_turns(self):
+        """会话超预算时应保留最近轮次，而不是最早轮次。"""
+        long_text = "\n".join(
+            f"turn-{index}: 这是第 {index} 轮用户纠正"
+            for index in range(20)
+        )
+        src = ContextSource(
+            "chat_history",
+            long_text,
+            PRIORITY_CHAT_HISTORY,
+            min_tokens=0,
+            preserve="tail",
+        )
+        result = src.truncate_to(55)
+
+        assert result.startswith("... (较早内容已截断)")
+        assert "turn-19" in result
+        assert "turn-0" not in result

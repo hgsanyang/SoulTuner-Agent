@@ -129,7 +129,9 @@ def test_session_id_reaches_streaming_and_both_planner_paths():
     root = Path(__file__).resolve().parents[2]
     agent = (root / "agent" / "music_agent.py").read_text(encoding="utf-8")
     graph = (root / "agent" / "music_graph.py").read_text(encoding="utf-8")
-    assert agent.count('"session_id": str((client_context or {}).get("session_id") or "")') >= 2
+    assert agent.count("resolve_conversation_id(client_context)") >= 2
+    assert agent.count("checkpoint_thread_id(user_id, conversation_id)") >= 1
+    assert "checkpoint_thread_id(user_id, _conversation_id)" in agent
     assert graph.count('retrieval_plan_dict["_session_id"] = str(state.get("session_id") or "")') >= 2
 
 

@@ -1,7 +1,9 @@
+import asyncio
+
 import pytest
 
 from agent.intent.parsing import clean_json_response, parse_music_query_plan
-from agent.intent.planner import PlannerResultCache
+from agent.intent.planner import IntentPlanner, PlannerResultCache
 
 
 def test_clean_json_response_removes_thinking_and_fence():
@@ -71,3 +73,37 @@ def test_planner_cache_key_includes_resolved_reference_context():
         **common,
     )
     assert first != second
+
+
+def test_preassembled_context_never_keys_cache_with_raw_long_memory(monkeypatch):
+    """Raw memory must not bypass or fragment the canonical bounded view."""
+
+    class FakeLLM:
+        model_name = "fake-planner"
+
+    calls = []
+
+    async def fake_plan(_llm, _system, _human, payload):
+        calls.append(payload)
+        return parse_music_query_plan('{"intent_type":"vector_search"}')
+
+    monkeypatch.setattr("agent.intent.planner.plan_with_generic_structured_output", fake_plan)
+    monkeypatch.setattr("agent.intent.planner.settings.intent_llm_provider", "generic")
+    monkeypatch.setattr("agent.intent.planner.settings.llm_default_provider", "generic")
+
+    planner = IntentPlanner(lambda: FakeLLM())
+    planner._cache = PlannerResultCache(ttl_seconds=60, max_entries=8)
+    common = {
+        "user_input": "继续刚才的感觉",
+        "user_preferences": "【预算后的统一记忆】喜欢舒缓音乐",
+        "chat_history": "最近一轮",
+        "previous_plan": "",
+        "user_id": "u1",
+        "conversation_id": "session-1",
+        "context_preassembled": True,
+    }
+
+    asyncio.run(planner.plan(graphzep_facts="未截断原始记忆 A" * 100, **common))
+    asyncio.run(planner.plan(graphzep_facts="完全不同的未截断原始记忆 B" * 100, **common))
+
+    assert len(calls) == 1

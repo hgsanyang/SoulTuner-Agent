@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
   <img src="https://github.com/hgsanyang/SoulTuner-Agent/actions/workflows/ci.yml/badge.svg" alt="CI" />
-  <img src="https://img.shields.io/badge/tests-CI_passing-brightgreen?logo=pytest" alt="Tests" />
+  <img src="https://img.shields.io/badge/tests-1200+_passed-brightgreen?logo=pytest" alt="Tests" />
   <img src="https://img.shields.io/badge/code_style-ruff-261230?logo=ruff" alt="Ruff" />
 </p>
 
@@ -27,12 +27,13 @@
 
 ## 🎯 What it is
 
-SoulTuner is a music recommendation agent. Describe what you want to hear in one ordinary sentence; it works out what you meant and finds the songs.
+SoulTuner is an open-source music recommendation agent. Describe a mood, scene, sound, artist, or a song you want to avoid in one ordinary sentence. SoulTuner turns that request into a search plan, looks through the music library, and explains why each result fits.
 
 - 🗣️ **Just say it** — "I'm feeling really down today, I just want some quiet time alone." No need to pick genres or keywords first.
-- 🧠 **Gets to know you** — every like, save, skip and conversation updates your taste profile, which shapes later ranking.
-- 🌐 **Goes online when your library falls short** — finds songs backed by charts or community consensus (one switch turns it off).
-- ♻️ **Discover → preview → ingest** — good songs land in a staging area first; confirm to add them to your library.
+- 🔎 **Searches in more than one way** — combines known music facts with sound similarity instead of relying on a single keyword search.
+- 🧠 **Gets to know you** — likes, saves, skips, and preferences you explicitly share can shape later ranking without replacing your current request.
+- 🌐 **Goes online when your library falls short** — optional web discovery can supplement the local catalogue; it can be turned off at any time.
+- ♻️ **Grows a lawful music library** — approved audio can be checked, described, converted into searchable representations, reviewed, and then added to the catalogue.
 - 🧪 **Daily and developer modes** — anything you do in developer mode is stored separately: it never feeds personalisation and never reaches the training set.
 
 > 📖 Full feature and interaction details: [Feature_Walkthrough.md](Feature_Walkthrough.md)
@@ -62,6 +63,23 @@ SoulTuner is a music recommendation agent. Describe what you want to hear in one
 
 ---
 
+## ✨ How it works
+
+1. **Understand the request** — the Planner separates hard requirements (for example, artist or language) from softer preferences such as mood and atmosphere.
+2. **Find candidates** — graph search finds music with the right facts and relationships; vector search finds music that sounds or feels similar. Results are merged and diversified.
+3. **Learn from feedback** — likes, saves, skips, and session context are recorded as traceable events. Useful preferences can be recalled in later conversations; stale or unrelated context stays out.
+4. **Improve the catalogue** — the data pipeline checks approved audio, adds tags and background information, creates music embeddings, and imports the reviewed result into the searchable library.
+
+The language model plans *how to search*; deterministic application code validates that plan before any retrieval tool runs. The model does not invent a song list and bypass the catalogue.
+
+### A Planner built for this project
+
+The default setup can use the Qwen3.7 Plus API. SoulTuner also includes an optional 35B Planner trained specifically for its retrieval contract. On a held-out 500-request planning evaluation, the trained Planner produced valid structured decisions for **99.4%** of requests and selected the correct intent and retrieval route for **95.6%**. These figures measure planning behaviour, not subjective music quality.
+
+Both Planner options use the same retrieval, memory, ranking, and frontend code. Switching models therefore does not require rewriting the recommendation system.
+
+---
+
 ## 🚀 Quick start
 
 ```powershell
@@ -88,37 +106,19 @@ Then start it and open `http://localhost:3003`:
 
 Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu`.
 
-To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / VLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
+To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / vLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
 
-### Self-host the trained SoulTuner 35B Planner
+### Choose a Planner
 
-The repository includes a standalone 35B deployment package: [deploy/self_hosted_35b](deploy/self_hosted_35b). It keeps the Planner behind an OpenAI-compatible endpoint, so the application switches between Qwen3.7 Plus and the fine-tuned SoulTuner model without changing retrieval, memory, ranking, or frontend code.
+SoulTuner accepts an API model or a self-hosted OpenAI-compatible endpoint. The large model can stay on a GPU server while the rest of the application runs on an ordinary computer.
 
-| Profile | Where it runs | Local GPU requirement |
+| Option | Best for | What you need |
 |---|---|---|
-| Qwen3.7 Plus API | current laptop or any CPU host | none; an RTX 4070 is sufficient for the rest of the app |
-| SoulTuner V4.2 35B | your GPU server or managed GPU workspace | the 35B base and LoRA adapter stay on the inference server |
-| Safe demo | anywhere | none |
+| Qwen3.7 Plus API | the easiest first run | an API key; no large local GPU |
+| SoulTuner V4.2 35B | project-specific planning and private hosting | a high-memory inference server |
+| Safe demo | UI and retrieval demonstration | CPU only; no external model call |
 
-```powershell
-cd deploy/self_hosted_35b
-python -m pip install -r requirements.txt
-$env:DASHSCOPE_API_KEY="your key"
-$env:SOULTUNER_MODEL_PROFILE="qwen3.7-plus"
-python app.py
-```
-
-On a suitable GPU server, download the official `Qwen/Qwen3.6-35B-A3B` base and the SoulTuner PEFT adapter from your chosen model registry, start the endpoint, and select **SoulTuner V4.2 35B**. The generic package supports local paths, Hugging Face-compatible registries, and any OpenAI-compatible inference endpoint; platform-specific mirrors live in separate adapter directories. Its README covers hardware sizing, integrity checks, endpoint startup, production Agent wiring, and measured inference results. The verified environment used an AMD MI308X, but the application contract is hardware- and cloud-neutral.
-
-The complete service also has an AMD ROCm overlay. It preserves the existing
-CPU and NVIDIA CUDA profiles while using the official AMD PyTorch image and
-ROCm device mapping:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.amd.yml --profile gpu up -d --build
-```
-
-See [AMD_ROCM_DEPLOYMENT.md](docs/AMD_ROCM_DEPLOYMENT.md) for host requirements and verification.
+See [the self-hosting package](deploy/self_hosted_35b) for the model switch, integrity checks, server startup, and benchmark tools. The main Docker deployment supports CPU and NVIDIA CUDA; [AMD ROCm deployment](docs/AMD_ROCM_DEPLOYMENT.md) is available as an overlay without changing the application code.
 
 <details>
 <summary>Other common commands</summary>

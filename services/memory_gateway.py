@@ -341,6 +341,11 @@ def _slate_overall_value(rating: str, extra: dict[str, Any] | None) -> str | Non
     return slate_overall({"overall": (extra or {}).get("overall"), "rating": rating})
 
 
+# Natural-language rendering of the canonical 3-way judgement, for the sidecar
+# description only. Keyed on `overall`, never on the raw `rating` slug.
+_SLATE_DESCRIPTIONS = {"fits": "整体合适", "partial": "部分合适", "off": "不太合适"}
+
+
 def _feedback_polarity(overall: str | None, reasons: list[Any] | None) -> str:
     """Classify slate feedback so the consolidator treats it as signal vs counter-signal.
 
@@ -569,6 +574,7 @@ class MemoryGateway:
         # mutation. The LLM consolidator may turn repeated evidence into expiring L2.
         # Polarity lets the consolidator use negative feedback as counter-evidence
         # rather than as a positive preference signal.
+        overall = _slate_overall_value(rating, extra)
         self._append_memory_record(
             user_id=user_id,
             layer=MemoryLayer.RAW_EVENT,
@@ -578,10 +584,10 @@ class MemoryGateway:
             payload={
                 "exposure_id": exposure_id,
                 # canonical judgement (via the shared adapter); `rating` is not stored
-                "overall": _slate_overall_value(rating, extra),
+                "overall": overall,
                 "reasons": _clean_list(reasons),
                 "note": str(note or "")[:500],
-                "polarity": _feedback_polarity(_slate_overall_value(rating, extra), reasons),
+                "polarity": _feedback_polarity(overall, reasons),
                 **(extra or {}),
             },
             memory_key=f"slate:{feedback_id}",
@@ -589,7 +595,14 @@ class MemoryGateway:
         )
         consolidation_scheduled = self._schedule_consolidation(user_id)
 
-        description = f"用户评价本次推荐歌单: {rating}"
+        # Describe the canonical judgement, not the raw `rating` slug — the sidecar
+        # write is natural language a model reads back, and "unrated" would read as
+        # a verdict. No verdict is a real state: the user only left a note.
+        description = (
+            f"用户评价本次推荐歌单: {_SLATE_DESCRIPTIONS[overall]}"
+            if overall in _SLATE_DESCRIPTIONS
+            else "用户对本次推荐歌单留下了反馈（未给整体评价）"
+        )
         if reasons:
             description += "；原因: " + "、".join(_clean_list(reasons))
         if note:
