@@ -63,7 +63,13 @@ AMD MI308X 并不是创建创空间后自动可用。完整顺序是：完成 AM
 申请加入 `AMD_Dev` 组织 → 审核通过 → 在现有 SoulTuner 创空间的部署设置中选择
 AMD MI308X 和对应 ROCm 镜像。在组织审核完成前，继续保留 CPU 档位即可。
 
-获批 AMD GPU 资源后，在对应 ROCm 镜像中执行一体化入口：
+获批 AMD GPU 资源后，在对应 ROCm 镜像中把
+`SOULTUNER_MODEL_PROFILE` 设为 `soultuner-v4.2-35b`。ModelScope 的 Gradio
+创空间仍从 `app.py` 启动；应用会在后台运行 `start_amd_35b.sh`，让 Gradio 先
+绑定公开端口，再完成依赖检查、基座与 LoRA 下载及 vLLM 启动。首次下载期间，
+界面保持可用并对 Planner 请求进行安全回退。
+
+在普通终端中也可以显式执行一体化入口：
 
 ```bash
 python -m pip install -r requirements-amd.txt
@@ -73,6 +79,10 @@ bash start_space_amd.sh
 这个入口会按顺序完成 ROCm/HIP 预检、基座与 LoRA 下载、可用时校验
 `SHA256SUMS`、启动本地 OpenAI 兼容端点、等待 `/v1/models` 健康，然后启动现有
 Gradio 界面。任何关键步骤失败都会停止，不会悄悄退回 CPU 承载 35B。
+
+创空间自动启动路径会把同样的端点流程放到后台，并将日志写到
+`soultuner-35b-endpoint.log`。若 ROCm 镜像缺少 `vllm`，启动脚本会在下载模型前
+明确失败；不要在 AMD 资源上改用 CUDA wheel。
 
 也可以分两个进程调试：
 

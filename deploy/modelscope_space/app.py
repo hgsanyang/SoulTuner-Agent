@@ -19,9 +19,11 @@ import gradio as gr
 from hardware import runtime_markdown
 from planner_runtime import default_profile, plan_request, profile_choices
 from retrieval_demo import retrieve
+from space_bootstrap import launch_local_planner_if_requested, startup_markdown
 
 
 TITLE = "SoulTuner 智能音乐推荐 Agent"
+PLANNER_STARTUP = launch_local_planner_if_requested()
 EXAMPLES = [
     "我今天心情有点差，想听温暖治愈、但不要太吵的歌",
     "想要低音更重、鼓点清晰，适合夜跑的音乐",
@@ -241,6 +243,7 @@ def build_app() -> gr.Blocks:
             """
         )
         gr.Markdown(runtime_markdown())
+        gr.Markdown(startup_markdown(PLANNER_STARTUP))
 
         with gr.Tabs():
             with gr.Tab("发现音乐"):

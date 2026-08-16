@@ -23,6 +23,11 @@ assert READINESS_SPEC and READINESS_SPEC.loader
 readiness = importlib.util.module_from_spec(READINESS_SPEC)
 READINESS_SPEC.loader.exec_module(readiness)
 
+BOOTSTRAP_SPEC = importlib.util.spec_from_file_location("space_bootstrap", SPACE / "space_bootstrap.py")
+assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
+bootstrap = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
+BOOTSTRAP_SPEC.loader.exec_module(bootstrap)
+
 def test_space_card_text_has_theme_independent_contrast() -> None:
     source = (SPACE / "app.py").read_text(encoding="utf-8")
     assert ".st-card h3" in source
@@ -88,3 +93,35 @@ def test_space_endpoint_is_private_by_default_and_requires_public_auth() -> None
     assert 'SOULTUNER_PLANNER_HOST:-127.0.0.1' in script
     assert '"${HOST}" == "0.0.0.0"' in script
     assert "SOULTUNER_SERVE_API_KEY" in script
+
+
+def test_cpu_profile_does_not_start_local_planner(monkeypatch) -> None:
+    monkeypatch.setenv("SOULTUNER_MODEL_PROFILE", "demo-heuristic")
+    status = bootstrap.launch_local_planner_if_requested()
+    assert status == {
+        "requested": False,
+        "state": "disabled",
+        "profile": "demo-heuristic",
+    }
+
+
+def test_external_35b_endpoint_does_not_spawn_local_process(monkeypatch) -> None:
+    monkeypatch.setenv("SOULTUNER_MODEL_PROFILE", "soultuner-v4.2-35b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_BASE_URL", "https://planner.example/v1")
+    status = bootstrap.launch_local_planner_if_requested()
+    assert status["state"] == "external-endpoint"
+    assert status["base_url"] == "https://planner.example/v1"
+
+
+def test_gradio_entrypoint_bootstraps_requested_35b_profile() -> None:
+    source = (SPACE / "app.py").read_text(encoding="utf-8")
+    script = (SPACE / "start_amd_35b.sh").read_text(encoding="utf-8")
+    assert "launch_local_planner_if_requested()" in source
+    assert "requirements-amd.txt" in script
+    assert '("modelscope", "swift", "vllm")' in script
+    assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index(
+        "pip install"
+    )
+    assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index(
+        "modelscope download"
+    )

@@ -75,6 +75,9 @@ python audit_public_adapter_repo.py /private/SoulTuner-Planner-V4.2-35B-LoRA \
 
 The audit rejects optimizer/resume state, private paths, evaluation rows,
 unknown files, an incorrect base identity, and a mismatched adapter digest.
+Complete the full registry procedure in
+[`MODELSCOPE_UPLOAD_CHECKLIST.md`](MODELSCOPE_UPLOAD_CHECKLIST.md) before any
+visibility change.
 
 ## Download model assets
 
@@ -167,6 +170,10 @@ variable at a time. AITER, SGLang, FP8, or 4-bit variants become defaults only
 after the same contract, guard, latency, throughput, and memory checks pass.
 The measured MI308X profile and its limits are recorded in
 [`INFERENCE_BENCHMARK.md`](INFERENCE_BENCHMARK.md).
+
+For a ModelScope AMD Creation Space, use
+[`DEPLOYMENT_CHECKLIST.md`](DEPLOYMENT_CHECKLIST.md) to preserve the CPU
+fallback, verify ROCm identity, and gate the final review submission.
 
 ## Aggregate Planner evaluation
 

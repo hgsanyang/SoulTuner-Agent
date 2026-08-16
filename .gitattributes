@@ -1,2 +1,3 @@
 * text=auto
 deploy/self_hosted_35b/*.sh text eol=lf
+deploy/modelscope_space/*.sh text eol=lf
