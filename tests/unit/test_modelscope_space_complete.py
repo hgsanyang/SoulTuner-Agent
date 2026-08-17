@@ -113,10 +113,40 @@ def test_external_35b_endpoint_does_not_spawn_local_process(monkeypatch) -> None
     assert status["base_url"] == "https://planner.example/v1"
 
 
+def test_local_35b_status_reports_ready_endpoint(monkeypatch) -> None:
+    monkeypatch.setenv("SOULTUNER_MODEL_PROFILE", "soultuner-v4.2-35b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_BASE_URL", "http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(bootstrap, "_endpoint_ready", lambda _base_url: True)
+    monkeypatch.setattr(bootstrap, "_planner_process", None)
+    status = bootstrap.planner_runtime_status()
+    assert status["state"] == "ready"
+    assert "已就绪" in bootstrap.startup_markdown(status)
+
+
+def test_local_35b_status_reports_failed_process(monkeypatch) -> None:
+    class FailedProcess:
+        pid = 42
+
+        @staticmethod
+        def poll() -> int:
+            return 7
+
+    monkeypatch.setenv("SOULTUNER_MODEL_PROFILE", "soultuner-v4.2-35b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_BASE_URL", "http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(bootstrap, "_endpoint_ready", lambda _base_url: False)
+    monkeypatch.setattr(bootstrap, "_planner_process", FailedProcess())
+    status = bootstrap.planner_runtime_status()
+    assert status["state"] == "failed"
+    assert status["returncode"] == 7
+    assert "退出码 `7`" in bootstrap.startup_markdown(status)
+
+
 def test_gradio_entrypoint_bootstraps_requested_35b_profile() -> None:
     source = (SPACE / "app.py").read_text(encoding="utf-8")
     script = (SPACE / "start_amd_35b.sh").read_text(encoding="utf-8")
     assert "launch_local_planner_if_requested()" in source
+    assert "live_startup_markdown" in source
+    assert "gr.Timer" in source
     assert "requirements-amd.txt" in script
     assert '("modelscope", "swift", "vllm")' in script
     assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index(

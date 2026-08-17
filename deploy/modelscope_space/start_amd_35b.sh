@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run inside the AMD MI308X / ROCm image after installing requirements-amd.txt.
+# Run inside the AMD MI308X / ROCm image; this script validates the host before downloading.
 # Authentication, when needed for a private model, is read by the ModelScope SDK
 # from the platform secret store. Never place tokens in this file.
 
