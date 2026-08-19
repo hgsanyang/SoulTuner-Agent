@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -40,9 +41,11 @@ ACOUSTIC_TERMS = [
 
 SYSTEM_PROMPT = """你是 SoulTuner 音乐检索规划器。只输出一个 JSON 对象，不输出 Markdown 或隐藏思维过程。
 字段：task_mode, dialogue_mode, response_mode, evidence, lane_policy, hard, soft, hints,
-metadata, acoustic_queries, clarification。lane_policy 中 graph/web 取 required|optional|off，dense
-取 required|off。明确目录条件使用 graph；主观情绪、音色、节奏、空间感或参考歌曲相似度使用
-dense；二者都存在时表达主次。brief_reason 最多80字。"""
+metadata, acoustic_queries, clarification。evidence 必须是包含 decision_phase、failed_lanes、
+reason_codes、reference_songs、brief_reason 的对象；hard、soft、hints、metadata 也必须是对象，
+不能输出字符串或数组。lane_policy 中 graph/web 取 required|optional|off，dense 取 required|off。
+明确目录条件使用 graph；主观情绪、音色、节奏、空间感或参考歌曲相似度使用 dense；二者都存在时
+表达主次。brief_reason 最多80字。"""
 
 
 def profile_choices() -> list[tuple[str, str]]:
@@ -206,6 +209,80 @@ def _remote_plan(profile: str, query: str) -> dict[str, Any]:
     return _extract_json(body["choices"][0]["message"]["content"])
 
 
+def normalize_legacy_candidate(
+    candidate: dict[str, Any],
+    fallback: dict[str, Any],
+    query: str,
+) -> tuple[dict[str, Any], bool]:
+    """Map the released 35B adapter's legacy JSON shape into the guarded Space contract.
+
+    The released checkpoint emits the training-time ``music_search`` schema where
+    evidence is text and soft/hints are arrays.  Keep its lane decision and acoustic
+    queries, but project them into the current object-shaped public runtime contract.
+    Unknown malformed responses are intentionally left untouched and fail closed.
+    """
+
+    is_legacy = (
+        candidate.get("task_mode") == "music_search"
+        and isinstance(candidate.get("evidence"), str)
+        and isinstance(candidate.get("soft"), list)
+        and isinstance(candidate.get("hints"), list)
+    )
+    if not is_legacy:
+        return candidate, False
+
+    normalized = copy.deepcopy(fallback)
+    normalized["task_mode"] = "recommendation"
+    normalized["dialogue_mode"] = None
+    normalized["response_mode"] = "answer"
+    normalized["lane_policy"] = copy.deepcopy(candidate.get("lane_policy"))
+
+    public_reason = str(candidate["evidence"]).strip()
+    normalized["evidence"]["brief_reason"] = public_reason[:80]
+
+    legacy_hard = candidate.get("hard")
+    if isinstance(legacy_hard, dict):
+        for key in ("artist", "song", "language", "region", "instrumental"):
+            if key in legacy_hard:
+                normalized["hard"][key] = copy.deepcopy(legacy_hard[key])
+
+    legacy_metadata = candidate.get("metadata")
+    if isinstance(legacy_metadata, dict):
+        for key in (
+            "era",
+            "release_year_from",
+            "release_year_to",
+            "recency_required",
+            "external_knowledge_required",
+        ):
+            if key in legacy_metadata:
+                normalized["metadata"][key] = copy.deepcopy(legacy_metadata[key])
+        language = legacy_metadata.get("language")
+        if isinstance(language, str) and language.strip().casefold() not in {"", "any"}:
+            normalized["hard"]["language"] = language.strip()
+        genres = legacy_metadata.get("genre")
+        if isinstance(genres, list):
+            normalized["hints"]["genre"] = [
+                str(item).strip() for item in genres if str(item).strip()
+            ][:6]
+
+    descriptors = [str(item).strip() for item in candidate["soft"] if str(item).strip()]
+    descriptors.extend(
+        str(item).strip() for item in candidate["hints"] if str(item).strip()
+    )
+    if isinstance(legacy_hard, dict):
+        descriptors.extend(
+            str(legacy_hard[key]).strip()
+            for key in ("mood", "tempo", "energy")
+            if str(legacy_hard.get(key) or "").strip()
+        )
+    normalized["soft"]["goal"] = query
+    normalized["soft"]["vibe"] = list(dict.fromkeys(descriptors))[:12]
+    normalized["acoustic_queries"] = copy.deepcopy(candidate.get("acoustic_queries"))
+    normalized["clarification"] = candidate.get("clarification")
+    return normalized, True
+
+
 def validate_plan(candidate: dict[str, Any], fallback: dict[str, Any]) -> tuple[dict[str, Any], str]:
     policy = candidate.get("lane_policy")
     evidence = candidate.get("evidence")
@@ -225,7 +302,15 @@ def validate_plan(candidate: dict[str, Any], fallback: dict[str, Any]) -> tuple[
     required_objects = ("hard", "soft", "hints", "metadata")
     if any(not isinstance(candidate.get(key), dict) for key in required_objects):
         return fallback, "候选缺少检索约束，已使用安全计划"
-    candidate.setdefault("acoustic_queries", [])
+    acoustic_queries = candidate.get("acoustic_queries")
+    if (
+        not isinstance(acoustic_queries, list)
+        or len(acoustic_queries) > 4
+        or any(not isinstance(item, str) or not item.strip() for item in acoustic_queries)
+    ):
+        return fallback, "候选声学查询非法，已使用安全计划"
+    if policy.get("dense") == "required" and not acoustic_queries:
+        return fallback, "Dense 候选缺少声学查询，已使用安全计划"
     return candidate, "模型候选通过结构与策略守卫"
 
 
@@ -255,7 +340,12 @@ def plan_request(profile: str, query: str) -> tuple[dict[str, Any], dict[str, An
         plan, status = fallback, "公开安全演示：确定性计划，不调用外部模型"
     else:
         try:
-            plan, status = validate_plan(_remote_plan(profile, query), fallback)
+            candidate, legacy_adapted = normalize_legacy_candidate(
+                _remote_plan(profile, query), fallback, query
+            )
+            plan, status = validate_plan(candidate, fallback)
+            if legacy_adapted and status == "模型候选通过结构与策略守卫":
+                status = "35B 模型候选经兼容适配后通过结构与策略守卫"
         except Exception as exc:  # The UI must remain available when a model is cold/offline.
             plan, status = fallback, f"模型端点暂不可用，已安全回退（{type(exc).__name__}）"
     return plan, compile_route(plan), status

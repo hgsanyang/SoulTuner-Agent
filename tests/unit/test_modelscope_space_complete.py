@@ -162,3 +162,36 @@ def test_amd_requirements_cover_qwen36_runtime() -> None:
     assert "transformers>=5.2.0" in requirements
     assert "qwen-vl-utils>=0.0.14" in requirements
     assert "decord>=0.6.0" in requirements
+
+
+def test_released_35b_legacy_payload_is_adapted_without_fallback() -> None:
+    query = "外面下暴雨，窝在家里想听氛围感强、安静但不压抑的音乐"
+    fallback = runtime.safe_plan(query)
+    legacy = {
+        "task_mode": "music_search",
+        "dialogue_mode": "single_turn",
+        "response_mode": "direct",
+        "evidence": "用户想在暴雨天居家听氛围感强、安静但不压抑的音乐。",
+        "lane_policy": {"graph": "off", "web": "off", "dense": "required"},
+        "hard": {"mood": "calm, cozy, atmospheric", "tempo": "slow", "energy": "low"},
+        "soft": ["rainy day ambiance", "warm texture", "spacious", "gentle"],
+        "hints": ["氛围感强", "安静但不压抑", "居家音乐"],
+        "metadata": {"genre": ["ambient", "downtempo", "chill"], "language": "any"},
+        "acoustic_queries": [
+            "atmospheric ambient music with warm textures",
+            "slow tempo downtempo with gentle piano and soft pads",
+        ],
+        "clarification": [],
+    }
+
+    normalized, adapted = runtime.normalize_legacy_candidate(legacy, fallback, query)
+    accepted, status = runtime.validate_plan(normalized, fallback)
+
+    assert adapted is True
+    assert status == "模型候选通过结构与策略守卫"
+    assert accepted is normalized
+    assert accepted["lane_policy"] == {"graph": "off", "web": "off", "dense": "required"}
+    assert accepted["evidence"]["brief_reason"] == legacy["evidence"]
+    assert accepted["hints"]["genre"] == ["ambient", "downtempo", "chill"]
+    assert "rainy day ambiance" in accepted["soft"]["vibe"]
+    assert accepted["acoustic_queries"] == legacy["acoustic_queries"]
