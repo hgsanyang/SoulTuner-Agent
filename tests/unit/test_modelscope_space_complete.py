@@ -195,3 +195,38 @@ def test_released_35b_legacy_payload_is_adapted_without_fallback() -> None:
     assert accepted["hints"]["genre"] == ["ambient", "downtempo", "chill"]
     assert "rainy day ambiance" in accepted["soft"]["vibe"]
     assert accepted["acoustic_queries"] == legacy["acoustic_queries"]
+
+
+def test_released_35b_mixed_payload_gets_bounded_field_projection() -> None:
+    query = "外面下暴雨，窝在家里想听氛围感强、安静但不压抑的音乐"
+    fallback = runtime.safe_plan(query)
+    mixed = {
+        "task_mode": "music_search",
+        "dialogue_mode": "single_turn",
+        "response_mode": "direct",
+        "evidence": {
+            "decision_phase": "final",
+            "failed_lanes": [],
+            "reason_codes": ["mood", "atmosphere"],
+            "reference_songs": [],
+            "brief_reason": "暴雨天居家氛围，安静但不压抑",
+        },
+        "lane_policy": {"graph": "off", "web": "off", "dense": "required"},
+        "hard": {"mood": "平静", "atmosphere": "氛围感强", "energy": "low"},
+        "soft": {"scene": "居家暴雨", "emotion": "平静放松", "texture": "温暖"},
+        "hints": ["氛围感", "安静", "不压抑"],
+        "metadata": {"genre": [], "instrument": [], "vocal_style": []},
+        "acoustic_queries": [],
+        "clarification": [],
+    }
+
+    normalized, adapted = runtime.normalize_legacy_candidate(mixed, fallback, query)
+    accepted, status = runtime.validate_plan(normalized, fallback)
+
+    assert adapted is True
+    assert status == "模型候选通过结构与策略守卫"
+    assert accepted is normalized
+    assert accepted["lane_policy"] == {"graph": "off", "web": "off", "dense": "required"}
+    assert accepted["evidence"]["brief_reason"] == "暴雨天居家氛围，安静但不压抑"
+    assert accepted["acoustic_queries"] == [query]
+    assert {"平静", "氛围感强", "居家暴雨", "安静"} <= set(accepted["soft"]["vibe"])

@@ -41,11 +41,9 @@ ACOUSTIC_TERMS = [
 
 SYSTEM_PROMPT = """你是 SoulTuner 音乐检索规划器。只输出一个 JSON 对象，不输出 Markdown 或隐藏思维过程。
 字段：task_mode, dialogue_mode, response_mode, evidence, lane_policy, hard, soft, hints,
-metadata, acoustic_queries, clarification。evidence 必须是包含 decision_phase、failed_lanes、
-reason_codes、reference_songs、brief_reason 的对象；hard、soft、hints、metadata 也必须是对象，
-不能输出字符串或数组。lane_policy 中 graph/web 取 required|optional|off，dense 取 required|off。
-明确目录条件使用 graph；主观情绪、音色、节奏、空间感或参考歌曲相似度使用 dense；二者都存在时
-表达主次。brief_reason 最多80字。"""
+metadata, acoustic_queries, clarification。lane_policy 中 graph/web 取 required|optional|off，dense
+取 required|off。明确目录条件使用 graph；主观情绪、音色、节奏、空间感或参考歌曲相似度使用
+dense；二者都存在时表达主次。brief_reason 最多80字。"""
 
 
 def profile_choices() -> list[tuple[str, str]]:
@@ -216,17 +214,18 @@ def normalize_legacy_candidate(
 ) -> tuple[dict[str, Any], bool]:
     """Map the released 35B adapter's legacy JSON shape into the guarded Space contract.
 
-    The released checkpoint emits the training-time ``music_search`` schema where
-    evidence is text and soft/hints are arrays.  Keep its lane decision and acoustic
-    queries, but project them into the current object-shaped public runtime contract.
-    Unknown malformed responses are intentionally left untouched and fail closed.
+    The released checkpoint emits the training-time ``music_search`` schema.  Some
+    prompt variants make individual fields partially object-shaped, so projection is
+    field based rather than tied to one exact legacy payload.  Keep the model's lane
+    decision and acoustic queries while filling the current public runtime objects.
+    Unknown responses without the known task, policy, and evidence signature are left
+    untouched and fail closed.
     """
 
     is_legacy = (
         candidate.get("task_mode") == "music_search"
-        and isinstance(candidate.get("evidence"), str)
-        and isinstance(candidate.get("soft"), list)
-        and isinstance(candidate.get("hints"), list)
+        and isinstance(candidate.get("lane_policy"), dict)
+        and isinstance(candidate.get("evidence"), (str, dict))
     )
     if not is_legacy:
         return candidate, False
@@ -237,14 +236,56 @@ def normalize_legacy_candidate(
     normalized["response_mode"] = "answer"
     normalized["lane_policy"] = copy.deepcopy(candidate.get("lane_policy"))
 
-    public_reason = str(candidate["evidence"]).strip()
-    normalized["evidence"]["brief_reason"] = public_reason[:80]
+    legacy_evidence = candidate["evidence"]
+    if isinstance(legacy_evidence, dict):
+        public_reason = str(legacy_evidence.get("brief_reason") or "").strip()
+    else:
+        public_reason = legacy_evidence.strip()
+    if public_reason:
+        normalized["evidence"]["brief_reason"] = public_reason[:80]
+
+    def descriptor_values(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, dict):
+            values: list[str] = []
+            for item in value.values():
+                values.extend(descriptor_values(item))
+            return values
+        return []
 
     legacy_hard = candidate.get("hard")
     if isinstance(legacy_hard, dict):
         for key in ("artist", "song", "language", "region", "instrumental"):
             if key in legacy_hard:
                 normalized["hard"][key] = copy.deepcopy(legacy_hard[key])
+
+    descriptors: list[str] = []
+    if isinstance(legacy_hard, dict):
+        descriptors.extend(
+            descriptor
+            for key in ("mood", "atmosphere", "tempo", "energy")
+            for descriptor in descriptor_values(legacy_hard.get(key))
+        )
+
+    legacy_soft = candidate.get("soft")
+    if isinstance(legacy_soft, dict):
+        for key in ("goal", "trajectory", "vibe", "avoid"):
+            if key in legacy_soft:
+                normalized["soft"][key] = copy.deepcopy(legacy_soft[key])
+    descriptors.extend(descriptor_values(legacy_soft))
+
+    legacy_hints = candidate.get("hints")
+    if isinstance(legacy_hints, dict):
+        for key in ("mood", "scenario", "genre"):
+            values = legacy_hints.get(key)
+            if isinstance(values, list):
+                normalized["hints"][key] = [
+                    str(item).strip() for item in values if str(item).strip()
+                ][:6]
+    descriptors.extend(descriptor_values(legacy_hints))
 
     legacy_metadata = candidate.get("metadata")
     if isinstance(legacy_metadata, dict):
@@ -265,21 +306,26 @@ def normalize_legacy_candidate(
             normalized["hints"]["genre"] = [
                 str(item).strip() for item in genres if str(item).strip()
             ][:6]
-
-    descriptors = [str(item).strip() for item in candidate["soft"] if str(item).strip()]
-    descriptors.extend(
-        str(item).strip() for item in candidate["hints"] if str(item).strip()
-    )
-    if isinstance(legacy_hard, dict):
         descriptors.extend(
-            str(legacy_hard[key]).strip()
-            for key in ("mood", "tempo", "energy")
-            if str(legacy_hard.get(key) or "").strip()
+            descriptor
+            for key in ("instrument", "vocal_style")
+            for descriptor in descriptor_values(legacy_metadata.get(key))
         )
     normalized["soft"]["goal"] = query
     normalized["soft"]["vibe"] = list(dict.fromkeys(descriptors))[:12]
-    normalized["acoustic_queries"] = copy.deepcopy(candidate.get("acoustic_queries"))
-    normalized["clarification"] = candidate.get("clarification")
+    acoustic_queries = candidate.get("acoustic_queries")
+    if isinstance(acoustic_queries, list):
+        normalized["acoustic_queries"] = [
+            str(item).strip() for item in acoustic_queries if isinstance(item, str) and item.strip()
+        ][:4]
+    else:
+        normalized["acoustic_queries"] = acoustic_queries
+    if normalized["lane_policy"].get("dense") == "required" and not normalized[
+        "acoustic_queries"
+    ]:
+        normalized["acoustic_queries"] = [query]
+    clarification = candidate.get("clarification")
+    normalized["clarification"] = clarification if isinstance(clarification, str) else None
     return normalized, True
 
 
