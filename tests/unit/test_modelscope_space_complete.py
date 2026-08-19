@@ -155,3 +155,10 @@ def test_gradio_entrypoint_bootstraps_requested_35b_profile() -> None:
     assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index(
         "modelscope download"
     )
+
+
+def test_amd_requirements_cover_qwen36_runtime() -> None:
+    requirements = (SPACE / "requirements-amd.txt").read_text(encoding="utf-8")
+    assert "transformers>=5.2.0" in requirements
+    assert "qwen-vl-utils>=0.0.14" in requirements
+    assert "decord>=0.6.0" in requirements
