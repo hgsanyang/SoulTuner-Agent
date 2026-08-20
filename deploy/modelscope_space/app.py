@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 import gradio as gr
 
 from hardware import runtime_markdown
+from open_audio_bootstrap import materialize_open_audio
+from open_audio_bootstrap import startup_markdown as open_audio_startup_markdown
 from planner_runtime import default_profile, plan_request, profile_choices
 from retrieval_demo import retrieve
 from retrieval_demo import audio_root
@@ -30,6 +32,7 @@ from space_bootstrap import (
 
 TITLE = "SoulTuner 智能音乐推荐 Agent"
 PLANNER_STARTUP = launch_local_planner_if_requested()
+OPEN_AUDIO_STARTUP = materialize_open_audio()
 EXAMPLES = [
     "我今天心情有点差，想听温暖治愈、但不要太吵的歌",
     "想要低音更重、鼓点清晰，适合夜跑的音乐",
@@ -273,6 +276,7 @@ def build_app() -> gr.Blocks:
         )
         gr.Markdown(runtime_markdown())
         planner_status = gr.Markdown(startup_markdown(PLANNER_STARTUP))
+        gr.Markdown(open_audio_startup_markdown(OPEN_AUDIO_STARTUP))
         planner_status_timer = gr.Timer(value=5, active=bool(PLANNER_STARTUP["requested"]))
         planner_status_timer.tick(
             live_startup_markdown,
