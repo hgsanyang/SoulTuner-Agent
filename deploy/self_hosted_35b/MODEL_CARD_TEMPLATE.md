@@ -57,6 +57,10 @@ SoulTuner Planner contract and are not a general-purpose model ranking.
 - Frozen manifest SHA-256:
   `4ebaeeadcc843389efdbeb66cdebc2aef6014680f76074a621e6d2d9283c228c`
 - Verified inference environment: AMD MI308X 192 GB HBM
+- Training inputs were project-authored. Accepted targets were either generated
+  or reviewed through Qoder `qmodel_38max`, or migrated and validated by the
+  deterministic SoulTuner V4-to-V5 pipeline. Raw teacher outputs and training
+  rows are not redistributed.
 
 ## Loading and deployment
 

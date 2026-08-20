@@ -1,9 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run inside the AMD MI308X / ROCm image after installing requirements-amd.txt.
+# Run inside the AMD MI308X / ROCm image; this script validates the host before downloading.
 # Authentication, when needed for a private model, is read by the ModelScope SDK
 # from the platform secret store. Never place tokens in this file.
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+export SOULTUNER_REQUIRE_ROCM="${SOULTUNER_REQUIRE_ROCM:-1}"
+python amd_readiness.py --skip-adapter --skip-endpoint
+
+if [[ "${SOULTUNER_INSTALL_AMD_REQUIREMENTS:-1}" == "1" ]]; then
+  python -m pip install --disable-pip-version-check -r requirements-amd.txt
+fi
+
+python - <<'PY'
+import importlib.util
+
+missing = [name for name in ("modelscope", "swift", "vllm") if importlib.util.find_spec(name) is None]
+if missing:
+    raise SystemExit(
+        "AMD runtime is missing required packages: "
+        + ", ".join(missing)
+        + ". Select the ModelScope AMD ROCm image before deploying."
+    )
+PY
 
 BASE_MODEL_ID="${SOULTUNER_BASE_MODEL_ID:-Qwen/Qwen3.6-35B-A3B}"
 ADAPTER_MODEL_ID="${SOULTUNER_ADAPTER_MODEL_ID:-hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA}"
@@ -32,8 +54,7 @@ if [[ -f "${ADAPTER_MODEL_DIR}/SHA256SUMS" ]]; then
 fi
 
 export SOULTUNER_ADAPTER_DIR="${ADAPTER_MODEL_DIR}"
-SOULTUNER_REQUIRE_ROCM="${SOULTUNER_REQUIRE_ROCM:-1}" \
-  python amd_readiness.py --skip-endpoint
+python amd_readiness.py --skip-endpoint
 
 backend="${SOULTUNER_INFER_BACKEND:-vllm}"
 args=(
