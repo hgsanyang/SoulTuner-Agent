@@ -25,9 +25,9 @@ from retrieval.neo4j_client import get_neo4j_client
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 【V2 升级】M2D-CLAP 实测输出 768 维（非早期文档的 512 维），OMAR/MERT 输出 768 维
+# 【V2 升级】M2D-CLAP 输出 768 维，当前 omar-rq 向量输出 1024 维。
 M2D2_EMBEDDING_DIM = 768
-OMAR_EMBEDDING_DIM = 768
+OMAR_EMBEDDING_DIM = 1024
 MUQ_EMBEDDING_DIM = 512
 
 

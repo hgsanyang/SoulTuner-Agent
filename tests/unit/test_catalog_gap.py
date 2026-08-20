@@ -1,4 +1,9 @@
-from agent.catalog_gap import analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
+from agent.catalog_gap import (
+    analyze_catalog_gap,
+    interleave_online_results,
+    merge_online_with_local_candidates,
+    unwrap_recommendation_items,
+)
 from agent.retrieval_fallback import FallbackDecision
 from agent.web_discovery import build_web_discovery_query, extract_song_candidates
 
@@ -179,9 +184,35 @@ def test_soft_genre_gap_is_explained_when_web_disabled():
         web_enabled=False,
     )
 
-    assert decision.action == "blocked"
+    assert decision.action == "local_only"
     assert "local_genres_match_insufficient" in decision.reasons
-    assert "打开联网搜索" in decision.message
+    assert "保留并展示" in decision.message
+
+
+def test_sparse_local_candidates_are_preserved_when_web_is_disabled():
+    local = [
+        {
+            "song": {
+                "title": f"Local {index}",
+                "artist": "A",
+                "preview_url": "u",
+                "genres": ["Ambient"],
+            }
+        }
+        for index in range(3)
+    ]
+
+    decision = analyze_catalog_gap(
+        local,
+        _plan(instrumental=False),
+        "暴雨天在家想听安静的氛围音乐",
+        web_enabled=False,
+    )
+
+    assert decision.action == "local_only"
+    assert decision.inventory_count == 3
+    assert decision.needs_online is False
+    assert "local_inventory_low" in decision.reasons
 
 
 def test_soft_mood_aliases_do_not_trigger_false_gap():
@@ -215,6 +246,26 @@ def test_interleave_online_results_keeps_target_length_and_dedupes():
     assert len(merged) == len(local)
     assert any(row["song"]["title"] == "W1" for row in merged)
     assert any(row["song"].get("source") == "online_search" for row in merged)
+
+
+def test_successful_web_fallback_keeps_local_candidates_in_final_slate():
+    local = [{"song": {"title": f"Local {index}", "artist": "A"}} for index in range(3)]
+    online = [
+        {"song": {"title": f"Online {index}", "artist": "B", "source": "online_search"}}
+        for index in range(10)
+    ]
+
+    merged = merge_online_with_local_candidates(
+        local,
+        online,
+        action="fallback",
+        target_count=8,
+    )
+
+    titles = {row["song"]["title"] for row in merged}
+    assert len(merged) == 8
+    assert {"Local 0", "Local 1", "Local 2"} <= titles
+    assert any(title.startswith("Online") for title in titles)
 
 
 def test_unwrap_recommendation_items_accepts_raw_list_and_tool_output_like_object():

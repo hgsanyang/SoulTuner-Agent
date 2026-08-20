@@ -13,12 +13,14 @@ import os
 import time
 from collections import Counter
 from typing import Any
+from urllib.parse import urlparse
 
 import gradio as gr
 
 from hardware import runtime_markdown
 from planner_runtime import default_profile, plan_request, profile_choices
 from retrieval_demo import retrieve
+from retrieval_demo import audio_root
 from space_bootstrap import (
     launch_local_planner_if_requested,
     live_startup_markdown,
@@ -105,6 +107,14 @@ def memory_markdown(memory: dict[str, Any] | None) -> str:
     )
 
 
+def _safe_web_href(value: Any) -> str:
+    text = str(value or "").strip()
+    parsed = urlparse(text)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return html.escape(text, quote=True)
+    return ""
+
+
 def _render_results(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return '<div class="st-empty">输入一句话，SoulTuner 会生成检索计划并返回推荐。</div>'
@@ -113,7 +123,14 @@ def _render_results(rows: list[dict[str, Any]]) -> str:
         tags = "".join(
             f'<span class="st-tag">{html.escape(str(tag))}</span>' for tag in row["tags"][:5]
         )
-        audio_text = "可播放公开试听" if row["audio_available"] else "公开演示目录暂不包含版权音频"
+        audio_text = "可播放公开试听" if row["audio_available"] else "当前曲目暂无可播放的授权音频"
+        attribution = html.escape(str(row.get("attribution") or ""))
+        licence = html.escape(str(row.get("license") or "逐曲许可证"))
+        licence_url = _safe_web_href(row.get("license_url"))
+        source_url = _safe_web_href(row.get("source_url"))
+        licence_html = f'<a href="{licence_url}" target="_blank" rel="noopener">{licence}</a>' if licence_url else licence
+        source_html = f'<a href="{source_url}" target="_blank" rel="noopener">上游曲目</a>' if source_url else ""
+        provenance = " · ".join(part for part in (attribution, licence_html, source_html) if part)
         cards.append(
             '<article class="st-card">'
             f'<span class="st-rank">{index}</span><h3>{html.escape(row["title"])}</h3>'
@@ -125,7 +142,8 @@ def _render_results(rows: list[dict[str, Any]]) -> str:
             f'<span class="st-score">Graph {row["graph_score"]:.3f}</span>'
             f'<span class="st-score">Dense {row["dense_score"]:.3f}</span>'
             f'<span class="st-score">偏好 {row["preference_score"]:.3f}</span>'
-            f'</div><div class="st-audio">♫ {audio_text}</div></article>'
+            f'</div><div class="st-audio">♫ {audio_text}</div>'
+            f'<div class="st-meta">{provenance}</div></article>'
         )
     return f'<section class="st-grid">{"".join(cards)}</section>'
 
@@ -146,7 +164,7 @@ def recommend(
     profile: str,
     top_k: int,
     memory: dict[str, Any] | None,
-) -> tuple[str, str, list[list[Any]], dict[str, Any], dict[str, Any], Any, list, str]:
+) -> tuple[str, str, list[list[Any]], dict[str, Any], dict[str, Any], Any, list, str, str | None]:
     clean_query = (query or "").strip()
     if not clean_query:
         empty = _render_results([])
@@ -159,6 +177,7 @@ def recommend(
             gr.Dropdown(choices=[], value=None),
             [],
             memory_markdown(memory),
+            None,
         )
     started = time.perf_counter()
     plan, route, status = plan_request(profile, clean_query)
@@ -191,7 +210,13 @@ def recommend(
         gr.Dropdown(choices=choices, value=choices[0][1] if choices else None),
         rows,
         memory_markdown(memory),
+        rows[0].get("audio_source") if rows else None,
     )
+
+
+def select_audio(song_id: str | None, rows: list[dict[str, Any]] | None) -> str | None:
+    selected = next((row for row in (rows or []) if row.get("song_id") == song_id), None)
+    return selected.get("audio_source") if selected else None
 
 
 def record_feedback(
@@ -276,6 +301,11 @@ def build_app() -> gr.Blocks:
                 gr.Examples(EXAMPLES, inputs=query, label="试试这些需求")
                 route_status = gr.Markdown("等待请求。")
                 cards = gr.HTML(_render_results([]))
+                audio_player = gr.Audio(
+                    label="公开授权音频试听",
+                    type="filepath",
+                    interactive=False,
+                )
 
                 with gr.Row():
                     selected_song = gr.Dropdown(label="选择一首歌反馈", choices=[])
@@ -319,11 +349,11 @@ def build_app() -> gr.Blocks:
                     <p><b>Graph</b> 对接歌曲、艺人、流派、年代、语言和标签关系；
                     <b>Dense</b> 对接 MuQ 等音频/语义向量；<b>Memory</b> 保存经授权且可撤销的偏好；
                     <b>Data flywheel</b> 只接纳脱敏并经审核的失败样本。</p>
-                    <p>当前创空间使用公开合成目录实现同一数据流。完整工程通过 Neo4j、Qdrant、
+                    <p>当前创空间使用逐曲核验许可的开放音频实现同一数据流。完整工程通过 Neo4j、Qdrant、
                     音频向量服务、长期记忆和 Next.js 前端替换相应适配器，PlannerDecisionV5 契约保持不变。</p>
                     <h3>部署档位</h3>
                     <ul>
-                      <li>CPU：确定性 Planner 与公开演示目录，保证审核时可启动；</li>
+                      <li>CPU：确定性 Planner 与开放音频演示集，保证审核时可启动；</li>
                       <li>API：使用兼容 OpenAI 协议的 Planner，业务代码无需变化；</li>
                       <li>AMD MI308X：ROCm/HIP + SoulTuner V4.2 35B LoRA 本地 endpoint。</li>
                     </ul>
@@ -342,6 +372,7 @@ def build_app() -> gr.Blocks:
             selected_song,
             result_state,
             memory_view,
+            audio_player,
         ]
         run_button.click(
             recommend,
@@ -361,6 +392,12 @@ def build_app() -> gr.Blocks:
             outputs=[feedback_status, memory_state, memory_view],
             api_name="feedback",
         )
+        selected_song.change(
+            select_audio,
+            inputs=[selected_song, result_state],
+            outputs=audio_player,
+            api_name=False,
+        )
         reset_button.click(
             reset_memory,
             outputs=[memory_state, reset_status, memory_view],
@@ -373,8 +410,10 @@ demo = build_app()
 
 
 if __name__ == "__main__":
+    permitted_audio_root = audio_root()
     demo.launch(
         server_name=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
         show_error=True,
+        allowed_paths=[str(permitted_audio_root)] if permitted_audio_root.is_dir() else None,
     )

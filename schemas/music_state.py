@@ -49,6 +49,7 @@ class MusicAgentState(TypedDict, total=False):
     # 生成的内容
     explanation: str  # 推荐解释
     final_response: str  # 最终回复
+    response_meta: Dict[str, Any]  # 用户可见文本的模型角色与审计信息
     playlist: Optional[Dict[str, Any]]  # 生成的播放列表
 
     # 执行状态

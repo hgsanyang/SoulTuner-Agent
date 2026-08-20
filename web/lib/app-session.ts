@@ -1,3 +1,5 @@
+import { resolveBackendUrl } from '@/lib/runtime-url';
+
 export type InteractionMode = 'personal' | 'developer';
 
 export interface SessionRequestContext {
@@ -54,7 +56,10 @@ export function sessionHeadersFor(
 }
 
 export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, {
+  const resolved = typeof input === 'string' || input instanceof URL
+    ? resolveBackendUrl(input)
+    : input;
+  return fetch(resolved, {
     ...init,
     headers: sessionHeaders(init.headers),
   });
@@ -65,7 +70,10 @@ export function apiFetchFor(
   input: RequestInfo | URL,
   init: RequestInit = {},
 ): Promise<Response> {
-  return fetch(input, {
+  const resolved = typeof input === 'string' || input instanceof URL
+    ? resolveBackendUrl(input)
+    : input;
+  return fetch(resolved, {
     ...init,
     headers: sessionHeadersFor(context, init.headers),
   });

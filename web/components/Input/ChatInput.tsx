@@ -62,7 +62,7 @@ export default function ChatInput({
     submit();
   };
 
-  const useQuickPrompt = (prompt: string) => {
+  const applyQuickPrompt = (prompt: string) => {
     setValue(prompt);
     textareaRef.current?.focus();
   };
@@ -229,7 +229,7 @@ export default function ChatInput({
             <button
               key={prompt}
               type="button"
-              onClick={() => useQuickPrompt(prompt)}
+              onClick={() => applyQuickPrompt(prompt)}
               style={{
                 padding: '0.3rem 0.75rem',
                 borderRadius: theme.borderRadius.full,

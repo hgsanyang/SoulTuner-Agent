@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useLang } from '@/context/LanguageContext';
+import { resolveOptionalMediaUrl } from '@/lib/runtime-url';
 import { theme } from '@/styles/theme';
 import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
@@ -323,6 +324,9 @@ export default function PendingPage() {
                         {filteredSongs.map((song) => {
                             const isSelected = selected.has(song.file_basename);
                             const isInvalid = song.valid === false;
+                            const audioUrl = resolveOptionalMediaUrl(song.audio_url);
+                            const coverUrl = resolveOptionalMediaUrl(song.cover_url);
+                            const lyricsUrl = resolveOptionalMediaUrl(song.lrc_url);
                             return (
                                 <div key={song.file_basename}
                                     style={{
@@ -358,7 +362,9 @@ export default function PendingPage() {
                                     {/* Cover */}
                                     <div style={{
                                         width: '46px', height: '46px', borderRadius: '6px', flexShrink: 0,
-                                        background: `url(http://localhost:8501${song.cover_url}) center/cover, linear-gradient(135deg, #333, #222)`,
+                                        background: coverUrl
+                                            ? `url(${coverUrl}) center/cover, linear-gradient(135deg, #333, #222)`
+                                            : 'linear-gradient(135deg, #333, #222)',
                                     }} />
 
                                     {/* Info */}
@@ -401,7 +407,7 @@ export default function PendingPage() {
                                     </span>
 
                                     {/* Play */}
-                                    <button title={isInvalid ? t('缺音频，无法试听') : t('试听')} aria-label={isInvalid ? t('{v0} 缺音频', { v0: song.title }) : t('试听 {v0}', { v0: song.title })} disabled={isInvalid} onClick={e => { e.stopPropagation(); if (!isInvalid) playSong({ title: song.title, artist: song.artist, preview_url: `http://localhost:8501${song.audio_url}`, coverUrl: `http://localhost:8501${song.cover_url}`, lrc_url: `http://localhost:8501${song.lrc_url}` }); }}
+                                    <button title={isInvalid ? t('缺音频，无法试听') : t('试听')} aria-label={isInvalid ? t('{v0} 缺音频', { v0: song.title }) : t('试听 {v0}', { v0: song.title })} disabled={isInvalid || !audioUrl} onClick={e => { e.stopPropagation(); if (!isInvalid && audioUrl) playSong({ title: song.title, artist: song.artist, preview_url: audioUrl, coverUrl, lrc_url: lyricsUrl }); }}
                                         style={{ background: 'none', border: 'none', color: isInvalid ? theme.colors.text.muted : theme.colors.primary.accent, cursor: isInvalid ? 'not-allowed' : 'pointer', padding: '0.4rem', borderRadius: '50%', display: 'flex', transition: 'transform 0.2s', opacity: isInvalid ? 0.4 : 1 }}
                                         onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                         onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}

@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLang } from '@/context/LanguageContext';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
@@ -19,8 +19,6 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const seedPrompt = searchParams?.get('prompt');
 
   const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim();

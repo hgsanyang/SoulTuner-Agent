@@ -51,6 +51,10 @@ nest_asyncio>=1.5.0
 # 文本及音频嵌入模型
 sentence-transformers>=3.0.0
 muq==0.1.0
+# Portable M2D-CLAP constructs its ViT backbone through timm; OMAR-RQ is the
+# acoustic representation model used by the offline flywheel worker.
+timm==1.0.28
+omar-rq==0.2.1
 
 # Token 计数工具
 tiktoken>=0.7.0

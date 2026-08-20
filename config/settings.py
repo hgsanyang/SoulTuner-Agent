@@ -79,6 +79,21 @@ class GlobalSettings(BaseSettings):
         description="主 LLM 模型名称（云端 API 时为模型全名；本地时为 SGLang 部署的模型标识）",
     )
 
+    # --- 自然语言对话 LLM ---
+    # Planner LoRA 只学习结构化决策，不具备可靠的自然语言对话能力。
+    # 留空时沿用主 LLM；部署 35B Planner 时应显式指向一个通用指令模型
+    # （可以与 Planner 共用 OpenAI-compatible 服务，但 served model name 必须不同）。
+    conversation_llm_provider: str = Field(
+        default="",
+        validation_alias="CONVERSATION_LLM_PROVIDER",
+        description="闲聊/追问使用的通用对话模型提供商；空则复用主 LLM",
+    )
+    conversation_llm_model: str = Field(
+        default="",
+        validation_alias="CONVERSATION_LLM_MODEL",
+        description="闲聊/追问使用的通用对话模型；禁止指向 SoulTuner Planner LoRA",
+    )
+
     # --- 意图分析专用 LLM（Planner）---
     # ★ 切换本地 vs API 就改这两行，或直接在前端⚙️ 设置面板修改
     #

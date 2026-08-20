@@ -30,13 +30,22 @@ PY
 BASE_MODEL_ID="${SOULTUNER_BASE_MODEL_ID:-Qwen/Qwen3.6-35B-A3B}"
 ADAPTER_MODEL_ID="${SOULTUNER_ADAPTER_MODEL_ID:-hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA}"
 SERVED_MODEL_NAME="${SOULTUNER_PLANNER_MODEL:-soultuner-v4.2-35b}"
+CHAT_MODEL_NAME="${SOULTUNER_CHAT_MODEL:-qwen3.6-35b-a3b}"
 PORT="${SOULTUNER_PLANNER_PORT:-8000}"
 HOST="${SOULTUNER_PLANNER_HOST:-127.0.0.1}"
-CACHE_DIR="${SOULTUNER_MODEL_CACHE:-./model_cache}"
+default_cache_dir="./model_cache"
+if [[ -d "/mnt/workspace" && -w "/mnt/workspace" ]]; then
+  # ModelScope only persists /mnt/workspace across sleep/redeploy.  Keeping the
+  # 72 GB base and the LoRA here prevents every cold start downloading again.
+  default_cache_dir="/mnt/workspace/soultuner/model_cache"
+fi
+CACHE_DIR="${SOULTUNER_MODEL_CACHE:-${default_cache_dir}}"
+export SOULTUNER_MODEL_CACHE="${CACHE_DIR}"
 BASE_MODEL_DIR="${SOULTUNER_BASE_MODEL_DIR:-${CACHE_DIR}/qwen3.6-35b-a3b}"
 ADAPTER_MODEL_DIR="${SOULTUNER_ADAPTER_DIR:-${CACHE_DIR}/soultuner_adapter}"
 
 mkdir -p "${CACHE_DIR}"
+echo "SoulTuner model cache: ${CACHE_DIR}" >&2
 
 # ModelScope resumes incomplete downloads and reuses already cached files. Running
 # both commands on every boot also catches a directory that contains config.json
@@ -60,8 +69,6 @@ backend="${SOULTUNER_INFER_BACKEND:-vllm}"
 args=(
   deploy
   --model "${BASE_MODEL_DIR}"
-  --adapters "${ADAPTER_MODEL_DIR}"
-  --served_model_name "${SERVED_MODEL_NAME}"
   --host "${HOST}"
   --port "${PORT}"
   --infer_backend "${backend}"
@@ -69,6 +76,24 @@ args=(
   --temperature 0
   --max_new_tokens "${SOULTUNER_MAX_NEW_TOKENS:-1024}"
 )
+
+# The verified public Gradio deployment keeps the historical single-adapter
+# spelling by default.  The full experience opts into vLLM multi-LoRA naming:
+# the base model serves natural conversation while the named adapter serves the
+# deterministic Planner, all from one copy of the 35B weights.
+if [[ "${SOULTUNER_DUAL_ROLE_MODELS:-0}" == "1" ]]; then
+  args+=(
+    --adapters "${SERVED_MODEL_NAME}=${ADAPTER_MODEL_DIR}"
+    --served_model_name "${CHAT_MODEL_NAME}"
+  )
+  echo "SoulTuner vLLM roles: chat=${CHAT_MODEL_NAME}, planner=${SERVED_MODEL_NAME}" >&2
+else
+  args+=(
+    --adapters "${ADAPTER_MODEL_DIR}"
+    --served_model_name "${SERVED_MODEL_NAME}"
+  )
+  echo "SoulTuner vLLM compatibility role: planner=${SERVED_MODEL_NAME}" >&2
+fi
 
 # ms-swift renamed several vLLM flags after 3.7. Detect the installed CLI
 # instead of pinning the deployment to one spelling.

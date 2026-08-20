@@ -22,6 +22,10 @@ from .registry import (
 logger = logging.getLogger(__name__)
 
 
+class PlannerRoleViolation(RuntimeError):
+    """Raised when a planner-only LoRA is selected for prose generation."""
+
+
 def _settings_value(name: str, default):
     if settings is None:
         return default
@@ -168,6 +172,53 @@ def get_intent_chat_model():
         return get_chat_model(provider="dashscope", temperature=0.3, max_tokens=2048)
 
 
+def _looks_like_soultuner_planner(model_name: str) -> bool:
+    """Identify the released planner adapter by role, not by hosting endpoint."""
+
+    normalized = str(model_name or "").strip().lower().replace("_", "-")
+    # Production currently serves the adapter as ``soultuner-v4.2-35b``;
+    # some local profiles include the extra ``planner`` token.  Both names are
+    # the same planner-only role and must be rejected for prose generation.
+    return "soultuner" in normalized and (
+        "v4.2" in normalized or "v42" in normalized
+    )
+
+
+def _assert_prose_model_role(provider: str, model_name: str, *, role: str) -> None:
+    """Keep the compact Planner contract out of user-facing prose paths.
+
+    A base instruct model and the Planner LoRA may share the same vLLM server;
+    the boundary is the served model name.  Only the Planner adapter name is
+    rejected, so a separately exposed Qwen base model remains a valid option.
+    """
+
+    if _looks_like_soultuner_planner(model_name):
+        raise PlannerRoleViolation(
+            f"{role} requires a general instruction model; {provider}/{model_name} "
+            "is planner-only and may emit only guarded planning JSON"
+        )
+
+
+def get_conversation_chat_model():
+    """Return the natural-language model, never the SoulTuner Planner LoRA."""
+
+    provider = (
+        _settings_value("conversation_llm_provider", "")
+        or _settings_value("llm_default_provider", "dashscope")
+    )
+    model_name = (
+        _settings_value("conversation_llm_model", "")
+        or _settings_value("llm_default_model", "")
+        or None
+    )
+    _assert_prose_model_role(provider, model_name or "", role="conversation")
+    return get_chat_model(
+        provider=provider,
+        model_name=model_name,
+        temperature=0.7,
+    )
+
+
 def gemini_llm(model_name: Optional[str] = None, temperature: float = 1.0):
     return get_chat_model(provider="google", model_name=model_name, temperature=temperature)
 
@@ -183,13 +234,21 @@ def get_compress_chat_model():
 
 
 def get_explain_chat_model():
-    """Return the explanation-generation LLM, defaulting to the main LLM."""
-    try:
-        provider = _settings_value("explain_llm_provider", "") or _settings_value("llm_default_provider", "dashscope")
-        model_name = _settings_value("explain_llm_model", "") or _settings_value("llm_default_model", "") or None
-        return get_chat_model(provider=provider, model_name=model_name, temperature=0.7)
-    except Exception:
-        return get_chat_model(provider="dashscope", temperature=0.7)
+    """Return the prose explainer, inheriting the conversation role by default."""
+
+    provider = (
+        _settings_value("explain_llm_provider", "")
+        or _settings_value("conversation_llm_provider", "")
+        or _settings_value("llm_default_provider", "dashscope")
+    )
+    model_name = (
+        _settings_value("explain_llm_model", "")
+        or _settings_value("conversation_llm_model", "")
+        or _settings_value("llm_default_model", "")
+        or None
+    )
+    _assert_prose_model_role(provider, model_name or "", role="explanation")
+    return get_chat_model(provider=provider, model_name=model_name, temperature=0.7)
 
 
 def ollama_llm(model_name: Optional[str] = None, temperature: float = 0.6):

@@ -13,6 +13,7 @@ import { usePlayer } from '@/context/PlayerContext';
 import { useLibrary } from '@/context/LibraryContext';
 import { useRouter } from 'next/navigation';
 import { fetchLibrarySongs, deleteSongFromLibrary, retainOnlineAudio, updateLibrarySongTags, purgeCatalogCandidates, LibrarySong, CatalogTier } from '@/lib/api';
+import { resolveOptionalMediaUrl } from '@/lib/runtime-url';
 
 export default function MyLibraryPage() {
   const { t } = useLang();
@@ -455,6 +456,9 @@ export default function MyLibraryPage() {
                         const key = songKey(song);
                         const isSelected = selectedKeys.has(key);
                         const isDeleting = deleting === key;
+                        const audioUrl = resolveOptionalMediaUrl(song.audio_url);
+                        const coverUrl = resolveOptionalMediaUrl(song.cover_url);
+                        const lyricsUrl = resolveOptionalMediaUrl(song.lrc_url);
                         return (
                             <div key={key}
                                 style={{
@@ -467,13 +471,12 @@ export default function MyLibraryPage() {
                                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)')}
                                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.02)')}
                                     onClick={() => {
-                                        if (song.audio_url) {
-                                            const baseUrl = song.audio_url.startsWith('http') ? '' : 'http://localhost:8501';
+                                        if (audioUrl) {
                                             playSong({
                                                 title: song.title, artist: song.artist,
-                                            preview_url: `${baseUrl}${song.audio_url}`,
-                                            coverUrl: song.cover_url ? `${baseUrl}${song.cover_url}` : undefined,
-                                            lrc_url: song.lrc_url ? `${baseUrl}${song.lrc_url}` : undefined,
+                                                preview_url: audioUrl,
+                                                coverUrl,
+                                                lrc_url: lyricsUrl,
                                             });
                                         }
                                     }}
@@ -489,8 +492,8 @@ export default function MyLibraryPage() {
                                 {/* Cover */}
                                 <div style={{
                                     width: '46px', height: '46px', borderRadius: '6px', flexShrink: 0,
-                                    background: song.cover_url
-                                        ? `url(${song.cover_url.startsWith('http') ? song.cover_url : 'http://localhost:8501' + song.cover_url}) center/cover, linear-gradient(135deg, #333, #222)`
+                                    background: coverUrl
+                                        ? `url(${coverUrl}) center/cover, linear-gradient(135deg, #333, #222)`
                                         : 'linear-gradient(135deg, #333, #222)',
                                     backgroundSize: 'cover',
                                     backgroundPosition: 'center',
@@ -531,21 +534,20 @@ export default function MyLibraryPage() {
                                 </button>
 
                                 {/* Play */}
-                                <button title={song.audio_url ? t('播放') : t('暂无音源')} aria-label={song.audio_url ? t('播放 {v0}', { v0: song.title }) : t('{v0} 暂无音源', { v0: song.title })}
+                                <button title={audioUrl ? t('播放') : t('暂无音源')} aria-label={audioUrl ? t('播放 {v0}', { v0: song.title }) : t('{v0} 暂无音源', { v0: song.title })}
                                     onClick={e => {
                                         e.stopPropagation();
-                                        if (song.audio_url) {
-                                            const baseUrl = song.audio_url.startsWith('http') ? '' : 'http://localhost:8501';
+                                        if (audioUrl) {
                                             playSong({
                                                 title: song.title, artist: song.artist,
-                                                preview_url: `${baseUrl}${song.audio_url}`,
-                                                coverUrl: song.cover_url ? (song.cover_url.startsWith('http') ? song.cover_url : `http://localhost:8501${song.cover_url}`) : undefined,
-                                                lrc_url: song.lrc_url ? (song.lrc_url.startsWith('http') ? song.lrc_url : `http://localhost:8501${song.lrc_url}`) : undefined,
+                                                preview_url: audioUrl,
+                                                coverUrl,
+                                                lrc_url: lyricsUrl,
                                             });
                                         }
                                     }}
-                                    disabled={!song.audio_url}
-                                    style={{ background: 'none', border: 'none', color: song.audio_url ? theme.colors.primary.accent : theme.colors.text.muted, cursor: song.audio_url ? 'pointer' : 'not-allowed', padding: '0.4rem', display: 'flex', opacity: song.audio_url ? 1 : 0.35 }}>
+                                    disabled={!audioUrl}
+                                    style={{ background: 'none', border: 'none', color: audioUrl ? theme.colors.primary.accent : theme.colors.text.muted, cursor: audioUrl ? 'pointer' : 'not-allowed', padding: '0.4rem', display: 'flex', opacity: audioUrl ? 1 : 0.35 }}>
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
                                 </button>
 

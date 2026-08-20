@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLang } from '@/context/LanguageContext';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import WelcomeScreen from '@/components/Content/WelcomeScreen';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
@@ -59,8 +59,6 @@ export default function RecommendationsPage() {
   } = useAppSession();
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const seedPrompt = searchParams?.get('prompt');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const autoFollowMessagesRef = useRef(true);

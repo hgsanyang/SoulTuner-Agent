@@ -4,7 +4,9 @@
 
 import { NextRequest } from 'next/server';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
+// Server-side proxy traffic must use the private backend address.  The public
+// browser URL may intentionally be empty so Studio visitors stay same-origin.
+const API_BASE_URL = process.env.BACKEND_INTERNAL_URL || 'http://localhost:8501';
 
 export async function POST(request: NextRequest) {
   try {
