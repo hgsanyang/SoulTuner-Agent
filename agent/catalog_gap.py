@@ -16,7 +16,7 @@ from agent.retrieval_fallback import FallbackDecision, _canonical_language, laye
 
 @dataclass(frozen=True)
 class CatalogGapDecision:
-    action: str = "none"  # none | mix_in | fallback | blocked
+    action: str = "none"  # none | local_only | mix_in | fallback | blocked
     reasons: tuple[str, ...] = ()
     inventory_count: int = 0
     target_web_count: int = 0
@@ -486,6 +486,14 @@ def _message_for_reasons(reasons: Sequence[str]) -> str:
     )
 
 
+def _local_only_message(reasons: Sequence[str], count: int) -> str:
+    reason_text = "、".join(reasons) if reasons else "本地曲库证据不足"
+    return (
+        f"本地曲库目前只有 {count} 首候选能部分满足这次需求（{reason_text}）。"
+        "我会先保留并展示这些已有候选；如果你希望扩充结果，可以再打开联网搜索。"
+    )
+
+
 def analyze_catalog_gap(
     search_results: Sequence[Mapping[str, Any]],
     retrieval_plan: Mapping[str, Any] | None,
@@ -565,6 +573,16 @@ def analyze_catalog_gap(
         "metadata_constraints": metadata_constraints,
     }
     if strict_gap and not web_enabled:
+        if count:
+            return CatalogGapDecision(
+                action="local_only",
+                reasons=tuple(reasons),
+                inventory_count=count,
+                target_web_count=0,
+                discovery_required=discovery_required,
+                message=_local_only_message(reasons, count),
+                details=details,
+            )
         return CatalogGapDecision(
             action="blocked",
             reasons=tuple(reasons),
@@ -584,6 +602,16 @@ def analyze_catalog_gap(
             details=details,
         )
     if soft_gap and not web_enabled:
+        if count:
+            return CatalogGapDecision(
+                action="local_only",
+                reasons=tuple(soft_reasons),
+                inventory_count=count,
+                target_web_count=0,
+                discovery_required=False,
+                message=_local_only_message(soft_reasons, count),
+                details=details,
+            )
         return CatalogGapDecision(
             action="blocked",
             reasons=tuple(soft_reasons),
@@ -688,6 +716,29 @@ def interleave_online_results(
         result.append(online_queue[online_index])
         online_index += 1
     return result[:target] if target else result
+
+
+def merge_online_with_local_candidates(
+    local_items: Sequence[Mapping[str, Any]],
+    online_items: Sequence[Mapping[str, Any]],
+    *,
+    action: str,
+    target_count: int,
+) -> list[dict[str, Any]]:
+    """Merge successful web fallback without erasing already recalled local songs."""
+
+    if not local_items or action not in {"mix_in", "fallback"}:
+        return [dict(item) for item in online_items]
+    target_len = (
+        len(local_items)
+        if action == "mix_in"
+        else max(int(target_count), len(local_items))
+    )
+    return interleave_online_results(
+        local_items,
+        online_items,
+        target_len=target_len,
+    )
 
 
 def unwrap_recommendation_items(recommendations: Any) -> list[Any]:

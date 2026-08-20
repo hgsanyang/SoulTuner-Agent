@@ -232,6 +232,7 @@ class MusicRecommendationAgent:
                 "search_results": result.get("search_results", []),
                 "intent_type": result.get("intent_type", ""),
                 "explanation": result.get("explanation", ""),
+                "response_meta": result.get("response_meta", {}),
                 "playlist": result.get("playlist"),
                 "errors": result.get("error_log", []),
                 "timings": timings,

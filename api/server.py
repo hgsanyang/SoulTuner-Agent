@@ -471,8 +471,18 @@ async def stream_recommendations(
 
         # 根据 settings 配置初始化 LLM（provider/model 统一由设置面板管理）
         try:
-            from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
-            from agent.music_graph import set_llm, set_intent_llm, set_explain_llm
+            from llms.multi_llm import (
+                get_chat_model,
+                get_conversation_chat_model,
+                get_explain_chat_model,
+                get_intent_chat_model,
+            )
+            from agent.music_graph import (
+                set_conversation_llm,
+                set_explain_llm,
+                set_intent_llm,
+                set_llm,
+            )
             from config.settings import settings as _req_settings
 
             _provider = _req_settings.llm_default_provider or "dashscope"
@@ -480,6 +490,10 @@ async def stream_recommendations(
 
             new_llm = get_chat_model(provider=_provider, model_name=_model)
             set_llm(new_llm)
+
+            # 用户可见自然语言使用独立角色模型。Planner LoRA 若被误配到
+            # 这里会由工厂硬拒绝，而不是把结构化 JSON 当作聊天回复。
+            set_conversation_llm(get_conversation_chat_model())
 
             # 同步切换意图分析 LLM（如果没有独立配置，跟随主模型）
             if not _req_settings.intent_llm_model:
@@ -886,6 +900,8 @@ class SettingsUpdateRequest(BaseModel):
     # 所有字段都可选 —— 前端只发送修改了的字段
     llm_default_provider: str | None = None
     llm_default_model: str | None = None
+    conversation_llm_provider: str | None = None
+    conversation_llm_model: str | None = None
     intent_llm_provider: str | None = None
     intent_llm_model: str | None = None
     hyde_llm_provider: str | None = None
@@ -953,6 +969,23 @@ async def update_settings_endpoint(
             logger.info(f"[Settings] LLM 热切换至 {provider} / {model}")
         except Exception as e:
             logger.warning(f"[Settings] LLM 切换失败: {e}")
+
+    # 自然语言对话模型独立热切换；未显式配置时跟随主模型。
+    _conversation_changed = (
+        "conversation_llm_provider" in update_data
+        or "conversation_llm_model" in update_data
+        or "llm_default_provider" in update_data
+        or "llm_default_model" in update_data
+    )
+    if _conversation_changed:
+        try:
+            from llms.multi_llm import get_conversation_chat_model
+            from agent.music_graph import set_conversation_llm
+
+            set_conversation_llm(get_conversation_chat_model())
+            logger.info("[Settings] 通用对话 LLM 已完成角色校验并热切换")
+        except Exception as e:
+            logger.warning(f"[Settings] 通用对话 LLM 切换失败: {e}")
 
     # 如果切换了意图分析 LLM（或主模型变更且意图使用主模型，或 max_tokens 变更），热切换意图模型
     _intent_changed = ("intent_llm_provider" in update_data or "intent_llm_model" in update_data

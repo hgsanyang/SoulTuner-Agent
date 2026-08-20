@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 import { useCallback, useEffect, useState } from 'react';
 import { useLang } from '@/context/LanguageContext';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import MainLayout from '@/components/Layout/MainLayout';
 import ThinkingIndicator from '@/components/Content/ThinkingIndicator';
 import ResultsDisplay from '@/components/Content/ResultsDisplay';
@@ -78,8 +78,6 @@ export default function PlaylistPage() {
   const [result, setResult] = useState<{ response?: string; recommendations?: any[] } | null>(null);
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const seedPrompt = searchParams?.get('prompt');
 
   const handleSubmit = useCallback(async (value: string) => {
     setLoading(true);
@@ -104,10 +102,11 @@ export default function PlaylistPage() {
   }, []);
 
   useEffect(() => {
+    const seedPrompt = new URLSearchParams(window.location.search).get('prompt');
     if (!seedPrompt) return;
     handleSubmit(seedPrompt);
     router.replace(pathname);
-  }, [seedPrompt, handleSubmit, router, pathname]);
+  }, [handleSubmit, router, pathname]);
 
   return (
     <MainLayout

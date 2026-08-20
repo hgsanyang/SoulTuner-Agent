@@ -51,12 +51,11 @@ jobs:
         with:
           node-version: "20"
 
-      # web/package-lock.json is gitignored, so npm cache and `npm ci` are not
-      # available on a clean checkout; `npm install` resolves from package.json.
       - name: Install and build frontend
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
+          npm run lint
           npm run build
 
   secret-scan:

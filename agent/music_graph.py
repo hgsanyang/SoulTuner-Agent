@@ -25,7 +25,12 @@ from langchain_core.output_parsers import StrOutputParser
 
 from config.logging_config import get_logger, safe_labels, safe_query
 from config.settings import settings
-from agent.catalog_gap import CatalogGapDecision, analyze_catalog_gap, interleave_online_results, unwrap_recommendation_items
+from agent.catalog_gap import (
+    CatalogGapDecision,
+    analyze_catalog_gap,
+    merge_online_with_local_candidates,
+    unwrap_recommendation_items,
+)
 from agent.explanation import emit_fast_explanation
 from agent.intent.delta_planner import IntentDeltaPlanner
 from agent.intent.planner import IntentPlanner
@@ -46,7 +51,12 @@ from agent.retrieval_fallback import (
     filter_results_by_requested_language,
 )
 from agent.web_discovery import build_web_discovery_query, extract_song_candidates
-from llms.multi_llm import get_chat_model, get_intent_chat_model, get_explain_chat_model
+from llms.multi_llm import (
+    get_chat_model,
+    get_conversation_chat_model,
+    get_explain_chat_model,
+    get_intent_chat_model,
+)
 
 from schemas.music_state import MusicAgentState, ToolOutput
 # 【V2 升级】替换旧版 vector_search 为 Neo4j 原生语义搜索
@@ -56,6 +66,7 @@ from retrieval.user_memory import UserMemoryManager
 from retrieval.history import MusicContextManager
 from llms.prompts import (
     MUSIC_CHAT_RESPONSE_PROMPT,
+    MUSIC_CLARIFICATION_RESPONSE_PROMPT,
     MUSIC_RECOMMENDATION_EXPLAINER_PROMPT,
     MUSIC_TUNER_RESPONSE_PROMPT,
 )
@@ -228,6 +239,35 @@ def set_llm(new_llm):
     global _llm
     _llm = new_llm
     logger.info(f"[music_graph] LLM 已切换为: {getattr(new_llm, 'model_name', str(new_llm))}")
+
+
+# 用户可见自然语言必须与 Planner LoRA 分离。二者可以共用同一个
+# OpenAI-compatible 服务，但 served model name 必须代表不同角色。
+_conversation_llm = None
+
+
+def get_conversation_llm():
+    """获取通用对话 LLM（绝不复用 SoulTuner Planner LoRA）。"""
+
+    global _conversation_llm
+    if _conversation_llm is None:
+        _conversation_llm = get_conversation_chat_model()
+        logger.info(
+            "[music_graph] 通用对话 LLM 初始化: %s",
+            getattr(_conversation_llm, "model_name", str(_conversation_llm)),
+        )
+    return _conversation_llm
+
+
+def set_conversation_llm(new_llm):
+    """覆盖通用对话模型（API 设置热更新使用）。"""
+
+    global _conversation_llm
+    _conversation_llm = new_llm
+    logger.info(
+        "[music_graph] 通用对话 LLM 已切换为: %s",
+        getattr(new_llm, "model_name", str(new_llm)),
+    )
 
 # 意图分析专用 LLM（可配置更快/更小的模型）
 _intent_llm = None
@@ -829,10 +869,49 @@ class MusicRecommendationGraph:
             return "general_chat"
 
     async def clarification_node(self, state: MusicAgentState) -> Dict[str, Any]:
-        """Return a deterministic clarification question instead of guessing."""
+        """Render the planner-owned clarification with the conversation model."""
         clarification = state.get("clarification") or {}
-        question = clarification.get("question") or state.get("final_response") or "你想保留上一轮的哪种音乐感觉？"
+        planner_question = clarification.get("question") or state.get("final_response") or "你想保留上一轮的哪种音乐感觉？"
+        question = planner_question
         options = clarification.get("options") or state.get("clarification_options") or []
+        response_meta: Dict[str, Any] = {
+            "role": "deterministic_clarification",
+            "planner_decision_preserved": True,
+            "planner_used_for_generation": False,
+        }
+        try:
+            context_manager = MusicContextManager()
+            history_text = context_manager.format_chat_history(
+                state.get("chat_history", [])
+            )
+            conversation = get_conversation_llm()
+            rendered = await (
+                ChatPromptTemplate.from_template(MUSIC_CLARIFICATION_RESPONSE_PROMPT)
+                | conversation
+                | StrOutputParser()
+            ).ainvoke({
+                "chat_history": history_text,
+                "graphzep_facts": state.get("graphzep_facts", "暂无可用用户记忆"),
+                "user_message": state.get("input", ""),
+                "clarification_question": planner_question,
+                "clarification_options": "、".join(str(item) for item in options) or "无",
+            })
+            if str(rendered or "").strip():
+                question = str(rendered).strip()
+                response_meta = {
+                    "role": "conversation_clarification",
+                    "provider": (
+                        settings.conversation_llm_provider
+                        or settings.llm_default_provider
+                        or "unknown"
+                    ),
+                    "model": str(getattr(conversation, "model_name", "unknown")),
+                    "planner_decision_preserved": True,
+                    "planner_used_for_generation": False,
+                }
+        except Exception as exc:
+            # Planner 的确定性问题始终可用；自然语言模型故障不能阻塞澄清。
+            logger.warning("[Clarification] 自然语言润色失败，使用 Planner 原问题: %s", exc)
         request_id = (state.get("metadata") or {}).get("request_id")
         explanation_queue = self._explanation_queues.get(request_id) if request_id else None
         if explanation_queue is not None:
@@ -851,6 +930,7 @@ class MusicRecommendationGraph:
             "recommendations": [],
             "search_results": [],
             "clarification_options": options,
+            "response_meta": response_meta,
             "retrieval_meta": {
                 **(state.get("retrieval_meta") or {}),
                 "source": "clarification",
@@ -995,6 +1075,12 @@ class MusicRecommendationGraph:
                     "[search_songs] 本地缺口但联网关闭: reasons=%s",
                     ",".join(gap_decision.reasons),
                 )
+            elif gap_decision.action == "local_only":
+                logger.info(
+                    "[search_songs] 联网关闭，保留 %d 首本地候选: reasons=%s",
+                    gap_decision.inventory_count,
+                    ",".join(gap_decision.reasons),
+                )
             dialog_state = update_dialog_result_anchors(
                 state.get("dialog_state"),
                 search_results,
@@ -1047,10 +1133,10 @@ class MusicRecommendationGraph:
                     "inventory_count": gap_decision.inventory_count,
                     "result_count": result_count,
                     "source": "local",
-                    "degraded": gap_decision.action in {"fallback", "blocked"},
+                    "degraded": gap_decision.action in {"local_only", "fallback", "blocked"},
                     "degraded_reason": ",".join(gap_decision.reasons) or None,
                     "web_action": gap_decision.action,
-                    "web_search_blocked": gap_decision.action == "blocked",
+                    "web_search_blocked": gap_decision.action in {"local_only", "blocked"},
                     "catalog_gap": gap_decision.model_dump(),
                 },
                 "tool_observations": tool_observations,
@@ -1568,13 +1654,14 @@ class MusicRecommendationGraph:
 
             final_results = results
             final_meta = _web_meta(len(results))
-            if web_action == "mix_in":
+            if web_action in {"mix_in", "fallback"}:
                 local_items = unwrap_recommendation_items(state.get("recommendations", []))
                 if local_items:
-                    final_results = interleave_online_results(
+                    final_results = merge_online_with_local_candidates(
                         local_items,
                         results,
-                        target_len=len(local_items),
+                        action=web_action,
+                        target_count=target_count,
                     )
                     final_meta = {
                         **final_meta,
@@ -1582,7 +1669,8 @@ class MusicRecommendationGraph:
                         "result_count": len(final_results),
                         "online_result_count": len(results),
                         "local_result_count": len(local_items),
-                        "degraded": False,
+                        "degraded": web_action == "fallback",
+                        "local_candidates_preserved": True,
                     }
 
             auto_flywheel_candidates = 0
@@ -1929,15 +2017,22 @@ class MusicRecommendationGraph:
         节点2c: 通用聊天
         处理一般性的音乐话题聊天
         """
-        _main_llm = get_llm()
-        _main_model_name = getattr(_main_llm, 'model_name', '?')
-        _main_provider = (settings.llm_default_provider or '?').lower()
-        logger.info(f"--- [步骤 2c] 通用音乐聊天 | 🤖 {_main_provider} / {_main_model_name} ---")
-
         user_message = state.get("input", "")
         chat_history = state.get("chat_history", [])
 
         try:
+            _conversation = get_conversation_llm()
+            _conversation_model_name = getattr(_conversation, 'model_name', '?')
+            _conversation_provider = (
+                settings.conversation_llm_provider
+                or settings.llm_default_provider
+                or '?'
+            ).lower()
+            logger.info(
+                "--- [步骤 2c] 通用自然语言对话 | 🤖 %s / %s ---",
+                _conversation_provider,
+                _conversation_model_name,
+            )
             # 格式化对话历史
             context_manager = MusicContextManager()
             history_text = context_manager.format_chat_history(chat_history)
@@ -1946,7 +2041,7 @@ class MusicRecommendationGraph:
             # StrOutputParser 会自动提取大模型回复消息中的文本内容，省去手动获取 .content。
             chain = (
                 ChatPromptTemplate.from_template(MUSIC_CHAT_RESPONSE_PROMPT)
-                | get_llm()
+                | _conversation
                 | StrOutputParser()
             )
             _prompt_context = state.get("prompt_context") or {}
@@ -1986,6 +2081,12 @@ class MusicRecommendationGraph:
                 "step_count": state.get("step_count", 0) + 1,
                 "prompt_context": _prompt_context,
                 "assembled_context": _assembled_payload,
+                "response_meta": {
+                    "role": "conversation",
+                    "provider": _conversation_provider,
+                    "model": str(_conversation_model_name),
+                    "planner_used_for_generation": False,
+                },
             }
 
         except Exception as e:
@@ -2000,6 +2101,10 @@ class MusicRecommendationGraph:
                     pass
             return {
                 "final_response": "抱歉，我现在遇到了一些问题。不过我很乐意和你聊音乐！你可以告诉我你喜欢什么类型的音乐吗？",
+                "response_meta": {
+                    "role": "deterministic_conversation_fallback",
+                    "planner_used_for_generation": False,
+                },
                 "step_count": state.get("step_count", 0) + 1,
                 "error_log": state.get("error_log", []) + [
                     {"node": "general_chat", "error": str(e)}

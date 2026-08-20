@@ -12,6 +12,7 @@ import React, { createContext, useContext, useState, useRef, useEffect, ReactNod
 import { sendUserEvent } from '@/lib/api';
 import { useAppSession } from '@/context/AppSessionContext';
 import { SessionRequestContext } from '@/lib/app-session';
+import { resolveOptionalMediaUrl } from '@/lib/runtime-url';
 
 export interface Song {
     title: string;
@@ -54,6 +55,13 @@ const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
 
 const isSameSong = (a?: Song | null, b?: Song | null) =>
     Boolean(a && b && a.title === b.title && a.artist === b.artist);
+
+const normalizeSongMedia = (song: Song): Song => ({
+    ...song,
+    preview_url: resolveOptionalMediaUrl(song.preview_url),
+    coverUrl: resolveOptionalMediaUrl(song.coverUrl),
+    lrc_url: resolveOptionalMediaUrl(song.lrc_url),
+});
 
 const MIN_SKIP_LISTEN_MS = 1_000;
 const MAX_SKIP_LISTEN_MS = 30_000;
@@ -189,13 +197,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }, [currentSong, queue, playMode]);
 
     const playSong = (song: Song, newQueue?: Song[]) => {
+        const playableSong = normalizeSongMedia(song);
         const audio = audioRef.current;
-        if (isSameSong(currentSong, song) && audio && !audio.ended) {
-            setCurrentSong(song);
+        if (isSameSong(currentSong, playableSong) && audio && !audio.ended) {
+            setCurrentSong(playableSong);
             if (newQueue) {
-                setQueue(newQueue);
+                setQueue(newQueue.map(normalizeSongMedia));
             }
-            if (!isPlaying && song.preview_url) {
+            if (!isPlaying && playableSong.preview_url) {
                 startAudio(audio);
                 setIsPlaying(true);
             }
@@ -213,7 +222,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             }
         }
 
-        setCurrentSong(song);
+        setCurrentSong(playableSong);
         playbackContextRef.current = {
             profileId: activeProfile.profile_id,
             interactionMode,
@@ -222,16 +231,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setIsPlaying(true);
 
         if (newQueue) {
-            setQueue(newQueue);
+            setQueue(newQueue.map(normalizeSongMedia));
         } else if (queue.length === 0) {
-            setQueue([song]);
+            setQueue([playableSong]);
         }
 
-        if (audioRef.current && song.preview_url) {
-            audioRef.current.src = song.preview_url;
+        if (audioRef.current && playableSong.preview_url) {
+            audioRef.current.preload = 'metadata';
+            audioRef.current.src = playableSong.preview_url;
             startAudio(audioRef.current);
-            reportPlayback('play_start', song, audioRef.current);
-        } else if (audioRef.current && !song.preview_url) {
+            reportPlayback('play_start', playableSong, audioRef.current);
+        } else if (audioRef.current && !playableSong.preview_url) {
             // Stop audio if no preview
             audioRef.current.pause();
             setIsPlaying(false);
@@ -239,10 +249,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
 
     const addToQueue = (song: Song) => {
+        const normalized = normalizeSongMedia(song);
         setQueue(prev => {
-            const exists = prev.some(s => s.title === song.title && s.artist === song.artist);
+            const exists = prev.some(s => s.title === normalized.title && s.artist === normalized.artist);
             if (exists) return prev;
-            return [...prev, song];
+            return [...prev, normalized];
         });
     };
 
@@ -253,13 +264,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const addAllToQueue = (songs: Song[]) => {
         setQueue(prev => {
             const existing = new Set(prev.map(s => `${s.title}_${s.artist}`));
-            const newSongs = songs.filter(s => !existing.has(`${s.title}_${s.artist}`));
+            const newSongs = songs
+                .map(normalizeSongMedia)
+                .filter(s => !existing.has(`${s.title}_${s.artist}`));
             return [...prev, ...newSongs];
         });
     };
 
     const replaceQueue = (songs: Song[]) => {
-        setQueue(songs);
+        setQueue(songs.map(normalizeSongMedia));
     };
 
     const togglePlay = () => {

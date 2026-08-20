@@ -28,6 +28,14 @@ assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
 bootstrap = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
 BOOTSTRAP_SPEC.loader.exec_module(bootstrap)
 
+FULL_BOOTSTRAP_SPEC = importlib.util.spec_from_file_location(
+    "full_space_bootstrap_open_audio",
+    SPACE.parent / "modelscope_full" / "bootstrap_open_audio.py",
+)
+assert FULL_BOOTSTRAP_SPEC and FULL_BOOTSTRAP_SPEC.loader
+full_bootstrap = importlib.util.module_from_spec(FULL_BOOTSTRAP_SPEC)
+FULL_BOOTSTRAP_SPEC.loader.exec_module(full_bootstrap)
+
 def test_space_card_text_has_theme_independent_contrast() -> None:
     source = (SPACE / "app.py").read_text(encoding="utf-8")
     assert ".st-card h3" in source
@@ -162,6 +170,57 @@ def test_amd_requirements_cover_qwen36_runtime() -> None:
     assert "transformers>=5.2.0" in requirements
     assert "qwen-vl-utils>=0.0.14" in requirements
     assert "decord>=0.6.0" in requirements
+
+
+def test_amd_launcher_has_opt_in_dual_role_models_and_single_lora_compatibility() -> None:
+    script = (SPACE / "start_amd_35b.sh").read_text(encoding="utf-8")
+    assert 'default_cache_dir="/mnt/workspace/soultuner/model_cache"' in script
+    assert 'SOULTUNER_DUAL_ROLE_MODELS:-0' in script
+    assert '--adapters "${SERVED_MODEL_NAME}=${ADAPTER_MODEL_DIR}"' in script
+    assert '--served_model_name "${CHAT_MODEL_NAME}"' in script
+    assert '--adapters "${ADAPTER_MODEL_DIR}"' in script
+    assert '--served_model_name "${SERVED_MODEL_NAME}"' in script
+
+
+def test_full_space_requires_both_vllm_roles_without_changing_gradio_default() -> None:
+    full_script = (
+        SPACE.parent / "modelscope_full" / "start_full_space.sh"
+    ).read_text(encoding="utf-8")
+    assert 'SOULTUNER_DUAL_ROLE_MODELS:-1' in full_script
+    assert 'required.add(os.environ["SOULTUNER_CHAT_MODEL"])' in full_script
+    assert "if required <= models" in full_script
+    assert 'CONVERSATION_LLM_MODEL="${CONVERSATION_LLM_MODEL:-${SOULTUNER_CHAT_MODEL}}"' in full_script
+    assert 'INTENT_LLM_MODEL="${INTENT_LLM_MODEL:-${SOULTUNER_PLANNER_MODEL}}"' in full_script
+    assert "hgsanyang/SoulTuner-Open-Audio-Demo" in full_script
+    assert "deploy.modelscope_full.bootstrap_open_audio" in full_script
+
+
+def test_full_space_open_audio_requires_all_three_embedding_families() -> None:
+    ready = {
+        "enrichment_status": "ready",
+        "muq_dim": 512,
+        "m2d_dim": 768,
+        "omar_dim": 1024,
+    }
+    assert full_bootstrap._is_ready(ready) is True
+    assert full_bootstrap._is_ready({**ready, "muq_dim": 0}) is False
+    assert full_bootstrap._is_ready({**ready, "enrichment_status": "queued"}) is False
+
+
+def test_neo4j_schema_matches_current_omar_rq_vector_width() -> None:
+    source = (SPACE.parents[1] / "data" / "pipeline" / "neo4j_schema_v2.py").read_text(
+        encoding="utf-8"
+    )
+    assert "OMAR_EMBEDDING_DIM = 1024" in source
+
+
+def test_amd_space_materialises_and_verifies_public_open_audio_in_parallel() -> None:
+    script = (SPACE / "start_space_amd.sh").read_text(encoding="utf-8")
+    assert "hgsanyang/SoulTuner-Open-Audio-Demo" in script
+    assert '--repo-type dataset' in script
+    assert 'prepare_open_audio >"${open_audio_log}" 2>&1 &' in script
+    assert "audio_sha256" in script
+    assert "candidate.relative_to(root)" in script
 
 
 def test_released_35b_legacy_payload_is_adapted_without_fallback() -> None:

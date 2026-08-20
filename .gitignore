@@ -146,7 +146,6 @@ web/out/
 web/build/
 web/*.tsbuildinfo
 web/next-env.d.ts
-web/package-lock.json
 web/dark_mode_home.png
 
 # ================================================================
@@ -169,6 +168,7 @@ graphzep_service/src/**/*.js.map
 # Root-level stale files
 # ================================================================
 package-lock.json
+!web/package-lock.json
 diff_changes.txt
 
 # ================================================================

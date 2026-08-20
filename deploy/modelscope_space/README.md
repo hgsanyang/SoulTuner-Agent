@@ -13,8 +13,8 @@ tags:
 models:
   - hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA
 datasets:
-  train:
-    - hgsanyang/SoulTuner-Demo-Catalog
+  test:
+    - hgsanyang/SoulTuner-Open-Audio-Demo
 ---
 
 # SoulTuner Agent
@@ -31,7 +31,7 @@ SoulTuner 是一个自然语言音乐推荐 Agent。用户用一句话描述想�
 6. 喜欢、跳过和不喜欢反馈写入当前会话记忆；
 7. 同一应用可切换公开演示、远程 API 和 AMD MI308X 本地 35B 三种 Planner 档位。
 
-公开演示目录仅包含合成元数据和演示向量，不包含版权音频、个人数据、训练集或 sealed 评测答案。生产工程中的 Neo4j、Qdrant、MuQ 音频向量、长期记忆与前端播放器由同一接口接入。
+公开演示使用 `SoulTuner-Open-Audio-Demo` 中 5 首逐曲核验的 Song Describer/Jamendo 原始音频，不包含个人数据、训练集或 sealed 评测答案。每首歌均保留上游地址、归属文本、许可证和 SHA-256；其中的 NoDerivatives 文件只按原始字节播放，不做转码、剪辑或重封装。
 
 ## 一键运行
 
@@ -108,6 +108,25 @@ SOULTUNER_PLANNER_BASE_URL=http://127.0.0.1:8000/v1 python app.py
 
 ModelScope Access Token 仅在模型仍为私有或受限下载时作为“密文变量”配置；模型公开后不应再要求令牌。任何令牌都不得写入仓库、README 或普通明文变量。
 
+未显式设置 `SOULTUNER_MODEL_CACHE` 时，启动脚本会在可写的
+`/mnt/workspace` 上自动使用 `/mnt/workspace/soultuner/model_cache`；只有非创空间
+环境才退回仓库旁的 `./model_cache`。
+
+### 挂接公开授权音频目录
+
+Gradio 稳定版不需要切换为 Docker 也能播放真实音频。`start_space_amd.sh`
+会在 35B 基座下载的同时下载并校验公开音频数据集，默认物化到持久盘。也可以显式配置：
+
+```bash
+SOULTUNER_CATALOG_PATH=/mnt/workspace/soultuner/open_audio/catalog.jsonl
+SOULTUNER_AUDIO_ROOT=/mnt/workspace/soultuner/open_audio/audio
+```
+
+目录行可使用 `audio_relpath`（推荐）、`audio_path`、`audio_url` 或 `preview_url`。
+本地文件必须位于 `SOULTUNER_AUDIO_ROOT` 内，路径穿越和不支持的扩展名会被拒绝；
+只有这个目录会加入 Gradio 文件白名单。检索后页面会显示音频播放器，选择另一首歌曲
+会同步切换试听。音频来源、许可证、校验和应保留在独立数据集清单中。
+
 ### 先用训练实例完成推理实验
 
 AMD 创空间资源是否获批不影响推理验证。之前完成训练的 AMD 实例已经缓存基座、
@@ -160,18 +179,19 @@ AITER 仅作为可复测的可选优化。完整公开汇总见
 
 - 完整工程：[SoulTuner-Agent](https://github.com/hgsanyang/SoulTuner-Agent)
 - 35B LoRA：[SoulTuner-Planner-V4.2-35B-LoRA](https://modelscope.cn/models/hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA)
-- 演示目录：[SoulTuner-Demo-Catalog](https://modelscope.cn/datasets/hgsanyang/SoulTuner-Demo-Catalog)
+- 开放音频演示集：[SoulTuner-Open-Audio-Demo](https://modelscope.cn/datasets/hgsanyang/SoulTuner-Open-Audio-Demo)
 - Notebook：[SoulTuner 35B 音乐推荐规划器与混合检索实践](https://modelscope.cn/gallery/hgsanyang/soultuner-v4-2-35b-music-planner)
 - 技术文章：[从一句话到可执行检索计划](https://modelscope.cn/learn/435660)
 
 ## 数据与安全边界
 
 - 不在前端或仓库保存 API Key、ModelScope 令牌和用户凭据；
-- 公开演示只使用合成目录，所有反馈只保留在当前浏览器会话；
+- 公开演示只使用逐曲许可的开放音频；页面始终显示归属、许可证和上游链接；
+- 演示曲目均为非商业许可，不得将其扩大为商业音乐库；NoDerivatives 曲目不改写原始音频；
 - Planner 输出必须通过结构校验和 Policy Guard 后才能触发检索；
 - 生产部署需另外配置鉴权、限流、内容安全和持久化数据库；
 - 35B LoRA 需与其基座模型许可、模型卡和使用约束一并遵守。
 
 ## License
 
-应用代码采用 MIT License。公开演示数据采用其数据集页面所列的 CC BY 4.0；模型与基座模型分别遵循各自模型卡许可。
+应用代码采用 MIT License。音频数据不使用一个统一代码许可：每首曲目按数据集 manifest 中的 CC BY-NC / BY-NC-ND / BY-NC-SA 等逐曲条款使用。模型与基座模型分别遵循各自模型卡许可。

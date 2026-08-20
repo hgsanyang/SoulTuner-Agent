@@ -1,26 +1,130 @@
-"""Graph + Dense retrieval over the public synthetic SoulTuner catalog."""
+"""Graph + Dense retrieval over SoulTuner's licensed public demo catalog."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import math
+import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 DATA = Path(__file__).resolve().parent / "data" / "catalog.jsonl"
+_AUDIO_SUFFIXES = {".mp3", ".flac", ".ogg", ".opus", ".wav", ".m4a", ".aiff"}
 
 
-@lru_cache(maxsize=1)
-def load_catalog() -> tuple[dict[str, Any], ...]:
+def catalog_path() -> Path:
+    configured = os.getenv("SOULTUNER_CATALOG_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    persistent = Path("/mnt/workspace/soultuner/open_audio/catalog.jsonl")
+    return persistent if persistent.is_file() else DATA
+
+
+def audio_root() -> Path:
+    configured = os.getenv("SOULTUNER_AUDIO_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    persistent = Path("/mnt/workspace/soultuner/open_audio/audio")
+    return persistent if persistent.is_dir() else (DATA.parent / "audio").resolve()
+
+
+@lru_cache(maxsize=4)
+def _load_catalog(path: str) -> tuple[dict[str, Any], ...]:
     rows = [
         json.loads(line)
-        for line in DATA.read_text(encoding="utf-8").splitlines()
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     return tuple(rows)
+
+
+def load_catalog() -> tuple[dict[str, Any], ...]:
+    return _load_catalog(str(catalog_path()))
+
+
+def _string_list(row: dict[str, Any], *keys: str) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        raw = row.get(key) or []
+        if isinstance(raw, str):
+            raw = [raw]
+        if isinstance(raw, (list, tuple)):
+            values.extend(str(item).strip() for item in raw if str(item).strip())
+    return list(dict.fromkeys(values))
+
+
+def _row_tags(row: dict[str, Any]) -> list[str]:
+    return _string_list(row, "moods", "moods_themes", "genres", "scenarios", "instruments")
+
+
+def _row_language(row: dict[str, Any]) -> str:
+    return str(row.get("language") or "未知")
+
+
+def _row_decade(row: dict[str, Any]) -> int:
+    try:
+        return int(row.get("decade"))
+    except (TypeError, ValueError):
+        release_date = str(row.get("release_date") or "")
+        year = int(release_date[:4]) if release_date[:4].isdigit() else 0
+        return (year // 10) * 10 if year else 0
+
+
+def _catalog_description(row: dict[str, Any]) -> str:
+    captions = row.get("captions") or []
+    caption_text = [
+        str(item.get("text") or "") if isinstance(item, dict) else str(item)
+        for item in captions
+    ]
+    return " ".join(
+        [
+            str(row.get("title") or ""),
+            str(row.get("artist") or ""),
+            *_row_tags(row),
+            *caption_text,
+        ]
+    ).casefold()
+
+
+def resolve_audio_source(row: dict[str, Any]) -> str | None:
+    """Return a safe Gradio-playable path/URL from a catalog row.
+
+    Local catalog values are constrained to SOULTUNER_AUDIO_ROOT so a public
+    row can never make Gradio expose an arbitrary file from /mnt/workspace.
+    """
+
+    root = audio_root()
+    values = (
+        row.get("audio_relpath"),
+        row.get("audio_path"),
+        row.get("audio_url"),
+        row.get("preview_url"),
+    )
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return value
+        if parsed.scheme or parsed.netloc:
+            continue
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            resolved = candidate.expanduser().resolve()
+            resolved.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if resolved.is_file() and resolved.suffix.casefold() in _AUDIO_SUFFIXES:
+            return str(resolved)
+    return None
 
 
 def _cosine(left: list[float], right: list[float]) -> float:
@@ -47,11 +151,10 @@ def _query_vector(query: str, dimensions: int = 8) -> list[float]:
 def _graph_score(query: str, row: dict[str, Any], plan: dict[str, Any]) -> float:
     searchable = " ".join(
         [
-            row["language"],
-            str(row["decade"]),
-            *row["genres"],
-            *row["moods"],
-            *row["scenarios"],
+            _row_language(row),
+            str(_row_decade(row)),
+            *_row_tags(row),
+            _catalog_description(row),
         ]
     )
     terms = [
@@ -73,31 +176,74 @@ def _graph_score(query: str, row: dict[str, Any], plan: dict[str, Any]) -> float
     return matches / len(unique_terms)
 
 
-def _acoustic_score(query: str, row: dict[str, Any]) -> float:
-    score = (_cosine(_query_vector(query), row["demo_embedding"]) + 1.0) / 2.0
-    acoustic = row["acoustic"]
+def _description_score(query: str, row: dict[str, Any]) -> float:
+    """Score the open-audio catalog before materialised MuQ vectors exist."""
+
+    searchable = _catalog_description(row)
+    concepts = (
+        (("安静", "静谧", "quiet"), ("quiet", "calm", "meditative", "soft", "floaty", "lounge")),
+        (("氛围", "空间感", "ambient"), ("ambient", "atmospheric", "floaty", "forest", "lounge")),
+        (("不压抑", "明亮", "希望", "hopeful"), ("hopeful", "warm", "bright", "cool", "groovy")),
+        (("低音", "bass"), ("bass", "bassline")),
+        (("鼓", "节奏", "drum"), ("drum", "percussion", "beat", "fast-paced")),
+        (("温暖", "治愈", "warm"), ("warm", "hopeful", "gentle", "easylistening")),
+        (("摇滚", "metal", "rock"), ("rock", "metal", "guitar")),
+    )
+    matched = 0
+    requested = 0
+    descriptor_hits = 0
+    lowered_query = query.casefold()
+    for triggers, descriptors in concepts:
+        if any(trigger in lowered_query for trigger in triggers):
+            requested += 1
+            current_hits = sum(descriptor in searchable for descriptor in descriptors)
+            descriptor_hits += current_hits
+            if current_hits:
+                matched += 1
+    english_terms = {
+        token for token in re.findall(r"[a-z][a-z0-9-]+", lowered_query) if len(token) > 2
+    }
+    overlap = len(english_terms & set(re.findall(r"[a-z][a-z0-9-]+", searchable)))
+    return min(
+        0.95,
+        0.30
+        + (matched / max(1, requested)) * 0.4
+        + min(descriptor_hits, 7) * 0.035
+        + min(overlap, 2) * 0.05,
+    )
+
+
+def _acoustic_score(query: str, row: dict[str, Any]) -> tuple[float, str]:
+    embedding = row.get("demo_embedding")
+    acoustic = row.get("acoustic")
+    if not isinstance(embedding, list) or not embedding or not isinstance(acoustic, dict):
+        return _description_score(query, row), "catalog_descriptions"
+
+    score = (_cosine(_query_vector(query, len(embedding)), embedding) + 1.0) / 2.0
     if "低音" in query or "bass" in query.casefold():
-        score = (score + acoustic["bass"]) / 2.0
+        score = (score + float(acoustic.get("bass", score))) / 2.0
     if "鼓" in query or "节奏" in query:
-        score = (score + acoustic["percussion"]) / 2.0
+        score = (score + float(acoustic.get("percussion", score))) / 2.0
     if "温暖" in query or "治愈" in query:
-        score = (score + acoustic["warmth"]) / 2.0
+        score = (score + float(acoustic.get("warmth", score))) / 2.0
     if "运动" in query or "高能量" in query:
-        score = (score + acoustic["energy"]) / 2.0
+        score = (score + float(acoustic.get("energy", score))) / 2.0
     if "安静" in query or "睡前" in query:
-        score = (score + (1.0 - acoustic["energy"])) / 2.0
-    return score
+        score = (score + (1.0 - float(acoustic.get("energy", 0.5)))) / 2.0
+    return score, "demo_embedding"
 
 
 def _preference_score(row: dict[str, Any], preference_tags: set[str]) -> float:
     if not preference_tags:
         return 0.0
-    row_tags = set(row["moods"] + row["genres"] + row["scenarios"])
+    row_tags = set(_row_tags(row))
     return len(row_tags & preference_tags) / len(preference_tags)
 
 
-def _reason(row: dict[str, Any], graph_score: float, dense_score: float) -> str:
-    tags = "、".join((row["moods"] + row["genres"] + row["scenarios"])[:3])
+def _reason(row: dict[str, Any], graph_score: float, dense_score: float, dense_source: str) -> str:
+    tags = "、".join(_row_tags(row)[:3]) or "人工描述"
+    if dense_source == "catalog_descriptions":
+        return f"目录标签与人工听感描述共同支持，核心特征为{tags}。"
     if dense_score > graph_score + 0.12:
         return f"听感向量更接近当前描述，并带有{tags}特征。"
     if graph_score > dense_score + 0.12:
@@ -112,12 +258,13 @@ def retrieve(
     top_k: int = 8,
     preference_tags: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return deterministic fused results; only public synthetic data is read."""
+    """Return deterministic fused results; only reviewed public demo data is read."""
     preferences = preference_tags or set()
     scored: list[dict[str, Any]] = []
     for row in load_catalog():
+        audio_source = resolve_audio_source(row)
         graph_score = _graph_score(query, row, plan)
-        dense_score = _acoustic_score(query, row)
+        dense_score, dense_source = _acoustic_score(query, row)
         preference_score = _preference_score(row, preferences)
         base_score = route["graph_weight"] * graph_score + route["dense_weight"] * dense_score
         final_score = min(1.0, base_score * 0.9 + preference_score * 0.1)
@@ -126,15 +273,21 @@ def retrieve(
                 "song_id": row["song_id"],
                 "title": row["title"],
                 "artist": row["artist"],
-                "language": row["language"],
-                "decade": row["decade"],
-                "tags": row["moods"] + row["genres"] + row["scenarios"],
+                "language": _row_language(row),
+                "decade": _row_decade(row),
+                "tags": _row_tags(row),
                 "graph_score": round(graph_score, 3),
                 "dense_score": round(dense_score, 3),
                 "preference_score": round(preference_score, 3),
                 "final_score": round(final_score, 3),
-                "reason": _reason(row, graph_score, dense_score),
-                "audio_available": bool(row.get("audio_available")),
+                "reason": _reason(row, graph_score, dense_score, dense_source),
+                "dense_source": dense_source,
+                "audio_available": bool(audio_source),
+                "audio_source": audio_source,
+                "license": str(row.get("license") or row.get("license_id") or ""),
+                "license_url": str(row.get("license_url") or ""),
+                "attribution": str(row.get("attribution") or ""),
+                "source_url": str(row.get("source_url") or ""),
             }
         )
     return sorted(scored, key=lambda item: (-item["final_score"], item["song_id"]))[:top_k]
