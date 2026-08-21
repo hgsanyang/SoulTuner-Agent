@@ -6,3 +6,6 @@ qwen-vl-utils>=0.0.14
 decord>=0.6.0
 peft>=0.17
 safetensors>=0.5
+# vLLM 0.20.1 in the ROCm 7.2 image requires this floor.  Keeping it explicit
+# prevents ms-swift's install pass from leaving the preinstalled 2.11 runtime.
+pydantic>=2.12.0,<3

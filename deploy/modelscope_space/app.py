@@ -17,6 +17,8 @@ import gradio as gr
 
 from conversation_runtime import recommendation_opening
 from conversation_ui import continue_general_chat, reset_general_chat
+from enrichment_runtime import launch_enrichment_if_requested
+from enrichment_runtime import status_markdown as enrichment_status_markdown
 from graph_runtime import status_markdown as graph_status_markdown
 from hardware import runtime_markdown
 from open_audio_bootstrap import materialize_open_audio
@@ -36,6 +38,7 @@ TITLE = "SoulTuner 智能音乐推荐 Agent"
 PLANNER_STARTUP = launch_local_planner_if_requested()
 OPEN_AUDIO_STARTUP = materialize_open_audio()
 PUBLIC_TRACK_COUNT = int(OPEN_AUDIO_STARTUP.get("tracks") or 0)
+ENRICHMENT_STARTUP = launch_enrichment_if_requested(PUBLIC_TRACK_COUNT)
 EXAMPLES = [
     "外面下暴雨，窝在家里想听氛围感强、安静但不压抑的音乐",
     "我今天心情有点差，想听温暖治愈、但不要太吵的歌",
@@ -198,6 +201,12 @@ def _route_markdown(
     )
 
 
+def _live_data_statuses() -> tuple[str, str]:
+    """Refresh durable Aura/vector progress without rebuilding the interface."""
+
+    return graph_status_markdown(), enrichment_status_markdown()
+
+
 def recommend(
     query: str,
     profile: str,
@@ -335,11 +344,19 @@ def build_app() -> gr.Blocks:
             gr.Markdown(
                 open_audio_startup_markdown(OPEN_AUDIO_STARTUP), elem_classes=["st-system"]
             )
-            gr.Markdown(graph_status_markdown(), elem_classes=["st-system"])
+            graph_status = gr.Markdown(graph_status_markdown(), elem_classes=["st-system"])
+            enrichment_status = gr.Markdown(enrichment_status_markdown(), elem_classes=["st-system"])
         planner_status_timer = gr.Timer(value=5, active=bool(PLANNER_STARTUP["requested"]))
         planner_status_timer.tick(
             live_startup_markdown,
             outputs=planner_status,
+            api_name=False,
+            show_progress="hidden",
+        )
+        data_status_timer = gr.Timer(value=30, active=True)
+        data_status_timer.tick(
+            _live_data_statuses,
+            outputs=[graph_status, enrichment_status],
             api_name=False,
             show_progress="hidden",
         )
