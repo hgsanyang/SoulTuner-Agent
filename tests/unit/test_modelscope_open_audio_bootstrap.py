@@ -52,7 +52,7 @@ def test_materialize_downloads_then_switches_catalog(monkeypatch: pytest.MonkeyP
     def fake_download(command: list[str], *, check: bool, timeout: int) -> None:
         assert command[:3] == ["modelscope", "download", open_audio_bootstrap.DEFAULT_DATASET_ID]
         assert check is True
-        assert timeout == 300
+        assert timeout == 1800
         _write_track(tmp_path)
 
     monkeypatch.setattr(subprocess, "run", fake_download)
@@ -62,6 +62,29 @@ def test_materialize_downloads_then_switches_catalog(monkeypatch: pytest.MonkeyP
     assert status["state"] == "ready"
     assert status["tracks"] == 1
     assert Path(open_audio_bootstrap.os.environ["SOULTUNER_CATALOG_PATH"]) == tmp_path / "catalog.jsonl"
+
+
+def test_materialize_refreshes_even_when_a_valid_cache_exists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_track(tmp_path)
+    monkeypatch.setenv("SOULTUNER_OPEN_AUDIO_DIR", str(tmp_path))
+    monkeypatch.setenv("SOULTUNER_CATALOG_PATH", "")
+    monkeypatch.setenv("SOULTUNER_AUDIO_ROOT", "")
+    called = False
+
+    def fake_download(_command: list[str], *, check: bool, timeout: int) -> None:
+        nonlocal called
+        called = True
+        assert check is True
+        assert timeout == 1800
+
+    monkeypatch.setattr(subprocess, "run", fake_download)
+
+    status = open_audio_bootstrap.materialize_open_audio()
+
+    assert called is True
+    assert status["tracks"] == 1
 
 
 def test_materialize_failure_restores_safe_bundled_catalog(

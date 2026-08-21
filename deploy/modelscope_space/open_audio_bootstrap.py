@@ -73,10 +73,14 @@ def _fallback_to_bundled_catalog() -> dict[str, Any]:
 
 
 def materialize_open_audio() -> dict[str, Any]:
-    """Download the public library once, then reuse the persistent copy.
+    """Refresh the public library manifest, then reuse persistent audio blobs.
 
-    A failed download never prevents the Space from binding its public port; the
-    synthetic catalogue remains available and the failure is visible in logs.
+    ``modelscope download`` is content-addressed and resumes into the durable
+    directory, so checking the remote revision on every fresh process does not
+    download unchanged audio again.  This matters when a small bootstrap bundle
+    has already verified successfully but the published dataset later expands.
+    A failed refresh reuses a valid persistent copy before falling back to the
+    synthetic catalogue.
     """
 
     if os.getenv("SOULTUNER_ENABLE_OPEN_AUDIO", "1").strip() != "1":
@@ -96,13 +100,6 @@ def materialize_open_audio() -> dict[str, Any]:
             flush=True,
         )
         return {"state": "ready", "tracks": len(rows), "root": str(root)}
-    try:
-        tracks = verify_open_audio(catalog, audio_root)
-        print(f"SoulTuner open-audio catalog ready from cache: {tracks} tracks", flush=True)
-        return {"state": "ready", "tracks": tracks, "root": str(root)}
-    except (FileNotFoundError, ValueError, json.JSONDecodeError):
-        pass
-
     dataset_id = os.getenv("SOULTUNER_OPEN_AUDIO_DATASET_ID", DEFAULT_DATASET_ID)
     revision = os.getenv("SOULTUNER_OPEN_AUDIO_REVISION", "master")
     root.mkdir(parents=True, exist_ok=True)
@@ -120,11 +117,23 @@ def materialize_open_audio() -> dict[str, Any]:
         "4",
     ]
     try:
-        subprocess.run(command, check=True, timeout=300)
+        timeout = int(os.getenv("SOULTUNER_OPEN_AUDIO_DOWNLOAD_TIMEOUT", "1800"))
+        subprocess.run(command, check=True, timeout=timeout)
         tracks = verify_open_audio(catalog, audio_root)
     except (OSError, subprocess.SubprocessError, FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
-        print(f"SoulTuner open-audio startup failed; using bundled catalog: {type(exc).__name__}: {exc}", flush=True)
-        return _fallback_to_bundled_catalog()
+        try:
+            tracks = verify_open_audio(catalog, audio_root)
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            print(
+                f"SoulTuner open-audio startup failed; using bundled catalog: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return _fallback_to_bundled_catalog()
+        print(
+            f"SoulTuner open-audio refresh failed; reusing {tracks} cached tracks: {type(exc).__name__}",
+            flush=True,
+        )
+        return {"state": "ready", "tracks": tracks, "root": str(root)}
 
     print(f"SoulTuner open-audio catalog downloaded and verified: {tracks} tracks", flush=True)
     return {"state": "ready", "tracks": tracks, "root": str(root)}
