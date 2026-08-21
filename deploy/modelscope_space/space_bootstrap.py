@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from urllib.request import Request, urlopen
 
 PROFILE_SOULTUNER = "soultuner-v4.2-35b"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1"
+DEFAULT_CHAT_MODEL = "qwen3.6-35b-a3b"
 _planner_process: subprocess.Popen[bytes] | None = None
 _planner_log_path: Path | None = None
 _planner_log_thread: threading.Thread | None = None
@@ -28,11 +30,29 @@ def _uses_local_endpoint(base_url: str) -> bool:
 
 def _endpoint_ready(base_url: str) -> bool:
     endpoint = f"{base_url.rstrip('/')}/models"
-    request = Request(endpoint, headers={"Accept": "application/json"})
+    headers = {"Accept": "application/json"}
+    api_key = (
+        os.getenv("SOULTUNER_PLANNER_API_KEY", "").strip()
+        or os.getenv("SOULTUNER_SERVE_API_KEY", "").strip()
+    )
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = Request(endpoint, headers=headers)
     try:
         with urlopen(request, timeout=1.5) as response:
-            return 200 <= int(response.status) < 300
-    except (HTTPError, URLError, OSError, TimeoutError, ValueError):
+            if not 200 <= int(response.status) < 300:
+                return False
+            body = json.loads(response.read().decode("utf-8"))
+        models = {
+            str(item.get("id"))
+            for item in body.get("data", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        required = {os.getenv("SOULTUNER_PLANNER_MODEL", PROFILE_SOULTUNER)}
+        if os.getenv("SOULTUNER_DUAL_ROLE_MODELS", "0") == "1":
+            required.add(os.getenv("SOULTUNER_CHAT_MODEL", DEFAULT_CHAT_MODEL))
+        return required <= models
+    except (HTTPError, URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError):
         return False
 
 
@@ -131,6 +151,14 @@ def launch_local_planner_if_requested() -> dict[str, Any]:
             "profile": profile,
             "base_url": base_url,
         }
+
+    # ModelScope's Gradio runtime starts ``python app.py`` directly, so the
+    # public Space does not necessarily pass through start_space_amd.sh.  Set
+    # the same dual-role defaults here: one 35B base copy serves prose, while
+    # the named SoulTuner adapter remains the structure-only Planner.
+    os.environ.setdefault("SOULTUNER_DUAL_ROLE_MODELS", "1")
+    os.environ.setdefault("SOULTUNER_CHAT_MODEL", DEFAULT_CHAT_MODEL)
+    os.environ.setdefault("SOULTUNER_CHAT_BASE_URL", base_url)
 
     if _planner_process is not None and _planner_process.poll() is None:
         return {

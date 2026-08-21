@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -134,6 +135,32 @@ def test_local_35b_status_reports_ready_endpoint(monkeypatch) -> None:
     assert "已就绪" in bootstrap.startup_markdown(status)
 
 
+def test_local_endpoint_requires_planner_and_chat_model_ids(monkeypatch) -> None:
+    models = ["soultuner-v4.2-35b"]
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read() -> bytes:
+            return json.dumps({"data": [{"id": model} for model in models]}).encode()
+
+    monkeypatch.setenv("SOULTUNER_DUAL_ROLE_MODELS", "1")
+    monkeypatch.setenv("SOULTUNER_PLANNER_MODEL", "soultuner-v4.2-35b")
+    monkeypatch.setenv("SOULTUNER_CHAT_MODEL", "qwen3.6-35b-a3b")
+    monkeypatch.setattr(bootstrap, "urlopen", lambda *_args, **_kwargs: Response())
+
+    assert bootstrap._endpoint_ready("http://127.0.0.1:8000/v1") is False
+    models.append("qwen3.6-35b-a3b")
+    assert bootstrap._endpoint_ready("http://127.0.0.1:8000/v1") is True
+
+
 def test_local_35b_status_reports_failed_process(monkeypatch) -> None:
     class FailedProcess:
         pid = 42
@@ -175,17 +202,21 @@ def test_amd_requirements_cover_qwen36_runtime() -> None:
     assert "decord>=0.6.0" in requirements
 
 
-def test_amd_launcher_has_opt_in_dual_role_models_and_single_lora_compatibility() -> None:
+def test_amd_launcher_has_dual_role_models_and_single_lora_compatibility() -> None:
     script = (SPACE / "start_amd_35b.sh").read_text(encoding="utf-8")
+    bootstrap_source = (SPACE / "space_bootstrap.py").read_text(encoding="utf-8")
     assert 'default_cache_dir="/mnt/workspace/soultuner/model_cache"' in script
     assert 'SOULTUNER_DUAL_ROLE_MODELS:-0' in script
     assert '--adapters "${SERVED_MODEL_NAME}=${ADAPTER_MODEL_DIR}"' in script
     assert '--served_model_name "${CHAT_MODEL_NAME}"' in script
     assert '--adapters "${ADAPTER_MODEL_DIR}"' in script
     assert '--served_model_name "${SERVED_MODEL_NAME}"' in script
+    assert 'setdefault("SOULTUNER_DUAL_ROLE_MODELS", "1")' in bootstrap_source
+    assert 'setdefault("SOULTUNER_CHAT_MODEL", DEFAULT_CHAT_MODEL)' in bootstrap_source
+    assert "required <= models" in bootstrap_source
 
 
-def test_full_space_requires_both_vllm_roles_without_changing_gradio_default() -> None:
+def test_full_space_requires_both_vllm_roles() -> None:
     full_script = (
         SPACE.parent / "modelscope_full" / "start_full_space.sh"
     ).read_text(encoding="utf-8")
