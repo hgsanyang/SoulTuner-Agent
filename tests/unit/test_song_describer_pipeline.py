@@ -246,6 +246,19 @@ def test_manifest_row_maps_to_existing_ingest_contract(tmp_path):
     assert song["audio_license"]["id"] == "CC-BY-NC-SA-3.0"
 
 
+def test_public_catalog_cover_is_preserved_in_ingest_contract(tmp_path):
+    metadata = _write_fixture(tmp_path)
+    audio_root = tmp_path / "audio"
+    (audio_root / "00").mkdir(parents=True)
+    (audio_root / "00" / "100.mp3").write_bytes(b"real-enough-for-contract-test")
+    row = build_manifest_rows(metadata, audio_root=audio_root, subset="validated")[0]
+    row["cover_url"] = "https://usercontent.jamendo.com/cover.jpg"
+
+    song = manifest_row_to_ingest_song(row, tmp_path)
+
+    assert song["cover_url"] == "https://usercontent.jamendo.com/cover.jpg"
+
+
 def test_load_ingest_songs_fails_closed_on_audio_tampering(tmp_path):
     metadata = _write_fixture(tmp_path)
     audio_root = tmp_path / "audio"

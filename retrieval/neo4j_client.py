@@ -26,6 +26,7 @@ class Neo4jClient:
         self._uri = os.getenv("NEO4J_URI", "bolt://127.0.0.1:7687")
         self._user = os.getenv("NEO4J_USER", "neo4j")
         self._password = os.getenv("NEO4J_PASSWORD", "12345678")
+        self._database = os.getenv("NEO4J_DATABASE", "").strip() or None
         self._connect()
 
     def _connect(self, *, force: bool = False) -> bool:
@@ -97,7 +98,7 @@ class Neo4jClient:
                 return []
             driver = self.driver
             try:
-                with driver.session() as session:
+                with driver.session(database=self._database) as session:
                     result = session.run(query, parameters)
                     return [record.data() for record in result]
             except Exception as exc:

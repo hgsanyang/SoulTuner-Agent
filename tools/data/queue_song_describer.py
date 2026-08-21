@@ -55,7 +55,7 @@ def manifest_row_to_ingest_song(row: Mapping[str, Any], cache_dir: Path) -> dict
         "file_basename": Path(relpath).stem,
         "audio_path": str(audio_path.resolve()),
         "audio_url": f"/static/mtg_audio/{relpath}",
-        "cover_url": "",
+        "cover_url": str(row.get("cover_url") or row.get("cover_fallback_path") or ""),
         "lrc_url": "",
         "source": "song_describer",
         "platform": "song_describer",

@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+try:
+    from .graph_runtime import merge_graph_overlay
+except ImportError:  # ModelScope uploads this directory as a flat application.
+    from graph_runtime import merge_graph_overlay
+
 
 DATA = Path(__file__).resolve().parent / "data" / "catalog.jsonl"
 _AUDIO_SUFFIXES = {".mp3", ".flac", ".ogg", ".opus", ".wav", ".m4a", ".aiff"}
@@ -44,7 +49,7 @@ def _load_catalog(path: str) -> tuple[dict[str, Any], ...]:
 
 
 def load_catalog() -> tuple[dict[str, Any], ...]:
-    return _load_catalog(str(catalog_path()))
+    return merge_graph_overlay(_load_catalog(str(catalog_path())))
 
 
 def _string_list(row: dict[str, Any], *keys: str) -> list[str]:
@@ -277,6 +282,8 @@ def retrieve(
                 "decade": _row_decade(row),
                 "tags": _row_tags(row),
                 "graph_score": round(graph_score, 3),
+                "graph_backend": str(row.get("graph_backend") or "local_catalog"),
+                "enrichment_status": str(row.get("enrichment_status") or "pending"),
                 "dense_score": round(dense_score, 3),
                 "preference_score": round(preference_score, 3),
                 "final_score": round(final_score, 3),

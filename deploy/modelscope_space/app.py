@@ -17,6 +17,7 @@ import gradio as gr
 
 from conversation_runtime import recommendation_opening
 from conversation_ui import continue_general_chat, reset_general_chat
+from graph_runtime import status_markdown as graph_status_markdown
 from hardware import runtime_markdown
 from open_audio_bootstrap import materialize_open_audio
 from open_audio_bootstrap import startup_markdown as open_audio_startup_markdown
@@ -334,6 +335,7 @@ def build_app() -> gr.Blocks:
             gr.Markdown(
                 open_audio_startup_markdown(OPEN_AUDIO_STARTUP), elem_classes=["st-system"]
             )
+            gr.Markdown(graph_status_markdown(), elem_classes=["st-system"])
         planner_status_timer = gr.Timer(value=5, active=bool(PLANNER_STARTUP["requested"]))
         planner_status_timer.tick(
             live_startup_markdown,

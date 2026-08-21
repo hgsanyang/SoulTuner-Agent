@@ -40,7 +40,8 @@ class _Driver:
     def verify_connectivity(self) -> None:
         return None
 
-    def session(self) -> _Session:
+    def session(self, *, database: str | None = None) -> _Session:
+        self.database = database
         return self._session
 
     def close(self) -> None:
@@ -107,3 +108,16 @@ def test_non_retryable_query_error_is_not_replayed(monkeypatch) -> None:
     assert client.execute_query("INVALID") == []
     assert calls == 1
     assert driver.closed is False
+
+
+def test_explicit_database_is_used_for_aura_sessions(monkeypatch) -> None:
+    import neo4j
+
+    _reset_singleton(monkeypatch)
+    monkeypatch.setenv("NEO4J_DATABASE", "55e3d095")
+    driver = _Driver(_Session([{"ok": True}]))
+    monkeypatch.setattr(neo4j.GraphDatabase, "driver", lambda *_args, **_kwargs: driver)
+
+    client = Neo4jClient()
+    assert client.execute_query("RETURN true AS ok") == [{"ok": True}]
+    assert driver.database == "55e3d095"
