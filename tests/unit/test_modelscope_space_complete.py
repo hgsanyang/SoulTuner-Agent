@@ -38,9 +38,12 @@ FULL_BOOTSTRAP_SPEC.loader.exec_module(full_bootstrap)
 
 def test_space_card_text_has_theme_independent_contrast() -> None:
     source = (SPACE / "app.py").read_text(encoding="utf-8")
-    assert ".st-card h3" in source
-    assert "color: #102a20 !important" in source
-    assert "color: #315647 !important" in source
+    renderer = (SPACE / "ui_render.py").read_text(encoding="utf-8")
+    assert ".st-track-heading h3" in source
+    assert "color: #f3f9f6" in source
+    assert "background: #0d151f" in source
+    assert 'class="st-cover"' in renderer
+    assert 'class="st-play-state' in renderer
 
 
 def test_public_catalog_and_hybrid_retrieval() -> None:
@@ -221,6 +224,11 @@ def test_amd_space_materialises_and_verifies_public_open_audio_in_parallel() -> 
     assert 'prepare_open_audio >"${open_audio_log}" 2>&1 &' in script
     assert "audio_sha256" in script
     assert "candidate.relative_to(root)" in script
+    assert 'SOULTUNER_DUAL_ROLE_MODELS="${SOULTUNER_DUAL_ROLE_MODELS:-1}"' in script
+    assert 'SOULTUNER_CHAT_MODEL="${SOULTUNER_CHAT_MODEL:-qwen3.6-35b-a3b}"' in script
+    assert 'required.add(os.environ["SOULTUNER_CHAT_MODEL"])' in script
+    assert "required <= models" in script
+    assert "SOULTUNER_OPEN_AUDIO_ALREADY_VERIFIED=1" in script
 
 
 def test_released_35b_legacy_payload_is_adapted_without_fallback() -> None:

@@ -80,3 +80,23 @@ def test_materialize_failure_restores_safe_bundled_catalog(
 
     assert status == {"state": "fallback", "tracks": 0}
     assert Path(open_audio_bootstrap.os.environ["SOULTUNER_CATALOG_PATH"]).is_file()
+
+
+def test_materialize_reuses_startup_verified_catalog_without_second_audio_hash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_track(tmp_path)
+    monkeypatch.setenv("SOULTUNER_OPEN_AUDIO_DIR", str(tmp_path))
+    monkeypatch.setenv("SOULTUNER_CATALOG_PATH", "")
+    monkeypatch.setenv("SOULTUNER_AUDIO_ROOT", "")
+    monkeypatch.setenv("SOULTUNER_OPEN_AUDIO_ALREADY_VERIFIED", "1")
+    monkeypatch.setattr(
+        open_audio_bootstrap,
+        "verify_open_audio",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("duplicate hash pass")),
+    )
+
+    status = open_audio_bootstrap.materialize_open_audio()
+
+    assert status["state"] == "ready"
+    assert status["tracks"] == 1

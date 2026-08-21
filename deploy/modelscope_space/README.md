@@ -29,9 +29,10 @@ SoulTuner 是一个自然语言音乐推荐 Agent。用户用一句话描述想�
 4. Dense 处理听感、氛围、音色与参考歌曲相似性；
 5. 结果融合、推荐理由与受控输出；
 6. 喜欢、跳过和不喜欢反馈写入当前会话记忆；
-7. 同一应用可切换公开演示、远程 API 和 AMD MI308X 本地 35B 三种 Planner 档位。
+7. 同一 35B 基座同时提供两个受控角色：SoulTuner LoRA 只负责 Planner，基座模型负责自然语言对话、推荐开场白和解释；
+8. 支持 706 首公开曲目的封面展示、检索、播放、反馈与会话记忆。
 
-公开演示使用 `SoulTuner-Open-Audio-Demo` 中 5 首逐曲核验的 Song Describer/Jamendo 原始音频，不包含个人数据、训练集或 sealed 评测答案。每首歌均保留上游地址、归属文本、许可证和 SHA-256；其中的 NoDerivatives 文件只按原始字节播放，不做转码、剪辑或重封装。
+公开演示使用 `SoulTuner-Open-Audio-Demo` 中 706 首 Song Describer/Jamendo 原始音频，不包含个人数据、训练集或 sealed 评测答案。每首歌均带原始封面地址、可播放音频、上游页面、归属文本、许可证和 SHA-256。首次启动会将数据集物化到持久盘，后续启动直接复用并校验现有文件。
 
 ## 一键运行
 
@@ -59,9 +60,8 @@ python app.py
 
 ## AMD MI308X / ROCm
 
-AMD MI308X 并不是创建创空间后自动可用。完整顺序是：完成 AMD 开发者注册 →
-申请加入 `AMD_Dev` 组织 → 审核通过 → 在现有 SoulTuner 创空间的部署设置中选择
-AMD MI308X 和对应 ROCm 镜像。在组织审核完成前，继续保留 CPU 档位即可。
+当前公开创空间使用 AMD MI308X 192 GB 与 ROCm 镜像。Gradio 会先绑定公开端口，
+随后在后台复用持久盘中的 35B 基座、LoRA 和公开音频；只有首次落盘或缓存缺失时才下载。
 
 获批 AMD GPU 资源后，在对应 ROCm 镜像中把
 `SOULTUNER_MODEL_PROFILE` 设为 `soultuner-v4.2-35b`。ModelScope 的 Gradio
@@ -77,8 +77,9 @@ bash start_space_amd.sh
 ```
 
 这个入口会按顺序完成 ROCm/HIP 预检、基座与 LoRA 下载、可用时校验
-`SHA256SUMS`、启动本地 OpenAI 兼容端点、等待 `/v1/models` 健康，然后启动现有
-Gradio 界面。任何关键步骤失败都会停止，不会悄悄退回 CPU 承载 35B。
+`SHA256SUMS`，再启动同一个本地 OpenAI 兼容端点。端点暴露两个模型 ID：
+`soultuner-v4.2-35b` 负责结构化 Planner，`qwen3.6-35b-a3b` 负责自然语言对话与解释。
+启动脚本会等待两个角色都通过 `/v1/models` 健康检查后再宣布 35B 就绪。
 
 创空间自动启动路径会把同样的端点流程放到后台，并将日志写到
 `soultuner-35b-endpoint.log`。若 ROCm 镜像缺少 `vllm`，启动脚本会在下载模型前
@@ -103,6 +104,8 @@ SOULTUNER_PLANNER_BASE_URL=http://127.0.0.1:8000/v1 python app.py
 | `SOULTUNER_MODEL_PROFILE` | `soultuner-v4.2-35b` | 默认选择训练后的 Planner |
 | `SOULTUNER_BASE_MODEL_ID` | `Qwen/Qwen3.6-35B-A3B` | 官方基座，不重复上传到项目仓库 |
 | `SOULTUNER_ADAPTER_MODEL_ID` | `hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA` | 公开 LoRA 仓库 |
+| `SOULTUNER_DUAL_ROLE_MODELS` | `1` | 同一 35B 基座同时服务 Planner LoRA 与自然语言基座角色 |
+| `SOULTUNER_CHAT_MODEL` | `qwen3.6-35b-a3b` | 推荐开场白、解释与“聊音乐”使用的模型 ID |
 | `SOULTUNER_MODEL_CACHE` | 平台持久化目录 | 避免每次休眠后重复下载 72 GB 基座 |
 | `SOULTUNER_INFER_BACKEND` | `vllm` | 首次部署沿用当前启动方式，优化后再重新评测 |
 
@@ -115,7 +118,7 @@ ModelScope Access Token 仅在模型仍为私有或受限下载时作为“密�
 ### 挂接公开授权音频目录
 
 Gradio 稳定版不需要切换为 Docker 也能播放真实音频。`start_space_amd.sh`
-会在 35B 基座下载的同时下载并校验公开音频数据集，默认物化到持久盘。也可以显式配置：
+会在 35B 基座下载的同时下载并校验 706 首公开音频，默认物化到持久盘；后续休眠唤醒不会重新下载完整曲库。也可以显式配置：
 
 ```bash
 SOULTUNER_CATALOG_PATH=/mnt/workspace/soultuner/open_audio/catalog.jsonl
@@ -124,8 +127,8 @@ SOULTUNER_AUDIO_ROOT=/mnt/workspace/soultuner/open_audio/audio
 
 目录行可使用 `audio_relpath`（推荐）、`audio_path`、`audio_url` 或 `preview_url`。
 本地文件必须位于 `SOULTUNER_AUDIO_ROOT` 内，路径穿越和不支持的扩展名会被拒绝；
-只有这个目录会加入 Gradio 文件白名单。检索后页面会显示音频播放器，选择另一首歌曲
-会同步切换试听。音频来源、许可证、校验和应保留在独立数据集清单中。
+只有这个目录会加入 Gradio 文件白名单。检索后页面会显示原始封面和音频播放器，选择另一首歌曲
+会同步切换试听。音频来源、许可证、校验和保留在独立数据集清单中。
 
 ### 先用训练实例完成推理实验
 

@@ -49,6 +49,8 @@ def test_open_audio_schema_is_retrievable_with_visible_provenance(tmp_path, monk
         "license_url": "https://creativecommons.org/licenses/by-nc-nd/2.5/",
         "attribution": "Pan by Tom La Meche",
         "source_url": "https://example.test/pan",
+        "cover_url": "https://images.example.test/pan.jpg",
+        "cover_attribution": "Pan cover from the source catalog",
     }
     monkeypatch.setattr(retrieval_demo, "load_catalog", lambda: (row,))
     plan = {
@@ -66,3 +68,5 @@ def test_open_audio_schema_is_retrievable_with_visible_provenance(tmp_path, monk
     assert results[0]["dense_source"] == "catalog_descriptions"
     assert results[0]["license"] == "CC-BY-NC-ND-2.5"
     assert results[0]["attribution"] == "Pan by Tom La Meche"
+    assert results[0]["cover_url"] == "https://images.example.test/pan.jpg"
+    assert results[0]["cover_attribution"] == "Pan cover from the source catalog"

@@ -7,16 +7,16 @@ retrieval, policy guard, fusion, memory and UI keep the same contract.
 
 from __future__ import annotations
 
-import html
 import json
 import os
 import time
 from collections import Counter
 from typing import Any
-from urllib.parse import urlparse
 
 import gradio as gr
 
+from conversation_runtime import recommendation_opening
+from conversation_ui import continue_general_chat, reset_general_chat
 from hardware import runtime_markdown
 from open_audio_bootstrap import materialize_open_audio
 from open_audio_bootstrap import startup_markdown as open_audio_startup_markdown
@@ -28,54 +28,114 @@ from space_bootstrap import (
     live_startup_markdown,
     startup_markdown,
 )
+from ui_render import render_conversation, render_results
 
 
 TITLE = "SoulTuner 智能音乐推荐 Agent"
 PLANNER_STARTUP = launch_local_planner_if_requested()
 OPEN_AUDIO_STARTUP = materialize_open_audio()
+PUBLIC_TRACK_COUNT = int(OPEN_AUDIO_STARTUP.get("tracks") or 0)
 EXAMPLES = [
+    "外面下暴雨，窝在家里想听氛围感强、安静但不压抑的音乐",
     "我今天心情有点差，想听温暖治愈、但不要太吵的歌",
     "想要低音更重、鼓点清晰，适合夜跑的音乐",
     "给我一些 90 年代英文摇滚，整体不要太沉重",
     "刚才那种氛围很好，再来一组更安静、更有空间感的",
-    "周末小聚想听轻松明亮的中文流行",
 ]
 
 
 CSS = """
-:root { --st-green: #12a66a; --st-dark: #071a13; --st-soft: #eaf8f1; }
-.gradio-container { max-width: 1220px !important; margin: auto !important; }
-.st-hero { padding: 30px 34px; border-radius: 24px; color: white;
-  background: radial-gradient(circle at 85% 10%, #2ac784 0, transparent 32%),
-              linear-gradient(135deg, #071a13 0%, #0c402d 58%, #0f7650 100%);
-  box-shadow: 0 18px 60px rgba(6, 54, 37, .22); margin-bottom: 18px; }
-.st-hero h1 { font-size: 40px; margin: 0 0 8px; letter-spacing: -.5px; }
-.st-hero p { max-width: 820px; opacity: .9; font-size: 16px; line-height: 1.8; }
-.st-chip { display: inline-block; padding: 6px 12px; border: 1px solid rgba(255,255,255,.3);
-  border-radius: 999px; margin: 8px 8px 0 0; font-size: 13px; }
-.st-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.st-card { padding: 18px; border-radius: 18px; border: 1px solid #d9eee4;
-  background: linear-gradient(145deg, #ffffff, #f4fbf7); color: #102a20 !important;
-  box-shadow: 0 8px 30px rgba(7,50,35,.07); }
-.st-rank { width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 10px;
-  background: #0d8d5d; color: white !important; font-weight: 700; margin-right: 9px; }
-.st-card h3 { display: inline; color: #102a20 !important; font-size: 17px; font-weight: 750; }
-.st-meta { color: #405f52 !important; font-size: 13px; margin: 9px 0; }
-.st-tag { display: inline-block; padding: 3px 8px; margin: 2px; border-radius: 999px;
-  background: #e2f7ed; color: #096743 !important; font-size: 12px; }
-.st-reason { color: #1d342a !important; line-height: 1.65; font-size: 14px; min-height: 45px; }
-.st-scores { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 11px;
-  color: #315647 !important; font-size: 12px; }
-.st-score { padding: 4px 8px; border-radius: 8px; background: #f8fcfa;
-  border: 1px solid #bcd9cc; color: #315647 !important; font-weight: 600; }
-.st-audio { margin-top: 12px; color: #536f62 !important; font-size: 12px; }
-.st-empty { padding: 48px 24px; text-align: center; border-radius: 18px; color: #60756b;
-  border: 1px dashed #b7d9c8; background: #f7fcf9; }
+:root { --st-green: #24d184; --st-green-2: #11a76a; --st-ink: #eef6f2;
+  --st-muted: #92a49d; --st-panel: rgba(16, 24, 34, .92); --st-line: rgba(255,255,255,.09); }
+html, body, .gradio-container { background: #080d15 !important; color: var(--st-ink) !important; overflow-x: hidden !important; }
+body { background-image: radial-gradient(circle at 12% 18%, rgba(36,209,132,.08), transparent 24%),
+  radial-gradient(circle at 84% 5%, rgba(39,121,255,.07), transparent 26%) !important; }
+.gradio-container { width: 100% !important; max-width: 1460px !important; box-sizing: border-box !important;
+  margin: auto !important; padding: 18px 24px 80px !important; }
+.contain, .panel, .block { border-color: var(--st-line) !important; }
+.st-hero { position: relative; overflow: hidden; padding: 26px 30px; border-radius: 24px;
+  border: 1px solid rgba(56,232,154,.2); color: white;
+  background: radial-gradient(circle at 88% 8%, rgba(43,221,139,.82), transparent 30%),
+    linear-gradient(118deg, #073323 0%, #0b5b3b 54%, #0d8e58 100%);
+  box-shadow: 0 22px 70px rgba(0,0,0,.3); margin-bottom: 12px; }
+.st-hero:after { content: ""; position: absolute; inset: 0; opacity: .22; pointer-events: none;
+  background-image: radial-gradient(#fff 1px, transparent 1px); background-size: 36px 36px; }
+.st-hero h1 { position: relative; z-index: 1; font-size: clamp(34px, 4vw, 52px); margin: 0 0 4px;
+  letter-spacing: -1.8px; font-weight: 850; }
+.st-hero p { position: relative; z-index: 1; max-width: 860px; opacity: .9; margin: 0;
+  font-size: 15px; line-height: 1.7; }
+.st-hero-badges { position: relative; z-index: 1; margin-top: 14px; }
+.st-chip { display: inline-block; padding: 6px 11px; border: 1px solid rgba(255,255,255,.3);
+  border-radius: 999px; margin: 4px 6px 0 0; font-size: 12px; background: rgba(2,17,12,.2); }
+.st-system { margin: 8px 0 14px !important; padding: 10px 14px !important; border-radius: 14px !important;
+  background: rgba(14,22,31,.82) !important; border: 1px solid var(--st-line) !important; }
+.st-system p { margin: 2px 0 !important; color: #b9c7c1 !important; font-size: 12px !important; }
+.st-tabs > .tab-nav { border-bottom: 1px solid var(--st-line) !important; }
+.st-shell { width: 100% !important; max-width: 100% !important; gap: 14px !important; align-items: stretch !important; }
+.st-pane { min-width: 0 !important; padding: 16px !important; border-radius: 18px !important;
+  border: 1px solid var(--st-line) !important; background: var(--st-panel) !important;
+  box-shadow: 0 16px 42px rgba(0,0,0,.18); }
+.st-section-title { display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; }
+.st-section-title h2 { margin: 0; color: #f5fbf8; font-size: 17px; }
+.st-kicker { color: var(--st-green); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.st-conversation { min-height: 286px; padding: 6px 2px 14px; display: flex; flex-direction: column; gap: 14px; }
+.st-assistant-row, .st-user-row { display: flex; gap: 10px; align-items: flex-start; }
+.st-user-row { justify-content: flex-end; }
+.st-avatar { width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
+  flex: 0 0 auto; color: #04150e; background: linear-gradient(135deg,#27df8e,#1caf70); font-weight: 900; }
+.st-bubble { max-width: 88%; border-radius: 16px; padding: 13px 15px; line-height: 1.65; font-size: 14px; }
+.st-bubble p { margin: 5px 0 0; color: #bac8c2; }
+.st-bubble .st-understanding { color: #7f938a; font-size: 11px; }
+.st-assistant { background: #111c27; border: 1px solid rgba(255,255,255,.08); color: #edf7f2; }
+.st-user { background: linear-gradient(135deg,#146744,#0f4f36); border: 1px solid rgba(71,238,163,.25); }
+.st-guide-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 12px; }
+.st-guide-grid span { padding: 7px 9px; border-radius: 10px; color: #b8c9c1; background: rgba(255,255,255,.04); font-size: 12px; }
+.st-route-line { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.st-route-line span { padding: 3px 7px; border-radius: 999px; color: #84e9ba; background: rgba(36,209,132,.09);
+  border: 1px solid rgba(36,209,132,.16); font-size: 10px; }
+.st-input textarea { background: #151f2b !important; color: #eef7f3 !important; border-radius: 14px !important; }
+.st-chatbot { min-height: 292px !important; border-radius: 15px !important; background: #0c141d !important;
+  border: 1px solid var(--st-line) !important; }
+.st-chat-status p { color: #78d9a9 !important; font-size: 11px !important; margin: 4px 0 !important; }
+.st-primary button { min-height: 44px !important; border: 0 !important; border-radius: 13px !important;
+  color: #03150e !important; font-weight: 850 !important; background: linear-gradient(90deg,#19b970,#2add91) !important; }
+.st-grid { display: grid; grid-template-columns: 1fr; gap: 8px; max-height: 650px; overflow-y: auto; padding-right: 4px; }
+.st-card { display: grid; grid-template-columns: 62px minmax(0,1fr) 64px; gap: 11px; align-items: center;
+  padding: 10px; border-radius: 15px; border: 1px solid var(--st-line); background: #0d151f; color: #eaf4ef;
+  transition: border-color .18s ease, transform .18s ease, background .18s ease; }
+.st-card:hover { transform: translateY(-1px); border-color: rgba(42,221,145,.35); background: #101b26; }
+.st-cover { width: 62px; height: 62px; border-radius: 12px; overflow: hidden; display: grid; place-items: center;
+  color: rgba(255,255,255,.9); font-size: 24px; font-weight: 900; background: linear-gradient(145deg,#215b47,#132d28); }
+.st-cover img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.st-cover-0 { background: linear-gradient(145deg,#205b4a,#0b3028); }.st-cover-1 { background: linear-gradient(145deg,#31527f,#182844); }
+.st-cover-2 { background: linear-gradient(145deg,#76533a,#312316); }.st-cover-3 { background: linear-gradient(145deg,#603d71,#2a1835); }
+.st-cover-4 { background: linear-gradient(145deg,#566a35,#28341a); }
+.st-track-main { min-width: 0; }.st-track-heading { display: flex; gap: 8px; align-items: flex-start; }
+.st-rank { color: #64746e; font-size: 10px; font-weight: 800; padding-top: 3px; }
+.st-track-heading h3 { color: #f3f9f6; font-size: 14px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-track-heading p { color: #879a92; font-size: 11px; margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-track-tags { margin: 6px 0 4px; white-space: nowrap; overflow: hidden; }.st-tag { display: inline-block; padding: 2px 6px;
+  margin-right: 4px; border-radius: 999px; background: rgba(36,209,132,.08); color: #7bdcac; font-size: 9px; }
+.st-reason { color: #aab9b3; line-height: 1.45; font-size: 10px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-provenance { margin-top: 3px; color: #62736c; font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-provenance a { color: #6eaf91 !important; text-decoration: none; }.st-track-side { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
+.st-match { color: #e7f7ef; font-size: 15px; font-weight: 800; }.st-match small { display: block; color: #61736b; font-size: 8px; text-align: right; }
+.st-play-state { padding: 3px 6px; border-radius: 999px; color: #778880; background: rgba(255,255,255,.04); font-size: 8px; white-space: nowrap; }
+.st-play-state.is-ready { color: #65dea3; background: rgba(36,209,132,.1); }
+.st-empty { min-height: 340px; padding: 52px 26px; text-align: center; border-radius: 16px; color: #81928b;
+  border: 1px dashed rgba(255,255,255,.12); background: #0c141d; display: grid; place-content: center; }
+.st-empty span { color: var(--st-green); font-size: 30px; }.st-empty b { color: #dce9e3; margin-top: 8px; }.st-empty p { max-width: 360px; font-size: 12px; }
+.st-player, .st-feedback { margin-top: 10px !important; padding: 10px !important; border-radius: 14px !important;
+  max-width: 100% !important; overflow: hidden !important; box-sizing: border-box !important;
+  background: #0c141d !important; border: 1px solid var(--st-line) !important; }
 .st-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
-.st-flow div { padding: 16px 12px; border-radius: 14px; background: #edf9f3; border: 1px solid #d8eee3;
-  text-align: center; font-weight: 600; color: #125d42; }
-@media (max-width: 760px) { .st-grid { grid-template-columns: 1fr; } .st-flow { grid-template-columns: 1fr 1fr; }
-  .st-hero h1 { font-size: 31px; } }
+.st-flow div { padding: 14px 10px; border-radius: 12px; background: #111c27; border: 1px solid var(--st-line);
+  text-align: center; font-weight: 650; color: #77d7aa; }
+@media (max-width: 980px) { .st-shell { flex-direction: column !important; } .st-grid { max-height: none; }
+  .st-conversation { min-height: auto; }.st-empty { min-height: 240px; } }
+@media (max-width: 620px) { .gradio-container { padding: 10px 10px 70px !important; }.st-hero { padding: 22px 20px; }
+  .st-card { grid-template-columns: 52px minmax(0,1fr); }.st-cover { width: 52px; height: 52px; }.st-track-side { display: none; }
+  .st-guide-grid, .st-flow { grid-template-columns: 1fr 1fr; } }
 """
 
 
@@ -110,55 +170,30 @@ def memory_markdown(memory: dict[str, Any] | None) -> str:
     )
 
 
-def _safe_web_href(value: Any) -> str:
-    text = str(value or "").strip()
-    parsed = urlparse(text)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return html.escape(text, quote=True)
-    return ""
+_render_results = render_results
 
 
-def _render_results(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return '<div class="st-empty">输入一句话，SoulTuner 会生成检索计划并返回推荐。</div>'
-    cards: list[str] = []
-    for index, row in enumerate(rows, start=1):
-        tags = "".join(
-            f'<span class="st-tag">{html.escape(str(tag))}</span>' for tag in row["tags"][:5]
-        )
-        audio_text = "可播放公开试听" if row["audio_available"] else "当前曲目暂无可播放的授权音频"
-        attribution = html.escape(str(row.get("attribution") or ""))
-        licence = html.escape(str(row.get("license") or "逐曲许可证"))
-        licence_url = _safe_web_href(row.get("license_url"))
-        source_url = _safe_web_href(row.get("source_url"))
-        licence_html = f'<a href="{licence_url}" target="_blank" rel="noopener">{licence}</a>' if licence_url else licence
-        source_html = f'<a href="{source_url}" target="_blank" rel="noopener">上游曲目</a>' if source_url else ""
-        provenance = " · ".join(part for part in (attribution, licence_html, source_html) if part)
-        cards.append(
-            '<article class="st-card">'
-            f'<span class="st-rank">{index}</span><h3>{html.escape(row["title"])}</h3>'
-            f'<div class="st-meta">{html.escape(row["artist"])} · {html.escape(row["language"])} · '
-            f'{row["decade"]}s · {html.escape(row["song_id"])}</div>'
-            f'<div>{tags}</div><p class="st-reason">{html.escape(row["reason"])}</p>'
-            '<div class="st-scores">'
-            f'<span class="st-score">融合 {row["final_score"]:.3f}</span>'
-            f'<span class="st-score">Graph {row["graph_score"]:.3f}</span>'
-            f'<span class="st-score">Dense {row["dense_score"]:.3f}</span>'
-            f'<span class="st-score">偏好 {row["preference_score"]:.3f}</span>'
-            f'</div><div class="st-audio">♫ {audio_text}</div>'
-            f'<div class="st-meta">{provenance}</div></article>'
-        )
-    return f'<section class="st-grid">{"".join(cards)}</section>'
-
-
-def _route_markdown(route: dict[str, Any], plan: dict[str, Any], status: str, elapsed: float) -> str:
-    policy = plan["lane_policy"]
-    reason = plan["evidence"]["brief_reason"]
-    return (
-        f"**检索策略：{route['profile']}** · Graph `{policy['graph']}` · "
-        f"Dense `{policy['dense']}` · Web `{policy['web']}`  \n"
-        f"{reason}  \n"
-        f"运行状态：{status} · 端到端 {elapsed:.2f} 秒"
+def _route_markdown(
+    query: str,
+    route: dict[str, Any],
+    plan: dict[str, Any],
+    status: str,
+    elapsed: float,
+    opening: str = "",
+    conversation_status: str = "",
+    result_count: int = 0,
+) -> str:
+    display_status = status
+    if conversation_status:
+        display_status = f"{status} · 自然语言 {conversation_status}"
+    return render_conversation(
+        query=query,
+        plan=plan,
+        route=route,
+        status=display_status,
+        opening=opening,
+        elapsed=elapsed,
+        result_count=result_count,
     )
 
 
@@ -172,7 +207,7 @@ def recommend(
     if not clean_query:
         empty = _render_results([])
         return (
-            "请输入一句音乐需求。",
+            render_conversation(),
             empty,
             [],
             {},
@@ -191,6 +226,12 @@ def recommend(
         top_k=int(top_k),
         preference_tags=_preference_tags(memory),
     )
+    opening, conversation_status = recommendation_opening(
+        clean_query,
+        plan,
+        rows,
+        memory,
+    )
     elapsed = time.perf_counter() - started
     table = [
         [
@@ -205,7 +246,16 @@ def recommend(
     ]
     choices = [(f"{row['title']} — {row['artist']}", row["song_id"]) for row in rows]
     return (
-        _route_markdown(route, plan, status, elapsed),
+        _route_markdown(
+            clean_query,
+            route,
+            plan,
+            status,
+            elapsed,
+            opening,
+            conversation_status,
+            len(rows),
+        ),
         _render_results(rows),
         table,
         plan,
@@ -265,18 +315,25 @@ def build_app() -> gr.Blocks:
             """
             <section class="st-hero">
               <h1>SoulTuner Agent</h1>
-              <p>用一句普通的话描述你想听什么。系统会规划 Graph / Dense / Web 的职责，
-              在受控目录中融合召回结果，并通过会话反馈逐步理解你的偏好。</p>
-              <span class="st-chip">35B Music Planner</span>
-              <span class="st-chip">Graph + Dense</span>
-              <span class="st-chip">Memory & Feedback</span>
-              <span class="st-chip">AMD ROCm Ready</span>
+              <p>把场景、情绪和声音偏好说给我听。35B 会把自然对话与可执行检索计划衔接起来，
+              再从开放授权目录中组织可试听推荐，并用反馈记住你这一轮的取舍。</p>
+              <div class="st-hero-badges">
+                <span class="st-chip">35B Planner + Conversation</span>
+                <span class="st-chip">Graph + Dense</span>
+                <span class="st-chip">Open Audio</span>
+                <span class="st-chip">AMD ROCm</span>
+              </div>
             </section>
             """
         )
-        gr.Markdown(runtime_markdown())
-        planner_status = gr.Markdown(startup_markdown(PLANNER_STARTUP))
-        gr.Markdown(open_audio_startup_markdown(OPEN_AUDIO_STARTUP))
+        with gr.Row():
+            gr.Markdown(runtime_markdown(), elem_classes=["st-system"])
+            planner_status = gr.Markdown(
+                startup_markdown(PLANNER_STARTUP), elem_classes=["st-system"]
+            )
+            gr.Markdown(
+                open_audio_startup_markdown(OPEN_AUDIO_STARTUP), elem_classes=["st-system"]
+            )
         planner_status_timer = gr.Timer(value=5, active=bool(PLANNER_STARTUP["requested"]))
         planner_status_timer.tick(
             live_startup_markdown,
@@ -285,39 +342,78 @@ def build_app() -> gr.Blocks:
             show_progress="hidden",
         )
 
-        with gr.Tabs():
+        with gr.Tabs(elem_classes=["st-tabs"]):
             with gr.Tab("发现音乐"):
-                with gr.Row():
-                    with gr.Column(scale=7):
-                        query = gr.Textbox(
-                            label="现在想听什么？",
-                            placeholder="例如：我今天心情有点差，想听温暖治愈、但不要太吵的歌",
-                            lines=3,
+                with gr.Row(elem_classes=["st-shell"]):
+                    with gr.Column(scale=6, elem_classes=["st-pane"]):
+                        gr.HTML(
+                            '<div class="st-section-title"><div><span class="st-kicker">Conversation</span>'
+                            '<h2>对话记录</h2></div><span class="st-kicker">会话级记忆</span></div>'
                         )
-                    with gr.Column(scale=3):
-                        profile = gr.Dropdown(
-                            choices=profile_choices(),
-                            value=default_profile(),
-                            label="Planner 档位",
-                        )
-                        top_k = gr.Slider(4, 12, value=8, step=1, label="推荐数量")
-                run_button = gr.Button("生成我的推荐", variant="primary")
-                gr.Examples(EXAMPLES, inputs=query, label="试试这些需求")
-                route_status = gr.Markdown("等待请求。")
-                cards = gr.HTML(_render_results([]))
-                audio_player = gr.Audio(
-                    label="公开授权音频试听",
-                    type="filepath",
-                    interactive=False,
-                )
+                        with gr.Tabs():
+                            with gr.Tab("找音乐"):
+                                route_status = gr.HTML(render_conversation())
+                                query = gr.Textbox(
+                                    label="现在想听什么？",
+                                    placeholder="例如：外面下暴雨，想听安静但不压抑、有空间感的音乐",
+                                    lines=3,
+                                    elem_classes=["st-input"],
+                                )
+                                with gr.Accordion("推荐设置", open=False):
+                                    profile = gr.Dropdown(
+                                        choices=profile_choices(),
+                                        value=default_profile(),
+                                        label="Planner 档位",
+                                    )
+                                    top_k = gr.Slider(4, 12, value=8, step=1, label="推荐数量")
+                                run_button = gr.Button(
+                                    "交给 Planner 找音乐", variant="primary", elem_classes=["st-primary"]
+                                )
+                                gr.Examples(EXAMPLES, inputs=query, label="你也可以这样说")
 
-                with gr.Row():
-                    selected_song = gr.Dropdown(label="选择一首歌反馈", choices=[])
-                    feedback_action = gr.Radio(
-                        ["喜欢", "跳过", "不喜欢"], label="本次反馈"
-                    )
-                feedback_button = gr.Button("记录反馈")
-                feedback_status = gr.Markdown("反馈只保存在当前会话。")
+                            with gr.Tab("聊音乐"):
+                                chat_history = gr.Chatbot(
+                                    value=[],
+                                    type="messages",
+                                    label="35B 基座自然对话",
+                                    height=292,
+                                    allow_tags=False,
+                                    elem_classes=["st-chatbot"],
+                                )
+                                chat_status = gr.Markdown(
+                                    "自然对话：等待消息。", elem_classes=["st-chat-status"]
+                                )
+                                chat_message = gr.Textbox(
+                                    label="继续聊聊",
+                                    placeholder="比如：为什么下雨天会更想听有空间感的音乐？",
+                                    lines=2,
+                                    elem_classes=["st-input"],
+                                )
+                                with gr.Row():
+                                    chat_send = gr.Button("发送", variant="primary")
+                                    chat_clear = gr.Button("清空对话")
+
+                    with gr.Column(scale=7, elem_classes=["st-pane"]):
+                        gr.HTML(
+                            '<div class="st-section-title"><div><span class="st-kicker">Recommendations</span>'
+                            '<h2>为你挑选</h2></div>'
+                            f'<span class="st-kicker">{PUBLIC_TRACK_COUNT or "开放"} 首曲库</span></div>'
+                        )
+                        cards = gr.HTML(_render_results([]))
+                        with gr.Group(elem_classes=["st-player"]):
+                            audio_player = gr.Audio(
+                                label="公开授权音频试听",
+                                type="filepath",
+                                interactive=False,
+                            )
+                            selected_song = gr.Dropdown(label="当前曲目", choices=[])
+                        with gr.Group(elem_classes=["st-feedback"]):
+                            with gr.Row():
+                                feedback_action = gr.Radio(
+                                    ["喜欢", "跳过", "不喜欢"], label="这首歌怎么样？"
+                                )
+                                feedback_button = gr.Button("记录反馈", variant="secondary")
+                            feedback_status = gr.Markdown("反馈只保存在当前会话。")
 
             with gr.Tab("偏好与记忆"):
                 memory_view = gr.Markdown(memory_markdown(_blank_memory()))
@@ -400,6 +496,23 @@ def build_app() -> gr.Blocks:
             select_audio,
             inputs=[selected_song, result_state],
             outputs=audio_player,
+            api_name=False,
+        )
+        chat_send.click(
+            continue_general_chat,
+            inputs=[chat_message, chat_history, memory_state],
+            outputs=[chat_message, chat_history, chat_status],
+            api_name="general_chat",
+        )
+        chat_message.submit(
+            continue_general_chat,
+            inputs=[chat_message, chat_history, memory_state],
+            outputs=[chat_message, chat_history, chat_status],
+            api_name=False,
+        )
+        chat_clear.click(
+            reset_general_chat,
+            outputs=[chat_history, chat_status],
             api_name=False,
         )
         reset_button.click(

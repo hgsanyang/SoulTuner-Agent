@@ -288,6 +288,11 @@ def retrieve(
                 "license_url": str(row.get("license_url") or ""),
                 "attribution": str(row.get("attribution") or ""),
                 "source_url": str(row.get("source_url") or ""),
+                "cover_url": str(row.get("cover_url") or ""),
+                "cover_fallback_path": str(row.get("cover_fallback_path") or ""),
+                "cover_attribution": str(row.get("cover_attribution") or ""),
+                "cover_source_page_url": str(row.get("cover_source_page_url") or ""),
+                "cover_provider": str(row.get("cover_provider") or ""),
             }
         )
     return sorted(scored, key=lambda item: (-item["final_score"], item["song_id"]))[:top_k]

@@ -9,6 +9,9 @@ export SOULTUNER_REQUIRE_ROCM="${SOULTUNER_REQUIRE_ROCM:-1}"
 export SOULTUNER_MODEL_PROFILE="${SOULTUNER_MODEL_PROFILE:-soultuner-v4.2-35b}"
 export SOULTUNER_PLANNER_BASE_URL="${SOULTUNER_PLANNER_BASE_URL:-http://127.0.0.1:8000/v1}"
 export SOULTUNER_PLANNER_MODEL="${SOULTUNER_PLANNER_MODEL:-soultuner-v4.2-35b}"
+export SOULTUNER_DUAL_ROLE_MODELS="${SOULTUNER_DUAL_ROLE_MODELS:-1}"
+export SOULTUNER_CHAT_MODEL="${SOULTUNER_CHAT_MODEL:-qwen3.6-35b-a3b}"
+export SOULTUNER_CHAT_BASE_URL="${SOULTUNER_CHAT_BASE_URL:-${SOULTUNER_PLANNER_BASE_URL}}"
 default_cache_dir="./model_cache"
 if [[ -d "/mnt/workspace" && -w "/mnt/workspace" ]]; then
   default_cache_dir="/mnt/workspace/soultuner/model_cache"
@@ -111,7 +114,15 @@ while time.monotonic() < deadline:
             request.add_header("Authorization", f"Bearer {api_key}")
         with urllib.request.urlopen(request, timeout=5) as response:
             body = json.loads(response.read().decode("utf-8"))
-        if isinstance(body.get("data"), list):
+        models = {
+            str(item.get("id"))
+            for item in body.get("data", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        required = {os.environ["SOULTUNER_PLANNER_MODEL"]}
+        if os.getenv("SOULTUNER_DUAL_ROLE_MODELS", "0") == "1":
+            required.add(os.environ["SOULTUNER_CHAT_MODEL"])
+        if required <= models:
             print(f"SoulTuner Planner endpoint ready: {url}", flush=True)
             break
     except Exception as exc:
@@ -130,6 +141,9 @@ if [[ -n "${open_audio_pid:-}" ]] && ! wait "${open_audio_pid}"; then
   echo "Open-audio dataset startup failed; last log lines:" >&2
   tail -n 100 "${open_audio_log}" >&2 || true
   exit 7
+fi
+if [[ -n "${open_audio_pid:-}" ]]; then
+  export SOULTUNER_OPEN_AUDIO_ALREADY_VERIFIED=1
 fi
 
 python amd_readiness.py

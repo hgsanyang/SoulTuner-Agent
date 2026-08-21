@@ -73,7 +73,7 @@ def _fallback_to_bundled_catalog() -> dict[str, Any]:
 
 
 def materialize_open_audio() -> dict[str, Any]:
-    """Download the five-track public demo once, then reuse the persistent copy.
+    """Download the public library once, then reuse the persistent copy.
 
     A failed download never prevents the Space from binding its public port; the
     synthetic catalogue remains available and the failure is visible in logs.
@@ -83,6 +83,19 @@ def materialize_open_audio() -> dict[str, Any]:
         return _fallback_to_bundled_catalog()
 
     root, catalog, audio_root = _configure_paths()
+    if os.getenv("SOULTUNER_OPEN_AUDIO_ALREADY_VERIFIED", "0").strip() == "1":
+        rows = [
+            json.loads(line)
+            for line in catalog.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if not rows:
+            raise ValueError("open-audio catalog is empty after startup verification")
+        print(
+            f"SoulTuner open-audio catalog reused after startup verification: {len(rows)} tracks",
+            flush=True,
+        )
+        return {"state": "ready", "tracks": len(rows), "root": str(root)}
     try:
         tracks = verify_open_audio(catalog, audio_root)
         print(f"SoulTuner open-audio catalog ready from cache: {tracks} tracks", flush=True)
