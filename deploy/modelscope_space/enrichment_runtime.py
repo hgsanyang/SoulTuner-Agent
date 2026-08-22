@@ -28,6 +28,14 @@ EXPECTED_DIMS = {"muq_embedding": 512, "m2d2_embedding": 768, "omar_embedding": 
 M2D_URL = "https://github.com/nttcslab/m2d/releases/download/v0.5.0/m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025.zip"
 M2D_DIRNAME = "m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025"
 M2D_SHA256 = "238521603c04862ab151cdd80980b591cb36ebe844d43203992fac9ef085c8a1"
+BERT_REPO_ID = "AI-ModelScope/bert-base-uncased"
+BERT_FILES = (
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.txt",
+)
 ENRICHMENT_PACKAGES = (
     "muq==0.1.0",
     "omar-rq==0.2.1",
@@ -232,6 +240,33 @@ def _ensure_m2d_checkpoint() -> Path:
     if not checkpoint.is_file() or _sha256(checkpoint) != M2D_SHA256:
         raise RuntimeError("M2D checkpoint SHA-256 mismatch")
     return checkpoint
+
+
+def _ensure_bert_snapshot() -> Path:
+    """Persist the M2D text tower on ModelScope's reachable model hub."""
+
+    target = _workspace_root() / "model_cache" / "bert-base-uncased"
+    if all((target / name).is_file() for name in BERT_FILES):
+        return target
+    _write_status("downloading-models", family="bert-text")
+    target.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "modelscope",
+            "download",
+            BERT_REPO_ID,
+            *BERT_FILES,
+            "--local-dir",
+            str(target),
+            "--max-workers",
+            "4",
+        ],
+        check=True,
+    )
+    missing = [name for name in BERT_FILES if not (target / name).is_file()]
+    if missing:
+        raise RuntimeError("BERT snapshot is incomplete: " + ", ".join(missing))
+    return target
 
 
 def _catalog_paths() -> tuple[Path, Path]:
@@ -475,6 +510,7 @@ def run_worker() -> None:
         _wait_for_endpoint(float(os.getenv("SOULTUNER_ENDPOINT_START_TIMEOUT", "1800")))
         _ensure_packages()
         checkpoint = _ensure_m2d_checkpoint()
+        _ensure_bert_snapshot()
         _configure_model_caches(checkpoint)
         _ensure_project_source()
         rows = _catalog_rows()

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import base64
+import os
+from pathlib import Path
 
+import pytest
+
+from deploy.modelscope_space import dense_runtime
 from deploy.modelscope_space import retrieval_demo as retrieval
 
 
@@ -77,3 +82,29 @@ def test_packaged_svg_cover_is_resolved_as_safe_data_url(monkeypatch, tmp_path) 
 
     assert resolved == "data:image/svg+xml;base64," + base64.b64encode(b"<svg/>").decode()
     assert retrieval.resolve_cover_source({"cover_fallback_path": "../outside.svg"}) == ""
+
+
+def test_dense_runtime_requires_local_bert_and_forces_offline_loading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    audio_embedder = source / "retrieval" / "audio_embedder.py"
+    audio_embedder.parent.mkdir(parents=True)
+    audio_embedder.write_text("", encoding="utf-8")
+    checkpoint = tmp_path / "checkpoint-30.pth"
+    checkpoint.write_bytes(b"weights")
+    bert = tmp_path / "bert"
+    bert.mkdir()
+    monkeypatch.setattr(dense_runtime, "_source_root", lambda: source)
+    monkeypatch.setattr(dense_runtime, "_checkpoint", lambda: checkpoint)
+    monkeypatch.setattr(dense_runtime, "_bert_snapshot", lambda: bert)
+
+    with pytest.raises(FileNotFoundError, match="text encoder cache"):
+        dense_runtime._prepare_import()
+
+    for name in dense_runtime._BERT_FILES:
+        (bert / name).write_bytes(b"model")
+    dense_runtime._prepare_import()
+
+    assert Path(os.environ["GOOGLE_BERT_BERT_BASE_UNCASED_PATH"]) == bert
+    assert os.environ["HF_HUB_OFFLINE"] == "1"

@@ -122,3 +122,29 @@ def test_update_vector_uses_aura_database_and_exact_dimension(monkeypatch: pytes
     assert driver.kwargs["database_"] == "soultuner"
     with pytest.raises(ValueError, match="dimension mismatch"):
         enrichment_runtime._update_vector(driver, "sdd-226", "muq_embedding", [0.1])
+
+
+def test_bert_snapshot_uses_modelscope_and_persistent_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SOULTUNER_WORKSPACE_ROOT", str(tmp_path))
+    captured: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        captured.append(command)
+        target = Path(command[command.index("--local-dir") + 1])
+        target.mkdir(parents=True, exist_ok=True)
+        for name in enrichment_runtime.BERT_FILES:
+            (target / name).write_bytes(b"model")
+
+    monkeypatch.setattr(enrichment_runtime.subprocess, "run", fake_run)
+
+    snapshot = enrichment_runtime._ensure_bert_snapshot()
+
+    assert snapshot == tmp_path / "model_cache" / "bert-base-uncased"
+    assert captured[0][:3] == [
+        "modelscope",
+        "download",
+        enrichment_runtime.BERT_REPO_ID,
+    ]
+    assert all((snapshot / name).is_file() for name in enrichment_runtime.BERT_FILES)
