@@ -135,6 +135,7 @@ def test_recommendation_opening_streams_cumulative_base_model_prose(monkeypatch)
     monkeypatch.setenv("SOULTUNER_CHAT_MODEL", "qwen3.6-35b-a3b")
     monkeypatch.setenv("SOULTUNER_PLANNER_MODEL", "soultuner-v4.2-35b")
     monkeypatch.setenv("SOULTUNER_PLANNER_BASE_URL", "http://127.0.0.1:8000/v1")
+    monkeypatch.setenv("SOULTUNER_CHAT_STREAM_SSE", "1")
     monkeypatch.setattr(conversation_runtime.urllib.request, "urlopen", fake_urlopen)
 
     updates = list(
@@ -153,6 +154,7 @@ def test_recommendation_opening_streams_cumulative_base_model_prose(monkeypatch)
 
 
 def test_recommendation_opening_stream_falls_back_once(monkeypatch):
+    monkeypatch.setenv("SOULTUNER_CHAT_STREAM_SSE", "1")
     monkeypatch.setattr(
         conversation_runtime,
         "_request_prose_stream",
@@ -170,6 +172,25 @@ def test_recommendation_opening_stream_falls_back_once(monkeypatch):
     assert len(updates) == 1
     assert "Rain Window" in updates[0][0]
     assert updates[0][1] == "自然语言安全回退（TimeoutError）"
+
+
+def test_recommendation_opening_defaults_to_one_reliable_completion(monkeypatch):
+    monkeypatch.delenv("SOULTUNER_CHAT_STREAM_SSE", raising=False)
+    monkeypatch.setattr(
+        conversation_runtime,
+        "_request_prose",
+        lambda *_args: "歌单已经先到；这段 35B 解释稍后独立完成。",
+    )
+
+    updates = list(
+        conversation_runtime.stream_recommendation_opening(
+            "想听安静的",
+            {"evidence": {"brief_reason": "听感检索"}},
+            _rows(),
+        )
+    )
+
+    assert updates == [("歌单已经先到；这段 35B 解释稍后独立完成。", "35B 基座自然语言已就绪")]
 
 
 def test_general_chat_passes_recent_history_and_session_memory(monkeypatch):

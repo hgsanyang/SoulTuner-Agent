@@ -325,7 +325,6 @@ def retrieve(
                 dense_backend = "m2d2_aura"
     scored: list[dict[str, Any]] = []
     for row in load_catalog():
-        audio_source = resolve_audio_source(row)
         graph_score = _graph_score(query, row, plan)
         if dense_backend == "m2d2_aura":
             dense_score = dense_scores.get(str(row.get("song_id") or ""), 0.0)
@@ -337,6 +336,12 @@ def retrieve(
         final_score = min(1.0, base_score * 0.9 + preference_score * 0.1)
         scored.append(
             {
+                # Keep the catalog row only until ranking is complete.  Audio
+                # and cover validation touch the persistent filesystem, so
+                # doing that work for all 1,806 candidates made every request
+                # pay thousands of stat/resolve calls before the first card
+                # could be shown.  Only the returned slate needs those fields.
+                "_catalog_row": row,
                 "song_id": row["song_id"],
                 "title": row["title"],
                 "artist": row["artist"],
@@ -351,17 +356,21 @@ def retrieve(
                 "final_score": round(final_score, 3),
                 "reason": _reason(row, graph_score, dense_score, dense_source),
                 "dense_source": dense_source,
-                "audio_available": bool(audio_source),
-                "audio_source": audio_source,
                 "license": str(row.get("license") or row.get("license_id") or ""),
                 "license_url": str(row.get("license_url") or ""),
                 "attribution": str(row.get("attribution") or ""),
                 "source_url": str(row.get("source_url") or ""),
-                "cover_url": resolve_cover_source(row),
                 "cover_fallback_path": str(row.get("cover_fallback_path") or ""),
                 "cover_attribution": str(row.get("cover_attribution") or ""),
                 "cover_source_page_url": str(row.get("cover_source_page_url") or ""),
                 "cover_provider": str(row.get("cover_provider") or ""),
             }
         )
-    return sorted(scored, key=lambda item: (-item["final_score"], item["song_id"]))[:top_k]
+    selected = sorted(scored, key=lambda item: (-item["final_score"], item["song_id"]))[:top_k]
+    for item in selected:
+        catalog_row = item.pop("_catalog_row")
+        audio_source = resolve_audio_source(catalog_row)
+        item["audio_available"] = bool(audio_source)
+        item["audio_source"] = audio_source
+        item["cover_url"] = resolve_cover_source(catalog_row)
+    return selected

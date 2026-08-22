@@ -272,10 +272,10 @@ def _planner_context(
     tags = list(_preference_tags(data))[:8]
     recent = list(data.get("events") or [])[-8:]
     reference = resolved_reference(rows, selected_song_id)
-    previous_plan = {
-        "last_recommendation_plan": data.get("last_plan") or {},
-        "last_turn_plan": data.get("last_turn_plan") or {},
-    }
+    # Both memory fields normally point at the same plan.  Sending the full
+    # object twice inflated every follow-up prompt and diverged from the
+    # production context builder's bounded, deduplicated snapshot.
+    previous_plan = data.get("last_turn_plan") or data.get("last_plan") or {}
     return {
         "profile_snapshot": "偏好标签：" + "、".join(tags) if tags else "",
         "retrieved_memories": [

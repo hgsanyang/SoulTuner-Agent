@@ -240,13 +240,22 @@ def stream_recommendation_opening(
     """Stream a recommendation opening after the slate is already visible."""
 
     prompt = _recommendation_prompt(query, plan, rows, memory)
-    emitted = False
+    # Some ms-swift/vLLM combinations acknowledge ``stream=true`` but return
+    # an empty SSE body for the base served model.  The slate has already been
+    # yielded by Gradio at this point, so a normal completion still preserves
+    # the original SoulTuner ordering (songs first, explanation second) and is
+    # more reliable than turning a valid 35B response into a safety fallback.
+    use_sse = os.getenv("SOULTUNER_CHAT_STREAM_SSE", "0").strip() == "1"
     try:
-        for partial in _request_prose_stream(prompt):
-            emitted = True
-            yield partial, "35B 基座自然语言生成中"
-        if not emitted:
-            raise ValueError("conversation model returned empty stream")
+        if use_sse:
+            emitted = False
+            for partial in _request_prose_stream(prompt):
+                emitted = True
+                yield partial, "35B 基座自然语言生成中"
+            if not emitted:
+                raise ValueError("conversation model returned empty stream")
+        else:
+            yield _request_prose(prompt), "35B 基座自然语言已就绪"
     except Exception as exc:
         yield _fallback_opening(query, rows), f"自然语言安全回退（{type(exc).__name__}）"
 

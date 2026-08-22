@@ -69,6 +69,36 @@ def test_chinese_genre_and_scene_aliases_match_english_catalog_tags() -> None:
     assert score == 1.0
 
 
+def test_playback_and_cover_io_only_runs_for_ranked_slate(monkeypatch) -> None:
+    rows = tuple(_row(f"song-{index}", "ambient") for index in range(100))
+    audio_calls: list[str] = []
+    cover_calls: list[str] = []
+    monkeypatch.setattr(retrieval, "load_catalog", lambda: rows)
+    monkeypatch.setattr(retrieval, "encode_text_query", lambda _text: [])
+    monkeypatch.setattr(
+        retrieval,
+        "resolve_audio_source",
+        lambda row: audio_calls.append(row["song_id"]) or f"/{row['song_id']}.mp3",
+    )
+    monkeypatch.setattr(
+        retrieval,
+        "resolve_cover_source",
+        lambda row: cover_calls.append(row["song_id"]) or f"https://example/{row['song_id']}.jpg",
+    )
+
+    result = retrieval.retrieve(
+        "安静氛围",
+        _plan(),
+        {"graph_weight": 1.0, "dense_weight": 0.0},
+        top_k=5,
+    )
+
+    assert len(result) == 5
+    assert len(audio_calls) == 5
+    assert len(cover_calls) == 5
+    assert all("_catalog_row" not in row for row in result)
+
+
 def test_packaged_svg_cover_is_resolved_as_safe_data_url(monkeypatch, tmp_path) -> None:
     catalog = tmp_path / "catalog.jsonl"
     catalog.write_text("", encoding="utf-8")

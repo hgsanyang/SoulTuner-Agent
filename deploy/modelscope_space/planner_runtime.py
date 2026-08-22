@@ -120,7 +120,11 @@ def _remote_plan(
                 {"role": "user", "content": user_message},
             ],
             "temperature": 0,
-            "max_tokens": 1024,
+            # Valid V4.2 plans are normally about 300 completion tokens.  Keep
+            # enough headroom for the guarded schema without allowing a rare
+            # malformed continuation to occupy the single MI308X for 1,024
+            # tokens before failing closed.
+            "max_tokens": int(os.getenv("SOULTUNER_PLANNER_MAX_TOKENS", "512")),
             "response_format": {"type": "json_object"},
             "enable_thinking": False,
             "chat_template_kwargs": {"enable_thinking": False},

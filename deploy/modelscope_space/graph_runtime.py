@@ -90,7 +90,13 @@ def graph_overlay(*, force: bool = False) -> tuple[dict[str, dict[str, Any]], di
         if not force and now < _CACHE_EXPIRES_AT:
             return _CACHE_ROWS, dict(_CACHE_STATUS)
         rows, status = _query_overlay()
-        ttl = 300.0 if status.get("state") == "ready" else 15.0
+        # The public catalogue metadata is immutable for a deployed revision.
+        # Re-reading all 1,806 Aura nodes every five minutes put a remote graph
+        # round-trip directly on the recommendation critical path.  Keep a
+        # healthy snapshot for an hour; failures still retry quickly and the
+        # vector query itself continues to reconnect on every request.
+        healthy_ttl = float(os.getenv("SOULTUNER_GRAPH_CACHE_TTL_SECONDS", "3600"))
+        ttl = healthy_ttl if status.get("state") == "ready" else 15.0
         _CACHE_ROWS = rows
         _CACHE_STATUS = status
         _CACHE_EXPIRES_AT = now + ttl
