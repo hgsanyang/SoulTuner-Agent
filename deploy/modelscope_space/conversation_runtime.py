@@ -165,6 +165,8 @@ def general_chat(
     memory: dict[str, Any] | None = None,
     planner_decision: dict[str, Any] | None = None,
     evidence_rows: list[dict[str, Any]] | None = None,
+    current_playlist_rows: list[dict[str, Any]] | None = None,
+    selected_song_id: str | None = None,
 ) -> tuple[str, str]:
     """Render a Planner-owned dialogue decision as natural prose.
 
@@ -188,11 +190,33 @@ def general_chat(
         }
         for row in (evidence_rows or [])[:5]
     ]
+    selected = str(selected_song_id or "").strip()
+    compact_playlist = [
+        {
+            "rank": index,
+            "is_currently_playing": bool(
+                selected and str(row.get("song_id") or "").strip() == selected
+            ),
+            "title": row.get("title"),
+            "artist": row.get("artist"),
+            "tags": list(row.get("tags") or [])[:5],
+            "final_score": row.get("final_score"),
+            "graph_score": row.get("graph_score"),
+            "dense_score": row.get("dense_score"),
+            "dense_source": row.get("dense_source"),
+            "reason": row.get("reason"),
+        }
+        for index, row in enumerate((current_playlist_rows or [])[:12], start=1)
+    ]
     prompt = (
         "请自然回应用户当前消息；如果需要追问，一次只问一个问题。"
         "你必须服从已验证的 Planner 决策，不能自行把 dialogue 改成 recommendation，"
         "也不能增加证据列表外的歌曲。response_mode=clarify 时保留 Planner 的澄清目标；"
-        "dialogue_mode=information 时只根据 supplied_evidence 回答。\n"
+        "dialogue_mode=information 时只根据 supplied_evidence 回答。"
+        "current_playlist 按真实展示顺序排列；用户询问当前歌曲、推荐理由或排序时，"
+        "只能引用其中的 rank、分数、标签、reason 与 currently-playing 标记。"
+        "不得声称没有排序逻辑、随机排序或为了丰富列表，也不得虚构旋律抓耳等未给出的特征；"
+        "证据不足就明确说哪些部分无法从现有证据判断。\n"
         + json.dumps(
             {
                 "history": history,
@@ -205,6 +229,7 @@ def general_chat(
                     "brief_reason": (current_plan.get("evidence") or {}).get("brief_reason"),
                     "clarification": current_plan.get("clarification"),
                 },
+                "current_playlist": compact_playlist,
                 "supplied_evidence": compact_evidence,
             },
             ensure_ascii=False,

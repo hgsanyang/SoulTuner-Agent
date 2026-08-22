@@ -25,8 +25,24 @@ class _Response:
 
 def _rows():
     return [
-        {"title": "Rain Window", "artist": "Open Artist", "tags": ["安静", "氛围"]},
-        {"title": "Soft Light", "artist": "Open Artist 2", "tags": ["温暖"]},
+        {
+            "song_id": "rain",
+            "title": "Rain Window",
+            "artist": "Open Artist",
+            "tags": ["安静", "氛围"],
+            "final_score": 0.82,
+            "graph_score": 0.71,
+            "dense_score": 0.91,
+            "dense_source": "m2d2_aura",
+            "reason": "听感向量和目录标签共同支持。",
+        },
+        {
+            "song_id": "light",
+            "title": "Soft Light",
+            "artist": "Open Artist 2",
+            "tags": ["温暖"],
+            "final_score": 0.76,
+        },
     ]
 
 
@@ -154,6 +170,35 @@ def test_dialogue_renderer_receives_planner_decision_and_bounded_evidence(monkey
     assert "不能自行把 dialogue 改成 recommendation" in prompt
 
 
+def test_dialogue_renderer_receives_ordered_current_playlist_and_selected_song(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response("第一首按真实融合分数排在前面。")
+
+    monkeypatch.setenv("SOULTUNER_CHAT_MODEL", "qwen3.6-35b-a3b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_MODEL", "soultuner-v4.2-35b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_BASE_URL", "http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(conversation_runtime.urllib.request, "urlopen", fake_urlopen)
+
+    conversation_runtime.general_chat(
+        "为什么第一首排在前面？",
+        planner_decision={"task_mode": "dialogue", "dialogue_mode": "chat"},
+        current_playlist_rows=_rows(),
+        selected_song_id="rain",
+    )
+
+    prompt = captured["payload"]["messages"][1]["content"]
+    payload = json.loads(prompt[prompt.index("{") :])
+    first = payload["current_playlist"][0]
+    assert first["rank"] == 1
+    assert first["is_currently_playing"] is True
+    assert first["final_score"] == 0.82
+    assert first["dense_source"] == "m2d2_aura"
+    assert "不得声称没有排序逻辑" in prompt
+
+
 def test_clarification_fallback_preserves_planner_question(monkeypatch):
     monkeypatch.setattr(
         conversation_runtime,
@@ -185,3 +230,4 @@ def test_space_app_uses_one_orchestrated_conversation_surface():
     unified = content[content.index("def unified_turn(") : content.index("def recommend(")]
     assert unified.index("plan_request(") < unified.index("planner_turn_kind(plan)")
     assert "selected_song_id" in unified
+    assert "current_playlist_rows=list(previous_rows or [])" in unified

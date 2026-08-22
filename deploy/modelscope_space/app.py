@@ -404,6 +404,8 @@ def unified_turn(
             data,
             planner_decision=plan,
             evidence_rows=evidence_rows,
+            current_playlist_rows=list(previous_rows or []),
+            selected_song_id=selected_song_id,
         )
         updated_history = append_turn(current_history, clean, reply)
         updated_memory = _copy_memory(data)
