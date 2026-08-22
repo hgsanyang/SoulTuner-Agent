@@ -3,17 +3,27 @@ from __future__ import annotations
 from deploy.modelscope_space import dialogue_orchestrator as dialogue
 
 
-def test_one_entry_routes_discovery_and_explanations_to_different_roles() -> None:
-    assert dialogue.classify_turn("公路旅行") == "recommendation"
-    assert dialogue.classify_turn("来点有主唱的英伦摇滚") == "recommendation"
-    assert dialogue.classify_turn("为什么下雨天会想听空间感强的音乐？") == "conversation"
+def test_ui_action_is_derived_only_from_validated_planner_fields() -> None:
+    assert dialogue.planner_turn_kind({"task_mode": "recommendation"}) == "recommendation"
+    assert dialogue.planner_turn_kind(
+        {"task_mode": "dialogue", "dialogue_mode": "chat"}
+    ) == "conversation"
+    assert dialogue.planner_turn_kind(
+        {"task_mode": "dialogue", "dialogue_mode": "information"}
+    ) == "information"
+    assert dialogue.planner_turn_kind(
+        {"task_mode": "recommendation", "response_mode": "clarify"}
+    ) == "clarification"
 
 
-def test_short_refinement_inherits_last_recommendation_request() -> None:
-    previous = "外面下暴雨，想听安静但不压抑的音乐"
+def test_currently_playing_song_is_the_reference_anchor() -> None:
+    rows = [
+        {"song_id": "one", "title": "First"},
+        {"song_id": "two", "title": "Second"},
+    ]
 
-    assert dialogue.classify_turn("再摇滚一点", previous) == "recommendation"
-    assert dialogue.contextualize_recommendation("再摇滚一点", previous) == (previous + "\n[本轮调整] 再摇滚一点")
+    assert dialogue.resolved_reference(rows, "two")["title"] == "Second"
+    assert dialogue.resolved_reference(rows, "missing")["title"] == "First"
 
 
 def test_history_is_bounded_and_only_keeps_visible_dialogue_roles() -> None:

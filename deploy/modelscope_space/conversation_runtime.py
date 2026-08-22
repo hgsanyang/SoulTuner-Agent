@@ -163,22 +163,49 @@ def general_chat(
     message: str,
     chat_history: list[dict[str, str]] | None = None,
     memory: dict[str, Any] | None = None,
+    planner_decision: dict[str, Any] | None = None,
+    evidence_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
-    """Natural multi-turn chat entry point for a future Gradio chat component."""
+    """Render a Planner-owned dialogue decision as natural prose.
+
+    The conversation model never decides whether retrieval should run.  It is
+    given the validated Planner decision and, for information turns, bounded
+    retrieved evidence.  This mirrors the production Agent's role boundary.
+    """
 
     history = [
         {"role": str(item.get("role") or ""), "content": str(item.get("content") or "")[:500]}
         for item in (chat_history or [])[-8:]
         if isinstance(item, dict)
     ]
+    current_plan = planner_decision or {}
+    compact_evidence = [
+        {
+            "title": row.get("title"),
+            "artist": row.get("artist"),
+            "tags": list(row.get("tags") or [])[:5],
+            "reason": row.get("reason"),
+        }
+        for row in (evidence_rows or [])[:5]
+    ]
     prompt = (
         "请自然回应用户当前消息；如果需要追问，一次只问一个问题。"
-        "若用户开始索要歌曲，只承接需求，不要绕过 Planner 自行给歌单。\n"
+        "你必须服从已验证的 Planner 决策，不能自行把 dialogue 改成 recommendation，"
+        "也不能增加证据列表外的歌曲。response_mode=clarify 时保留 Planner 的澄清目标；"
+        "dialogue_mode=information 时只根据 supplied_evidence 回答。\n"
         + json.dumps(
             {
                 "history": history,
                 "session_memory": json.loads(_memory_summary(memory)),
                 "current_message": str(message or "").strip(),
+                "planner_decision": {
+                    "task_mode": current_plan.get("task_mode"),
+                    "dialogue_mode": current_plan.get("dialogue_mode"),
+                    "response_mode": current_plan.get("response_mode"),
+                    "brief_reason": (current_plan.get("evidence") or {}).get("brief_reason"),
+                    "clarification": current_plan.get("clarification"),
+                },
+                "supplied_evidence": compact_evidence,
             },
             ensure_ascii=False,
         )
@@ -186,6 +213,9 @@ def general_chat(
     try:
         return _request_prose(prompt), "35B 基座自然语言已就绪"
     except Exception as exc:
+        clarification = str(current_plan.get("clarification") or "").strip()
+        if clarification:
+            return clarification, f"自然语言安全回退（{type(exc).__name__}）"
         return (
             "我在。你可以继续说说现在的心情、场景，或者哪种音乐感觉最重要；需要找歌时我会先交给 Planner 做受控规划。",
             f"自然语言安全回退（{type(exc).__name__}）",

@@ -414,6 +414,16 @@ def _candidate_findings(candidate: Mapping[str, Any]) -> list[str]:
         if policy.get("dense") == "optional":
             findings.append("dense 不允许 optional")
 
+        task_mode = candidate.get("task_mode")
+        dialogue_mode = candidate.get("dialogue_mode")
+        if task_mode == "recommendation" and dialogue_mode is not None:
+            findings.append("recommendation 的 dialogue_mode 必须为 null")
+        if task_mode == "dialogue" and dialogue_mode is None:
+            findings.append("dialogue 必须提供 dialogue_mode")
+        if task_mode == "dialogue" and dialogue_mode == "information":
+            if policy.get("graph") != "required":
+                findings.append("information 对话必须启用 required graph")
+
     evidence = candidate.get("evidence")
     if isinstance(evidence, Mapping):
         if evidence.get("decision_phase") not in {"initial", "recovery"}:
@@ -568,13 +578,6 @@ def _lane_policy_findings(
     candidate_policy = candidate.get("lane_policy", {})
     findings: list[str] = []
 
-    # External access is a side-effect boundary. It is enabled only when the
-    # deterministic parser independently finds a freshness/external request.
-    if candidate_policy.get("web") != safe_policy["web"]:
-        findings.append(
-            f"模型 web 角色为 {candidate_policy.get('web')}，安全边界要求 {safe_policy['web']}"
-        )
-
     safe_dense = safe_policy["dense"]
     candidate_dense = candidate_policy.get("dense")
     dense_evidence = _candidate_dense_evidence(candidate)
@@ -633,26 +636,22 @@ def guard_candidate(
 
     findings = _candidate_findings(candidate)
     if not findings:
-        if candidate.get("task_mode") != safe["task_mode"]:
-            findings.append("模型任务类型与确定性分类冲突")
-        if candidate.get("dialogue_mode") != safe.get("dialogue_mode"):
-            findings.append("模型对话类型与确定性分类冲突")
-        if candidate.get("response_mode", "answer") != safe["response_mode"]:
-            findings.append("模型回答/澄清决策与安全边界冲突")
-
         candidate_policy = candidate.get("lane_policy", {})
-        if safe["task_mode"] == "recommendation" and safe["response_mode"] == "answer":
+        safe_policy = safe["lane_policy"]
+
+        # Network access is a true side-effect boundary, so the deterministic
+        # layer still owns it.  Semantic task/dialogue classification is not a
+        # side effect and remains model-owned.
+        if candidate_policy.get("web") != safe_policy["web"]:
+            findings.append(
+                f"模型 web 角色为 {candidate_policy.get('web')}，安全边界要求 {safe_policy['web']}"
+            )
+
+        if (
+            candidate.get("task_mode") == "recommendation"
+            and candidate.get("response_mode", "answer") == "answer"
+        ):
             findings.extend(_lane_policy_findings(safe, candidate))
-        else:
-            for lane, safe_mode in safe["lane_policy"].items():
-                candidate_mode = candidate_policy.get(lane)
-                if candidate_mode != safe_mode:
-                    findings.append(
-                        f"模型 {lane} 角色为 {candidate_mode}，安全边界要求 {safe_mode}"
-                    )
-        if safe["task_mode"] == "dialogue" and safe.get("dialogue_mode") in {"chat", "library_guidance"}:
-            if any(candidate_policy.get(lane, "off") != "off" for lane in ("graph", "dense", "web")):
-                findings.append("普通对话或产品指导不允许携带检索通道")
 
     if findings:
         return safe, [*findings, "候选被拒绝，已回退到确定性安全计划"]

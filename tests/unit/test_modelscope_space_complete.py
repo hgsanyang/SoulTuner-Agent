@@ -65,6 +65,15 @@ def test_subjective_acoustics_are_dense_only() -> None:
     assert plan["lane_policy"] == {"graph": "off", "dense": "required", "web": "off"}
 
 
+def test_dialogue_plan_compiles_to_no_retrieval_route() -> None:
+    plan = runtime.safe_plan("你好")
+    route = runtime.compile_route(plan)
+
+    assert route["profile"] == "no_retrieval"
+    assert route["graph_weight"] == 0.0
+    assert route["dense_weight"] == 0.0
+
+
 def test_amd_readiness_fails_closed_without_rocm(monkeypatch) -> None:
     monkeypatch.setattr(
         readiness,

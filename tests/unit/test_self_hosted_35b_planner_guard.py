@@ -142,6 +142,37 @@ def test_valid_candidate_is_accepted():
     assert findings == ["模型候选通过结构与策略守卫"]
 
 
+def test_semantic_dialogue_decision_is_not_overridden_by_keyword_fallback():
+    candidate = _candidate("你好")
+    accepted, findings = guard_candidate(
+        "为什么第一首排在最前面？如果更暖一点会怎么调整？",
+        candidate,
+    )
+
+    assert accepted["source"] == "model_candidate_guarded"
+    assert accepted["task_mode"] == "dialogue"
+    assert accepted["dialogue_mode"] == "chat"
+    assert findings == ["模型候选通过结构与策略守卫"]
+
+
+def test_model_owned_clarification_can_override_keyword_fallback_answer():
+    candidate = _candidate("给我和刚刚那首歌听感相似的")
+    accepted, findings = guard_candidate("那个感觉还有没有？", candidate)
+
+    assert accepted["source"] == "model_candidate_guarded"
+    assert accepted["response_mode"] == "clarify"
+    assert findings == ["模型候选通过结构与策略守卫"]
+
+
+def test_information_dialogue_requires_graph_evidence():
+    candidate = _candidate("这首歌是谁唱的？")
+    candidate["lane_policy"]["graph"] = "off"
+    accepted, findings = guard_candidate("给我讲讲第一首", candidate)
+
+    assert accepted["source"] == "deterministic_guard"
+    assert any("information 对话必须启用 required graph" in finding for finding in findings)
+
+
 def test_empty_thinking_wrapper_is_removed_before_json_parse():
     assert parse_candidate_content('<think>\n\n</think>\n{"task_mode":"recommendation"}') == {
         "task_mode": "recommendation"

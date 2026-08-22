@@ -123,6 +123,57 @@ def test_general_chat_passes_recent_history_and_session_memory(monkeypatch):
     assert status == "35B 基座自然语言已就绪"
 
 
+def test_dialogue_renderer_receives_planner_decision_and_bounded_evidence(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response("第一首的排序依据来自当前检索证据，而不是重新生成歌单。")
+
+    monkeypatch.setenv("SOULTUNER_CHAT_MODEL", "qwen3.6-35b-a3b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_MODEL", "soultuner-v4.2-35b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_BASE_URL", "http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(conversation_runtime.urllib.request, "urlopen", fake_urlopen)
+
+    conversation_runtime.general_chat(
+        "为什么第一首排在前面？",
+        [],
+        {},
+        planner_decision={
+            "task_mode": "dialogue",
+            "dialogue_mode": "information",
+            "response_mode": "answer",
+            "evidence": {"brief_reason": "解释当前结果"},
+        },
+        evidence_rows=_rows(),
+    )
+
+    prompt = captured["payload"]["messages"][1]["content"]
+    assert '"dialogue_mode": "information"' in prompt
+    assert "Rain Window" in prompt
+    assert "不能自行把 dialogue 改成 recommendation" in prompt
+
+
+def test_clarification_fallback_preserves_planner_question(monkeypatch):
+    monkeypatch.setattr(
+        conversation_runtime,
+        "_request_prose",
+        lambda *_args: (_ for _ in ()).throw(TimeoutError("cold")),
+    )
+
+    text, status = conversation_runtime.general_chat(
+        "跟刚才那首差不多的",
+        planner_decision={
+            "task_mode": "recommendation",
+            "response_mode": "clarify",
+            "clarification": "你指的是当前正在播放的歌曲吗？",
+        },
+    )
+
+    assert text == "你指的是当前正在播放的歌曲吗？"
+    assert status == "自然语言安全回退（TimeoutError）"
+
+
 def test_space_app_uses_one_orchestrated_conversation_surface():
     source = conversation_runtime.__file__.replace("conversation_runtime.py", "app.py")
     content = open(source, encoding="utf-8").read()
@@ -130,3 +181,7 @@ def test_space_app_uses_one_orchestrated_conversation_surface():
     assert "opening, conversation_status = recommendation_opening(" in content
     assert "def unified_turn(" in content
     assert 'api_name="conversation"' in content
+    assert "classify_turn" not in content
+    unified = content[content.index("def unified_turn(") : content.index("def recommend(")]
+    assert unified.index("plan_request(") < unified.index("planner_turn_kind(plan)")
+    assert "selected_song_id" in unified

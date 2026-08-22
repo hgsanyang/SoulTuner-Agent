@@ -1,112 +1,48 @@
-"""Deterministic turn routing for the unified public conversation surface.
+"""Planner-owned routing helpers for the unified public conversation surface.
 
-The base 35B model writes prose and the SoulTuner LoRA writes guarded plans.
-This module only decides which role should receive the current turn and carries
-the last recommendation request into short refinement follow-ups.
+The SoulTuner LoRA owns semantic intent.  Python validates the returned
+contract and maps it to UI actions, but never guesses intent from user-facing
+phrases.  This keeps the Creation Space aligned with the production Agent:
+paraphrases and follow-ups are interpreted from assembled dialogue context
+instead of a growing keyword list.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 
-_EXPLANATION_PREFIXES = (
-    "为什么",
-    "怎么理解",
-    "什么是",
-    "解释",
-    "聊聊",
-    "你觉得",
-    "区别",
-)
-_RECOMMENDATION_ACTIONS = (
-    "推荐",
-    "来点",
-    "来首",
-    "听点",
-    "想听",
-    "找歌",
-    "找一",
-    "歌单",
-    "播放",
-    "换一组",
-    "再来",
-    "类似的歌",
-)
-_REFINEMENT_MARKERS = (
-    "刚才",
-    "刚刚",
-    "上一组",
-    "这组",
-    "同样",
-    "再",
-    "更",
-    "换成",
-    "不要",
-    "少一点",
-    "多一点",
-    "保持",
-)
-_MUSIC_CUES = (
-    "摇滚",
-    "流行",
-    "电子",
-    "爵士",
-    "民谣",
-    "说唱",
-    "嘻哈",
-    "朋克",
-    "金属",
-    "古典",
-    "氛围",
-    "轻音乐",
-    "钢琴",
-    "吉他",
-    "人声",
-    "纯音乐",
-    "夜跑",
-    "通勤",
-    "旅行",
-    "学习",
-    "睡前",
-)
+def planner_turn_kind(plan: dict[str, Any] | None) -> str:
+    """Map one validated Planner decision to a UI action.
 
+    No user text is inspected here.  The only inputs are structured fields
+    emitted by the Planner and accepted by the guard.
+    """
 
-def _contains(text: str, values: tuple[str, ...]) -> bool:
-    lowered = text.casefold()
-    return any(value.casefold() in lowered for value in values)
-
-
-def classify_turn(message: str, last_recommendation_query: str = "") -> str:
-    """Return ``recommendation`` or ``conversation`` for one visible turn."""
-
-    clean = str(message or "").strip()
-    if not clean:
-        return "conversation"
-    if clean.startswith(_EXPLANATION_PREFIXES) and not _contains(clean, ("推荐", "找歌", "来点", "来首")):
-        return "conversation"
-    if _contains(clean, _RECOMMENDATION_ACTIONS):
+    current = plan or {}
+    if str(current.get("response_mode") or "answer") == "clarify":
+        return "clarification"
+    if str(current.get("task_mode") or "recommendation") != "dialogue":
         return "recommendation"
-    if last_recommendation_query and _contains(clean, _REFINEMENT_MARKERS):
-        return "recommendation"
-    # A compact genre/scene utterance such as "公路旅行" or "英伦摇滚" is
-    # normally a discovery request.  Longer explanatory sentences stay chat.
-    if len(clean) <= 18 and _contains(clean, _MUSIC_CUES):
-        return "recommendation"
-    if re.search(r"(?:适合|用于).{0,12}(?:听|歌|音乐)$", clean):
-        return "recommendation"
+    mode = str(current.get("dialogue_mode") or "chat")
+    if mode == "information":
+        return "information"
     return "conversation"
 
 
-def contextualize_recommendation(message: str, last_recommendation_query: str = "") -> str:
-    """Resolve a short refinement against the last recommendation request."""
+def resolved_reference(
+    rows: list[dict[str, Any]] | None,
+    selected_song_id: str | None,
+) -> dict[str, Any]:
+    """Return the currently playing result, falling back to the first row."""
 
-    clean = str(message or "").strip()
-    previous = str(last_recommendation_query or "").strip()
-    if previous and _contains(clean, _REFINEMENT_MARKERS):
-        return f"{previous}\n[本轮调整] {clean}"
-    return clean
+    current = list(rows or [])
+    selected = str(selected_song_id or "").strip()
+    if selected:
+        for row in current:
+            if str(row.get("song_id") or "") == selected:
+                return row
+    return current[0] if current else {}
 
 
 def bounded_history(history: list[dict[str, Any]] | None, *, limit: int = 20) -> list[dict[str, str]]:

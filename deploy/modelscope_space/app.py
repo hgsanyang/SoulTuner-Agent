@@ -7,6 +7,7 @@ retrieval, policy guard, fusion, memory and UI keep the same contract.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import time
@@ -19,9 +20,9 @@ from conversation_runtime import general_chat, recommendation_opening
 from dialogue_orchestrator import (
     append_turn,
     bounded_history,
-    classify_turn,
-    contextualize_recommendation,
     history_for_planner,
+    planner_turn_kind,
+    resolved_reference,
 )
 from enrichment_runtime import launch_enrichment_if_requested
 from enrichment_runtime import status_markdown as enrichment_status_markdown
@@ -192,6 +193,7 @@ def _blank_memory() -> dict[str, Any]:
         "negative_tags": {},
         "last_recommendation_query": "",
         "last_recommendations": [],
+        "last_turn_plan": {},
     }
 
 
@@ -259,21 +261,25 @@ def _planner_context(
     history: list[dict[str, Any]] | None,
     memory: dict[str, Any] | None,
     rows: list[dict[str, Any]] | None,
+    selected_song_id: str | None = None,
 ) -> dict[str, Any]:
     data = memory or _blank_memory()
     tags = list(_preference_tags(data))[:8]
     recent = list(data.get("events") or [])[-8:]
-    first = next(iter(rows or []), {})
-    previous_plan = data.get("last_plan")
+    reference = resolved_reference(rows, selected_song_id)
+    previous_plan = {
+        "last_recommendation_plan": data.get("last_plan") or {},
+        "last_turn_plan": data.get("last_turn_plan") or {},
+    }
     return {
         "profile_snapshot": "偏好标签：" + "、".join(tags) if tags else "",
         "retrieved_memories": [
             f"{item.get('action')}《{item.get('title')}》" for item in recent if isinstance(item, dict)
         ],
         "chat_history": history_for_planner(history),
-        "previous_plan": json.dumps(previous_plan, ensure_ascii=False) if isinstance(previous_plan, dict) else "",
-        "reference_title": str(first.get("title") or ""),
-        "reference_artist": str(first.get("artist") or ""),
+        "previous_plan": json.dumps(previous_plan, ensure_ascii=False),
+        "reference_title": str(reference.get("title") or ""),
+        "reference_artist": str(reference.get("artist") or ""),
     }
 
 
@@ -285,12 +291,14 @@ def _recommendation_payload(
     memory: dict[str, Any] | None,
     history: list[dict[str, Any]] | None = None,
     previous_rows: list[dict[str, Any]] | None = None,
+    selected_song_id: str | None = None,
+    planned: tuple[dict[str, Any], dict[str, Any], str] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    plan, route, status = plan_request(
+    plan, route, status = planned or plan_request(
         profile,
         planning_query,
-        _planner_context(history, memory, previous_rows),
+        _planner_context(history, memory, previous_rows, selected_song_id),
     )
     rows = retrieve(
         planning_query,
@@ -305,6 +313,7 @@ def _recommendation_payload(
         {"song_id": row["song_id"], "title": row["title"], "artist": row["artist"]} for row in rows[:12]
     ]
     updated_memory["last_plan"] = plan
+    updated_memory["last_turn_plan"] = plan
     opening, conversation_status = recommendation_opening(
         display_query,
         plan,
@@ -364,38 +373,82 @@ def unified_turn(
     top_k: int,
     memory: dict[str, Any] | None,
     previous_rows: list[dict[str, Any]] | None,
+    selected_song_id: str | None,
 ) -> tuple[Any, ...]:
-    """Route one textbox through conversation or Planner without split tabs."""
+    """Let the Planner semantically route every visible user turn."""
 
+    started = time.perf_counter()
     clean = str(message or "").strip()
     current_history = bounded_history(history)
     data = memory or _blank_memory()
     if not clean:
         return ("", current_history, current_history, "请输入一条消息。", *([gr.skip()] * 9))
 
-    last_query = str(data.get("last_recommendation_query") or "")
-    if classify_turn(clean, last_query) == "conversation":
-        reply, status = general_chat(clean, current_history, data)
+    context = _planner_context(current_history, data, previous_rows, selected_song_id)
+    plan, route, planner_status = plan_request(profile, clean, context)
+    turn_kind = planner_turn_kind(plan)
+
+    if turn_kind != "recommendation":
+        evidence_rows: list[dict[str, Any]] = []
+        if turn_kind == "information":
+            evidence_rows = retrieve(
+                clean,
+                plan,
+                route,
+                top_k=min(5, int(top_k)),
+                preference_tags=_preference_tags(data),
+            )
+        reply, conversation_status = general_chat(
+            clean,
+            current_history,
+            data,
+            planner_decision=plan,
+            evidence_rows=evidence_rows,
+        )
         updated_history = append_turn(current_history, clean, reply)
-        compact = f'<div class="st-turn-status"><b>本轮状态</b><span>自然对话</span><span>{status}</span></div>'
+        updated_memory = _copy_memory(data)
+        updated_memory["last_turn_plan"] = plan
+        labels = {
+            "conversation": "对话",
+            "information": "有据问答",
+            "clarification": "澄清",
+        }
+        compact = (
+            '<div class="st-turn-status"><b>本轮状态</b>'
+            f'<span>35B Planner：{labels.get(turn_kind, turn_kind)}</span>'
+            f'<span>{html.escape(str(plan.get("dialogue_mode") or turn_kind))}</span>'
+            f'<span>{html.escape(conversation_status)}</span>'
+            f'<span>{time.perf_counter() - started:.2f}s</span></div>'
+        )
+        diagnostic_plan = {"planner_status": planner_status, **plan}
         return (
             "",
             updated_history,
             updated_history,
             compact,
-            *([gr.skip()] * 9),
+            gr.skip(),
+            gr.skip(),
+            diagnostic_plan,
+            route,
+            gr.skip(),
+            gr.skip(),
+            updated_memory,
+            memory_markdown(updated_memory),
+            gr.skip(),
         )
 
-    planning_query = contextualize_recommendation(clean, last_query)
     payload = _recommendation_payload(
         clean,
-        planning_query,
+        clean,
         profile,
         int(top_k),
         data,
         current_history,
         previous_rows,
+        selected_song_id,
+        planned=(plan, route, planner_status),
     )
+    payload["elapsed"] = time.perf_counter() - started
     rows = payload["rows"]
     assistant = payload["opening"]
     if not rows:
@@ -518,6 +571,7 @@ def clear_dialogue(
     data["last_recommendation_query"] = ""
     data["last_recommendations"] = []
     data.pop("last_plan", None)
+    data["last_turn_plan"] = {}
     return (
         "",
         [],
@@ -621,7 +675,7 @@ def build_app() -> gr.Blocks:
                         )
                         turn_status = gr.HTML(
                             '<div class="st-turn-status"><b>本轮状态</b>'
-                            "<span>直接聊天或描述听歌需求，系统会自动判断</span></div>"
+                            "<span>每一轮都由 35B Planner 结合上下文做语义判断</span></div>"
                         )
                         chat_message = gr.Textbox(
                             label="现在想听什么，或继续聊聊",
@@ -733,6 +787,7 @@ def build_app() -> gr.Blocks:
             top_k,
             memory_state,
             result_state,
+            selected_song,
         ]
         chat_send.click(
             unified_turn,

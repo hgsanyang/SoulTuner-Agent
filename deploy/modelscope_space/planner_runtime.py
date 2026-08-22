@@ -35,25 +35,6 @@ PROFILE_LABELS = {
     PROFILE_SAFE: "公开演示（CPU，无需密钥）",
 }
 
-GENRES = ["流行", "电子", "摇滚", "爵士", "民谣", "氛围", "放克", "古典跨界"]
-MOODS = ["温暖", "治愈", "平静", "明亮", "怀旧", "浪漫", "专注", "活力", "低落"]
-SCENARIOS = ["夜晚", "通勤", "学习", "运动", "雨天", "周末", "小聚", "睡前"]
-LANGUAGES = ["中文", "英文", "日文", "纯音乐"]
-ACOUSTIC_TERMS = [
-    "低音",
-    "bass",
-    "鼓",
-    "人声",
-    "音色",
-    "空间感",
-    "混响",
-    "听感",
-    "温暖",
-    "治愈",
-    "安静",
-    "能量",
-]
-
 SYSTEM_PROMPT = STUDENT_SYSTEM_PROMPT_V4_2
 
 
@@ -72,83 +53,10 @@ def default_profile() -> str:
     return PROFILE_SAFE
 
 
-def _tokens(query: str, values: list[str]) -> list[str]:
-    lowered = query.casefold()
-    return [value for value in values if value.casefold() in lowered]
-
-
 def safe_plan(query: str) -> dict[str, Any]:
-    genres = _tokens(query, GENRES)
-    moods = _tokens(query, MOODS)
-    scenarios = _tokens(query, SCENARIOS)
-    languages = _tokens(query, LANGUAGES)
-    acoustic = _tokens(query, ACOUSTIC_TERMS)
-    year_match = re.search(r"(?:19|20)\d{2}|(?:80|90|00|10|20)\s*年代", query)
-    graph_evidence = bool(genres or languages or year_match)
-    tag_evidence = bool(moods or scenarios)
-    dense_evidence = bool(acoustic or tag_evidence)
+    """Compatibility alias for the single shared fail-closed guard plan."""
 
-    if graph_evidence and dense_evidence:
-        graph, dense = "required", "required"
-        brief = "目录条件与主观听感同时存在，图谱过滤后由向量补充相似度"
-    elif graph_evidence:
-        graph, dense = "required", "off"
-        brief = "请求包含语言、年代或流派等目录条件，使用图谱精确过滤"
-    elif dense_evidence:
-        graph = "optional" if tag_evidence else "off"
-        dense = "required"
-        brief = "情绪标签可辅助粗筛，主观听感由向量召回主导"
-    else:
-        graph, dense = "optional", "required"
-        brief = "请求约束较少，使用语义召回并让图谱提供轻量标签辅助"
-
-    reason_codes: list[str] = []
-    if genres:
-        reason_codes.append("taggable_genre")
-    if moods:
-        reason_codes.append("taggable_mood")
-    if scenarios:
-        reason_codes.append("taggable_scenario")
-    if dense_evidence:
-        reason_codes.append("subjective_affective_goal")
-    if any(term in acoustic for term in ["低音", "bass", "鼓", "音色", "人声"]):
-        reason_codes.append("acoustic_timbre_or_instrument")
-    reason_codes = list(dict.fromkeys(reason_codes)) or ["underspecified_request"]
-
-    decade = None
-    if year_match:
-        decade = year_match.group(0).replace(" ", "")
-    return {
-        "task_mode": "recommendation",
-        "dialogue_mode": None,
-        "response_mode": "answer",
-        "evidence": {
-            "decision_phase": "initial",
-            "failed_lanes": [],
-            "reason_codes": reason_codes,
-            "reference_songs": [],
-            "brief_reason": brief,
-        },
-        "lane_policy": {"graph": graph, "dense": dense, "web": "off"},
-        "hard": {
-            "artist": [],
-            "song": [],
-            "language": languages[0] if languages else None,
-            "region": None,
-            "instrumental": "纯音乐" in languages,
-        },
-        "soft": {"goal": query, "trajectory": "", "vibe": moods, "avoid": []},
-        "hints": {"mood": moods, "scenario": scenarios, "genre": genres},
-        "metadata": {
-            "era": decade,
-            "release_year_from": None,
-            "release_year_to": None,
-            "recency_required": False,
-            "external_knowledge_required": False,
-        },
-        "acoustic_queries": [f"music with {query}, coherent timbre and dynamics"] if dense == "required" else [],
-        "clarification": None,
-    }
+    return _build_safe_plan(query)
 
 
 def _endpoint(profile: str) -> tuple[str, str, str] | None:
@@ -398,6 +306,7 @@ def compile_route(plan: dict[str, Any]) -> dict[str, Any]:
         ("required", "required"): ("balanced_hybrid", 0.5, 0.5),
         ("optional", "required"): ("dense_primary", 0.25, 0.75),
         ("off", "required"): ("dense_only", 0.0, 1.0),
+        ("off", "off"): ("no_retrieval", 0.0, 0.0),
     }
     profile, graph_weight, dense_weight = mapping.get((graph, dense), ("safe_hybrid", 0.25, 0.75))
     return {
