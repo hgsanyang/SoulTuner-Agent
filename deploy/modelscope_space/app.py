@@ -21,6 +21,7 @@ from dialogue_orchestrator import (
     append_turn,
     bounded_history,
     history_for_planner,
+    novel_result_window,
     planner_turn_kind,
     resolved_reference,
 )
@@ -300,12 +301,21 @@ def _recommendation_payload(
         planning_query,
         _planner_context(history, memory, previous_rows, selected_song_id),
     )
-    rows = retrieve(
+    requested_count = max(1, int(top_k))
+    previous_count = len(previous_rows or [])
+    candidates = retrieve(
         planning_query,
         plan,
         route,
-        top_k=int(top_k),
+        top_k=requested_count + previous_count,
         preference_tags=_preference_tags(memory),
+    )
+    hard_songs = list((plan.get("hard") or {}).get("song") or [])
+    rows = novel_result_window(
+        candidates,
+        previous_rows,
+        requested_count,
+        preserve_previous=bool(hard_songs),
     )
     updated_memory = _copy_memory(memory)
     updated_memory["last_recommendation_query"] = planning_query
@@ -568,7 +578,7 @@ def next_audio(song_id: str | None, rows: list[dict[str, Any]] | None) -> tuple[
 
 def clear_dialogue(
     memory: dict[str, Any] | None,
-) -> tuple[str, list[dict[str, str]], list[dict[str, str]], str, dict[str, Any], str]:
+) -> tuple[Any, ...]:
     data = _copy_memory(memory)
     data["last_recommendation_query"] = ""
     data["last_recommendations"] = []
@@ -579,8 +589,15 @@ def clear_dialogue(
         [],
         [],
         '<div class="st-turn-status"><b>本轮状态</b><span>已开始新对话</span></div>',
+        _render_results([]),
+        [],
+        {},
+        {},
+        gr.Dropdown(choices=[], value=None),
+        [],
         data,
         memory_markdown(data),
+        None,
     )
 
 
@@ -620,7 +637,9 @@ def build_app() -> gr.Blocks:
     with gr.Blocks(title=TITLE, css=CSS, theme=gr.themes.Soft(primary_hue="emerald")) as demo:
         browser_secret = os.getenv("SOULTUNER_BROWSER_STATE_SECRET", "soultuner-public-browser-memory-v2")
         memory_state = gr.BrowserState(_blank_memory(), storage_key="soultuner-memory-v2", secret=browser_secret)
-        history_state = gr.BrowserState([], storage_key="soultuner-history-v2", secret=browser_secret)
+        # Dialogue history is session-local so "新建对话" is a hard context
+        # boundary.  Only explicit preference feedback remains browser-local.
+        history_state = gr.State([])
         result_state = gr.State([])
 
         gr.HTML(
@@ -830,14 +849,7 @@ def build_app() -> gr.Blocks:
         chat_clear.click(
             clear_dialogue,
             inputs=memory_state,
-            outputs=[
-                chat_message,
-                chat_history,
-                history_state,
-                turn_status,
-                memory_state,
-                memory_view,
-            ],
+            outputs=conversation_outputs,
             api_name=False,
         )
         reset_button.click(

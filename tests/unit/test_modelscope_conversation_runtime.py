@@ -231,3 +231,7 @@ def test_space_app_uses_one_orchestrated_conversation_surface():
     assert unified.index("plan_request(") < unified.index("planner_turn_kind(plan)")
     assert "selected_song_id" in unified
     assert "current_playlist_rows=list(previous_rows or [])" in unified
+    assert "novel_result_window(" in content
+    assert "history_state = gr.State([])" in content
+    assert 'storage_key="soultuner-history-v2"' not in content
+    assert "outputs=conversation_outputs" in content

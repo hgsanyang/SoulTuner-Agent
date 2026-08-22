@@ -37,3 +37,18 @@ def test_history_is_bounded_and_only_keeps_visible_dialogue_roles() -> None:
     assert len(bounded) == 20
     assert bounded[0]["content"] == "turn-10"
     assert all(item["role"] in {"user", "assistant"} for item in bounded)
+
+
+def test_followup_recommendation_prefers_a_novel_result_window_without_keywords() -> None:
+    candidates = [
+        {"song_id": "old-1"},
+        {"song_id": "old-2"},
+        {"song_id": "new-1"},
+        {"song_id": "new-2"},
+    ]
+    previous = [{"song_id": "old-1"}, {"song_id": "old-2"}]
+
+    rows = dialogue.novel_result_window(candidates, previous, 2)
+
+    assert [row["song_id"] for row in rows] == ["new-1", "new-2"]
+    assert dialogue.novel_result_window(candidates, previous, 2, preserve_previous=True) == candidates[:2]

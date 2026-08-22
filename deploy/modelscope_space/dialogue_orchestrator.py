@@ -45,6 +45,36 @@ def resolved_reference(
     return current[0] if current else {}
 
 
+def novel_result_window(
+    candidates: list[dict[str, Any]] | None,
+    previous_rows: list[dict[str, Any]] | None,
+    limit: int,
+    *,
+    preserve_previous: bool = False,
+) -> list[dict[str, Any]]:
+    """Prefer unseen candidates after a Planner-owned recommendation action.
+
+    This is presentation policy, not intent classification: the validated
+    Planner has already decided that the turn requests recommendations.  A
+    follow-up therefore gets a genuinely new window without looking for any
+    particular word in the user's message.  Explicit song constraints may opt
+    out so an exact requested title is never filtered away.
+    """
+
+    requested = max(0, int(limit))
+    current = list(candidates or [])
+    if requested == 0 or preserve_previous or not previous_rows:
+        return current[:requested]
+    previous_ids = {
+        str(row.get("song_id") or "").strip()
+        for row in previous_rows
+        if str(row.get("song_id") or "").strip()
+    }
+    unseen = [row for row in current if str(row.get("song_id") or "").strip() not in previous_ids]
+    repeated = [row for row in current if str(row.get("song_id") or "").strip() in previous_ids]
+    return (unseen + repeated)[:requested]
+
+
 def bounded_history(history: list[dict[str, Any]] | None, *, limit: int = 20) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for item in history or []:
