@@ -16,7 +16,11 @@ from typing import Any
 
 import gradio as gr
 
-from conversation_runtime import general_chat, recommendation_opening
+from conversation_runtime import (
+    general_chat,
+    recommendation_opening,
+    stream_recommendation_opening,
+)
 from dialogue_orchestrator import (
     append_turn,
     bounded_history,
@@ -294,6 +298,7 @@ def _recommendation_payload(
     previous_rows: list[dict[str, Any]] | None = None,
     selected_song_id: str | None = None,
     planned: tuple[dict[str, Any], dict[str, Any], str] | None = None,
+    include_opening: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     plan, route, status = planned or plan_request(
@@ -324,12 +329,15 @@ def _recommendation_payload(
     ]
     updated_memory["last_plan"] = plan
     updated_memory["last_turn_plan"] = plan
-    opening, conversation_status = recommendation_opening(
-        display_query,
-        plan,
-        rows,
-        updated_memory,
-    )
+    opening = ""
+    conversation_status = "35B 基座自然语言等待检索结果"
+    if include_opening:
+        opening, conversation_status = recommendation_opening(
+            display_query,
+            plan,
+            rows,
+            updated_memory,
+        )
     elapsed = time.perf_counter() - started
     table = [
         [
@@ -355,7 +363,13 @@ def _recommendation_payload(
     }
 
 
-def _friendly_route_status(payload: dict[str, Any]) -> str:
+def _friendly_route_status(
+    payload: dict[str, Any],
+    *,
+    songs_ready_elapsed: float | None = None,
+    total_elapsed: float | None = None,
+    conversation_status: str | None = None,
+) -> str:
     route = payload["route"]
     raw = str(payload["status"])
     if "通过结构与策略守卫" in raw:
@@ -369,10 +383,19 @@ def _friendly_route_status(payload: dict[str, Any]) -> str:
         (str(row.get("dense_source")) for row in payload["rows"] if row.get("dense_source")),
         "none",
     )
+    timing = ""
+    if songs_ready_elapsed is not None:
+        timing += f"<span>歌单 {songs_ready_elapsed:.2f}s</span>"
+    if total_elapsed is not None:
+        timing += f"<span>整轮 {total_elapsed:.2f}s</span>"
+    elif songs_ready_elapsed is None:
+        timing = f"<span>{payload['elapsed']:.2f}s</span>"
+    prose = conversation_status or str(payload.get("conversation_status") or "")
+    prose_html = f"<span>{html.escape(prose)}</span>" if prose else ""
     return (
         '<div class="st-turn-status"><b>本轮状态</b>'
         f"<span>{planner}</span><span>{profile}</span><span>{dense_backend}</span>"
-        f"<span>{payload['elapsed']:.2f}s</span></div>"
+        f"{prose_html}{timing}</div>"
     )
 
 
@@ -384,15 +407,38 @@ def unified_turn(
     memory: dict[str, Any] | None,
     previous_rows: list[dict[str, Any]] | None,
     selected_song_id: str | None,
-) -> tuple[Any, ...]:
-    """Let the Planner semantically route every visible user turn."""
+):
+    """Stream one Planner-owned turn, exposing the slate before prose finishes."""
 
     started = time.perf_counter()
     clean = str(message or "").strip()
     current_history = bounded_history(history)
     data = memory or _blank_memory()
     if not clean:
-        return ("", current_history, current_history, "请输入一条消息。", *([gr.skip()] * 9))
+        yield ("", current_history, current_history, "请输入一条消息。", *([gr.skip()] * 9))
+        return
+
+    # Match the production SSE surface: acknowledge the turn immediately while
+    # the Planner is running.  This preview is not committed to history state.
+    pending_history = bounded_history(
+        [*current_history, {"role": "user", "content": clean}]
+    )
+    yield (
+        "",
+        pending_history,
+        current_history,
+        '<div class="st-turn-status"><b>本轮状态</b>'
+        "<span>35B Planner 正在理解需求</span><span>检索尚未开始</span></div>",
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+    )
 
     context = _planner_context(current_history, data, previous_rows, selected_song_id)
     plan, route, planner_status = plan_request(profile, clean, context)
@@ -433,7 +479,7 @@ def unified_turn(
             f'<span>{time.perf_counter() - started:.2f}s</span></div>'
         )
         diagnostic_plan = {"planner_status": planner_status, **plan}
-        return (
+        yield (
             "",
             updated_history,
             updated_history,
@@ -448,6 +494,7 @@ def unified_turn(
             memory_markdown(updated_memory),
             gr.skip(),
         )
+        return
 
     payload = _recommendation_payload(
         clean,
@@ -459,20 +506,30 @@ def unified_turn(
         previous_rows,
         selected_song_id,
         planned=(plan, route, planner_status),
+        include_opening=False,
     )
-    payload["elapsed"] = time.perf_counter() - started
+    songs_ready_elapsed = time.perf_counter() - started
+    payload["elapsed"] = songs_ready_elapsed
     rows = payload["rows"]
-    assistant = payload["opening"]
-    if not rows:
-        assistant = assistant or "这一轮没有找到可靠候选，我们可以换个流派、场景或参考歌曲。"
-    updated_history = append_turn(current_history, clean, assistant)
     choices = [(f"{row['title']} — {row['artist']}", row["song_id"]) for row in rows]
     diagnostic_plan = {"planner_status": payload["status"], **payload["plan"]}
-    return (
+    if rows:
+        preview = "歌单已经先为你准备好了，可以立即试听；35B 正在结合这些结果组织推荐说明。"
+    else:
+        preview = "这一轮暂时没有找到可靠候选，35B 正在整理下一步建议。"
+    preview_history = append_turn(current_history, clean, preview)
+
+    # The first useful result: cards, player and diagnostics become interactive
+    # before the second 35B call starts.
+    yield (
         "",
-        updated_history,
-        updated_history,
-        _friendly_route_status(payload),
+        preview_history,
+        current_history,
+        _friendly_route_status(
+            payload,
+            songs_ready_elapsed=songs_ready_elapsed,
+            conversation_status="歌单已返回 · 35B 推荐话术生成中",
+        ),
         _render_results(rows, rows[0]["song_id"] if rows else None),
         payload["table"],
         diagnostic_plan,
@@ -482,6 +539,70 @@ def unified_turn(
         payload["memory"],
         memory_markdown(payload["memory"]),
         rows[0].get("audio_source") if rows else None,
+    )
+
+    final_opening = ""
+    final_status = ""
+    for partial, conversation_status in stream_recommendation_opening(
+        clean,
+        payload["plan"],
+        rows,
+        payload["memory"],
+    ):
+        final_opening = partial
+        final_status = conversation_status
+        partial_history = append_turn(current_history, clean, partial)
+        yield (
+            "",
+            partial_history,
+            current_history,
+            _friendly_route_status(
+                payload,
+                songs_ready_elapsed=songs_ready_elapsed,
+                conversation_status=conversation_status,
+            ),
+            gr.skip(),
+            gr.skip(),
+            gr.skip(),
+            gr.skip(),
+            gr.skip(),
+            gr.skip(),
+            gr.skip(),
+            gr.skip(),
+            gr.skip(),
+        )
+
+    if not final_opening:
+        final_opening = (
+            "这一轮没有找到可靠候选，我们可以换个流派、场景或参考歌曲。"
+            if not rows
+            else preview
+        )
+    total_elapsed = time.perf_counter() - started
+    updated_history = append_turn(current_history, clean, final_opening)
+    yield (
+        "",
+        updated_history,
+        updated_history,
+        _friendly_route_status(
+            payload,
+            songs_ready_elapsed=songs_ready_elapsed,
+            total_elapsed=total_elapsed,
+            conversation_status=(
+                "35B 基座自然语言已就绪"
+                if "安全回退" not in final_status
+                else final_status
+            ),
+        ),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        gr.skip(),
+        payload["memory"],
+        memory_markdown(payload["memory"]),
+        gr.skip(),
     )
 
 
@@ -815,12 +936,14 @@ def build_app() -> gr.Blocks:
             inputs=conversation_inputs,
             outputs=conversation_outputs,
             api_name="conversation",
+            show_progress="hidden",
         )
         chat_message.submit(
             unified_turn,
             inputs=conversation_inputs,
             outputs=conversation_outputs,
             api_name=False,
+            show_progress="hidden",
         )
         feedback_button.click(
             record_feedback,

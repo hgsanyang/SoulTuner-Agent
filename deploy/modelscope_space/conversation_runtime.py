@@ -11,6 +11,7 @@ import json
 import os
 import re
 import urllib.request
+from collections.abc import Iterator
 from typing import Any
 
 
@@ -81,6 +82,68 @@ def _request_prose(user_content: str) -> str:
     return _clean_prose(body["choices"][0]["message"]["content"])
 
 
+def _request_prose_stream(user_content: str) -> Iterator[str]:
+    """Yield cumulative prose from an OpenAI-compatible SSE response.
+
+    The public Space can render the retrieved slate before this iterator is
+    consumed.  Batching cumulative text here keeps Gradio updates bounded while
+    still making the base-model response visibly progressive.
+    """
+
+    endpoint, chat_model = _endpoint()
+    payload = json.dumps(
+        {
+            "model": chat_model,
+            "messages": [
+                {"role": "system", "content": _PROSE_SYSTEM},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": 0.6,
+            "max_tokens": 240,
+            "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "stream": True,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    token = os.getenv("SOULTUNER_CHAT_API_KEY", "").strip() or os.getenv(
+        "SOULTUNER_PLANNER_API_KEY", ""
+    ).strip()
+    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
+    timeout = float(os.getenv("SOULTUNER_CHAT_TIMEOUT", "45"))
+    accumulated = ""
+    last_emitted = ""
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            event = json.loads(data)
+            choices = event.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            content = delta.get("content")
+            if not content:
+                continue
+            accumulated += str(content)
+            # Swift/vLLM may emit a token at a time.  Updating the full Gradio
+            # output for every token creates avoidable queue and DOM pressure.
+            cleaned = _clean_prose(accumulated)
+            if len(cleaned) - len(last_emitted) >= 12:
+                last_emitted = cleaned
+                yield cleaned
+    final = _clean_prose(accumulated)
+    if final != last_emitted:
+        yield final
+
+
 def _memory_summary(memory: dict[str, Any] | None) -> str:
     data = memory or {}
     positives = data.get("positive_tags") or {}
@@ -124,14 +187,12 @@ def _fallback_opening(query: str, rows: list[dict[str, Any]]) -> str:
     return f"我已经按“{query}”整理检索方向；当前没有可靠候选，可以换一种氛围、场景或参考歌曲再试。"
 
 
-def recommendation_opening(
+def _recommendation_prompt(
     query: str,
     plan: dict[str, Any],
     rows: list[dict[str, Any]],
-    memory: dict[str, Any] | None = None,
-) -> tuple[str, str]:
-    """Return a natural recommendation opening plus an observable role status."""
-
+    memory: dict[str, Any] | None,
+) -> str:
     compact_rows = [
         {
             "title": row.get("title"),
@@ -140,7 +201,7 @@ def recommendation_opening(
         }
         for row in rows[:5]
     ]
-    prompt = (
+    return (
         "请根据已经完成的检索结果，写一段不超过100字的推荐开场。"
         "不要复述系统流程，不要增加列表外的歌曲；可以自然邀请用户试听后反馈。\n"
         + json.dumps(
@@ -153,10 +214,41 @@ def recommendation_opening(
             ensure_ascii=False,
         )
     )
+
+
+def recommendation_opening(
+    query: str,
+    plan: dict[str, Any],
+    rows: list[dict[str, Any]],
+    memory: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Return a natural recommendation opening plus an observable role status."""
+
+    prompt = _recommendation_prompt(query, plan, rows, memory)
     try:
         return _request_prose(prompt), "35B 基座自然语言已就绪"
     except Exception as exc:
         return _fallback_opening(query, rows), f"自然语言安全回退（{type(exc).__name__}）"
+
+
+def stream_recommendation_opening(
+    query: str,
+    plan: dict[str, Any],
+    rows: list[dict[str, Any]],
+    memory: dict[str, Any] | None = None,
+) -> Iterator[tuple[str, str]]:
+    """Stream a recommendation opening after the slate is already visible."""
+
+    prompt = _recommendation_prompt(query, plan, rows, memory)
+    emitted = False
+    try:
+        for partial in _request_prose_stream(prompt):
+            emitted = True
+            yield partial, "35B 基座自然语言生成中"
+        if not emitted:
+            raise ValueError("conversation model returned empty stream")
+    except Exception as exc:
+        yield _fallback_opening(query, rows), f"自然语言安全回退（{type(exc).__name__}）"
 
 
 def general_chat(

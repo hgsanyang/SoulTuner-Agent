@@ -23,6 +23,23 @@ class _Response:
         ).encode("utf-8")
 
 
+class _StreamResponse:
+    def __init__(self, chunks: list[str]):
+        self.chunks = chunks
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def __iter__(self):
+        for chunk in self.chunks:
+            event = {"choices": [{"delta": {"content": chunk}}]}
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield b"data: [DONE]\n\n"
+
+
 def _rows():
     return [
         {
@@ -106,6 +123,53 @@ def test_recommendation_opening_safely_falls_back_when_endpoint_is_cold(monkeypa
 
     assert "Rain Window" in text
     assert status == "自然语言安全回退（URLError）"
+
+
+def test_recommendation_opening_streams_cumulative_base_model_prose(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _StreamResponse(["歌单已经先到，", "可以从第一首开始试听，", "我再陪你慢慢调整。"])
+
+    monkeypatch.setenv("SOULTUNER_CHAT_MODEL", "qwen3.6-35b-a3b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_MODEL", "soultuner-v4.2-35b")
+    monkeypatch.setenv("SOULTUNER_PLANNER_BASE_URL", "http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(conversation_runtime.urllib.request, "urlopen", fake_urlopen)
+
+    updates = list(
+        conversation_runtime.stream_recommendation_opening(
+            "想听雨天音乐",
+            {"evidence": {"brief_reason": "安静氛围"}},
+            _rows(),
+        )
+    )
+
+    assert captured["payload"]["stream"] is True
+    assert captured["payload"]["model"] == "qwen3.6-35b-a3b"
+    assert len(updates) >= 2
+    assert updates[-1][0] == "歌单已经先到，可以从第一首开始试听，我再陪你慢慢调整。"
+    assert all(status == "35B 基座自然语言生成中" for _, status in updates)
+
+
+def test_recommendation_opening_stream_falls_back_once(monkeypatch):
+    monkeypatch.setattr(
+        conversation_runtime,
+        "_request_prose_stream",
+        lambda *_args: (_ for _ in ()).throw(TimeoutError("cold")),
+    )
+
+    updates = list(
+        conversation_runtime.stream_recommendation_opening(
+            "想听安静的",
+            {"evidence": {"brief_reason": "听感检索"}},
+            _rows(),
+        )
+    )
+
+    assert len(updates) == 1
+    assert "Rain Window" in updates[0][0]
+    assert updates[0][1] == "自然语言安全回退（TimeoutError）"
 
 
 def test_general_chat_passes_recent_history_and_session_memory(monkeypatch):
@@ -222,7 +286,8 @@ def test_clarification_fallback_preserves_planner_question(monkeypatch):
 def test_space_app_uses_one_orchestrated_conversation_surface():
     source = conversation_runtime.__file__.replace("conversation_runtime.py", "app.py")
     content = open(source, encoding="utf-8").read()
-    assert "from conversation_runtime import general_chat, recommendation_opening" in content
+    assert "recommendation_opening," in content
+    assert "stream_recommendation_opening," in content
     assert "opening, conversation_status = recommendation_opening(" in content
     assert "def unified_turn(" in content
     assert 'api_name="conversation"' in content
@@ -232,6 +297,10 @@ def test_space_app_uses_one_orchestrated_conversation_surface():
     assert "selected_song_id" in unified
     assert "current_playlist_rows=list(previous_rows or [])" in unified
     assert "novel_result_window(" in content
+    assert "include_opening=False" in unified
+    assert unified.index("_render_results(rows") < unified.index("stream_recommendation_opening(")
+    assert "歌单已返回 · 35B 推荐话术生成中" in unified
+    assert "songs_ready_elapsed" in unified
     assert "history_state = gr.State([])" in content
     assert 'storage_key="soultuner-history-v2"' not in content
     assert "outputs=conversation_outputs" in content
