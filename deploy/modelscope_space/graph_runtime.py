@@ -16,10 +16,18 @@ _CACHE_STATUS: dict[str, Any] = {"state": "not-checked", "tracks": 0}
 
 def _connection_settings() -> tuple[str, str, str, str | None]:
     uri = os.getenv("NEO4J_URI", "").strip()
-    user = (os.getenv("NEO4J_USER", "").strip() or os.getenv("NEO4J_USERNAME", "").strip())
+    user = os.getenv("NEO4J_USER", "").strip() or os.getenv("NEO4J_USERNAME", "").strip()
     password = os.getenv("NEO4J_PASSWORD", "").strip()
     database = os.getenv("NEO4J_DATABASE", "").strip() or None
     return uri, user, password, database
+
+
+def _public_datasets() -> list[str]:
+    configured = os.getenv(
+        "SOULTUNER_PUBLIC_DATASETS",
+        "song_describer_full,fma_small_balanced",
+    )
+    return list(dict.fromkeys(part.strip() for part in configured.split(",") if part.strip()))
 
 
 def _query_overlay() -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
@@ -40,18 +48,24 @@ def _query_overlay() -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
             with driver.session(database=database) as session:
                 records = session.run(
                     """
-                    MATCH (s:Song {dataset: 'song_describer_full'})
+                    MATCH (s:Song)
+                    WHERE s.dataset IN $datasets
                     RETURN toString(s.music_id) AS song_id,
                            s.title AS title,
                            s.artist AS artist,
                            s.audio_url AS audio_url,
                            s.cover_url AS cover_url,
                            s.description AS description,
-                           [(s)-[:BELONGS_TO_GENRE]->(g:Genre) | g.name] AS genres,
+                           CASE
+                             WHEN size([(s)-[:BELONGS_TO_GENRE]->(g:Genre) | g.name]) > 0
+                             THEN [(s)-[:BELONGS_TO_GENRE]->(g:Genre) | g.name]
+                             ELSE coalesce(s.genres, [])
+                           END AS genres,
                            [(s)-[:HAS_MOOD]->(m:Mood) | m.name] AS moods_themes,
                            [(s)-[:HAS_INSTRUMENT]->(i:Instrument) | i.name] AS instruments,
                            coalesce(s.enrichment_status, 'pending') AS enrichment_status
-                    """
+                    """,
+                    datasets=_public_datasets(),
                 )
                 rows = {str(record["song_id"]): record.data() for record in records}
         finally:
@@ -107,6 +121,53 @@ def merge_graph_overlay(rows: Iterable[Mapping[str, Any]]) -> tuple[dict[str, An
         for row in merged:
             row["graph_backend"] = "local_catalog"
     return tuple(merged)
+
+
+def vector_query_scores(
+    embedding: list[float],
+    *,
+    index_name: str = "song_m2d2_index",
+    limit: int = 200,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    """Query one ONLINE Aura vector index with reconnect-on-every-call safety."""
+
+    uri, user, password, database = _connection_settings()
+    if not all((uri, user, password)):
+        return {}, {"state": "not-configured"}
+    if not embedding:
+        return {}, {"state": "empty-vector"}
+    try:
+        from neo4j import GraphDatabase
+
+        driver = GraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            connection_timeout=float(os.getenv("NEO4J_CONNECTION_TIMEOUT_SECONDS", "5")),
+        )
+        try:
+            with driver.session(database=database) as session:
+                records = session.run(
+                    """
+                    CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+                    YIELD node AS song, score
+                    WHERE song:Song AND song.dataset IN $datasets
+                    RETURN toString(song.music_id) AS song_id, score
+                    """,
+                    index_name=str(index_name),
+                    limit=max(1, min(int(limit), 500)),
+                    embedding=[float(value) for value in embedding],
+                    datasets=_public_datasets(),
+                )
+                scores = {
+                    str(record["song_id"]): float(record["score"])
+                    for record in records
+                    if record.get("song_id") is not None
+                }
+        finally:
+            driver.close()
+    except Exception as exc:
+        return {}, {"state": "unavailable", "detail": type(exc).__name__}
+    return scores, {"state": "ready", "matches": len(scores), "index": index_name}
 
 
 def status_markdown() -> str:

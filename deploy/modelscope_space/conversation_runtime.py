@@ -22,15 +22,11 @@ _PROSE_SYSTEM = """你是 SoulTuner 的自然语言对话助手。你只负责�
 
 def _models() -> tuple[str, str]:
     chat_model = os.getenv("SOULTUNER_CHAT_MODEL", DEFAULT_CHAT_MODEL).strip()
-    planner_model = os.getenv(
-        "SOULTUNER_PLANNER_MODEL", DEFAULT_PLANNER_MODEL
-    ).strip()
+    planner_model = os.getenv("SOULTUNER_PLANNER_MODEL", DEFAULT_PLANNER_MODEL).strip()
     if not chat_model:
         raise RuntimeError("SOULTUNER_CHAT_MODEL is empty")
     normalized_chat = chat_model.casefold().replace("_", "-")
-    planner_named_chat = "soultuner" in normalized_chat and (
-        "v4.2" in normalized_chat or "v42" in normalized_chat
-    )
+    planner_named_chat = "soultuner" in normalized_chat and ("v4.2" in normalized_chat or "v42" in normalized_chat)
     if chat_model.casefold() == planner_model.casefold() or planner_named_chat:
         raise RuntimeError("chat served model must differ from planner-only LoRA")
     return chat_model, planner_model
@@ -38,10 +34,7 @@ def _models() -> tuple[str, str]:
 
 def _endpoint() -> tuple[str, str]:
     chat_model, _ = _models()
-    base = (
-        os.getenv("SOULTUNER_CHAT_BASE_URL", "").strip()
-        or os.getenv("SOULTUNER_PLANNER_BASE_URL", "").strip()
-    )
+    base = os.getenv("SOULTUNER_CHAT_BASE_URL", "").strip() or os.getenv("SOULTUNER_PLANNER_BASE_URL", "").strip()
     if not base:
         # CPU demo mode intentionally has no model server.  Fail immediately so
         # a recommendation never waits on an endpoint that was not launched.
@@ -77,10 +70,7 @@ def _request_prose(user_content: str) -> str:
         },
         ensure_ascii=False,
     ).encode("utf-8")
-    token = (
-        os.getenv("SOULTUNER_CHAT_API_KEY", "").strip()
-        or os.getenv("SOULTUNER_PLANNER_API_KEY", "").strip()
-    )
+    token = os.getenv("SOULTUNER_CHAT_API_KEY", "").strip() or os.getenv("SOULTUNER_PLANNER_API_KEY", "").strip()
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -99,6 +89,7 @@ def _memory_summary(memory: dict[str, Any] | None) -> str:
         positives = {}
     if not isinstance(negatives, dict):
         negatives = {}
+
     def weight(mapping: dict[str, Any], key: str) -> int:
         try:
             return int(mapping[key])
@@ -107,18 +98,27 @@ def _memory_summary(memory: dict[str, Any] | None) -> str:
 
     liked = sorted(positives, key=lambda key: (-weight(positives, key), str(key)))[:6]
     avoided = sorted(negatives, key=lambda key: (-weight(negatives, key), str(key)))[:6]
+    last_results = []
+    for item in (data.get("last_recommendations") or [])[:8]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        artist = str(item.get("artist") or "").strip()
+        if title:
+            last_results.append({"title": title, "artist": artist})
     return json.dumps(
-        {"session_likes": liked, "session_avoids": avoided},
+        {
+            "session_likes": liked,
+            "session_avoids": avoided,
+            "last_recommendation_query": str(data.get("last_recommendation_query") or "")[:300],
+            "last_recommendations": last_results,
+        },
         ensure_ascii=False,
     )
 
 
 def _fallback_opening(query: str, rows: list[dict[str, Any]]) -> str:
-    names = [
-        f"《{row.get('title')}》"
-        for row in rows[:3]
-        if str(row.get("title") or "").strip()
-    ]
+    names = [f"《{row.get('title')}》" for row in rows[:3] if str(row.get("title") or "").strip()]
     if names:
         return f"我按“{query}”整理了这组结果，可以先从{'、'.join(names)}开始试听，再告诉我哪种感觉更接近。"
     return f"我已经按“{query}”整理检索方向；当前没有可靠候选，可以换一种氛围、场景或参考歌曲再试。"

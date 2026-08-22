@@ -6,8 +6,23 @@ import copy
 import json
 import os
 import re
+import sys
 import urllib.request
+from pathlib import Path
 from typing import Any
+
+
+for _candidate_root in (Path.cwd(), Path(__file__).resolve().parents[2]):
+    if (_candidate_root / "deploy" / "self_hosted_35b" / "planner_guard.py").is_file():
+        _root_text = str(_candidate_root)
+        if _root_text not in sys.path:
+            sys.path.insert(0, _root_text)
+        break
+
+from deploy.self_hosted_35b.planner_guard import build_safe_plan as _build_safe_plan  # noqa: E402
+from deploy.self_hosted_35b.planner_guard import guard_candidate as _guard_candidate  # noqa: E402
+from deploy.self_hosted_35b.prompt_v42 import STUDENT_SYSTEM_PROMPT_V4_2  # noqa: E402
+from deploy.self_hosted_35b.prompt_v42 import format_student_user_message  # noqa: E402
 
 
 PROFILE_SAFE = "demo-heuristic"
@@ -39,11 +54,7 @@ ACOUSTIC_TERMS = [
     "能量",
 ]
 
-SYSTEM_PROMPT = """你是 SoulTuner 音乐检索规划器。只输出一个 JSON 对象，不输出 Markdown 或隐藏思维过程。
-字段：task_mode, dialogue_mode, response_mode, evidence, lane_policy, hard, soft, hints,
-metadata, acoustic_queries, clarification。lane_policy 中 graph/web 取 required|optional|off，dense
-取 required|off。明确目录条件使用 graph；主观情绪、音色、节奏、空间感或参考歌曲相似度使用
-dense；二者都存在时表达主次。brief_reason 最多80字。"""
+SYSTEM_PROMPT = STUDENT_SYSTEM_PROMPT_V4_2
 
 
 def profile_choices() -> list[tuple[str, str]]:
@@ -135,9 +146,7 @@ def safe_plan(query: str) -> dict[str, Any]:
             "recency_required": False,
             "external_knowledge_required": False,
         },
-        "acoustic_queries": [f"music with {query}, coherent timbre and dynamics"]
-        if dense == "required"
-        else [],
+        "acoustic_queries": [f"music with {query}, coherent timbre and dynamics"] if dense == "required" else [],
         "clarification": None,
     }
 
@@ -147,11 +156,7 @@ def _endpoint(profile: str) -> tuple[str, str, str] | None:
         base_url = os.getenv("SOULTUNER_PLANNER_BASE_URL", "").strip().rstrip("/")
         if not base_url:
             return None
-        endpoint = (
-            base_url
-            if base_url.endswith("/chat/completions")
-            else f"{base_url}/chat/completions"
-        )
+        endpoint = base_url if base_url.endswith("/chat/completions") else f"{base_url}/chat/completions"
         return (
             endpoint,
             os.getenv("SOULTUNER_PLANNER_MODEL", PROFILE_SOULTUNER),
@@ -180,21 +185,37 @@ def _extract_json(text: str) -> dict[str, Any]:
     return value
 
 
-def _remote_plan(profile: str, query: str) -> dict[str, Any]:
+def _remote_plan(
+    profile: str,
+    query: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     resolved = _endpoint(profile)
     if resolved is None:
         raise RuntimeError("selected model endpoint is not configured")
     endpoint, model, token = resolved
+    current_context = context or {}
+    user_message = format_student_user_message(
+        query,
+        profile_snapshot=str(current_context.get("profile_snapshot") or ""),
+        retrieved_memories=current_context.get("retrieved_memories"),
+        chat_history=str(current_context.get("chat_history") or ""),
+        previous_plan=str(current_context.get("previous_plan") or ""),
+        reference_title=str(current_context.get("reference_title") or ""),
+        reference_artist=str(current_context.get("reference_artist") or ""),
+    )
     payload = json.dumps(
         {
             "model": model,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": query},
+                {"role": "user", "content": user_message},
             ],
             "temperature": 0,
             "max_tokens": 1024,
+            "response_format": {"type": "json_object"},
             "enable_thinking": False,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
     ).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -230,7 +251,22 @@ def normalize_legacy_candidate(
     if not is_legacy:
         return candidate, False
 
-    normalized = copy.deepcopy(fallback)
+    normalized = {
+        key: copy.deepcopy(fallback[key])
+        for key in (
+            "task_mode",
+            "dialogue_mode",
+            "response_mode",
+            "evidence",
+            "lane_policy",
+            "hard",
+            "soft",
+            "hints",
+            "metadata",
+            "acoustic_queries",
+            "clarification",
+        )
+    }
     normalized["task_mode"] = "recommendation"
     normalized["dialogue_mode"] = None
     normalized["response_mode"] = "answer"
@@ -282,9 +318,7 @@ def normalize_legacy_candidate(
         for key in ("mood", "scenario", "genre"):
             values = legacy_hints.get(key)
             if isinstance(values, list):
-                normalized["hints"][key] = [
-                    str(item).strip() for item in values if str(item).strip()
-                ][:6]
+                normalized["hints"][key] = [str(item).strip() for item in values if str(item).strip()][:6]
     descriptors.extend(descriptor_values(legacy_hints))
 
     legacy_metadata = candidate.get("metadata")
@@ -303,9 +337,7 @@ def normalize_legacy_candidate(
             normalized["hard"]["language"] = language.strip()
         genres = legacy_metadata.get("genre")
         if isinstance(genres, list):
-            normalized["hints"]["genre"] = [
-                str(item).strip() for item in genres if str(item).strip()
-            ][:6]
+            normalized["hints"]["genre"] = [str(item).strip() for item in genres if str(item).strip()][:6]
         descriptors.extend(
             descriptor
             for key in ("instrument", "vocal_style")
@@ -320,9 +352,7 @@ def normalize_legacy_candidate(
         ][:4]
     else:
         normalized["acoustic_queries"] = acoustic_queries
-    if normalized["lane_policy"].get("dense") == "required" and not normalized[
-        "acoustic_queries"
-    ]:
+    if normalized["lane_policy"].get("dense") == "required" and not normalized["acoustic_queries"]:
         normalized["acoustic_queries"] = [query]
     clarification = candidate.get("clarification")
     normalized["clarification"] = clarification if isinstance(clarification, str) else None
@@ -369,9 +399,7 @@ def compile_route(plan: dict[str, Any]) -> dict[str, Any]:
         ("optional", "required"): ("dense_primary", 0.25, 0.75),
         ("off", "required"): ("dense_only", 0.0, 1.0),
     }
-    profile, graph_weight, dense_weight = mapping.get(
-        (graph, dense), ("safe_hybrid", 0.25, 0.75)
-    )
+    profile, graph_weight, dense_weight = mapping.get((graph, dense), ("safe_hybrid", 0.25, 0.75))
     return {
         "profile": profile,
         "graph_weight": graph_weight,
@@ -380,17 +408,22 @@ def compile_route(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def plan_request(profile: str, query: str) -> tuple[dict[str, Any], dict[str, Any], str]:
-    fallback = safe_plan(query)
+def plan_request(
+    profile: str,
+    query: str,
+    context: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    fallback = _build_safe_plan(query, context)
     if profile == PROFILE_SAFE:
         plan, status = fallback, "公开安全演示：确定性计划，不调用外部模型"
     else:
         try:
             candidate, legacy_adapted = normalize_legacy_candidate(
-                _remote_plan(profile, query), fallback, query
+                _remote_plan(profile, query, context), fallback, query
             )
-            plan, status = validate_plan(candidate, fallback)
-            if legacy_adapted and status == "模型候选通过结构与策略守卫":
+            plan, findings = _guard_candidate(query, candidate, context)
+            status = "；".join(findings)
+            if legacy_adapted and findings == ["模型候选通过结构与策略守卫"]:
                 status = "35B 模型候选经兼容适配后通过结构与策略守卫"
         except Exception as exc:  # The UI must remain available when a model is cold/offline.
             plan, status = fallback, f"模型端点暂不可用，已安全回退（{type(exc).__name__}）"

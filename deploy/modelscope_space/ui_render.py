@@ -7,6 +7,7 @@ tested without starting the 35B endpoint or materialising the audio dataset.
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -21,6 +22,11 @@ def _safe_web_href(value: Any) -> str:
     parsed = urlparse(text)
     if parsed.scheme in {"http", "https"} and parsed.netloc:
         return html.escape(text, quote=True)
+    if len(text) <= 512 * 1024 and re.fullmatch(
+        r"data:image/(?:png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+",
+        text,
+    ):
+        return text
     return ""
 
 
@@ -53,7 +59,10 @@ def _cover_html(row: dict[str, Any], index: int, title: str) -> str:
     return f'<div class="st-cover st-cover-{index % 5}" aria-hidden="true">{initial}</div>'
 
 
-def render_results(rows: list[dict[str, Any]] | None) -> str:
+def render_results(
+    rows: list[dict[str, Any]] | None,
+    active_song_id: str | None = None,
+) -> str:
     if not rows:
         return (
             '<div class="st-empty"><span>♫</span><b>推荐会出现在这里</b>'
@@ -67,9 +76,7 @@ def render_results(rows: list[dict[str, Any]] | None) -> str:
         language = _text(row.get("language"), "语言未知")
         decade = _text(row.get("decade"))
         meta = " · ".join(part for part in (artist, language, f"{decade}s" if decade and decade != "0" else "") if part)
-        tag_html = "".join(
-            f'<span class="st-tag">{html.escape(tag)}</span>' for tag in _tags(row)
-        )
+        tag_html = "".join(f'<span class="st-tag">{html.escape(tag)}</span>' for tag in _tags(row))
         playable = bool(row.get("audio_available") or row.get("audio_source"))
         play_state = "可试听" if playable else "暂无音频"
         play_class = "is-ready" if playable else ""
@@ -80,33 +87,36 @@ def render_results(rows: list[dict[str, Any]] | None) -> str:
         licence_url = _safe_web_href(row.get("license_url"))
         source_url = _safe_web_href(row.get("source_url"))
         licence_html = (
-            f'<a href="{licence_url}" target="_blank" rel="noopener">{licence}</a>'
-            if licence_url
-            else licence
+            f'<a href="{licence_url}" target="_blank" rel="noopener">{licence}</a>' if licence_url else licence
         )
-        source_html = (
-            f'<a href="{source_url}" target="_blank" rel="noopener">来源</a>'
-            if source_url
-            else ""
-        )
+        source_html = f'<a href="{source_url}" target="_blank" rel="noopener">来源</a>' if source_url else ""
         provenance = " · ".join(part for part in (attribution, licence_html, source_html) if part)
         provenance_html = f'<div class="st-provenance">{provenance}</div>' if provenance else ""
         song_id = html.escape(_text(row.get("song_id")), quote=True)
+        is_current = bool(active_song_id and _text(row.get("song_id")) == active_song_id)
+        card_class = "st-card is-current" if is_current else "st-card"
+        playing_label = "正在播放" if is_current and playable else play_state
+        equalizer = (
+            '<span class="st-equalizer" aria-label="正在播放"><i></i><i></i><i></i><i></i></span>'
+            if is_current and playable
+            else ""
+        )
 
         cards.append(
-            f'<article class="st-card" data-song-id="{song_id}">'
-            f'{_cover_html(row, index, title)}'
+            f'<article class="{card_class}" data-song-id="{song_id}">'
+            f"{_cover_html(row, index, title)}"
             '<div class="st-track-main">'
             '<div class="st-track-heading">'
             f'<span class="st-rank">{index:02d}</span>'
-            f'<div><h3>{html.escape(title)}</h3><p>{html.escape(meta)}</p></div>'
+            f"<div><h3>{html.escape(title)}</h3><p>{html.escape(meta)}</p></div>"
             "</div>"
             f'<div class="st-track-tags">{tag_html}</div>'
             f'<p class="st-reason">{reason}</p>{provenance_html}'
             "</div>"
             '<div class="st-track-side">'
+            f"{equalizer}"
             f'<span class="st-match">{_score(row.get("final_score"))}<small>匹配</small></span>'
-            f'<span class="st-play-state {play_class}">▶ {play_state}</span>'
+            f'<span class="st-play-state {play_class}">▶ {playing_label}</span>'
             "</div></article>"
         )
     return f'<section class="st-grid">{"".join(cards)}</section>'
@@ -127,10 +137,10 @@ def render_conversation(
         return (
             '<section class="st-conversation">'
             '<div class="st-assistant-row"><span class="st-avatar">S</span><div class="st-bubble st-assistant">'
-            '<b>晚上好，我是 SoulTuner。</b>'
-            '<p>不用先想歌名。告诉我此刻的场景、心情、想要的声音，或者明确说出“不想听什么”。</p>'
+            "<b>晚上好，我是 SoulTuner。</b>"
+            "<p>不用先想歌名。告诉我此刻的场景、心情、想要的声音，或者明确说出“不想听什么”。</p>"
             '<div class="st-guide-grid"><span>☔ 暴雨天宅家</span><span>🌙 安静夜晚</span>'
-            '<span>💻 专注工作</span><span>🏃 节奏运动</span></div>'
+            "<span>💻 专注工作</span><span>🏃 节奏运动</span></div>"
             "</div></div></section>"
         )
 
@@ -148,18 +158,18 @@ def render_conversation(
     lane_text = " + ".join(lane_labels) or _text(current_route.get("profile"), "安全目录")
     count_text = f"我为你整理了 {result_count} 首" if result_count else "暂时没有找到合适曲目"
     safe_status = html.escape(_text(status, "请求已完成"))
-    opening_html = f'<p>{html.escape(natural_opening)}</p>' if natural_opening else ""
+    opening_html = f"<p>{html.escape(natural_opening)}</p>" if natural_opening else ""
     return "".join(
         (
-        '<section class="st-conversation">'
-        '<div class="st-user-row"><div class="st-bubble st-user">'
-        f'{html.escape(clean_query)}</div></div>',
-        '<div class="st-assistant-row"><span class="st-avatar">S</span><div class="st-bubble st-assistant">'
-        f'<b>{html.escape(count_text)}。</b>',
-        opening_html,
-        f'<p class="st-understanding">需求理解：{html.escape(reason)}</p>',
-        '<div class="st-route-line">'
-        f'<span>{html.escape(lane_text)}</span><span>{safe_status}</span><span>{elapsed:.2f}s</span>',
-        "</div></div></div></section>",
+            '<section class="st-conversation">'
+            '<div class="st-user-row"><div class="st-bubble st-user">'
+            f"{html.escape(clean_query)}</div></div>",
+            '<div class="st-assistant-row"><span class="st-avatar">S</span><div class="st-bubble st-assistant">'
+            f"<b>{html.escape(count_text)}。</b>",
+            opening_html,
+            f'<p class="st-understanding">需求理解：{html.escape(reason)}</p>',
+            '<div class="st-route-line">'
+            f"<span>{html.escape(lane_text)}</span><span>{safe_status}</span><span>{elapsed:.2f}s</span>",
+            "</div></div></div></section>",
         )
     )

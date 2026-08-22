@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -14,12 +15,34 @@ from urllib.parse import urlparse
 
 try:
     from .graph_runtime import merge_graph_overlay
+    from .graph_runtime import vector_query_scores
+    from .dense_runtime import encode_text_query
 except ImportError:  # ModelScope uploads this directory as a flat application.
     from graph_runtime import merge_graph_overlay
+    from graph_runtime import vector_query_scores
+    from dense_runtime import encode_text_query
 
 
 DATA = Path(__file__).resolve().parent / "data" / "catalog.jsonl"
 _AUDIO_SUFFIXES = {".mp3", ".flac", ".ogg", ".opus", ".wav", ".m4a", ".aiff"}
+_TAG_ALIASES = {
+    "旅行": ("travel", "journey", "road", "driving", "trip"),
+    "驾驶": ("driving", "road", "travel", "car"),
+    "公路": ("road", "driving", "travel", "journey"),
+    "摇滚": ("rock", "guitar", "alternative", "metal", "punk"),
+    "流行": ("pop", "singer-songwriter"),
+    "电子": ("electronic", "electronica", "synth"),
+    "爵士": ("jazz", "swing"),
+    "民谣": ("folk", "acoustic", "singer-songwriter"),
+    "说唱": ("rap", "hiphop", "hip-hop"),
+    "嘻哈": ("hiphop", "hip-hop", "rap"),
+    "温暖": ("warm", "gentle", "comforting"),
+    "治愈": ("healing", "hopeful", "gentle", "warm"),
+    "平静": ("calm", "peaceful", "quiet", "relaxing"),
+    "活力": ("energetic", "upbeat", "lively"),
+    "雨天": ("rain", "rainy", "cozy", "intimate"),
+    "夜晚": ("night", "nighttime", "late-night"),
+}
 
 
 def catalog_path() -> Path:
@@ -40,11 +63,7 @@ def audio_root() -> Path:
 
 @lru_cache(maxsize=4)
 def _load_catalog(path: str) -> tuple[dict[str, Any], ...]:
-    rows = [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
     return tuple(rows)
 
 
@@ -82,10 +101,7 @@ def _row_decade(row: dict[str, Any]) -> int:
 
 def _catalog_description(row: dict[str, Any]) -> str:
     captions = row.get("captions") or []
-    caption_text = [
-        str(item.get("text") or "") if isinstance(item, dict) else str(item)
-        for item in captions
-    ]
+    caption_text = [str(item.get("text") or "") if isinstance(item, dict) else str(item) for item in captions]
     return " ".join(
         [
             str(row.get("title") or ""),
@@ -132,6 +148,35 @@ def resolve_audio_source(row: dict[str, Any]) -> str | None:
     return None
 
 
+@lru_cache(maxsize=256)
+def _cover_data_url(path: str) -> str:
+    payload = Path(path).read_bytes()
+    if len(payload) > 512 * 1024:
+        raise ValueError("cover fallback is too large")
+    return "data:image/svg+xml;base64," + base64.b64encode(payload).decode("ascii")
+
+
+def resolve_cover_source(row: dict[str, Any]) -> str:
+    remote = str(row.get("cover_url") or "").strip()
+    if remote.startswith(("http://", "https://")):
+        return remote
+    relative = str(row.get("cover_fallback_path") or "").strip()
+    if not relative:
+        return ""
+    root = catalog_path().parent.resolve()
+    try:
+        candidate = (root / relative).resolve()
+        candidate.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    if not candidate.is_file() or candidate.suffix.casefold() != ".svg":
+        return ""
+    try:
+        return _cover_data_url(str(candidate))
+    except (OSError, ValueError):
+        return ""
+
+
 def _cosine(left: list[float], right: list[float]) -> float:
     numerator = sum(a * b for a, b in zip(left, right))
     denominator = math.sqrt(sum(a * a for a in left) * sum(b * b for b in right)) or 1.0
@@ -174,10 +219,14 @@ def _graph_score(query: str, row: dict[str, Any], plan: dict[str, Any]) -> float
     if era:
         terms.append(str(era).replace("年代", ""))
     terms.extend(term for term in ["温暖", "治愈", "专注", "活力"] if term in query)
-    unique_terms = {term for term in terms if term}
+    unique_terms = {str(term).casefold() for term in terms if term}
     if not unique_terms:
         return 0.5
-    matches = sum(1 for term in unique_terms if term in searchable)
+    matches = sum(
+        1
+        for term in unique_terms
+        if any(alias.casefold() in searchable for alias in (term, *_TAG_ALIASES.get(term, ())))
+    )
     return matches / len(unique_terms)
 
 
@@ -205,16 +254,11 @@ def _description_score(query: str, row: dict[str, Any]) -> float:
             descriptor_hits += current_hits
             if current_hits:
                 matched += 1
-    english_terms = {
-        token for token in re.findall(r"[a-z][a-z0-9-]+", lowered_query) if len(token) > 2
-    }
+    english_terms = {token for token in re.findall(r"[a-z][a-z0-9-]+", lowered_query) if len(token) > 2}
     overlap = len(english_terms & set(re.findall(r"[a-z][a-z0-9-]+", searchable)))
     return min(
         0.95,
-        0.30
-        + (matched / max(1, requested)) * 0.4
-        + min(descriptor_hits, 7) * 0.035
-        + min(overlap, 2) * 0.05,
+        0.30 + (matched / max(1, requested)) * 0.4 + min(descriptor_hits, 7) * 0.035 + min(overlap, 2) * 0.05,
     )
 
 
@@ -265,11 +309,29 @@ def retrieve(
 ) -> list[dict[str, Any]]:
     """Return deterministic fused results; only reviewed public demo data is read."""
     preferences = preference_tags or set()
+    dense_scores: dict[str, float] = {}
+    dense_backend = "catalog_descriptions"
+    if float(route.get("dense_weight") or 0.0) > 0:
+        acoustic_queries = plan.get("acoustic_queries") or []
+        semantic_query = str(acoustic_queries[0] if acoustic_queries else query).strip()
+        query_vector = encode_text_query(semantic_query)
+        if query_vector:
+            dense_scores, vector_status = vector_query_scores(
+                query_vector,
+                index_name="song_m2d2_index",
+                limit=max(120, int(top_k) * 24),
+            )
+            if vector_status.get("state") == "ready" and dense_scores:
+                dense_backend = "m2d2_aura"
     scored: list[dict[str, Any]] = []
     for row in load_catalog():
         audio_source = resolve_audio_source(row)
         graph_score = _graph_score(query, row, plan)
-        dense_score, dense_source = _acoustic_score(query, row)
+        if dense_backend == "m2d2_aura":
+            dense_score = dense_scores.get(str(row.get("song_id") or ""), 0.0)
+            dense_source = dense_backend
+        else:
+            dense_score, dense_source = _acoustic_score(query, row)
         preference_score = _preference_score(row, preferences)
         base_score = route["graph_weight"] * graph_score + route["dense_weight"] * dense_score
         final_score = min(1.0, base_score * 0.9 + preference_score * 0.1)
@@ -295,7 +357,7 @@ def retrieve(
                 "license_url": str(row.get("license_url") or ""),
                 "attribution": str(row.get("attribution") or ""),
                 "source_url": str(row.get("source_url") or ""),
-                "cover_url": str(row.get("cover_url") or ""),
+                "cover_url": resolve_cover_source(row),
                 "cover_fallback_path": str(row.get("cover_fallback_path") or ""),
                 "cover_attribution": str(row.get("cover_attribution") or ""),
                 "cover_source_page_url": str(row.get("cover_source_page_url") or ""),

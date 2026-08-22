@@ -25,10 +25,7 @@ from typing import Any, Callable, Iterable
 
 
 EXPECTED_DIMS = {"muq_embedding": 512, "m2d2_embedding": 768, "omar_embedding": 1024}
-M2D_URL = (
-    "https://github.com/nttcslab/m2d/releases/download/v0.5.0/"
-    "m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025.zip"
-)
+M2D_URL = "https://github.com/nttcslab/m2d/releases/download/v0.5.0/m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025.zip"
 M2D_DIRNAME = "m2d_clap_vit_base-80x1001p16x16p16kpBpTI-2025"
 M2D_SHA256 = "238521603c04862ab151cdd80980b591cb36ebe844d43203992fac9ef085c8a1"
 ENRICHMENT_PACKAGES = (
@@ -161,9 +158,9 @@ def _wait_for_endpoint(timeout_seconds: float = 1800.0) -> None:
     while time.monotonic() < deadline:
         try:
             request = urllib.request.Request(f"{base_url}/models", headers={"Accept": "application/json"})
-            api_key = os.getenv("SOULTUNER_PLANNER_API_KEY", "").strip() or os.getenv(
-                "SOULTUNER_SERVE_API_KEY", ""
-            ).strip()
+            api_key = (
+                os.getenv("SOULTUNER_PLANNER_API_KEY", "").strip() or os.getenv("SOULTUNER_SERVE_API_KEY", "").strip()
+            )
             if api_key:
                 request.add_header("Authorization", f"Bearer {api_key}")
             with urllib.request.urlopen(request, timeout=5) as response:
@@ -272,15 +269,73 @@ def _driver():
     )
 
 
-def _missing_ids(driver: Any, family: str, expected: int) -> set[str]:
+def _missing_ids(
+    driver: Any,
+    family: str,
+    expected: int,
+    song_ids: set[str],
+) -> set[str]:
     database = os.getenv("NEO4J_DATABASE", "").strip() or None
     query = f"""
     MATCH (s:Song)
-    WHERE coalesce(size(s.{family}), 0) <> $expected
+    WHERE toString(s.music_id) IN $song_ids
+      AND coalesce(size(s.{family}), 0) <> $expected
     RETURN toString(s.music_id) AS music_id
     """
-    records, _, _ = driver.execute_query(query, expected=expected, database_=database)
+    records, _, _ = driver.execute_query(
+        query,
+        expected=expected,
+        song_ids=sorted(song_ids),
+        database_=database,
+    )
     return {str(record["music_id"]) for record in records if record.get("music_id")}
+
+
+def _upsert_catalog_rows(driver: Any, rows: list[dict[str, Any]]) -> None:
+    """Make every playable catalogue row addressable by Aura vector indexes."""
+
+    database = os.getenv("NEO4J_DATABASE", "").strip() or None
+    query = """
+    UNWIND $rows AS row
+    MERGE (s:Song {music_id: row.song_id})
+    SET s.source_id = row.source_id,
+        s.dataset = row.dataset,
+        s.title = row.title,
+        s.artist = row.artist,
+        s.genres = row.genres,
+        s.language = row.language,
+        s.audio_relpath = row.audio_relpath,
+        s.cover_url = row.cover_url,
+        s.license = row.license,
+        s.license_url = row.license_url,
+        s.source_url = row.source_url,
+        s.updated_at = timestamp()
+    MERGE (a:Artist {name: row.artist})
+    MERGE (s)-[:PERFORMED_BY]->(a)
+    """
+    batch_size = 250
+    for offset in range(0, len(rows), batch_size):
+        payload = []
+        for row in rows[offset : offset + batch_size]:
+            song_id = str(row["song_id"])
+            default_dataset = "song_describer_full" if song_id.startswith("sdd-") else "public_open_audio"
+            payload.append(
+                {
+                    "song_id": song_id,
+                    "source_id": str(row.get("source_id") or song_id),
+                    "dataset": str(row.get("dataset") or default_dataset),
+                    "title": str(row.get("title") or ""),
+                    "artist": str(row.get("artist") or "未知艺人"),
+                    "genres": list(row.get("genres") or row.get("tags") or [])[:16],
+                    "language": row.get("language"),
+                    "audio_relpath": str(row.get("audio_relpath") or ""),
+                    "cover_url": str(row.get("cover_url") or ""),
+                    "license": str(row.get("license") or row.get("license_id") or ""),
+                    "license_url": str(row.get("license_url") or ""),
+                    "source_url": str(row.get("source_url") or ""),
+                }
+            )
+        driver.execute_query(query, rows=payload, database_=database)
 
 
 def _update_vector(driver: Any, song_id: str, family: str, vector: list[float]) -> None:
@@ -289,8 +344,7 @@ def _update_vector(driver: Any, song_id: str, family: str, vector: list[float]) 
         raise ValueError(f"{family} dimension mismatch: {len(vector)} != {expected}")
     database = os.getenv("NEO4J_DATABASE", "").strip() or None
     query = f"""
-    MATCH (s:Song)
-    WHERE toString(s.music_id) = $song_id OR toString(s.source_id) = $source_id
+    MATCH (s:Song {{music_id: $song_id}})
     SET s.{family} = $vector
     WITH s
     SET s.enrichment_status = CASE
@@ -305,7 +359,6 @@ def _update_vector(driver: Any, song_id: str, family: str, vector: list[float]) 
     records, _, _ = driver.execute_query(
         query,
         song_id=song_id,
-        source_id=song_id.removeprefix("sdd-"),
         vector=vector,
         database_=database,
     )
@@ -428,9 +481,11 @@ def run_worker() -> None:
         total = len(rows)
         driver = _driver()
         try:
+            _upsert_catalog_rows(driver, rows)
+            song_ids = {str(row["song_id"]) for row in rows}
             completed_updates = 0
             for family, expected, extractor, release in _family_extractors():
-                missing = _missing_ids(driver, family, expected)
+                missing = _missing_ids(driver, family, expected, song_ids)
                 selected = [row for row in rows if str(row.get("song_id")) in missing]
                 _write_status("running", family=family, completed=0, total=len(selected))
                 for index, row in enumerate(selected, start=1):
@@ -451,9 +506,9 @@ def run_worker() -> None:
                     if index == 1 or index % 10 == 0 or index == len(selected):
                         _write_status("running", family=family, completed=index, total=len(selected))
                 release()
-            ready = total - len(_missing_ids(driver, "muq_embedding", 512))
+            ready = total - len(_missing_ids(driver, "muq_embedding", 512, song_ids))
             still_missing = {
-                family: len(_missing_ids(driver, family, expected))
+                family: len(_missing_ids(driver, family, expected, song_ids))
                 for family, expected in EXPECTED_DIMS.items()
             }
             if any(still_missing.values()):

@@ -37,12 +37,14 @@ assert FULL_BOOTSTRAP_SPEC and FULL_BOOTSTRAP_SPEC.loader
 full_bootstrap = importlib.util.module_from_spec(FULL_BOOTSTRAP_SPEC)
 FULL_BOOTSTRAP_SPEC.loader.exec_module(full_bootstrap)
 
+
 def test_space_card_text_has_theme_independent_contrast() -> None:
     source = (SPACE / "app.py").read_text(encoding="utf-8")
     renderer = (SPACE / "ui_render.py").read_text(encoding="utf-8")
     assert ".st-track-heading h3" in source
     assert "color: #f3f9f6" in source
-    assert "background: #0d151f" in source
+    assert "background: rgba(11,20,29,.88)" in source
+    assert ".st-card.is-current" in source
     assert 'class="st-cover"' in renderer
     assert 'class="st-play-state' in renderer
 
@@ -102,7 +104,7 @@ def test_amd_readiness_checks_adapter_files(monkeypatch, tmp_path: Path) -> None
 
 def test_space_endpoint_is_private_by_default_and_requires_public_auth() -> None:
     script = (SPACE / "start_amd_35b.sh").read_text(encoding="utf-8")
-    assert 'SOULTUNER_PLANNER_HOST:-127.0.0.1' in script
+    assert "SOULTUNER_PLANNER_HOST:-127.0.0.1" in script
     assert '"${HOST}" == "0.0.0.0"' in script
     assert "SOULTUNER_SERVE_API_KEY" in script
 
@@ -187,12 +189,8 @@ def test_gradio_entrypoint_bootstraps_requested_35b_profile() -> None:
     assert "gr.Timer" in source
     assert "requirements-amd.txt" in script
     assert '("modelscope", "swift", "vllm")' in script
-    assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index(
-        "pip install"
-    )
-    assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index(
-        "modelscope download"
-    )
+    assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index("pip install")
+    assert script.index("amd_readiness.py --skip-adapter --skip-endpoint") < script.index("modelscope download")
 
 
 def test_amd_requirements_cover_qwen36_runtime() -> None:
@@ -206,7 +204,7 @@ def test_amd_launcher_has_dual_role_models_and_single_lora_compatibility() -> No
     script = (SPACE / "start_amd_35b.sh").read_text(encoding="utf-8")
     bootstrap_source = (SPACE / "space_bootstrap.py").read_text(encoding="utf-8")
     assert 'default_cache_dir="/mnt/workspace/soultuner/model_cache"' in script
-    assert 'SOULTUNER_DUAL_ROLE_MODELS:-0' in script
+    assert "SOULTUNER_DUAL_ROLE_MODELS:-0" in script
     assert '--adapters "${SERVED_MODEL_NAME}=${ADAPTER_MODEL_DIR}"' in script
     assert '--served_model_name "${CHAT_MODEL_NAME}"' in script
     assert '--adapters "${ADAPTER_MODEL_DIR}"' in script
@@ -217,10 +215,8 @@ def test_amd_launcher_has_dual_role_models_and_single_lora_compatibility() -> No
 
 
 def test_full_space_requires_both_vllm_roles() -> None:
-    full_script = (
-        SPACE.parent / "modelscope_full" / "start_full_space.sh"
-    ).read_text(encoding="utf-8")
-    assert 'SOULTUNER_DUAL_ROLE_MODELS:-1' in full_script
+    full_script = (SPACE.parent / "modelscope_full" / "start_full_space.sh").read_text(encoding="utf-8")
+    assert "SOULTUNER_DUAL_ROLE_MODELS:-1" in full_script
     assert 'required.add(os.environ["SOULTUNER_CHAT_MODEL"])' in full_script
     assert "if required <= models" in full_script
     assert 'CONVERSATION_LLM_MODEL="${CONVERSATION_LLM_MODEL:-${SOULTUNER_CHAT_MODEL}}"' in full_script
@@ -242,16 +238,14 @@ def test_full_space_open_audio_requires_all_three_embedding_families() -> None:
 
 
 def test_neo4j_schema_matches_current_omar_rq_vector_width() -> None:
-    source = (SPACE.parents[1] / "data" / "pipeline" / "neo4j_schema_v2.py").read_text(
-        encoding="utf-8"
-    )
+    source = (SPACE.parents[1] / "data" / "pipeline" / "neo4j_schema_v2.py").read_text(encoding="utf-8")
     assert "OMAR_EMBEDDING_DIM = 1024" in source
 
 
 def test_amd_space_materialises_and_verifies_public_open_audio_in_parallel() -> None:
     script = (SPACE / "start_space_amd.sh").read_text(encoding="utf-8")
     assert "hgsanyang/SoulTuner-Open-Audio-Demo" in script
-    assert '--repo-type dataset' in script
+    assert "--repo-type dataset" in script
     assert 'prepare_open_audio >"${open_audio_log}" 2>&1 &' in script
     assert "audio_sha256" in script
     assert "candidate.relative_to(root)" in script
@@ -328,3 +322,58 @@ def test_released_35b_mixed_payload_gets_bounded_field_projection() -> None:
     assert accepted["evidence"]["brief_reason"] == "暴雨天居家氛围，安静但不压抑"
     assert accepted["acoustic_queries"] == [query]
     assert {"平静", "氛围感强", "居家暴雨", "安静"} <= set(accepted["soft"]["vibe"])
+
+
+def test_remote_planner_uses_frozen_v42_prompt_and_context_format(monkeypatch) -> None:
+    captured = {}
+    candidate = runtime.safe_plan("公路旅行摇滚")
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read() -> bytes:
+            return json.dumps(
+                {"choices": [{"message": {"content": json.dumps(candidate, ensure_ascii=False)}}]},
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(
+        runtime,
+        "_endpoint",
+        lambda _profile: ("http://127.0.0.1:8000/v1/chat/completions", "soultuner-v4.2-35b", ""),
+    )
+    monkeypatch.setattr(runtime.urllib.request, "urlopen", fake_urlopen)
+
+    result = runtime._remote_plan(
+        runtime.PROFILE_SOULTUNER,
+        "公路旅行摇滚",
+        {
+            "profile_snapshot": "偏好标签：rock",
+            "retrieved_memories": ["喜欢《Open Road》"],
+            "chat_history": "用户：再摇滚一点",
+            "previous_plan": "{}",
+            "reference_title": "Open Road",
+            "reference_artist": "Open Artist",
+        },
+    )
+
+    payload = captured["payload"]
+    assert result["task_mode"] == "recommendation"
+    assert payload["messages"][0]["content"] == runtime.SYSTEM_PROMPT
+    user_content = payload["messages"][1]["content"]
+    assert "[用户画像] 偏好标签：rock" in user_content
+    assert "[长期记忆] 喜欢《Open Road》" in user_content
+    assert "[上轮推荐结果] 1. Open Road — Open Artist" in user_content
+    assert user_content.endswith("[当前输入] 公路旅行摇滚")
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["enable_thinking"] is False

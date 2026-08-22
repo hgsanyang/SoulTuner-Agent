@@ -30,9 +30,9 @@ SoulTuner 是一个自然语言音乐推荐 Agent。用户用一句话描述想�
 5. 结果融合、推荐理由与受控输出；
 6. 喜欢、跳过和不喜欢反馈写入当前会话记忆；
 7. 同一 35B 基座同时提供两个受控角色：SoulTuner LoRA 只负责 Planner，基座模型负责自然语言对话、推荐开场白和解释；
-8. 支持 706 首公开曲目的封面展示、检索、播放、反馈与会话记忆。
+8. 支持 1,806 首公开曲目的封面展示、检索、播放、反馈与会话记忆。
 
-公开演示使用 `SoulTuner-Open-Audio-Demo` 中 706 首 Song Describer/Jamendo 原始音频，不包含个人数据、训练集或 sealed 评测答案。每首歌均带原始封面地址、可播放音频、上游页面、归属文本、许可证和 SHA-256。首次启动会将数据集物化到持久盘，后续启动直接复用并校验现有文件。
+公开演示使用 `SoulTuner-Open-Audio-Demo` 中 1,806 首开放音频：706 首来自 Song Describer/Jamendo，另有 1,100 首来自按流派平衡的 FMA Small 扩展（Rock 300、Hip-Hop 220、Pop 220、Folk 160、International 120、Electronic 80）。不包含个人数据、训练集或 sealed 评测答案。每首歌均带可播放音频、上游页面、归属文本、逐曲许可证、SHA-256 和可用封面或生成式占位封面。首次启动会将数据集物化到持久盘，后续启动直接复用并校验现有文件。
 
 ## 一键运行
 
@@ -118,7 +118,7 @@ ModelScope Access Token 仅在模型仍为私有或受限下载时作为“密�
 ### 挂接公开授权音频目录
 
 Gradio 稳定版不需要切换为 Docker 也能播放真实音频。`start_space_amd.sh`
-会在 35B 基座下载的同时下载并校验 706 首公开音频，默认物化到持久盘；后续休眠唤醒不会重新下载完整曲库。也可以显式配置：
+会在 35B 基座下载的同时下载并校验 1,806 首公开音频，默认物化到持久盘；后续休眠唤醒不会重新下载完整曲库。也可以显式配置：
 
 ```bash
 SOULTUNER_CATALOG_PATH=/mnt/workspace/soultuner/open_audio/catalog.jsonl

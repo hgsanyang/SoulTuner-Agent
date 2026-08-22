@@ -107,20 +107,26 @@ def test_general_chat_passes_recent_history_and_session_memory(monkeypatch):
     text, status = conversation_runtime.general_chat(
         "你还记得我喜欢什么吗？",
         [{"role": "user", "content": "我喜欢安静的氛围音乐"}],
-        {"positive_tags": {"氛围": 3}},
+        {
+            "positive_tags": {"氛围": 3},
+            "last_recommendation_query": "雨天安静但不压抑",
+            "last_recommendations": [{"title": "Rain Window", "artist": "Open Artist"}],
+        },
     )
 
     user_prompt = captured["payload"]["messages"][1]["content"]
     assert "安静的氛围音乐" in user_prompt
     assert "氛围" in user_prompt
+    assert "Rain Window" in user_prompt
+    assert "雨天安静但不压抑" in user_prompt
     assert "安静" in text
     assert status == "35B 基座自然语言已就绪"
 
 
-def test_space_app_calls_recommendation_opening_without_adding_new_ui():
-    source = (
-        conversation_runtime.__file__.replace("conversation_runtime.py", "app.py")
-    )
+def test_space_app_uses_one_orchestrated_conversation_surface():
+    source = conversation_runtime.__file__.replace("conversation_runtime.py", "app.py")
     content = open(source, encoding="utf-8").read()
-    assert "from conversation_runtime import recommendation_opening" in content
+    assert "from conversation_runtime import general_chat, recommendation_opening" in content
     assert "opening, conversation_status = recommendation_opening(" in content
+    assert "def unified_turn(" in content
+    assert 'api_name="conversation"' in content

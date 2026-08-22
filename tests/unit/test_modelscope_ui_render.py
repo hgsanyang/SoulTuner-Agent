@@ -54,15 +54,30 @@ def test_card_renderer_falls_back_without_cover_or_optional_metadata() -> None:
     assert "与当前需求具有较高匹配度" in rendered
 
 
+def test_card_renderer_marks_active_track_with_playing_visual_state() -> None:
+    rendered = ui.render_results([_row(1), _row(2)], active_song_id="licensed-2")
+
+    assert rendered.count('class="st-card is-current"') == 1
+    assert 'data-song-id="licensed-2"' in rendered
+    assert "st-equalizer" in rendered
+    assert "正在播放" in rendered
+
+
 def test_card_renderer_rejects_script_cover_and_escapes_catalog_text() -> None:
-    rendered = ui.render_results(
-        [_row(1, title="<img src=x onerror=alert(1)>", cover_url="javascript:alert(1)")]
-    )
+    rendered = ui.render_results([_row(1, title="<img src=x onerror=alert(1)>", cover_url="javascript:alert(1)")])
 
     assert "javascript:alert" not in rendered
     assert "onerror=alert" in rendered  # visible escaped title, never executable markup
     assert "&lt;img src=x onerror=alert(1)&gt;" in rendered
     assert "st-cover-1" in rendered
+
+
+def test_card_renderer_accepts_only_bounded_image_data_urls() -> None:
+    svg = "data:image/svg+xml;base64,PHN2Zy8+"
+    rendered = ui.render_results([_row(1, cover_url=svg)])
+
+    assert f'src="{svg}"' in rendered
+    assert "data:text/html" not in ui.render_results([_row(1, cover_url="data:text/html;base64,PHNjcmlwdD4=")])
 
 
 def test_conversation_renders_natural_opening_and_public_route_summary() -> None:
@@ -99,12 +114,17 @@ def test_gradio_layout_keeps_stable_entry_player_feedback_and_five_track_default
 
     assert "def build_app() -> gr.Blocks" in source
     assert "demo = build_app()" in source
-    assert 'gr.Audio(' in source
+    assert "gr.Audio(" in source
     assert 'api_name="recommend"' in source
     assert 'api_name="feedback"' in source
-    assert 'api_name="general_chat"' in source
+    assert 'api_name="conversation"' in source
     assert "gr.Chatbot(" in source
-    assert '"交给 Planner 找音乐"' in source
+    assert 'label="统一对话记录"' in source
+    assert 'with gr.Tab("找音乐")' not in source
+    assert 'with gr.Tab("聊音乐")' not in source
+    assert 'previous_button = gr.Button("◀ 上一首"' in source
+    assert 'next_button = gr.Button("下一首 ▶"' in source
+    assert "gr.BrowserState(" in source
     assert "gr.Slider(4, 12, value=8" in source
     assert "recommendation_opening(" in source
     assert "render_conversation(" in source
