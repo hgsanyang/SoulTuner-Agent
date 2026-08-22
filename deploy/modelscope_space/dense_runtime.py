@@ -10,6 +10,9 @@ from pathlib import Path
 
 
 _LOCK = threading.Lock()
+_WARMUP_LOCK = threading.Lock()
+_WARMUP_THREAD: threading.Thread | None = None
+_WARMUP_STATE = "not-started"
 _EXPECTED_DIM = 768
 _BERT_FILES = (
     "config.json",
@@ -88,3 +91,41 @@ def encode_text_query(text: str) -> list[float] | None:
             flush=True,
         )
         return None
+
+
+def dense_warmup_status() -> str:
+    with _WARMUP_LOCK:
+        return _WARMUP_STATE
+
+
+def launch_dense_text_warmup() -> str:
+    """Warm the M2D text tower once, outside the first user request.
+
+    The production API already follows this pattern.  The public Space calls
+    this only after vLLM and the persisted vector assets are ready, preventing
+    model-load contention while removing the one-time dense encoder penalty
+    from the first recommendation.
+    """
+
+    global _WARMUP_STATE, _WARMUP_THREAD
+    if os.getenv("SOULTUNER_DENSE_TEXT_WARMUP", "1").strip() != "1":
+        with _WARMUP_LOCK:
+            _WARMUP_STATE = "disabled"
+        return _WARMUP_STATE
+    with _WARMUP_LOCK:
+        if _WARMUP_STATE in {"starting", "ready"}:
+            return _WARMUP_STATE
+        _WARMUP_STATE = "starting"
+
+    def run() -> None:
+        global _WARMUP_STATE
+        vector = encode_text_query("warmup quiet spacious music")
+        with _WARMUP_LOCK:
+            _WARMUP_STATE = "ready" if vector and len(vector) == _EXPECTED_DIM else "failed"
+        print(f"SoulTuner dense text warmup: {_WARMUP_STATE}", flush=True)
+
+    thread = threading.Thread(target=run, name="soultuner-dense-warmup", daemon=True)
+    with _WARMUP_LOCK:
+        _WARMUP_THREAD = thread
+    thread.start()
+    return "starting"

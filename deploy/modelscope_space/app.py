@@ -29,6 +29,8 @@ from dialogue_orchestrator import (
     planner_turn_kind,
     resolved_reference,
 )
+from dense_runtime import dense_warmup_status, launch_dense_text_warmup
+from enrichment_runtime import enrichment_status as get_enrichment_status
 from enrichment_runtime import launch_enrichment_if_requested
 from enrichment_runtime import status_markdown as enrichment_status_markdown
 from graph_runtime import status_markdown as graph_status_markdown
@@ -41,6 +43,7 @@ from retrieval_demo import audio_root
 from space_bootstrap import (
     launch_local_planner_if_requested,
     live_startup_markdown,
+    planner_runtime_status,
     startup_markdown,
 )
 from ui_render import render_conversation, render_results
@@ -256,6 +259,22 @@ def _live_data_statuses() -> tuple[str, str]:
     """Refresh durable Aura/vector progress without rebuilding the interface."""
 
     return graph_status_markdown(), enrichment_status_markdown()
+
+
+def _live_planner_status() -> str:
+    """Expose model readiness and warm dense retrieval before the first turn."""
+
+    markdown = live_startup_markdown()
+    planner_ready = planner_runtime_status().get("state") == "ready"
+    vectors_ready = get_enrichment_status().get("state") == "ready"
+    if planner_ready and vectors_ready:
+        launch_dense_text_warmup()
+    dense_state = dense_warmup_status()
+    if dense_state == "starting":
+        markdown += "\n\n稠密检索：`M2D 文本编码器正在后台预热`。"
+    elif dense_state == "ready":
+        markdown += "\n\n稠密检索：`M2D 文本编码器已预热`。"
+    return markdown
 
 
 def _copy_memory(memory: dict[str, Any] | None) -> dict[str, Any]:
@@ -786,7 +805,7 @@ def build_app() -> gr.Blocks:
             enrichment_status = gr.Markdown(enrichment_status_markdown(), elem_classes=["st-system"])
         planner_status_timer = gr.Timer(value=5, active=bool(PLANNER_STARTUP["requested"]))
         planner_status_timer.tick(
-            live_startup_markdown,
+            _live_planner_status,
             outputs=planner_status,
             api_name=False,
             show_progress="hidden",

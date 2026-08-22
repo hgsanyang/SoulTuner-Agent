@@ -138,3 +138,27 @@ def test_dense_runtime_requires_local_bert_and_forces_offline_loading(
 
     assert Path(os.environ["GOOGLE_BERT_BERT_BASE_UNCASED_PATH"]) == bert
     assert os.environ["HF_HUB_OFFLINE"] == "1"
+
+
+def test_dense_text_warmup_runs_once_outside_first_request(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class ImmediateThread:
+        def __init__(self, *, target, **_kwargs):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(dense_runtime, "_WARMUP_STATE", "not-started")
+    monkeypatch.setattr(dense_runtime.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(
+        dense_runtime,
+        "encode_text_query",
+        lambda text: calls.append(text) or [0.1] * 768,
+    )
+
+    assert dense_runtime.launch_dense_text_warmup() == "starting"
+    assert dense_runtime.dense_warmup_status() == "ready"
+    assert dense_runtime.launch_dense_text_warmup() == "ready"
+    assert calls == ["warmup quiet spacious music"]
