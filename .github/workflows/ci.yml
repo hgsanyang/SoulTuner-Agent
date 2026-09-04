@@ -79,6 +79,7 @@ jobs:
 
       - name: Validate CPU, CUDA, and ROCm Compose profiles
         run: |
+          cp .env.example .env
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.gpu.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.amd.yml config --quiet
