@@ -99,7 +99,7 @@ export default function PlaylistPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const seedPrompt = new URLSearchParams(window.location.search).get('prompt');

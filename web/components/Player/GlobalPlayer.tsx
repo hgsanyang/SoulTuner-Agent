@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element -- player covers include arbitrary licensed upstream and data URLs. */
 
 /**
  * 🎧 全局抽屉与底部控制栏组件 (GlobalPlayer)

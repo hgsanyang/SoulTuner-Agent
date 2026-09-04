@@ -75,6 +75,24 @@ def test_status_file_survives_restart_and_renders_progress(tmp_path: Path, monke
     assert "20/706" in rendered
 
 
+def test_default_enrichment_requires_muq_and_omar_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOULTUNER_EMBEDDING_FAMILIES", raising=False)
+    monkeypatch.delenv("SOULTUNER_BACKFILL_M2D_FALLBACK", raising=False)
+
+    assert enrichment_runtime._required_families() == ("muq_embedding", "omar_embedding")
+
+
+def test_m2d_backfill_is_explicitly_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SOULTUNER_EMBEDDING_FAMILIES", raising=False)
+    monkeypatch.setenv("SOULTUNER_BACKFILL_M2D_FALLBACK", "1")
+
+    assert enrichment_runtime._required_families() == (
+        "muq_embedding",
+        "omar_embedding",
+        "m2d2_embedding",
+    )
+
+
 def test_launch_waits_for_full_catalog_before_spawning(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOULTUNER_ENABLE_AUDIO_ENRICHMENT", "1")
     monkeypatch.setenv("SOULTUNER_ENRICHMENT_MIN_TRACKS", "700")

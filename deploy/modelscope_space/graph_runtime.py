@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 import threading
 import time
 from typing import Any, Iterable, Mapping
@@ -176,13 +177,120 @@ def vector_query_scores(
     return scores, {"state": "ready", "matches": len(scores), "index": index_name}
 
 
+def hybrid_vector_query_scores(
+    embedding: list[float],
+    *,
+    semantic_index: str = "song_muq_index",
+    acoustic_index: str = "song_omar_index",
+    limit: int = 200,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    """Fuse MuQ text/music similarity with an OMAR acoustic centroid.
+
+    OMAR is audio-only, so its query anchor is derived from the strongest MuQ
+    seeds instead of pretending that text can be encoded directly by OMAR.
+    The two phases share one short-lived Aura connection and reconnect on the
+    next request after any transient failure.
+    """
+
+    uri, user, password, database = _connection_settings()
+    if not all((uri, user, password)):
+        return {}, {"state": "not-configured"}
+    if not embedding:
+        return {}, {"state": "empty-vector"}
+    bounded_limit = max(1, min(int(limit), 500))
+    try:
+        from neo4j import GraphDatabase
+
+        driver = GraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            connection_timeout=float(os.getenv("NEO4J_CONNECTION_TIMEOUT_SECONDS", "5")),
+        )
+        try:
+            with driver.session(database=database) as session:
+                semantic_records = list(
+                    session.run(
+                        """
+                        CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+                        YIELD node AS song, score
+                        WHERE song:Song AND song.dataset IN $datasets
+                        RETURN toString(song.music_id) AS song_id, score,
+                               song.omar_embedding AS omar_embedding
+                        """,
+                        index_name=str(semantic_index),
+                        limit=bounded_limit,
+                        embedding=[float(value) for value in embedding],
+                        datasets=_public_datasets(),
+                    )
+                )
+                semantic_scores = {
+                    str(record["song_id"]): float(record["score"])
+                    for record in semantic_records
+                    if record.get("song_id") is not None
+                }
+                seed_vectors = [
+                    [float(value) for value in record["omar_embedding"]]
+                    for record in semantic_records[: min(8, len(semantic_records))]
+                    if record.get("omar_embedding") and len(record["omar_embedding"]) == 1024
+                ]
+                if not seed_vectors:
+                    return semantic_scores, {
+                        "state": "ready",
+                        "matches": len(semantic_scores),
+                        "backend": "muq",
+                        "semantic_index": semantic_index,
+                    }
+                centroid = [sum(values) / len(seed_vectors) for values in zip(*seed_vectors)]
+                norm = math.sqrt(sum(value * value for value in centroid))
+                if norm > 0:
+                    centroid = [value / norm for value in centroid]
+                acoustic_records = session.run(
+                    """
+                    CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+                    YIELD node AS song, score
+                    WHERE song:Song AND song.dataset IN $datasets
+                    RETURN toString(song.music_id) AS song_id, score
+                    """,
+                    index_name=str(acoustic_index),
+                    limit=bounded_limit,
+                    embedding=centroid,
+                    datasets=_public_datasets(),
+                )
+                acoustic_scores = {
+                    str(record["song_id"]): float(record["score"])
+                    for record in acoustic_records
+                    if record.get("song_id") is not None
+                }
+        finally:
+            driver.close()
+    except Exception as exc:
+        return {}, {"state": "unavailable", "detail": type(exc).__name__}
+
+    semantic_weight = float(os.getenv("SOULTUNER_MUQ_FUSION_WEIGHT", "0.78"))
+    semantic_weight = max(0.0, min(1.0, semantic_weight))
+    acoustic_weight = 1.0 - semantic_weight
+    song_ids = set(semantic_scores) | set(acoustic_scores)
+    fused = {
+        song_id: semantic_weight * semantic_scores.get(song_id, 0.0)
+        + acoustic_weight * acoustic_scores.get(song_id, 0.0)
+        for song_id in song_ids
+    }
+    return fused, {
+        "state": "ready",
+        "matches": len(fused),
+        "backend": "muq+omar",
+        "semantic_index": semantic_index,
+        "acoustic_index": acoustic_index,
+    }
+
+
 def status_markdown() -> str:
     _, status = graph_overlay()
     state = status.get("state")
     if state == "ready":
         return (
             f"图谱：`Aura Neo4j 已连接` · **{status.get('tracks', 0)}** 首曲目 · "
-            f"**{status.get('enriched', 0)}** 首三向量就绪"
+            f"**{status.get('enriched', 0)}** 首 MuQ + OMAR 就绪"
         )
     if state == "not-configured":
         return "图谱：`未配置 Aura` · 当前使用本地公开目录。"

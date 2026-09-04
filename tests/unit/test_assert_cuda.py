@@ -28,7 +28,7 @@ def run(env_extra: dict, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONUTF8": "1", **env_extra}
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        capture_output=True, text=True, env=env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
         cwd=str(SCRIPT.parent.parent), timeout=120,
     )
 

@@ -555,7 +555,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
       <div style={{ borderTop: `1px solid ${theme.colors.border.default}`, margin: '1.2rem 0', padding: '1rem 0 0' }}>
         <span style={{ fontSize: '0.8rem', color: theme.colors.text.muted }}>{t('内容双锚权重（语义 + 声学）')}</span>
       </div>
-      {renderSlider('tri_anchor_w_semantic', t('语义相关性（M2D-CLAP）'), 0, 1, 0.05)}
+      {renderSlider('tri_anchor_w_semantic', t('语义相关性（GPU MuQ / CPU M2D）'), 0, 1, 0.05)}
       {renderSlider('tri_anchor_w_acoustic', t('声学风格（OMAR-RQ）'), 0, 1, 0.05)}
       <div style={{ fontSize: '0.72rem', color: theme.colors.text.muted, marginTop: '-0.5rem', marginBottom: '1rem' }}>
         {t('权重会自动归一化；个性化只在召回后限幅校正层中轻微加减分')}

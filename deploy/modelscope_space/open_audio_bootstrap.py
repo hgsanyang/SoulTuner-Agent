@@ -101,7 +101,10 @@ def materialize_open_audio() -> dict[str, Any]:
         )
         return {"state": "ready", "tracks": len(rows), "root": str(root)}
     dataset_id = os.getenv("SOULTUNER_OPEN_AUDIO_DATASET_ID", DEFAULT_DATASET_ID)
-    revision = os.getenv("SOULTUNER_OPEN_AUDIO_REVISION", "master")
+    revision = os.getenv(
+        "SOULTUNER_OPEN_AUDIO_REVISION",
+        "4aa4fb3feeaabcb16b711a08930afd97434463b6",
+    )
     root.mkdir(parents=True, exist_ok=True)
     command = [
         "modelscope",

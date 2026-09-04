@@ -5,8 +5,8 @@ set -euo pipefail
 base_repo="${SOULTUNER_BASE_REPO:-Qwen/Qwen3.6-35B-A3B}"
 adapter_repo="${SOULTUNER_ADAPTER_REPO:-hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA}"
 model_root="${SOULTUNER_MODEL_ROOT:-$PWD/models}"
-base_revision="${SOULTUNER_BASE_REVISION:-master}"
-adapter_revision="${SOULTUNER_ADAPTER_REVISION:-master}"
+base_revision="${SOULTUNER_BASE_REVISION:-913c459c5c83fa016a0e54a52e5b95f6c894e0fe}"
+adapter_revision="${SOULTUNER_ADAPTER_REVISION:-f3685197007a5d7e41a20c484865f144af101804}"
 
 base_dir="$model_root/qwen3.6-35b-a3b"
 adapter_dir="$model_root/soultuner-v4.2-adapter"

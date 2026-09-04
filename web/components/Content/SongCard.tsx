@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element -- covers include arbitrary licensed upstream and data URLs. */
 
 import { theme } from '@/styles/theme';
 import { useLang } from '@/context/LanguageContext';

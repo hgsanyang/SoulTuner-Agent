@@ -6,6 +6,13 @@ qwen-vl-utils>=0.0.14
 decord>=0.6.0
 peft>=0.17
 safetensors>=0.5
-# vLLM 0.20.1 in the ROCm 7.2 image requires this floor.  Keeping it explicit
+# vLLM 0.20.1 in the ROCm 7.2 image requires this floor. Keeping it explicit
 # prevents ms-swift's install pass from leaving the preinstalled 2.11 runtime.
 pydantic>=2.12.0,<3
+gradio>=4.44,<6
+neo4j>=5.20,<7
+# GPU retrieval: MuQ is the Chinese semantic anchor and OMAR is the persisted
+# acoustic reranker. M2D is intentionally absent from the GPU profile.
+muq==0.1.0
+omar-rq==0.2.1
+librosa>=0.11,<1

@@ -32,17 +32,21 @@ def _row(song_id: str, genre: str) -> dict:
     }
 
 
-def test_retrieval_uses_real_aura_m2d2_scores_when_available(monkeypatch) -> None:
+def test_retrieval_uses_muq_omar_aura_scores_when_available(monkeypatch) -> None:
     monkeypatch.setattr(
         retrieval,
         "load_catalog",
         lambda: (_row("rock", "alternative rock road trip"), _row("ambient", "ambient")),
     )
     monkeypatch.setattr(retrieval, "resolve_audio_source", lambda _row: None)
-    monkeypatch.setattr(retrieval, "encode_text_query", lambda _text: [0.1] * 768)
     monkeypatch.setattr(
         retrieval,
-        "vector_query_scores",
+        "encode_primary_text_query",
+        lambda _text, **_kwargs: ([0.1] * 512, "muq"),
+    )
+    monkeypatch.setattr(
+        retrieval,
+        "hybrid_vector_query_scores",
         lambda *_args, **_kwargs: ({"rock": 0.94, "ambient": 0.12}, {"state": "ready"}),
     )
 
@@ -54,7 +58,7 @@ def test_retrieval_uses_real_aura_m2d2_scores_when_available(monkeypatch) -> Non
     )
 
     assert rows[0]["song_id"] == "rock"
-    assert rows[0]["dense_source"] == "m2d2_aura"
+    assert rows[0]["dense_source"] == "muq_omar_aura"
     assert rows[0]["dense_score"] == 0.94
     assert rows[0]["graph_score"] == 1.0
 
@@ -74,7 +78,11 @@ def test_playback_and_cover_io_only_runs_for_ranked_slate(monkeypatch) -> None:
     audio_calls: list[str] = []
     cover_calls: list[str] = []
     monkeypatch.setattr(retrieval, "load_catalog", lambda: rows)
-    monkeypatch.setattr(retrieval, "encode_text_query", lambda _text: [])
+    monkeypatch.setattr(
+        retrieval,
+        "encode_primary_text_query",
+        lambda _text, **_kwargs: (None, "catalog"),
+    )
     monkeypatch.setattr(
         retrieval,
         "resolve_audio_source",
@@ -114,7 +122,7 @@ def test_packaged_svg_cover_is_resolved_as_safe_data_url(monkeypatch, tmp_path) 
     assert retrieval.resolve_cover_source({"cover_fallback_path": "../outside.svg"}) == ""
 
 
-def test_dense_runtime_requires_local_bert_and_forces_offline_loading(
+def test_m2d_fallback_requires_local_bert_and_forces_offline_loading(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     source = tmp_path / "source"
@@ -130,11 +138,11 @@ def test_dense_runtime_requires_local_bert_and_forces_offline_loading(
     monkeypatch.setattr(dense_runtime, "_bert_snapshot", lambda: bert)
 
     with pytest.raises(FileNotFoundError, match="text encoder cache"):
-        dense_runtime._prepare_import()
+        dense_runtime._prepare_m2d_import()
 
     for name in dense_runtime._BERT_FILES:
         (bert / name).write_bytes(b"model")
-    dense_runtime._prepare_import()
+    dense_runtime._prepare_m2d_import()
 
     assert Path(os.environ["GOOGLE_BERT_BERT_BASE_UNCASED_PATH"]) == bert
     assert os.environ["HF_HUB_OFFLINE"] == "1"
@@ -151,14 +159,46 @@ def test_dense_text_warmup_runs_once_outside_first_request(monkeypatch) -> None:
             self.target()
 
     monkeypatch.setattr(dense_runtime, "_WARMUP_STATE", "not-started")
+    monkeypatch.setattr(dense_runtime, "_WARMUP_BACKEND", "")
     monkeypatch.setattr(dense_runtime.threading, "Thread", ImmediateThread)
     monkeypatch.setattr(
         dense_runtime,
-        "encode_text_query",
-        lambda text: calls.append(text) or [0.1] * 768,
+        "encode_primary_text_query",
+        lambda text: (calls.append(text) or [0.1] * 512, "muq"),
     )
 
     assert dense_runtime.launch_dense_text_warmup() == "starting"
     assert dense_runtime.dense_warmup_status() == "ready"
+    assert dense_runtime.dense_warmup_backend() == "muq"
     assert dense_runtime.launch_dense_text_warmup() == "ready"
-    assert calls == ["warmup quiet spacious music"]
+    assert calls == ["适合安静放松、温暖而有空间感的音乐"]
+
+
+def test_dense_runtime_can_opt_into_muq_then_m2d_compatibility(monkeypatch) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.delenv("SOULTUNER_DENSE_PRIMARY_BACKEND", raising=False)
+    monkeypatch.setenv("SOULTUNER_ENABLE_M2D_FALLBACK", "1")
+    monkeypatch.setattr(
+        dense_runtime,
+        "encode_text_query",
+        lambda text, backend: calls.append((text, backend)) or ([0.2] * 768 if backend == "m2d" else None),
+    )
+
+    vector, backend = dense_runtime.encode_primary_text_query(
+        "梦幻一点的歌曲有没有",
+        fallback_text="dreamy ethereal music",
+    )
+
+    assert backend == "m2d"
+    assert len(vector or []) == 768
+    assert calls == [
+        ("梦幻一点的歌曲有没有", "muq"),
+        ("dreamy ethereal music", "m2d"),
+    ]
+
+
+def test_dense_runtime_gpu_default_never_loads_m2d(monkeypatch) -> None:
+    monkeypatch.delenv("SOULTUNER_DENSE_PRIMARY_BACKEND", raising=False)
+    monkeypatch.delenv("SOULTUNER_ENABLE_M2D_FALLBACK", raising=False)
+
+    assert dense_runtime._backend_order() == ("muq",)

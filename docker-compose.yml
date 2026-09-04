@@ -125,6 +125,8 @@ services:
       MEMORY_EPISODIC_BACKENDS: ${MEMORY_EPISODIC_BACKENDS:-}
       MODEL_NAME: ${MODEL_NAME:-qwen3.7-plus}
       # soultuner.ps1 按 CPU/GPU profile 注入 m2d/muq；直接 compose 时可由 .env 覆盖。
+      # Base compose is the CPU profile. GPU overlays replace this with MuQ
+      # and disable M2D warmup.
       DENSE_TEXT_AUDIO_BACKEND: ${DENSE_TEXT_AUDIO_BACKEND:-m2d}
       MUSIC_M2D_MODEL_WARMUP: ${MUSIC_M2D_MODEL_WARMUP:-true}
       MUSIC_AUDIO_DATA_DIR: /app/data/processed_audio/audio

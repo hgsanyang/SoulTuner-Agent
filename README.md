@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Python-3.11+-blue?logo=python" alt="Python" />
   <img src="https://img.shields.io/badge/LangGraph-Agent_Framework-orange?logo=langchain" alt="LangGraph" />
   <img src="https://img.shields.io/badge/Neo4j-Graph_Database-008CC1?logo=neo4j" alt="Neo4j" />
-  <img src="https://img.shields.io/badge/Next.js_14-Frontend-black?logo=next.js" alt="Next.js" />
+  <img src="https://img.shields.io/badge/Next.js_16-Frontend-black?logo=next.js" alt="Next.js" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker" alt="Docker" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
@@ -23,6 +23,10 @@
 
 <p align="center">
   <a href="README.ch.md">中文</a> | <a href="README.md">English</a>
+</p>
+
+<p align="center">
+  <a href="https://modelscope.cn/studios/hgsanyang/SoulTuner-Agent"><strong>Try the live AMD MI308X demo on ModelScope</strong></a>
 </p>
 
 ## 🎯 What it is
@@ -104,7 +108,9 @@ Then start it and open `http://localhost:3003`:
 .\soultuner.ps1 up gpu
 ```
 
-Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu`.
+Without an NVIDIA GPU, use `.\soultuner.ps1 up cpu`. GPU profiles use MuQ as
+the primary semantic encoder and OMAR for acoustic reranking; the constrained
+CPU profile uses M2D-CLAP instead.
 
 To use another provider (SiliconFlow, Google, Volcengine, or local SGLang / vLLM / Ollama), change `MAIN_LLM_PROVIDER` and `MODEL_NAME` and supply the matching key — or adjust it from **System Settings** in the UI after startup.
 
@@ -152,7 +158,7 @@ your sentence
                        ▼
 ┌──────────────────────────────────────────────────┐
 │  Retrieval and catalog expansion                  │
-│  graph ＋ MuQ vector → fuse → optional web fill   │
+│ graph + MuQ semantics + OMAR rerank → web fill    │
 └──────────────────────┬───────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────┐
@@ -170,11 +176,11 @@ your sentence
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 14 + React 18 |
+| Frontend | Next.js 16 + React 18 |
 | Backend | FastAPI + SSE streaming |
 | Agent | LangGraph StateGraph |
 | Graph database | Neo4j 5.x (relations + native vector index) |
-| Text-to-music | MuQ-MuLan (M2D-CLAP fallback) |
+| Text-to-music | MuQ-MuLan + OMAR-RQ on GPU; M2D-CLAP for the CPU profile |
 | LLM | `dashscope / qwen3.7-plus` by default, provider swappable |
 | Long-term memory | Local SQLite ledger + Neo4j hot path |
 | Ranking | Multi-source fusion → rerank → diversity |
@@ -221,6 +227,12 @@ It listens on `127.0.0.1` only. For remote access use a VPN or SSH tunnel.
 
 ---
 
+## 🤝 Contributing
+
+Suggestions and bug reports are welcome through [GitHub Issues](https://github.com/hgsanyang/SoulTuner-Agent/issues). A pull request is only a proposed change: repository maintainers review it and decide whether it is merged. See [CONTRIBUTING.md](CONTRIBUTING.md) for the lightweight workflow, [SECURITY.md](SECURITY.md) for private vulnerability reports, and [CHANGELOG.md](CHANGELOG.md) for release changes.
+
+---
+
 ## 🙏 Acknowledgements
 
 The initial architecture came from [imagist13/Muisc-Research](https://github.com/imagist13/Muisc-Research) and has since been substantially rebuilt and extended.
@@ -228,8 +240,8 @@ The initial architecture came from [imagist13/Muisc-Research](https://github.com
 | Project | Used for |
 |---|---|
 | [OpenMuQ/MuQ](https://github.com/OpenMuQ/MuQ) | MuQ-MuLan, the primary text-to-music model (CC-BY-NC 4.0) |
-| [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP fallback and auxiliary semantic model |
-| [MTG/omar-rq](https://github.com/MTG/omar-rq) | OMAR-RQ audio representation model |
+| [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP encoder for the constrained CPU profile |
+| [MTG/omar-rq](https://github.com/MTG/omar-rq) | OMAR-RQ acoustic reranking on GPU profiles |
 | [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | legacy memory adapter (optional, non-default) |
 
 ---

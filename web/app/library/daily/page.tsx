@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable @next/next/no-img-element -- QR data URIs must render directly in the browser. */
 
 /**
  * 网易云日推 → 本地曲库对账

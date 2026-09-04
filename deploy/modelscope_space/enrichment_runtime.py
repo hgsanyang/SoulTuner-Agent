@@ -1,7 +1,8 @@
 """Persistent MI308X audio-vector backfill for the public Space catalogue.
 
-The online Gradio process stays responsive while a separate worker fills the
-three retrieval vector families in Aura.  The worker is deliberately
+The online Gradio process stays responsive while a separate worker fills MuQ
+and OMAR vectors in Aura. M2D can be enabled for a CPU compatibility corpus, but is not
+part of the default readiness gate. The worker is deliberately
 idempotent: every restart queries Aura for missing vectors and resumes from the
 first incomplete song, while model/audio caches remain under ``/mnt/workspace``.
 """
@@ -36,13 +37,16 @@ BERT_FILES = (
     "tokenizer_config.json",
     "vocab.txt",
 )
-ENRICHMENT_PACKAGES = (
-    "muq==0.1.0",
-    "omar-rq==0.2.1",
-    "timm==1.0.28",
-    "librosa>=0.11.0",
-    "nnAudio>=0.3.4",
-)
+_PACKAGE_GROUPS = {
+    "muq_embedding": ("muq==0.1.0", "librosa>=0.11.0"),
+    "omar_embedding": ("omar-rq==0.2.1", "librosa>=0.11.0"),
+    "m2d2_embedding": ("timm==1.0.28", "librosa>=0.11.0", "nnAudio>=0.3.4"),
+}
+_MODULE_GROUPS = {
+    "muq_embedding": ("muq", "librosa"),
+    "omar_embedding": ("omar_rq", "librosa"),
+    "m2d2_embedding": ("timm", "librosa", "nnAudio"),
+}
 _worker_process: subprocess.Popen[bytes] | None = None
 _worker_log_thread: threading.Thread | None = None
 
@@ -89,7 +93,7 @@ def status_markdown() -> str:
     total = int(status.get("total") or 0)
     family = str(status.get("family") or "")
     if state == "ready":
-        return f"音频向量：`MuQ / M2D2 / OMAR 已就绪` · **{completed or total}** 首完成。"
+        return f"音频向量：`MuQ + OMAR 已就绪` · **{completed or total}** 首完成 · M2D 仅用于纯 CPU 档。"
     if state in {"waiting-endpoint", "installing", "downloading-models", "running"}:
         label = family or state
         return f"音频向量：`后台补齐中` · {label} · **{completed}/{total or '?'}**。"
@@ -185,13 +189,28 @@ def _wait_for_endpoint(timeout_seconds: float = 1800.0) -> None:
     raise TimeoutError("35B dual-role endpoint did not become ready")
 
 
-def _ensure_packages() -> None:
-    modules = ("muq", "omar_rq", "timm", "librosa", "nnAudio")
+def _required_families() -> tuple[str, ...]:
+    configured = os.getenv(
+        "SOULTUNER_EMBEDDING_FAMILIES",
+        "muq_embedding,omar_embedding",
+    )
+    families = tuple(
+        dict.fromkeys(part.strip() for part in configured.split(",") if part.strip() in EXPECTED_DIMS)
+    )
+    if os.getenv("SOULTUNER_BACKFILL_M2D_FALLBACK", "0").strip() == "1" and "m2d2_embedding" not in families:
+        families += ("m2d2_embedding",)
+    return families or ("muq_embedding", "omar_embedding")
+
+
+def _ensure_packages(families: Iterable[str]) -> None:
+    selected = tuple(families)
+    modules = tuple(dict.fromkeys(module for family in selected for module in _MODULE_GROUPS[family]))
     if all(importlib.util.find_spec(name) is not None for name in modules):
         return
+    packages = tuple(dict.fromkeys(package for family in selected for package in _PACKAGE_GROUPS[family]))
     _write_status("installing")
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", *ENRICHMENT_PACKAGES],
+        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", *packages],
         check=True,
     )
 
@@ -373,19 +392,27 @@ def _upsert_catalog_rows(driver: Any, rows: list[dict[str, Any]]) -> None:
         driver.execute_query(query, rows=payload, database_=database)
 
 
-def _update_vector(driver: Any, song_id: str, family: str, vector: list[float]) -> None:
+def _update_vector(
+    driver: Any,
+    song_id: str,
+    family: str,
+    vector: list[float],
+    required_families: Iterable[str] | None = None,
+) -> None:
     expected = EXPECTED_DIMS[family]
     if len(vector) != expected:
         raise ValueError(f"{family} dimension mismatch: {len(vector)} != {expected}")
     database = os.getenv("NEO4J_DATABASE", "").strip() or None
+    required = tuple(required_families or _required_families())
+    ready_checks = " AND ".join(
+        f"size(coalesce(s.{name}, [])) = {EXPECTED_DIMS[name]}" for name in required
+    )
     query = f"""
     MATCH (s:Song {{music_id: $song_id}})
     SET s.{family} = $vector
     WITH s
     SET s.enrichment_status = CASE
-          WHEN size(coalesce(s.muq_embedding, [])) = 512
-           AND size(coalesce(s.m2d2_embedding, [])) = 768
-           AND size(coalesce(s.omar_embedding, [])) = 1024
+          WHEN {ready_checks}
           THEN 'ready' ELSE 'processing' END,
         s.enrichment_error = '',
         s.updated_at = timestamp()
@@ -427,30 +454,36 @@ def _release_model(module: Any, attribute: str) -> None:
         pass
 
 
-def _family_extractors() -> Iterable[tuple[str, int, Callable[[Path], list[float]], Callable[[], None]]]:
+def _family_extractors(
+    families: Iterable[str] | None = None,
+) -> Iterable[tuple[str, int, Callable[[Path], list[float]], Callable[[], None]]]:
     from retrieval import audio_embedder, muq_embedder
 
-    yield (
-        "muq_embedding",
-        512,
-        lambda path: muq_embedder.encode_audio_to_muq(_audio_segment(path, 24000), sample_rate=24000),
-        lambda: _release_model(muq_embedder, "_MUQ_MODEL"),
-    )
-    yield (
-        "m2d2_embedding",
-        768,
-        lambda path: audio_embedder.encode_audio_to_embedding(_audio_segment(path, 16000), sample_rate=16000),
-        lambda: _release_model(audio_embedder, "_M2D2_MODEL"),
-    )
-    yield (
-        "omar_embedding",
-        1024,
-        lambda path: audio_embedder.extract_audio_representation(_audio_segment(path, 16000), sample_rate=16000),
-        lambda: _release_model(audio_embedder, "_OMAR_MODEL"),
-    )
+    selected = tuple(families or _required_families())
+    if "muq_embedding" in selected:
+        yield (
+            "muq_embedding",
+            512,
+            lambda path: muq_embedder.encode_audio_to_muq(_audio_segment(path, 24000), sample_rate=24000),
+            lambda: _release_model(muq_embedder, "_MUQ_MODEL"),
+        )
+    if "omar_embedding" in selected:
+        yield (
+            "omar_embedding",
+            1024,
+            lambda path: audio_embedder.extract_audio_representation(_audio_segment(path, 16000), sample_rate=16000),
+            lambda: _release_model(audio_embedder, "_OMAR_MODEL"),
+        )
+    if "m2d2_embedding" in selected:
+        yield (
+            "m2d2_embedding",
+            768,
+            lambda path: audio_embedder.encode_audio_to_embedding(_audio_segment(path, 16000), sample_rate=16000),
+            lambda: _release_model(audio_embedder, "_M2D2_MODEL"),
+        )
 
 
-def _configure_model_caches(checkpoint: Path) -> None:
+def _configure_model_caches(checkpoint: Path | None = None) -> None:
     workspace = _workspace_root()
     hf_home = workspace / "hf_cache"
     torch_home = workspace / "torch_cache"
@@ -459,8 +492,9 @@ def _configure_model_caches(checkpoint: Path) -> None:
     os.environ["HF_HOME"] = str(hf_home)
     os.environ["HUGGINGFACE_HUB_CACHE"] = str(hf_home / "hub")
     os.environ["TORCH_HOME"] = str(torch_home)
-    os.environ["M2D_CLAP_WEIGHT_DIR"] = str(checkpoint.parent)
-    os.environ["M2D_CLAP_CHECKPOINT"] = str(checkpoint)
+    if checkpoint is not None:
+        os.environ["M2D_CLAP_WEIGHT_DIR"] = str(checkpoint.parent)
+        os.environ["M2D_CLAP_CHECKPOINT"] = str(checkpoint)
     os.environ["MUQ_MULAN_LOCAL_FILES_ONLY"] = "0"
     os.environ["HF_HUB_OFFLINE"] = "0"
     os.environ["TRANSFORMERS_OFFLINE"] = "0"
@@ -508,19 +542,46 @@ def _ensure_project_source() -> Path:
 def run_worker() -> None:
     try:
         _wait_for_endpoint(float(os.getenv("SOULTUNER_ENDPOINT_START_TIMEOUT", "1800")))
-        _ensure_packages()
-        checkpoint = _ensure_m2d_checkpoint()
-        _ensure_bert_snapshot()
-        _configure_model_caches(checkpoint)
-        _ensure_project_source()
         rows = _catalog_rows()
         total = len(rows)
+        required_families = _required_families()
         driver = _driver()
         try:
             _upsert_catalog_rows(driver, rows)
             song_ids = {str(row["song_id"]) for row in rows}
+            initial_missing = {
+                family: _missing_ids(driver, family, EXPECTED_DIMS[family], song_ids)
+                for family in required_families
+            }
+            # MuQ text encoding is needed even when Aura already contains all
+            # audio vectors. Prepare its small Python dependency and source
+            # before declaring the deployment ready; model weights are then
+            # materialised by the non-blocking dense warmup.
+            _ensure_packages(("muq_embedding",))
+            _configure_model_caches()
+            _ensure_project_source()
+            if not any(initial_missing.values()):
+                _write_status(
+                    "ready",
+                    completed=total,
+                    total=total,
+                    updates=0,
+                    families=list(required_families),
+                )
+                return
+
+            # Download and import only what this deployment actually needs.
+            # In particular, a healthy MuQ+OMAR catalogue no longer downloads
+            # the optional M2D checkpoint on every fresh image.
+            _ensure_packages(required_families)
+            checkpoint = None
+            if "m2d2_embedding" in required_families:
+                checkpoint = _ensure_m2d_checkpoint()
+                _ensure_bert_snapshot()
+            _configure_model_caches(checkpoint)
+            _ensure_project_source()
             completed_updates = 0
-            for family, expected, extractor, release in _family_extractors():
+            for family, expected, extractor, release in _family_extractors(required_families):
                 missing = _missing_ids(driver, family, expected, song_ids)
                 selected = [row for row in rows if str(row.get("song_id")) in missing]
                 _write_status("running", family=family, completed=0, total=len(selected))
@@ -528,7 +589,7 @@ def run_worker() -> None:
                     song_id = str(row["song_id"])
                     try:
                         vector = list(extractor(Path(row["audio_file"])))
-                        _update_vector(driver, song_id, family, vector)
+                        _update_vector(driver, song_id, family, vector, required_families)
                     except Exception as exc:
                         _write_status(
                             "running",
@@ -542,14 +603,21 @@ def run_worker() -> None:
                     if index == 1 or index % 10 == 0 or index == len(selected):
                         _write_status("running", family=family, completed=index, total=len(selected))
                 release()
-            ready = total - len(_missing_ids(driver, "muq_embedding", 512, song_ids))
+            ready = total - len(_missing_ids(driver, required_families[0], EXPECTED_DIMS[required_families[0]], song_ids))
             still_missing = {
                 family: len(_missing_ids(driver, family, expected, song_ids))
                 for family, expected in EXPECTED_DIMS.items()
+                if family in required_families
             }
             if any(still_missing.values()):
                 raise RuntimeError(f"vector backfill incomplete: {still_missing}")
-            _write_status("ready", completed=ready, total=total, updates=completed_updates)
+            _write_status(
+                "ready",
+                completed=ready,
+                total=total,
+                updates=completed_updates,
+                families=list(required_families),
+            )
         finally:
             driver.close()
     except Exception as exc:

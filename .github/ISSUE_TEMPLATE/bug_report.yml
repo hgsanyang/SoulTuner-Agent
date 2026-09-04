@@ -1,0 +1,46 @@
+name: 问题报告
+description: 报告可以复现的异常或回归
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题概述
+      description: 实际发生了什么？期望结果是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+      placeholder: |
+        1. 启动……
+        2. 输入……
+        3. 看到……
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: 运行档位
+      options:
+        - CUDA GPU（MuQ + OMAR）
+        - ROCm GPU（MuQ + OMAR）
+        - 纯 CPU（M2D-CLAP）
+        - ModelScope 公共创空间
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境与日志
+      description: 提供系统、Python/Node、提交号和已脱敏日志。不要粘贴密钥或数据库密码。
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 信息安全
+      options:
+        - label: 我确认以上内容不含密钥、私人数据或未公开漏洞细节。
+          required: true

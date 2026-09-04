@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Dict, Any, Optional, List, get_args
 
@@ -35,19 +36,11 @@ from api.security import (
 
 logger = get_logger(__name__)
 
-app = FastAPI(title="Music Recommendation API", version="1.0.0")
-
 # 注册用户画像路由
 from api.user_profile import router as user_profile_router
-app.include_router(user_profile_router)
 from api.profiles import router as profiles_router
-app.include_router(profiles_router)
-
-# 注册动态用户画像路由（Profile Synthesizer）
 from api.user_portrait import router as user_portrait_router
-app.include_router(user_portrait_router)
 
-@app.on_event("startup")
 async def startup_event():
     """在服务器启动时预加载关键组件，避免首次请求冷启动延迟"""
     import time as _t
@@ -65,9 +58,10 @@ async def startup_event():
     except Exception as exc:
         logger.debug("联网临时音频清理任务未启动: %s", exc)
 
-    # 1. CPU profile预加载M2D；GPU profile先让MuQ按需进入显存，避免两个大模型的加载峰值叠加。
+    # GPU profiles use MuQ and disable this warmup. The constrained CPU
+    # profile opts into M2D explicitly through its launcher/Compose settings.
     loop = asyncio.get_running_loop()
-    preload_m2d = os.getenv("MUSIC_M2D_MODEL_WARMUP", "true").lower() not in {"0", "false", "off"}
+    preload_m2d = os.getenv("MUSIC_M2D_MODEL_WARMUP", "false").lower() not in {"0", "false", "off"}
     if preload_m2d:
         try:
             from retrieval.audio_embedder import get_m2d2_model, encode_text_to_embedding
@@ -191,6 +185,20 @@ async def startup_event():
         logger.warning(f"  ⚠️ KV Cache 预热启动失败: {e}")
 
     logger.info(f"🏁 预加载完成，总耗时 {_t.time()-_t0:.1f}s")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Run startup warmups through FastAPI's supported lifespan protocol."""
+
+    await startup_event()
+    yield
+
+
+app = FastAPI(title="Music Recommendation API", version="1.0.0", lifespan=lifespan)
+app.include_router(user_profile_router)
+app.include_router(profiles_router)
+app.include_router(user_portrait_router)
 
 # 配置CORS
 app.add_middleware(

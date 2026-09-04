@@ -14,13 +14,15 @@ from typing import Any
 from urllib.parse import urlparse
 
 try:
+    from .graph_runtime import hybrid_vector_query_scores
     from .graph_runtime import merge_graph_overlay
     from .graph_runtime import vector_query_scores
-    from .dense_runtime import encode_text_query
+    from .dense_runtime import encode_primary_text_query
 except ImportError:  # ModelScope uploads this directory as a flat application.
+    from graph_runtime import hybrid_vector_query_scores
     from graph_runtime import merge_graph_overlay
     from graph_runtime import vector_query_scores
-    from dense_runtime import encode_text_query
+    from dense_runtime import encode_primary_text_query
 
 
 DATA = Path(__file__).resolve().parent / "data" / "catalog.jsonl"
@@ -314,19 +316,25 @@ def retrieve(
     if float(route.get("dense_weight") or 0.0) > 0:
         acoustic_queries = plan.get("acoustic_queries") or []
         semantic_query = str(acoustic_queries[0] if acoustic_queries else query).strip()
-        query_vector = encode_text_query(semantic_query)
+        query_vector, encoded_backend = encode_primary_text_query(query, fallback_text=semantic_query)
         if query_vector:
-            dense_scores, vector_status = vector_query_scores(
-                query_vector,
-                index_name="song_m2d2_index",
-                limit=max(120, int(top_k) * 24),
-            )
+            if encoded_backend == "muq":
+                dense_scores, vector_status = hybrid_vector_query_scores(
+                    query_vector,
+                    limit=max(120, int(top_k) * 24),
+                )
+            else:
+                dense_scores, vector_status = vector_query_scores(
+                    query_vector,
+                    index_name="song_m2d2_index",
+                    limit=max(120, int(top_k) * 24),
+                )
             if vector_status.get("state") == "ready" and dense_scores:
-                dense_backend = "m2d2_aura"
+                dense_backend = "muq_omar_aura" if encoded_backend == "muq" else "m2d2_fallback_aura"
     scored: list[dict[str, Any]] = []
     for row in load_catalog():
         graph_score = _graph_score(query, row, plan)
-        if dense_backend == "m2d2_aura":
+        if dense_backend in {"muq_omar_aura", "m2d2_fallback_aura"}:
             dense_score = dense_scores.get(str(row.get("song_id") or ""), 0.0)
             dense_source = dense_backend
         else:

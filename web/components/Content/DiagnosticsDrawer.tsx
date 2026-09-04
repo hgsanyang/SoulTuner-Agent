@@ -30,7 +30,7 @@ export default function DiagnosticsDrawer({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   if (!open) return null;
 

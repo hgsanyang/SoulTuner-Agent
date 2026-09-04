@@ -1,0 +1,31 @@
+name: 功能建议
+description: 建议新的体验、检索、数据或工程能力
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决的问题
+      description: 请从用户场景描述问题，而不只是给出某个实现名词。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 说明期望交互、可选实现和取舍。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 示例或依据
+      description: 可附脱敏截图、公开资料、数据许可证或类似项目链接。
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: 项目边界
+      options:
+        - label: 若涉及音频、数据或模型，我会提供可核验来源和许可证信息。
+          required: true

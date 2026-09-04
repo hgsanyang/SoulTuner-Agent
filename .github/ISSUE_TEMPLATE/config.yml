@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 私密安全报告
+    url: https://github.com/hgsanyang/SoulTuner-Agent/security/advisories/new
+    about: 漏洞和敏感安全信息请不要写入公开 Issue

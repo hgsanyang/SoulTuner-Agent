@@ -33,7 +33,7 @@ python amd_readiness.py --skip-adapter --skip-endpoint
 
 prepare_open_audio() {
   local dataset_id="${SOULTUNER_OPEN_AUDIO_DATASET_ID:-hgsanyang/SoulTuner-Open-Audio-Demo}"
-  local revision="${SOULTUNER_OPEN_AUDIO_REVISION:-master}"
+  local revision="${SOULTUNER_OPEN_AUDIO_REVISION:-4aa4fb3feeaabcb16b711a08930afd97434463b6}"
   mkdir -p "${SOULTUNER_OPEN_AUDIO_DIR}"
   modelscope download "${dataset_id}" --repo-type dataset \
     --revision "${revision}" --local-dir "${SOULTUNER_OPEN_AUDIO_DIR}" --max-workers 4

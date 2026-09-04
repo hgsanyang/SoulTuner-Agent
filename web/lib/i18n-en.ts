@@ -510,7 +510,7 @@ export const EN_DICT: Record<string, string> = {
     '小众歌曲曝光度': 'Long-tail exposure',
     'MMR 相关性偏好': 'MMR relevance weight',
     '最大跳数': 'Max graph hops',
-    '语义相关性（M2D-CLAP）': 'Semantic match (M2D-CLAP)',
+    '语义相关性（GPU MuQ / CPU M2D）': 'Semantic match (GPU MuQ / CPU M2D)',
     '声学风格（OMAR-RQ）': 'Acoustic style (OMAR-RQ)',
     '启用图距离粗排 + TS 探索': 'Graph-distance coarse rank + Thompson sampling',
     '推荐后回应方式': 'Reply style',

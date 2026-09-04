@@ -29,7 +29,7 @@ from dialogue_orchestrator import (
     planner_turn_kind,
     resolved_reference,
 )
-from dense_runtime import dense_warmup_status, launch_dense_text_warmup
+from dense_runtime import dense_warmup_backend, dense_warmup_status, launch_dense_text_warmup
 from enrichment_runtime import enrichment_status as get_enrichment_status
 from enrichment_runtime import launch_enrichment_if_requested
 from enrichment_runtime import status_markdown as enrichment_status_markdown
@@ -271,9 +271,11 @@ def _live_planner_status() -> str:
         launch_dense_text_warmup()
     dense_state = dense_warmup_status()
     if dense_state == "starting":
-        markdown += "\n\n稠密检索：`M2D 文本编码器正在后台预热`。"
+        markdown += "\n\n稠密检索：`MuQ 中文语义编码器正在后台预热`。"
     elif dense_state == "ready":
-        markdown += "\n\n稠密检索：`M2D 文本编码器已预热`。"
+        backend = dense_warmup_backend() or "muq"
+        label = "MuQ + OMAR" if backend == "muq" else "M2D 纯 CPU 档"
+        markdown += f"\n\n稠密检索：`{label} 已预热`。"
     return markdown
 
 

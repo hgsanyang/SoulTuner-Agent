@@ -123,7 +123,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         audioRef.current = new Audio();
-        audioRef.current.volume = volume;
+        audioRef.current.volume = 0.8;
 
         const audio = audioRef.current;
 
@@ -138,6 +138,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             audio.pause();
         };
     }, []); // Only init once
+
+    useEffect(() => {
+        if (audioRef.current) audioRef.current.volume = volume;
+    }, [volume]);
 
     // Playback events belong to the profile/mode that started the queue. Stop
     // and clear on a context switch so a late "ended" event cannot be written
@@ -194,7 +198,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             }
             handlePlayNext(true);
         };
-    }, [currentSong, queue, playMode]);
+    }, [currentSong, queue, playMode]); // eslint-disable-line react-hooks/exhaustive-deps -- rebind to the latest queue state
 
     const playSong = (song: Song, newQueue?: Song[]) => {
         const playableSong = normalizeSongMedia(song);

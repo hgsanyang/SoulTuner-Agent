@@ -5,7 +5,7 @@ LangGraph 工具层 — Agent 可调用的原子操作。
 | 文件 | 职责 |
 |------|------|
 | `graphrag_search.py` | 知识图谱检索（Neo4j Cypher + 五维度标签过滤 + 200+ 别名映射） |
-| `semantic_search.py` | 文搜音向量检索：MuQ-MuLan 主锚，M2D-CLAP 回退，OMAR-RQ 声学辅助 |
+| `semantic_search.py` | 文搜音向量检索：GPU 用 MuQ-MuLan 主锚与 OMAR-RQ 声学重排，纯 CPU 用 M2D-CLAP |
 | `acquire_music.py` | 联网获取音乐（搜索→下载→待入库暂存 + 按需入库） |
 | `web_search_aggregator.py` | 联网搜索聚合（SearxNG + Tavily + 智谱 WebSearch） |
 | `music_fetch_tool.py` | 在线歌曲试听链接抓取 |

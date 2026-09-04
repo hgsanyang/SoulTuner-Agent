@@ -17,7 +17,7 @@ from data.pipeline.neo4j_schema_v2 import create_vector_indexes
 from scripts.ingest_worker import process_one
 from tools.data.queue_song_describer import commit_to_existing_flywheel, load_ingest_songs
 
-EXPECTED_DIMS = {"muq_dim": 512, "m2d_dim": 768, "omar_dim": 1024}
+EXPECTED_DIMS = {"muq_dim": 512, "omar_dim": 1024}
 
 
 def _enrichment_status(song_ids: list[str]) -> dict[str, dict[str, object]]:
@@ -45,11 +45,11 @@ def _is_ready(row: dict[str, object] | None) -> bool:
 
 
 def _ensure_vector_indexes(timeout_seconds: float = 120.0) -> None:
-    """Create and wait for the three indexes used by the retrieval runtime."""
+    """Create available indexes and wait for the MuQ + OMAR production pair."""
 
     from retrieval.neo4j_client import get_neo4j_client
 
-    required = {"song_muq_index", "song_m2d2_index", "song_omar_index"}
+    required = {"song_muq_index", "song_omar_index"}
     create_vector_indexes()
     deadline = time.monotonic() + timeout_seconds
     last_states: dict[str, str] = {}

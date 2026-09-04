@@ -129,7 +129,7 @@ export default function MemoryPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const loadRatings = useCallback(async () => {
     try {

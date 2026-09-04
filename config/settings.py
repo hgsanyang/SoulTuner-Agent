@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import AliasChoices, Field
 from pathlib import Path
 import json as _json
@@ -50,6 +50,12 @@ class GlobalSettings(BaseSettings):
       from config.settings import settings
       settings.reranker_enabled
     """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # ================================================================
     # 1. LLM API Keys & 端点
@@ -328,7 +334,7 @@ class GlobalSettings(BaseSettings):
     dense_text_audio_backend: str = Field(
         default="muq",
         validation_alias="DENSE_TEXT_AUDIO_BACKEND",
-        description="文搜音稠密召回后端：muq / m2d / both；MuQ 失败时自动回退 M2D",
+        description="文搜音稠密召回后端：GPU 默认 muq；资源受限的纯 CPU 档使用 m2d；both 仅供对照实验",
     )
     dense_query_variant_mode: str = Field(
         default="off",
@@ -338,7 +344,7 @@ class GlobalSettings(BaseSettings):
     plan_query_variant_mode: str = Field(
         default="m2d",
         validation_alias="MUSIC_PLAN_QUERY_VARIANTS",
-        description="LLM plan 多声学描述启用范围：off / m2d / all；默认只用于 M2D fallback",
+        description="LLM plan 多声学描述启用范围：off / m2d / all；默认只用于纯 CPU 的 M2D 路径",
     )
     graph_search_limit: int = Field(
         default=24,
@@ -464,7 +470,7 @@ class GlobalSettings(BaseSettings):
     # --- 内容双锚精排权重（语义 + 声学，自动归一化）---
     tri_anchor_w_semantic: float = Field(
         default=0.45,
-        description="三锚精排: M2D-CLAP 语义相关性权重",
+        description="三锚精排: GPU 使用 MuQ 主语义，纯 CPU 使用 M2D 的相关性权重",
     )
     tri_anchor_w_acoustic: float = Field(
         default=0.30,
@@ -550,12 +556,6 @@ class GlobalSettings(BaseSettings):
     searxng_timeout: int = Field(default=8, description="SearxNG 搜索超时")
     netease_api_timeout: int = Field(default=10, description="网易云 API 请求超时")
     audio_download_timeout: int = Field(default=60, description="音频文件下载超时")
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"  # 忽略无法匹配的环境变量
-
 
 # ---- 用户设置持久化（JSON 文件） ----
 

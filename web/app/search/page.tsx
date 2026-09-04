@@ -43,7 +43,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const seedHandledRef = useRef<string | null>(null);
   useEffect(() => {
@@ -56,7 +56,7 @@ export default function SearchPage() {
       window.history.replaceState({}, '', pathname);
     }, 150);
     return () => clearTimeout(timer);
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [handleSubmit, pathname]);
 
   const hasResults = results.length > 0;
 

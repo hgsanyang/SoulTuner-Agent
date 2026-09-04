@@ -4,7 +4,7 @@
 #
 # 核心变更：
 #   - 废弃 Milvus 向量数据库，改用 Neo4j Native Vector Search
-#   - 废弃 LAION-CLAP 占位编码，改用真实 M2D-CLAP 跨模态编码
+#   - GPU 默认 MuQ-MuLan + OMAR-RQ；纯 CPU 档使用 M2D-CLAP
 #   - 支持"硬过滤 + 软排序"一体化 Cypher 查询
 #     （如：锁定"周杰伦"的歌，再按"悲伤"语义向量排序）
 # ============================================================
@@ -378,8 +378,8 @@ def _fetch_song_details_for_ranked_eids(
 
 def _translate_query(query: str) -> str:
     """
-    【V2 升级】查询预处理：中文情绪词命中缓存则直接翻译，
-    否则保持原文（由 M2D-CLAP 多语言能力直接理解）。
+    仅供纯 CPU 的 M2D 路径查询预处理。MuQ 主链直接理解中文原文，
+    不在检索前把用户表达压缩成固定英文模板。
     """
     query_stripped = query.strip()
     if query_stripped in _TRANSLATION_CACHE:
@@ -395,7 +395,9 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                     language_filter: str = "", region_filter: str = "") -> str:
     """
     【V2 升级】Neo4j 原生图向量语义搜索工具
-    根据用户的自然语言描述，使用 M2D-CLAP 编码为向量，
+    根据用户的自然语言描述，默认使用 MuQ-MuLan 编码为向量，
+    并用 OMAR-RQ 对语义候选做声学重排；M2D-CLAP 用于资源受限
+    的纯 CPU 档，
     在 Neo4j 图中检索语义最相似的歌曲。
     支持可选的硬过滤条件（歌手/流派/语言/地区），实现:
     "先通过图谱关系精准圈定候选池，再通过向量排序找到最匹配的"
@@ -419,10 +421,7 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                              language=language_filter, region=region_filter))
 
     try:
-        # 1. 文本预处理
-        search_text = _translate_query(query)
-
-        # 2. 构建 Neo4j 原生向量检索 Cypher
+        # 1. 构建 Neo4j 原生向量检索 Cypher
         client = get_neo4j_client()
 
         def _run_backend(backend: str) -> List[Dict[str, Any]]:
@@ -432,6 +431,9 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                 return []
 
             logger.info("[SemanticSearch] 正在用 %s 编码查询文本...", spec["name"])
+            # MuQ receives the user's Chinese wording unchanged. Translation
+            # caching belongs only to the CPU M2D compatibility path.
+            search_text = query if backend == "muq" else _translate_query(query)
             query_vector = _encode_query_for_backend(search_text, backend, query_variants=query_variants)
             logger.info("[SemanticSearch] %s 编码完成，向量维度: %d", spec["name"], len(query_vector))
 
@@ -575,7 +577,7 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                 for r in base_results:
                     base_s = r["similarity_score"]
                     omar_s = omar_scores.get(r["_eid"], 0.0)
-                    # 有 OMAR 分数时加权融合，否则只用 M2D
+                    # 有 OMAR 分数时加权融合，否则只用当前语义后端
                     if omar_s > 0:
                         score = 0.7 * base_s + 0.3 * omar_s
                     else:
@@ -615,7 +617,10 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
 
         configured_backend = _dense_backend()
         backend_order = ["muq", "m2d"] if configured_backend == "both" else [configured_backend]
-        if configured_backend == "muq":
+        allow_m2d_fallback = os.getenv("MUSIC_ENABLE_M2D_FALLBACK", "0").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        if configured_backend == "muq" and allow_m2d_fallback:
             backend_order.append("m2d")
 
         results = []
@@ -637,7 +642,7 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                     continue
                 results = backend_results
                 break
-            if backend == "muq":
+            if backend == "muq" and allow_m2d_fallback:
                 logger.warning("[SemanticSearch] MuQ-MuLan 无结果，尝试 M2D-CLAP fallback")
 
         if configured_backend == "both" and results:

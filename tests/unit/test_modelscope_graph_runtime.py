@@ -98,3 +98,51 @@ def test_vector_query_reconnects_and_returns_aura_scores(monkeypatch) -> None:
         "fma_small_balanced",
     ]
     assert captured["closed"] is True
+
+
+def test_hybrid_query_fuses_muq_semantics_with_omar_acoustics(monkeypatch) -> None:
+    calls = []
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def run(self, _query, **params):
+            calls.append(params)
+            if params["index_name"] == "song_muq_index":
+                return [
+                    {"song_id": "semantic", "score": 0.9, "omar_embedding": [1.0] * 1024},
+                    {"song_id": "acoustic", "score": 0.6, "omar_embedding": [1.0] * 1024},
+                ]
+            return [
+                {"song_id": "semantic", "score": 0.5},
+                {"song_id": "acoustic", "score": 1.0},
+            ]
+
+    class Driver:
+        def session(self, **_kwargs):
+            return Session()
+
+        def close(self):
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "neo4j",
+        SimpleNamespace(GraphDatabase=SimpleNamespace(driver=lambda *_args, **_kwargs: Driver())),
+    )
+    monkeypatch.setattr(
+        graph_runtime,
+        "_connection_settings",
+        lambda: ("neo4j+s://example", "user", "secret", "neo4j"),
+    )
+
+    scores, status = graph_runtime.hybrid_vector_query_scores([0.1] * 512, limit=2)
+
+    assert scores["semantic"] == 0.812
+    assert scores["acoustic"] == 0.688
+    assert status["backend"] == "muq+omar"
+    assert [call["index_name"] for call in calls] == ["song_muq_index", "song_omar_index"]

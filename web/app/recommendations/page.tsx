@@ -175,7 +175,6 @@ export default function RecommendationsPage() {
     if (allSongs.length > 0 && songListRef.current) {
       songListRef.current.scrollTop = 0;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestAssistantWithSongs?.id, allSongs.length]);
 
   const handleSubmit = useCallback(async (value: string) => {
@@ -302,8 +301,7 @@ export default function RecommendationsPage() {
     );
 
     cancelRef.current = cancel;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProfile.profile_id, dialogState, messages, sessionId, storageKey, webSearchEnabled]);
+  }, [activeProfile.profile_id, dialogState, messages, sessionId, storageKey, t, webSearchEnabled]);
 
   /** 中止当前搜索，立即允许新搜索 */
   const handleAbort = useCallback(() => {
@@ -325,7 +323,7 @@ export default function RecommendationsPage() {
       }
       return newMsgs;
     });
-  }, []);
+  }, [t]);
 
   /** 新建聊天：清空当前会话（localStorage 也清除） */
   const handleNewChat = useCallback(() => {
@@ -382,7 +380,7 @@ export default function RecommendationsPage() {
       showToast(t('⚠️ 反馈记录失败：{v0}', { v0: err?.message || t('未知错误') }));
       return false;
     }
-  }, [showToast, webSearchEnabled]);
+  }, [showToast, t, webSearchEnabled]);
 
   useEffect(() => {
     return () => {

@@ -51,9 +51,9 @@ echo "SoulTuner model cache: ${CACHE_DIR}" >&2
 # both commands on every boot also catches a directory that contains config.json
 # but was interrupted before all weight shards arrived.
 modelscope download "${BASE_MODEL_ID}" --repo-type model \
-  --revision "${SOULTUNER_BASE_MODEL_REVISION:-master}" --local-dir "${BASE_MODEL_DIR}"
+  --revision "${SOULTUNER_BASE_MODEL_REVISION:-913c459c5c83fa016a0e54a52e5b95f6c894e0fe}" --local-dir "${BASE_MODEL_DIR}"
 modelscope download "${ADAPTER_MODEL_ID}" --repo-type model \
-  --revision "${SOULTUNER_ADAPTER_REVISION:-master}" --local-dir "${ADAPTER_MODEL_DIR}"
+  --revision "${SOULTUNER_ADAPTER_REVISION:-f3685197007a5d7e41a20c484865f144af101804}" --local-dir "${ADAPTER_MODEL_DIR}"
 
 test -f "${BASE_MODEL_DIR}/config.json"
 test -f "${ADAPTER_MODEL_DIR}/adapter_config.json"

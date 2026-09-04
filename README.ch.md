@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Python-3.11+-blue?logo=python" alt="Python" />
   <img src="https://img.shields.io/badge/LangGraph-Agent_Framework-orange?logo=langchain" alt="LangGraph" />
   <img src="https://img.shields.io/badge/Neo4j-Graph_Database-008CC1?logo=neo4j" alt="Neo4j" />
-  <img src="https://img.shields.io/badge/Next.js_14-Frontend-black?logo=next.js" alt="Next.js" />
+  <img src="https://img.shields.io/badge/Next.js_16-Frontend-black?logo=next.js" alt="Next.js" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker" alt="Docker" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License" />
   <br/>
@@ -23,6 +23,10 @@
 
 <p align="center">
   <a href="README.ch.md">中文</a> | <a href="README.md">English</a>
+</p>
+
+<p align="center">
+  <a href="https://modelscope.cn/studios/hgsanyang/SoulTuner-Agent"><strong>在 ModelScope 体验 AMD MI308X 在线演示</strong></a>
 </p>
 
 ## 🎯 这是什么
@@ -104,7 +108,8 @@ MUSIC_DATA_PATH=../data
 .\soultuner.ps1 up gpu
 ```
 
-没有 NVIDIA 显卡就用 `.\soultuner.ps1 up cpu`。
+没有 NVIDIA 显卡就用 `.\soultuner.ps1 up cpu`。CUDA/ROCm GPU 档默认由 MuQ
+理解中文语义、OMAR 做声学重排；资源受限的纯 CPU 档才使用 M2D-CLAP。
 
 想换模型厂商（SiliconFlow / Google / 火山 / 本地 SGLang、vLLM、Ollama），改 `MAIN_LLM_PROVIDER` 和 `MODEL_NAME` 并填对应 Key 即可，也可以启动后在前端「系统设置」里改。
 
@@ -152,7 +157,7 @@ SoulTuner 既可以使用 API 模型，也可以连接自己部署的 OpenAI 兼
                        ▼
 ┌──────────────────────────────────────────────────┐
 │  本地检索与曲库扩展                                │
-│  图谱召回 ＋ MuQ 向量召回 → 融合 → 按需联网补充    │
+│  图谱 ＋ MuQ 语义召回 ＋ OMAR 声学重排 → 按需联网  │
 └──────────────────────┬───────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────┐
@@ -170,11 +175,11 @@ SoulTuner 既可以使用 API 模型，也可以连接自己部署的 OpenAI 兼
 
 | 层 | 用什么 |
 |---|---|
-| 前端 | Next.js 14 + React 18 |
+| 前端 | Next.js 16 + React 18 |
 | 后端 | FastAPI + SSE 流式推送 |
 | Agent | LangGraph StateGraph |
 | 图数据库 | Neo4j 5.x（图谱关系 + 原生向量索引） |
-| 文搜音 | MuQ-MuLan（M2D-CLAP 回退） |
+| 文搜音 | GPU：MuQ-MuLan + OMAR-RQ；纯 CPU：M2D-CLAP |
 | 大语言模型 | 默认 `dashscope / qwen3.7-plus`，可换 provider |
 | 长期记忆 | 本地 SQLite 账本 + Neo4j 热路径 |
 | 排序 | 多路召回融合 → 精排 → 多样性 |
@@ -219,6 +224,12 @@ Planner 支持蒸馏为本地学生模型。公开仓库只提供可复现的训
 
 ---
 
+## 🤝 参与项目
+
+发现问题或有功能建议，可以直接提交 [GitHub Issue](https://github.com/hgsanyang/SoulTuner-Agent/issues)。如果愿意修改代码，可以提交 Pull Request；PR 只是供维护者审查的修改建议，是否合并仍由仓库维护者决定。简明流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题见 [SECURITY.md](SECURITY.md)，版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
 ## 🙏 致谢
 
 本项目初始架构参考自 [imagist13/Muisc-Research](https://github.com/imagist13/Muisc-Research)，在此基础上做了大规模重构与功能扩展。
@@ -226,8 +237,8 @@ Planner 支持蒸馏为本地学生模型。公开仓库只提供可复现的训
 | 项目 | 用途 |
 |---|---|
 | [OpenMuQ/MuQ](https://github.com/OpenMuQ/MuQ) | MuQ-MuLan 文搜音主模型（CC-BY-NC 4.0） |
-| [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP 回退与辅助语义模型 |
-| [MTG/omar-rq](https://github.com/MTG/omar-rq) | OMAR-RQ 音频表示模型 |
+| [nttcslab/m2d](https://github.com/nttcslab/m2d) | 资源受限纯 CPU 档的 M2D-CLAP 编码器 |
+| [MTG/omar-rq](https://github.com/MTG/omar-rq) | GPU 档的 OMAR-RQ 声学重排模型 |
 | [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | legacy 记忆适配器（可选、非默认） |
 
 ---
