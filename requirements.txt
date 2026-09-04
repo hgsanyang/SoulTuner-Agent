@@ -57,7 +57,7 @@ timm==1.0.28
 omar-rq==0.2.1
 
 # Token 计数工具
-tiktoken>=0.7.0
+tiktoken>=0.14.0
 
 # PyTorch 深度学习运算及音频处理后端
 torch>=2.2.0
