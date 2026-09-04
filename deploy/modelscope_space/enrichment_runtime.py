@@ -518,7 +518,10 @@ def _ensure_project_source() -> Path:
         "SOULTUNER_SOURCE_REPOSITORY",
         "https://github.com/hgsanyang/SoulTuner-Agent.git",
     )
-    revision = os.getenv("SOULTUNER_SOURCE_REVISION", "main")
+    revision = os.getenv(
+        "SOULTUNER_SOURCE_REVISION",
+        "5339dc91ee167fea2fa5a071479821a62848f13f",
+    )
     subprocess.run(
         [
             "git",

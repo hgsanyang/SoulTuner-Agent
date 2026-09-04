@@ -82,6 +82,8 @@ bash start_space_amd.sh
 `SHA256SUMS`，再启动同一个本地 OpenAI 兼容端点。端点暴露两个模型 ID：
 `soultuner-v4.2-35b` 负责结构化 Planner，`qwen3.6-35b-a3b` 负责自然语言对话与解释。
 启动脚本会等待两个角色都通过 `/v1/models` 健康检查后再宣布 35B 就绪。
+默认下载版本记录在 `deployment.lock.json`，源码、基座、LoRA 和开放音频均使用
+不可变提交号；只有显式设置相应环境变量时才会切换版本。
 
 创空间自动启动路径会把同样的端点流程放到后台，并将日志写到
 `soultuner-35b-endpoint.log`。若 ROCm 镜像缺少 `vllm`，启动脚本会在下载模型前

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "https://github.com/hgsanyang/SoulTuner-Agent.git",
+    "revision": "5339dc91ee167fea2fa5a071479821a62848f13f"
+  },
+  "base_model": {
+    "repository": "Qwen/Qwen3.6-35B-A3B",
+    "revision": "913c459c5c83fa016a0e54a52e5b95f6c894e0fe"
+  },
+  "planner_adapter": {
+    "repository": "hgsanyang/SoulTuner-Planner-V4.2-35B-LoRA",
+    "revision": "f3685197007a5d7e41a20c484865f144af101804"
+  },
+  "open_audio": {
+    "repository": "hgsanyang/SoulTuner-Open-Audio-Demo",
+    "revision": "4aa4fb3feeaabcb16b711a08930afd97434463b6",
+    "tracks": 1806
+  },
+  "retrieval": {
+    "gpu_primary": "muq",
+    "gpu_acoustic_reranker": "omar",
+    "cpu_backend": "m2d"
+  }
+}
