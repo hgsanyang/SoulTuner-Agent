@@ -67,7 +67,7 @@ torchaudio>=2.2.0
 tqdm>=4.60.0
 
 # HuggingFace 模型工具
-transformers>=4.40.0
+transformers>=5.16.1
 
 # HTTP 客户端依赖
 urllib3>=2.0.0
