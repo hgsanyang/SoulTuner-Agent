@@ -319,16 +319,24 @@ def _recommendation_payload(
     previous_rows: list[dict[str, Any]] | None = None,
     selected_song_id: str | None = None,
     planned: tuple[dict[str, Any], dict[str, Any], str] | None = None,
+    planner_elapsed: float | None = None,
     include_opening: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    plan, route, status = planned or plan_request(
-        profile,
-        planning_query,
-        _planner_context(history, memory, previous_rows, selected_song_id),
-    )
+    if planned is None:
+        planner_started = time.perf_counter()
+        plan, route, status = plan_request(
+            profile,
+            planning_query,
+            _planner_context(history, memory, previous_rows, selected_song_id),
+        )
+        measured_planner_elapsed = time.perf_counter() - planner_started
+    else:
+        plan, route, status = planned
+        measured_planner_elapsed = max(0.0, float(planner_elapsed or 0.0))
     requested_count = max(1, int(top_k))
     previous_count = len(previous_rows or [])
+    retrieval_started = time.perf_counter()
     candidates = retrieve(
         planning_query,
         plan,
@@ -336,6 +344,7 @@ def _recommendation_payload(
         top_k=requested_count + previous_count,
         preference_tags=_preference_tags(memory),
     )
+    retrieval_elapsed = time.perf_counter() - retrieval_started
     hard_songs = list((plan.get("hard") or {}).get("song") or [])
     rows = novel_result_window(
         candidates,
@@ -352,13 +361,16 @@ def _recommendation_payload(
     updated_memory["last_turn_plan"] = plan
     opening = ""
     conversation_status = "35B 基座自然语言等待检索结果"
+    prose_elapsed = 0.0
     if include_opening:
+        prose_started = time.perf_counter()
         opening, conversation_status = recommendation_opening(
             display_query,
             plan,
             rows,
             updated_memory,
         )
+        prose_elapsed = time.perf_counter() - prose_started
     elapsed = time.perf_counter() - started
     table = [
         [
@@ -380,6 +392,12 @@ def _recommendation_payload(
         "rows": rows,
         "table": table,
         "elapsed": elapsed,
+        "timings": {
+            "planner": measured_planner_elapsed,
+            "retrieval": retrieval_elapsed,
+            "prose": prose_elapsed,
+            "total": elapsed,
+        },
         "memory": updated_memory,
     }
 
@@ -413,10 +431,19 @@ def _friendly_route_status(
         timing = f"<span>{payload['elapsed']:.2f}s</span>"
     prose = conversation_status or str(payload.get("conversation_status") or "")
     prose_html = f"<span>{html.escape(prose)}</span>" if prose else ""
+    stages = payload.get("timings") or {}
+    stage_html = ""
+    if songs_ready_elapsed is not None:
+        planner_elapsed = stages.get("planner")
+        retrieval_elapsed = stages.get("retrieval")
+        if isinstance(planner_elapsed, (int, float)):
+            stage_html += f"<span>理解 {planner_elapsed:.2f}s</span>"
+        if isinstance(retrieval_elapsed, (int, float)):
+            stage_html += f"<span>检索 {retrieval_elapsed:.2f}s</span>"
     return (
         '<div class="st-turn-status"><b>本轮状态</b>'
         f"<span>{planner}</span><span>{profile}</span><span>{dense_backend}</span>"
-        f"{prose_html}{timing}</div>"
+        f"{prose_html}{stage_html}{timing}</div>"
     )
 
 
@@ -462,12 +489,16 @@ def unified_turn(
     )
 
     context = _planner_context(current_history, data, previous_rows, selected_song_id)
+    planner_started = time.perf_counter()
     plan, route, planner_status = plan_request(profile, clean, context)
+    planner_elapsed = time.perf_counter() - planner_started
     turn_kind = planner_turn_kind(plan)
 
     if turn_kind != "recommendation":
         evidence_rows: list[dict[str, Any]] = []
+        retrieval_elapsed = 0.0
         if turn_kind == "information":
+            retrieval_started = time.perf_counter()
             evidence_rows = retrieve(
                 clean,
                 plan,
@@ -475,6 +506,8 @@ def unified_turn(
                 top_k=min(5, int(top_k)),
                 preference_tags=_preference_tags(data),
             )
+            retrieval_elapsed = time.perf_counter() - retrieval_started
+        prose_started = time.perf_counter()
         reply, conversation_status = general_chat(
             clean,
             current_history,
@@ -484,6 +517,7 @@ def unified_turn(
             current_playlist_rows=list(previous_rows or []),
             selected_song_id=selected_song_id,
         )
+        prose_elapsed = time.perf_counter() - prose_started
         updated_history = append_turn(current_history, clean, reply)
         updated_memory = _copy_memory(data)
         updated_memory["last_turn_plan"] = plan
@@ -497,6 +531,9 @@ def unified_turn(
             f'<span>35B Planner：{labels.get(turn_kind, turn_kind)}</span>'
             f'<span>{html.escape(str(plan.get("dialogue_mode") or turn_kind))}</span>'
             f'<span>{html.escape(conversation_status)}</span>'
+            f'<span>理解 {planner_elapsed:.2f}s</span>'
+            f'<span>检索 {retrieval_elapsed:.2f}s</span>'
+            f'<span>回复 {prose_elapsed:.2f}s</span>'
             f'<span>{time.perf_counter() - started:.2f}s</span></div>'
         )
         diagnostic_plan = {"planner_status": planner_status, **plan}
@@ -527,6 +564,7 @@ def unified_turn(
         previous_rows,
         selected_song_id,
         planned=(plan, route, planner_status),
+        planner_elapsed=planner_elapsed,
         include_opening=False,
     )
     songs_ready_elapsed = time.perf_counter() - started
@@ -600,6 +638,8 @@ def unified_turn(
             else preview
         )
     total_elapsed = time.perf_counter() - started
+    payload["timings"]["prose"] = max(0.0, total_elapsed - songs_ready_elapsed)
+    payload["timings"]["total"] = total_elapsed
     updated_history = append_turn(current_history, clean, final_opening)
     yield (
         "",

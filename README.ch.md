@@ -26,7 +26,8 @@
 </p>
 
 <p align="center">
-  <a href="https://modelscope.cn/studios/hgsanyang/SoulTuner-Agent"><strong>在 ModelScope 体验 AMD MI308X 在线演示</strong></a>
+  <a href="https://modelscope.cn/studios/hgsanyang/SoulTuner-Agent"><strong>在 ModelScope 体验公开演示</strong></a><br/>
+  <sub>创空间已经配置 AMD MI308X + ROCm；GPU 是否能实际启动取决于 ModelScope 当时的调度容量。</sub>
 </p>
 
 ## 🎯 这是什么

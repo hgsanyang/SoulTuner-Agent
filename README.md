@@ -26,7 +26,8 @@
 </p>
 
 <p align="center">
-  <a href="https://modelscope.cn/studios/hgsanyang/SoulTuner-Agent"><strong>Try the live AMD MI308X demo on ModelScope</strong></a>
+  <a href="https://modelscope.cn/studios/hgsanyang/SoulTuner-Agent"><strong>Try the public demo on ModelScope</strong></a><br/>
+  <sub>The Space is configured for AMD MI308X + ROCm; actual GPU availability depends on ModelScope scheduling capacity.</sub>
 </p>
 
 ## 🎯 What it is

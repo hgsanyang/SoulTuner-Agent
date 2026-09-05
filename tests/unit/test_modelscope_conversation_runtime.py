@@ -322,6 +322,12 @@ def test_space_app_uses_one_orchestrated_conversation_surface():
     assert unified.index("_render_results(rows") < unified.index("stream_recommendation_opening(")
     assert "歌单已返回 · 35B 推荐话术生成中" in unified
     assert "songs_ready_elapsed" in unified
+    assert "planner_elapsed=planner_elapsed" in unified
+    assert 'payload["timings"]["prose"]' in unified
+    assert '"planner": measured_planner_elapsed' in content
+    assert '"retrieval": retrieval_elapsed' in content
+    assert "<span>理解 {planner_elapsed:.2f}s</span>" in content
+    assert "<span>检索 {retrieval_elapsed:.2f}s</span>" in content
     assert "history_state = gr.State([])" in content
     assert 'storage_key="soultuner-history-v2"' not in content
     assert "outputs=conversation_outputs" in content
