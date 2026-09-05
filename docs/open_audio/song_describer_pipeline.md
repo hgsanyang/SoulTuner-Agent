@@ -58,7 +58,8 @@ python -m tools.data.song_describer_pipeline verify --cache-dir $cache
 python -m tools.data.queue_song_describer --cache-dir $cache --limit 5
 ```
 
-最后一条默认只做入库预览。Neo4j、MuQ/M2D GPU Worker 和音频静态路由都就绪后，再显式提交：
+最后一条默认只做入库预览。Neo4j、GPU 上的 MuQ + OMAR Worker 和音频静态路由都就绪后，再显式提交；
+纯 CPU 兼容档才使用 M2D-CLAP：
 
 ```powershell
 python -m tools.data.queue_song_describer --cache-dir $cache --limit 5 --commit
@@ -66,7 +67,8 @@ python scripts/ingest_worker.py
 ```
 
 `queue_song_describer` 不另造一套入库逻辑：它先复核每个 MP3 的 SHA-256，随后复用
-`_quick_ingest_to_neo4j` 与 `services.ingest_queue`，由现有 `ingest_worker` 生成 MuQ/M2D 向量。
+`_quick_ingest_to_neo4j` 与 `services.ingest_queue`，由现有 `ingest_worker` 在 GPU 档生成 MuQ 与
+OMAR 向量，在显式选择的纯 CPU 档生成 M2D 向量。
 同时补写逐曲许可证、captions、genre/mood 图谱关系。播放器地址沿用现有
 `/static/mtg_audio/{filename}` 路由。
 
@@ -111,5 +113,5 @@ python -m tools.data.song_describer_pipeline verify
 本脚本只负责合法来源、逐曲许可、音频身份和检索输入清单。后续 GPU Worker 应读取 manifest，
 在非商业部署约束下生成 512 维 MuQ-MuLan 向量，再写入 Neo4j/Qdrant。不要把 MuQ 权重、
 `.npz` 向量或音频提交到 Git；它们应放在持久化数据盘或独立 ModelScope 数据集/模型仓库。
-MuQ/M2D 可以在内存中解码音频并生成**非音频特征向量**，但不得把解码、重采样结果写回 MP3；
+MuQ/OMAR（或纯 CPU 档的 M2D）可以在内存中解码音频并生成**非音频特征向量**，但不得把解码、重采样结果写回 MP3；
 因此 ND 源文件在磁盘和播放链路中保持原字节不变。

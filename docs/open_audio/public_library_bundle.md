@@ -1,8 +1,13 @@
-# Song Describer 公开曲库封面与 ModelScope 打包
+# 1,806 首开放音乐曲库与 ModelScope 打包
 
 ## 已盘点的数据
 
-- 本地完整音频：706 首，约 3.111 GiB。
+- Song Describer/Jamendo：706 首，约 3.111 GiB。
+- FMA Small 平衡扩展：1,100 首（Rock 300、Hip-Hop 220、Pop 220、Folk 160、
+  International 120、Electronic 80）。选择过程排除了 Experimental 和 Instrumental
+  顶层类别，并在类别内优先保留具有人声线索的曲目。
+- 合并后的公开演示曲库：1,806 首；`bundle_audit.json` 必须同时显示 1,806 个音频文件、
+  1,806 个封面文件和逐曲来源/许可证覆盖。
 - 上游归档：Zenodo `audio.zip`，MD5 `2126b8facfe9468cf806c6154e09bbe5`，已匹配。
 - 完整清单：1106 条 captions，逐曲音频许可证、归属和 SHA-256 均有记录。
 
@@ -32,7 +37,7 @@ https://usercontent.jamendo.com/?type=album&id=<album_id>&width=600&trackid=<tra
 
 Jamendo API 条款：https://devportal.jamendo.com/api_terms_of_use
 
-## 准备完整 706 首封面审计
+## 准备 Song Describer 706 首封面审计
 
 ```powershell
 $cache = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\mtg_sample"
@@ -74,4 +79,25 @@ python -m tools.data.song_describer_public_bundle bundle `
 - `bundle_audit.json`：体积、覆盖率、物化方式与 catalog SHA-256；
 - `README.md`：ModelScope 数据集卡片草稿。
 
-本流程只构建本地产物，不执行上传或创空间部署。
+## 构建并合并 FMA 平衡扩展
+
+FMA Small 上游音频包约 7.2 GiB。脚本读取 ZIP 中央目录并只下载确定性选中的 1,100 个
+30 秒 MP3，不需要先展开完整归档：
+
+```powershell
+$fma = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\fma_open_expansion"
+python -m tools.data.fma_balanced_pipeline --root $fma --workers 8
+
+$base = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\modelscope_public_library"
+$merged = "C:\Users\sanyang\sanyangworkspace\music_recommendation\data\modelscope_public_library_v2"
+python -m tools.data.merge_public_audio_bundles `
+  --base $base `
+  --expansion $fma `
+  --output $merged
+```
+
+最终上传与创空间物化使用合并目录 `modelscope_public_library_v2`。首次成功物化后，文件位于
+创空间持久目录，休眠唤醒只复核清单并复用现有音频，不重新下载整个曲库。GPU 档为 1,806
+首歌曲生成 MuQ 512 维与 OMAR 1024 维向量；M2D 768 维只属于显式纯 CPU 兼容档。
+
+本流程只构建本地产物，不会自行上传或触发创空间部署。

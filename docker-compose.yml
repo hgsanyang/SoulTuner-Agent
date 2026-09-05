@@ -191,6 +191,9 @@ services:
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_dev_only}"
       MUSIC_INGEST_QUEUE_DIR: /app/data/ingest_queue
       MUSIC_DATA_ROOT: /app/data
+      # This service belongs to the GPU profile. Normal ingestion produces
+      # MuQ + OMAR only; use "cpu" explicitly for the M2D compatibility path.
+      MUSIC_INGEST_EMBEDDING_PROFILE: ${MUSIC_INGEST_EMBEDDING_PROFILE:-gpu}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       HF_OFFLINE: ${HF_OFFLINE:-false}
       HF_HOME: /root/.cache/huggingface

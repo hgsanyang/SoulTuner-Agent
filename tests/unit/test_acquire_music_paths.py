@@ -10,6 +10,7 @@ from tools.acquire_music import (
     EmbeddingExtraction,
     EnrichmentIncompleteError,
     _background_flywheel,
+    _ingest_embedding_families,
     _quick_ingest_to_neo4j,
     _resolve_enrichment_paths,
     _song_identity_parameters,
@@ -114,12 +115,58 @@ def test_embedding_models_fail_independently(monkeypatch):
     monkeypatch.setitem(sys.modules, "retrieval.audio_embedder", fake_audio_embedder)
     monkeypatch.setitem(sys.modules, "retrieval.muq_embedder", fake_muq_embedder)
 
-    result = _sync_extract_embeddings("song.flac")
+    result = _sync_extract_embeddings(
+        "song.flac",
+        families=("muq_embedding", "omar_embedding"),
+    )
 
     assert result.vectors["muq_embedding"] == [3.0, 4.0, 5.0]
-    assert result.vectors["m2d2_embedding"] == [1.0, 2.0]
+    assert "m2d2_embedding" not in result.vectors
     assert result.vectors["omar_embedding"] == []
     assert "ModuleNotFoundError" in result.errors["omar_embedding"]
+
+
+def test_ingest_profile_uses_muq_omar_by_default_and_m2d_only_for_cpu(monkeypatch):
+    monkeypatch.delenv("MUSIC_INGEST_EMBEDDING_PROFILE", raising=False)
+    monkeypatch.delenv("DENSE_TEXT_AUDIO_BACKEND", raising=False)
+    assert _ingest_embedding_families() == ("muq_embedding", "omar_embedding")
+
+    monkeypatch.setenv("MUSIC_INGEST_EMBEDDING_PROFILE", "cpu")
+    assert _ingest_embedding_families() == ("m2d2_embedding",)
+
+    monkeypatch.delenv("MUSIC_INGEST_EMBEDDING_PROFILE")
+    monkeypatch.setenv("DENSE_TEXT_AUDIO_BACKEND", "m2d")
+    assert _ingest_embedding_families() == ("m2d2_embedding",)
+
+
+def test_cpu_ingest_does_not_import_or_run_gpu_embedding_models(monkeypatch):
+    fake_librosa = SimpleNamespace(
+        get_duration=lambda **_kwargs: 1.0,
+        load=lambda *_args, **_kwargs: (np.zeros(160, dtype=np.float32), 16000),
+        resample=lambda audio, **_kwargs: audio,
+    )
+    fake_audio_embedder = SimpleNamespace(
+        encode_audio_to_embedding=lambda *_args, **_kwargs: [1.0, 2.0],
+        extract_audio_representation=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("OMAR must not run in the CPU profile")
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "librosa", fake_librosa)
+    monkeypatch.setitem(sys.modules, "retrieval.audio_embedder", fake_audio_embedder)
+    monkeypatch.setitem(
+        sys.modules,
+        "retrieval.muq_embedder",
+        SimpleNamespace(
+            encode_audio_to_muq=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("MuQ must not run in the CPU profile")
+            )
+        ),
+    )
+
+    result = _sync_extract_embeddings("song.flac", families=("m2d2_embedding",))
+
+    assert result.vectors == {"m2d2_embedding": [1.0, 2.0]}
+    assert result.errors == {}
 
 
 def test_flywheel_matches_catalog_by_stable_music_id(tmp_path, monkeypatch):
@@ -236,7 +283,7 @@ def test_flywheel_fails_when_required_retrieval_vector_is_missing(tmp_path, monk
         )),
     )
 
-    with pytest.raises(EnrichmentIncompleteError, match="missing m2d2_embedding,muq_embedding"):
+    with pytest.raises(EnrichmentIncompleteError, match="missing muq_embedding"):
         asyncio.run(_background_flywheel([{
             "song_id": "42",
             "title": "Track",

@@ -30,6 +30,7 @@ services:
       args:
         ROCM_PYTORCH_IMAGE: ${ROCM_PYTORCH_IMAGE:-rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0}
     environment:
+      MUSIC_INGEST_EMBEDDING_PROFILE: gpu
       MUSIC_REQUIRE_ACCELERATOR: "1"
     devices:
       - /dev/kfd:/dev/kfd

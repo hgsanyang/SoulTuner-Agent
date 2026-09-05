@@ -37,6 +37,7 @@ services:
     environment:
       # Fail loudly rather than quietly extracting vectors on CPU: a silent
       # fallback here looks like "ingestion is just slow" for hours.
+      MUSIC_INGEST_EMBEDDING_PROFILE: gpu
       MUSIC_REQUIRE_CUDA: "1"
     # No deploy block here on purpose: docker-compose.yml already reserves a
     # device for this service, and compose *appends* list entries rather than

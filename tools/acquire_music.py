@@ -830,6 +830,25 @@ LIMIT 1
 """
 
 
+def _ingest_embedding_families() -> tuple[str, ...]:
+    """Return the only vector families required by the selected runtime profile.
+
+    The normal CUDA/ROCm ingestion path is MuQ + OMAR. M2D is deliberately
+    isolated to the explicit CPU compatibility profile so a GPU worker never
+    downloads or runs it merely to satisfy a stale completion check.
+    """
+
+    explicit = os.getenv("MUSIC_INGEST_EMBEDDING_PROFILE", "").strip().casefold()
+    if explicit in {"cpu", "m2d", "m2d-cpu"}:
+        return ("m2d2_embedding",)
+    if explicit in {"gpu", "muq", "muq+omar", "cuda", "rocm"}:
+        return ("muq_embedding", "omar_embedding")
+    backend = os.getenv("DENSE_TEXT_AUDIO_BACKEND", "muq").strip().casefold()
+    if backend == "m2d":
+        return ("m2d2_embedding",)
+    return ("muq_embedding", "omar_embedding")
+
+
 async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Enrich queued songs and fail the job when required retrieval vectors are absent."""
     logger.info("[后台飞轮] 开始处理 %s 首歌...", len(songs))
@@ -837,7 +856,9 @@ async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
     from retrieval.neo4j_client import get_neo4j_client
 
     client = get_neo4j_client()
-    required_embeddings = {"muq_embedding", "m2d2_embedding"}
+    embedding_families = _ingest_embedding_families()
+    required_embeddings = set(embedding_families)
+    logger.info("[后台飞轮] 向量档位: %s", ",".join(embedding_families))
     failures: list[str] = []
     warnings: list[str] = []
     song_results: list[dict[str, Any]] = []
@@ -958,7 +979,7 @@ async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
             song_results.append(song_result)
             continue
 
-        extraction = await _extract_embeddings(audio_path)
+        extraction = await _extract_embeddings(audio_path, families=embedding_families)
         vectors = extraction.vectors
         embedding_query = _SONG_IDENTITY_MATCH + """
         SET s.m2d2_embedding = CASE WHEN size($m2d2_embedding) > 0
@@ -1081,32 +1102,66 @@ async def _extract_lyrics_tags(basename: str, lrc_path: str) -> Optional[Dict]:
         return None
 
 
-async def _extract_embeddings(audio_path: str) -> EmbeddingExtraction:
+async def _extract_embeddings(
+    audio_path: str,
+    *,
+    families: tuple[str, ...] | None = None,
+) -> EmbeddingExtraction:
     """Extract independent embeddings outside the event loop."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _sync_extract_embeddings, audio_path)
+    return await loop.run_in_executor(
+        None,
+        lambda: _sync_extract_embeddings(audio_path, families=families),
+    )
 
 
-def _sync_extract_embeddings(audio_path: str) -> EmbeddingExtraction:
+def _sync_extract_embeddings(
+    audio_path: str,
+    *,
+    families: tuple[str, ...] | None = None,
+) -> EmbeddingExtraction:
     """Extract each model independently so one optional anchor cannot erase the others."""
     import librosa
-    from retrieval.audio_embedder import encode_audio_to_embedding, extract_audio_representation
-    from retrieval.muq_embedder import encode_audio_to_muq
+
+    selected = tuple(dict.fromkeys(families or _ingest_embedding_families()))
+    supported = {"muq_embedding", "m2d2_embedding", "omar_embedding"}
+    unknown = set(selected) - supported
+    if unknown:
+        raise ValueError(f"unsupported embedding families: {sorted(unknown)}")
 
     MAX_SECONDS = 300
     file_duration = librosa.get_duration(path=audio_path)
     load_duration = MAX_SECONDS if file_duration > MAX_SECONDS else None
 
     audio_np, sr = librosa.load(audio_path, sr=None, mono=True, duration=load_duration)
-    audio_16k = librosa.resample(audio_np, orig_sr=sr, target_sr=16000)
-    audio_24k = librosa.resample(audio_np, orig_sr=sr, target_sr=24000)
 
     result = EmbeddingExtraction()
-    extractors = (
-        ("muq_embedding", lambda: encode_audio_to_muq(audio_24k, sample_rate=24000)),
-        ("m2d2_embedding", lambda: encode_audio_to_embedding(audio_16k, sample_rate=16000)),
-        ("omar_embedding", lambda: extract_audio_representation(audio_16k, sample_rate=16000)),
-    )
+    extractors: list[tuple[str, Any]] = []
+    if "muq_embedding" in selected:
+        from retrieval.muq_embedder import encode_audio_to_muq
+
+        audio_24k = librosa.resample(audio_np, orig_sr=sr, target_sr=24000)
+        extractors.append(
+            ("muq_embedding", lambda: encode_audio_to_muq(audio_24k, sample_rate=24000))
+        )
+    if {"m2d2_embedding", "omar_embedding"} & set(selected):
+        from retrieval import audio_embedder
+
+        audio_16k = librosa.resample(audio_np, orig_sr=sr, target_sr=16000)
+        if "m2d2_embedding" in selected:
+            extractors.append(
+                (
+                    "m2d2_embedding",
+                    lambda: audio_embedder.encode_audio_to_embedding(audio_16k, sample_rate=16000),
+                )
+            )
+        if "omar_embedding" in selected:
+            extractors.append(
+                (
+                    "omar_embedding",
+                    lambda: audio_embedder.extract_audio_representation(audio_16k, sample_rate=16000),
+                )
+            )
     for name, extractor in extractors:
         try:
             vector = extractor()
