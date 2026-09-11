@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLang } from '@/context/LanguageContext';
 import { useRouter } from 'next/navigation';
 import { theme } from '@/styles/theme';
-import { apiFetch } from '@/lib/app-session';
+import { apiFetch, getActiveRequestContext } from '@/lib/app-session';
 import { useAppSession } from '@/context/AppSessionContext';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8501';
@@ -61,6 +61,9 @@ type ProfileViews = {
 };
 
 type MemoryProfile = {
+  pending_preference_writes?: number;
+  pending_inferred_writes?: number;
+  pending_deletions?: number;
   user_id?: string;
   episodic_backends?: string[];
   diagnostics?: {
@@ -116,6 +119,8 @@ export default function MemoryPage() {
   const [value, setValue] = useState('');
   const [editing, setEditing] = useState<{ field: string; oldValue: string; nextValue: string } | null>(null);
   const [ratings, setRatings] = useState<SongRating[]>([]);
+  const [retryingDeletion, setRetryingDeletion] = useState(false);
+  const [retryingWrite, setRetryingWrite] = useState(false);
 
   const loadMemory = useCallback(async () => {
     setLoading(true);
@@ -171,7 +176,10 @@ export default function MemoryPage() {
       body: JSON.stringify({ user_id: activeProfile.profile_id, preferences: { [targetField]: [cleaned] } }),
     });
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok || !data.success) throw new Error(data.error || t('保存失败: {v0}', { v0: resp.status }));
+    if (!resp.ok || !data.success) {
+      await loadMemory();
+      throw new Error(data.error || t('保存失败: {v0}', { v0: resp.status }));
+    }
     setMessage(t('已保存：{v0} / {v1}', { v0: FIELD_LABELS[targetField] || targetField, v1: cleaned }));
     setValue('');
     await loadMemory();
@@ -182,7 +190,10 @@ export default function MemoryPage() {
       `${API_URL}/api/memory/preference?field=${encodeURIComponent(targetField)}&value=${encodeURIComponent(targetValue)}`,
       { method: 'DELETE' },
     );
-    if (!resp.ok) throw new Error(t('删除失败: {v0}', { v0: resp.status }));
+    if (!resp.ok) {
+      await loadMemory();
+      throw new Error(t('删除未完成，请稍后重试: {v0}', { v0: resp.status }));
+    }
     setMessage(t('已删除：{v0}', { v0: targetValue }));
     await loadMemory();
   };
@@ -201,23 +212,76 @@ export default function MemoryPage() {
 
   const clearLearnedMemory = async () => {
     if (!window.confirm(t('清空所有系统学习到的偏好？手动画像、喜欢和收藏不会被删除。'))) return;
-    const resp = await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
+    try {
+    const visitor = getActiveRequestContext().profileId.startsWith('anon:');
+    const resp = visitor
+      ? await apiFetch(`${API_URL}/api/visitor/memory/clear-learned`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        })
+      : await apiFetch(`${API_URL}/api/memory/profile`, { method: 'DELETE' });
     if (!resp.ok) {
       setMessage(t('清空失败：{v0}', { v0: resp.status }));
+      await loadMemory();
       return;
     }
+    const result = await resp.json();
+    if (result.success !== true) throw new Error('deletion_not_confirmed');
     setMessage(t('已清空系统学习偏好'));
     await loadMemory();
+    } catch {
+      setMessage(t('删除未确认完成，请刷新状态后重试'));
+      await loadMemory();
+    }
   };
 
   const deleteRecord = async (recordId: string) => {
-    const resp = await apiFetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
+    const visitor = getActiveRequestContext().profileId.startsWith('anon:');
+    const resp = visitor
+      ? await apiFetch(`${API_URL}/api/visitor/memory/forget`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ record_id: recordId }),
+        })
+      : await apiFetch(`${API_URL}/api/memory/record/${encodeURIComponent(recordId)}`, { method: 'DELETE' });
     if (!resp.ok) throw new Error(t('删除失败: {v0}', { v0: resp.status }));
     setMessage(t('已删除该条记忆；审计历史保留为删除标记'));
     await loadMemory();
   };
 
   const diagnostics = memory?.diagnostics || {};
+
+  const retryDeletions = async () => {
+    setRetryingDeletion(true);
+    try {
+      const resp = await apiFetch(`${API_URL}/api/visitor/memory/retry-deletions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (!resp.ok) throw new Error(String(resp.status));
+      const result = await resp.json();
+      setMessage(result.success ? t('待处理的记忆删除已完成') : t('部分删除仍未完成，请稍后重试'));
+      await loadMemory();
+    } catch {
+      setMessage(t('删除重试失败，待处理任务已保留'));
+    } finally {
+      setRetryingDeletion(false);
+    }
+  };
+
+  const retryWrites = async () => {
+    setRetryingWrite(true);
+    try {
+      const route = activeProfile?.profile_id?.startsWith('anon:') ? '/api/visitor/memory/retry-writes' : '/api/memory/retry-writes';
+      const resp = await apiFetch(`${API_URL}${route}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      if (!resp.ok || !(await resp.json()).success) throw new Error('unconfirmed');
+      setMessage(t('待处理的偏好写入已完成'));
+    } catch {
+      setMessage(t('偏好写入重试失败，待处理任务已保留'));
+    } finally {
+      await loadMemory();
+      setRetryingWrite(false);
+    }
+  };
 
   return (
     <div style={{ padding: '1.25rem', color: theme.colors.text.primary, display: 'grid', gap: '1rem' }}>
@@ -267,6 +331,26 @@ export default function MemoryPage() {
       {message && (
         <div style={{ padding: '0.7rem 0.85rem', borderRadius: theme.borderRadius.sm, border: `1px solid ${theme.colors.border.default}`, color: message.includes(t('失败')) ? '#fca5a5' : '#86efac', background: 'rgba(255,255,255,0.035)' }}>
           {message}
+        </div>
+      )}
+
+      {!!(memory?.pending_preference_writes || memory?.pending_inferred_writes) && (
+        <div role="status" style={{ color: '#fcd34d', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span>{t('有偏好写入尚未完成，请先恢复再修改偏好。')}</span>
+          <button disabled={retryingWrite} onClick={retryWrites} style={smallButtonStyle()}>
+            {retryingWrite ? t('处理中…') : t('重试写入')}
+          </button>
+        </div>
+      )}
+
+      {!!memory?.pending_deletions && (
+        <div role="status" style={{ color: '#fcd34d', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <span>{t('有 {v0} 项记忆删除任务尚未完成，可能包含批量删除。', { v0: memory.pending_deletions })}</span>
+          {activeProfile?.profile_id?.startsWith('anon:') && (
+            <button disabled={retryingDeletion} onClick={retryDeletions} style={smallButtonStyle()}>
+              {retryingDeletion ? t('处理中…') : t('重试删除')}
+            </button>
+          )}
         </div>
       )}
 

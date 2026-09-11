@@ -15,9 +15,17 @@ def _safe_basename(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    if Path(text).name != text or any(sep in text for sep in ("/", "\\")):
+    if (Path(text).name != text or text in {".", ".."}
+            or any(sep in text for sep in ('/', '\\', ':', '\x00'))):
         raise ValueError("Invalid online audio basename")
     return text
+
+
+def _contained_path(directory: Path, filename: str) -> Path:
+    candidate = directory / filename
+    if candidate.resolve().parent != directory.resolve():
+        raise ValueError("Online audio path escapes its storage directory")
+    return candidate
 
 
 def _artist_string(meta: dict[str, Any]) -> str:
@@ -57,12 +65,13 @@ def _candidate_meta_paths(
     if not meta_dir.exists():
         return []
     if safe_file_basename:
-        return [meta_dir / f"{safe_file_basename}_meta.json"]
+        return [_contained_path(meta_dir, f"{safe_file_basename}_meta.json")]
     title_key = str(title or "").strip().casefold()
     artist_key = str(artist or "").strip().casefold()
     song_id_key = str(song_id or "").strip()
     matches: list[Path] = []
     for path in sorted(meta_dir.glob("*_meta.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        _contained_path(meta_dir, path.name)
         meta = _load_json(path)
         if not meta:
             continue
@@ -111,11 +120,11 @@ def retain_online_audio(
         if not meta:
             continue
         basename = meta_path.name[: -len("_meta.json")]
-        audio_path = root / "audio" / f"{basename}.{requested_ext}"
+        audio_path = _contained_path(root / "audio", f"{basename}.{requested_ext}")
         actual_ext = requested_ext
         if not audio_path.exists():
             for candidate_ext in SUPPORTED_AUDIO_EXTS:
-                candidate = root / "audio" / f"{basename}.{candidate_ext}"
+                candidate = _contained_path(root / "audio", f"{basename}.{candidate_ext}")
                 if candidate.exists():
                     audio_path = candidate
                     actual_ext = candidate_ext

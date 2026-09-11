@@ -344,6 +344,7 @@ def _fetch_song_details_for_ranked_eids(
     OPTIONAL MATCH (song)-[:FITS_SCENARIO]->(scenario:Scenario)
     RETURN item.rank AS _rank,
            elementId(song) AS _eid,
+           song.music_id AS music_id,
            song.title AS title, head(collect(DISTINCT art.name)) AS artist,
            song.album AS album, song.audio_url AS audio_url,
            song.cover_url AS cover_url, song.lrc_url AS lrc_url,
@@ -392,7 +393,8 @@ def _translate_query(query: str) -> str:
 @tool
 def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[str]] = None,
                     artist_filter: str = "", genre_filter: str = "",
-                    language_filter: str = "", region_filter: str = "") -> str:
+                    language_filter: str = "", region_filter: str = "",
+                    negative_targets: Optional[List[str]] = None) -> str:
     """
     【V2 升级】Neo4j 原生图向量语义搜索工具
     根据用户的自然语言描述，默认使用 MuQ-MuLan 编码为向量，
@@ -435,6 +437,22 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
             # caching belongs only to the CPU M2D compatibility path.
             search_text = query if backend == "muq" else _translate_query(query)
             query_vector = _encode_query_for_backend(search_text, backend, query_variants=query_variants)
+            # Semantic exclusions remain continuous model-space constraints,
+            # not a list of lexical recommendation trigger words.
+            if negative_targets:
+                negatives = [str(item).strip()[:300] for item in negative_targets[:12] if str(item).strip()]
+                negative_vectors = [
+                    _encode_query_for_backend(text, backend, query_variants=[text])
+                    for text in negatives
+                ]
+                if negative_vectors:
+                    centroid = _mean_vectors(negative_vectors)
+                    if len(centroid) != len(query_vector):
+                        raise ValueError("negative target embedding dimension mismatch")
+                    query_vector = _normalize_vector([
+                        positive - 0.35 * negative
+                        for positive, negative in zip(query_vector, centroid)
+                    ])
             logger.info("[SemanticSearch] %s 编码完成，向量维度: %d", spec["name"], len(query_vector))
 
             if artist_filter or genre_filter or language_filter or region_filter:
@@ -685,6 +703,7 @@ def semantic_search(query: str, limit: int = 0, query_variants: Optional[List[st
                 genre_display_parts.append(scenarios[0])
 
             structured_results.append({
+                "music_id": record.get("music_id"),
                 "title": title,
                 "artist": artist,
                 "album": album,

@@ -10,6 +10,8 @@ class _Neo4jClient:
         self.calls.append({"query": query, "params": params or {}})
         if "RETURN elementId(existing) AS song_id" in query:
             return self.find_results.pop(0) if self.find_results else []
+        if "RETURN u.id AS user_id" in query:
+            return [{"user_id": params["user_id"]}]
         return []
 
 

@@ -7,6 +7,7 @@ import asyncio
 import os
 import time
 import uuid
+from contextlib import suppress
 from typing import Dict, Any, Optional, List
 
 
@@ -153,7 +154,9 @@ class MusicRecommendationAgent:
             if getattr(self.graph, 'checkpointer', None):
                 config["configurable"] = {"thread_id": thread_id}
                 logger.info("[Checkpoint] stable thread_id=%s", thread_id[:20])
-            result = await self.app.ainvoke(initial_state, config=config)
+            from services.graph_execution import invoke_graph_turn
+            result = await invoke_graph_turn(self.app, initial_state, config=config,
+                                             owner=user_id, conversation=conversation_id)
             timings = dict(result.get("timings") or {})
             timings["agent_total_ms"] = round((time.perf_counter() - request_started) * 1000, 3)
             raw_recommendations = result.get("recommendations", [])
@@ -294,6 +297,7 @@ class MusicRecommendationAgent:
         # writes share an id, so deriving it twice would stamp two different
         # timestamps on what is one moment of listening.
         _exposure_context = _listening_context(client_context)
+        graph_task = None
 
         try:
             logger.info(f"开始处理音乐推荐请求(流式): {safe_query(query)} [req={_request_id[:8]}]")
@@ -362,18 +366,17 @@ class MusicRecommendationAgent:
 
             async def _run_graph():
                 try:
-                    result = await self.app.ainvoke(initial_state, config=config)
+                    from services.graph_execution import invoke_graph_turn
+                    result = await invoke_graph_turn(self.app, initial_state, config=config,
+                                                     owner=user_id, conversation=_conversation_id)
                     result_holder["result"] = result
                 except Exception as e:
                     result_holder["error"] = str(e)
-                    # 确保队列收到终止信号
-                    try:
-                        await explanation_queue.put(None)
-                    except Exception:
-                        pass
+                finally:
+                    # Also terminate when a graph path never emitted prose.
+                    explanation_queue.put_nowait(None)
 
             graph_task = asyncio.create_task(_run_graph())
-            self._current_graph_task = graph_task  # 暴露给 server.py 断连取消用
 
             # 发送思考状态
             yield {"type": "thinking", "message": "正在理解你的音乐偏好..."}
@@ -554,14 +557,19 @@ class MusicRecommendationAgent:
 
         except asyncio.CancelledError:
             logger.info(f"🛑 流式推荐被取消 [req={_request_id[:8]}]")
-            yield {"type": "error", "error": "推荐已被用户取消"}
+            raise
         except Exception as e:
             logger.error(f"流式推荐失败: {str(e)} [req={_request_id[:8]}]", exc_info=True)
             yield {"type": "error", "error": str(e)}
         finally:
+            # The generator owns its task; never cancel a shared agent field.
+            if graph_task is not None:
+                if not graph_task.done():
+                    graph_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await graph_task
             # 清理本次请求的队列，防止内存泄漏
             self.graph._explanation_queues.pop(_request_id, None)
-            self._current_graph_task = None  # 清理 task 引用
 
     def get_status(self) -> Dict[str, Any]:
         """获取智能体状态信息"""

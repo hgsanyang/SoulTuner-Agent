@@ -202,8 +202,6 @@ switch ($Action) {
         Assert-Neo4jEditionMatchesVolume
         Stop-LocalNeteaseApiForDocker
         $ComposeFiles = @("-f", "docker-compose.yml")
-        $MemoryBackends = (($env:MEMORY_EPISODIC_BACKENDS -split ",") | ForEach-Object { $_.Trim().ToLowerInvariant() })
-        $UseGraphZep = $MemoryBackends -contains "graphzep"
         $KnowledgeVectorBackend = (Get-ProjectEnvValue "MUSIC_KNOWLEDGE_VECTOR_BACKEND" "qdrant").ToLowerInvariant()
         $EnableQdrantFlag = (Get-ProjectEnvValue "ENABLE_QDRANT" "").ToLowerInvariant()
         $DisableQdrantFlag = (Get-ProjectEnvValue "DISABLE_QDRANT" "").ToLowerInvariant()
@@ -229,12 +227,9 @@ switch ($Action) {
             docker compose @ComposeFiles build backend ingest-worker
             Assert-LastNativeCommand "Building CUDA images"
         }
-        docker compose @ComposeFiles --profile $Profile up -d --remove-orphans neo4j searxng netease backend
+        docker compose @ComposeFiles --profile $Profile up -d --remove-orphans neo4j netease backend
         Assert-LastNativeCommand "Starting core Docker services"
-        if ($UseGraphZep) {
-            docker compose @ComposeFiles --profile memory up -d graphzep
-            Assert-LastNativeCommand "Starting optional GraphZep memory sidecar"
-        }
+
         docker compose @ComposeFiles --profile $Profile up -d frontend
         Assert-LastNativeCommand "Starting frontend"
         if ($Profile -eq "gpu") {
@@ -251,17 +246,12 @@ switch ($Action) {
         Write-Host "Frontend: http://localhost:3003"
         Write-Host "Backend:  http://localhost:8501"
         Write-Host "Neo4j:    http://localhost:7474"
-        if ($UseGraphZep) {
-            Write-Host "GraphZep: http://localhost:3100 (optional sidecar)"
-        } else {
             Write-Host "Memory:   local structured ledger + Neo4j hot path"
-        }
         if ($UseQdrant) {
             Write-Host "Qdrant:   http://localhost:6333 (knowledge vector sidecar)"
         } else {
             Write-Host "RAG:      SQLite FTS only (set MUSIC_KNOWLEDGE_VECTOR_BACKEND=qdrant or ENABLE_QDRANT=1 to enable Qdrant)"
         }
-        Write-Host "SearxNG:  http://localhost:8888"
         Write-Host "Netease:  http://localhost:3000"
     }
     "down" {

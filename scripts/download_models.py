@@ -8,7 +8,7 @@ SoulTuner-Agent 模型权重一键下载脚本
 
 总计约 2.4 GB，下载完成后 Docker / 本地开发均直接使用，无需重复下载。
 
-注意：GraphZep 嵌入直接调用 SiliconFlow API (BAAI/bge-m3)，无需预下载。
+注意：已停用的历史服务不在当前模型下载范围内。
 
 使用方式：
     python scripts/download_models.py

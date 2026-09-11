@@ -9,6 +9,8 @@ failed import is loud; a poisoned embedding is not.
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
@@ -211,10 +213,31 @@ def test_artist_splitting_handles_the_separators_that_actually_occur():
 # These tests read files ffmpeg actually encoded, through the on-disk path.
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "audio"
+GENERATED_FIXTURES: Path | None = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def generate_missing_audio_fixtures(tmp_path_factory):
+    """Generate one-second synthetic fixtures; never download or modify music."""
+    global GENERATED_FIXTURES
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        GENERATED_FIXTURES = tmp_path_factory.mktemp("generated-audio-fixtures")
+        for extension in ("mp3", "flac", "ogg", "opus", "wav", "m4a"):
+            name = f"tone.{extension}"
+            if (FIXTURES / name).exists():
+                continue
+            subprocess.run([ffmpeg, "-nostdin", "-v", "error", "-f", "lavfi", "-i",
+                            "sine=frequency=440:duration=1", str(GENERATED_FIXTURES / name)],
+                           check=True, capture_output=True, timeout=20)
+    yield
+    GENERATED_FIXTURES = None
 
 
 def _fixture(name: str) -> Path:
     path = FIXTURES / name
+    if not path.exists() and GENERATED_FIXTURES is not None:
+        path = GENERATED_FIXTURES / name
     if not path.exists():
         pytest.skip(f"fixture missing: {name}")
     return path

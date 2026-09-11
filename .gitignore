@@ -17,6 +17,9 @@ parts/
 sdist/
 var/
 .venv/
+.venv-audit/
+.venv-mcp-audit/
+.venv-ui-audit/
 venv/
 env/
 ENV/
@@ -156,6 +159,14 @@ NeteaseCloudMusicApi/
 # ================================================================
 # GraphZep Service
 # ================================================================
+# Retired implementations are archived outside the repository; prevent re-addition.
+graphzep_service/
+tools/web_search_aggregator.py
+services/graphzep_client.py
+config/searxng_settings.yml
+config/settings.yml
+scripts/dev/startup_all.py
+tests/unit/test_graphzep_client.py
 # Node modules
 graphzep_service/**/node_modules/
 

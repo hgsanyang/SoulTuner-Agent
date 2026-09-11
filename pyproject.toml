@@ -35,7 +35,6 @@ ignore = [
 "api/*" = ["E402"]
 "scripts/*" = ["E402"]
 "data/pipeline/*" = ["E402"]
-"tools/web_search_aggregator.py" = ["E402"]
 "tools/graphrag_search.py" = ["E402"]
 # vendor 自上游 nttcslab/m2d 的可移植模块：保持与上游逐字可比对，不做本仓风格化
 "retrieval/portable_m2d.py" = ["E7", "E722", "E402", "F401"]
@@ -45,6 +44,6 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "unit: Unit tests (no external services required)",
-    "integration: Integration tests (require Neo4j/GraphZep)",
+    "integration: Integration tests (require external services such as Neo4j)",
     "eval: Evaluation tests (require LLM API)",
 ]

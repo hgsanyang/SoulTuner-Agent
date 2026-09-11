@@ -17,6 +17,9 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Cookie': request.headers.get('cookie') || '',
+        'Origin': request.headers.get('origin') || '',
+        'Sec-Fetch-Site': request.headers.get('sec-fetch-site') || '',
         'X-SoulTuner-Profile': request.headers.get('X-SoulTuner-Profile') || '',
         'X-SoulTuner-Mode': request.headers.get('X-SoulTuner-Mode') || '',
         'X-SoulTuner-Session': request.headers.get('X-SoulTuner-Session') || '',

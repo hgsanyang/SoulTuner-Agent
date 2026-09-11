@@ -1,20 +1,22 @@
 """Unified memory gateway for hot-path behavior and optional episodic memory.
 
 The gateway keeps recommendation code away from concrete memory backends.
-Neo4j remains the structured hot path; GraphZep is an optional sidecar; Mem0
+Neo4j remains the structured hot path; retired services are not loaded; Mem0
 can be added later behind the same interface.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Protocol
 
-from retrieval.user_memory import UserMemoryManager
+from retrieval.user_memory import UserMemoryManager, normalize_explicit_preferences
 from services.feedback_logger import log_slate_feedback, log_user_event
 from services.memory_consolidator import MemoryConsolidator
 from services.memory_event_store import MemoryEventStore
@@ -61,7 +63,7 @@ class MemoryAdapter(Protocol):
     def remember_event(self, event_type: str, title: str, artist: str, user_id: str, extra: dict[str, Any]) -> None:
         ...
 
-    def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> None:
+    def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> bool:
         ...
 
     def remember_inferred_preference(self, user_id: str, record: dict[str, Any]) -> bool:
@@ -113,12 +115,16 @@ class Neo4jPreferenceAdapter:
             duration = int(extra.get("play_duration_ms") or extra.get("duration") or 0)
             self.manager.record_listened_song(user_id, title, artist, duration=duration)
 
-    def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> None:
-        if not preferences:
-            return
-        self.manager.update_semantic_preferences(user_id, preferences)
+    def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> bool:
+        return self.manager.update_semantic_preferences(user_id, preferences)
+
+    def remember_preference_once(self, user_id: str, preferences: dict[str, Any], operation_id: str) -> bool:
+        return self.manager.update_semantic_preferences(user_id, preferences, operation_id=operation_id)
 
     def remember_inferred_preference(self, user_id: str, record: dict[str, Any]) -> bool:
+        return self.manager.upsert_inferred_preference(user_id, record)
+
+    def remember_inferred_preference_once(self, user_id: str, record: dict[str, Any]) -> bool:
         return self.manager.upsert_inferred_preference(user_id, record)
 
     def get_user_profile(self, user_id: str, limit: int = 30) -> dict[str, Any]:
@@ -159,13 +165,19 @@ class Neo4jPreferenceAdapter:
     def clear_learned_preferences(self, user_id: str) -> bool:
         return self.manager.clear_inferred_preferences(user_id)
 
+    def snapshot_learned_preferences(self, user_id: str) -> list[dict]:
+        return self.manager.snapshot_inferred_preferences(user_id)
+
+    def delete_learned_snapshot(self, user_id: str, targets: list[dict]) -> bool:
+        return self.manager.delete_inferred_snapshot(user_id, targets)
+
 
 class NoopMemoryAdapter:
     def remember_event(self, event_type: str, title: str, artist: str, user_id: str, extra: dict[str, Any]) -> None:
         return None
 
-    def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> None:
-        return None
+    def remember_preference(self, user_id: str, preferences: dict[str, Any]) -> bool:
+        return False
 
     def remember_inferred_preference(self, user_id: str, record: dict[str, Any]) -> bool:
         return False
@@ -178,36 +190,6 @@ class NoopMemoryAdapter:
 
     def clear_learned_preferences(self, user_id: str) -> bool:
         return False
-
-
-class GraphZepAdapter:
-    """Optional episodic sidecar. It never blocks the recommendation hot path."""
-
-    name = "graphzep"
-
-    async def remember_text(self, description: str, *, user_id: str = "local_admin", extra: dict[str, Any] | None = None) -> bool:
-        try:
-            from services.graphzep_client import get_graphzep_client, group_id_for_user
-
-            return await get_graphzep_client().add_user_event(
-                event_description=description,
-                group_id=group_id_for_user(user_id),
-            )
-        except Exception as exc:
-            logger.debug("[MemoryGateway] GraphZep side-write skipped: %s", exc)
-            return False
-
-    async def retrieve_context(self, query: str, *, user_id: str = "local_admin", max_facts: int = 8) -> str:
-        try:
-            from services.graphzep_client import get_graphzep_client, group_id_for_user
-
-            return await get_graphzep_client().search_facts(
-                query=query,
-                group_ids=[group_id_for_user(user_id)],
-                max_facts=max_facts,
-            )
-        except Exception:
-            return "暂无用户长期记忆（GraphZep 服务不可用）"
 
 
 class Mem0Adapter:
@@ -244,11 +226,11 @@ class Mem0Adapter:
             return None
 
     async def remember_text(self, description: str, *, user_id: str = "local_admin", extra: dict[str, Any] | None = None) -> bool:
-        client = self._get_client()
+        client = await asyncio.to_thread(self._get_client)
         if client is None:
             return False
         try:
-            result = client.add(description, user_id=user_id, metadata=extra or {})
+            result = await asyncio.to_thread(client.add, description, user_id=user_id, metadata=extra or {})
             if asyncio.iscoroutine(result):
                 await result
             return True
@@ -257,11 +239,11 @@ class Mem0Adapter:
             return False
 
     async def retrieve_context(self, query: str, *, user_id: str = "local_admin", max_facts: int = 8) -> str:
-        client = self._get_client()
+        client = await asyncio.to_thread(self._get_client)
         if client is None:
             return ""
         try:
-            result = client.search(query, user_id=user_id, limit=max_facts)
+            result = await asyncio.to_thread(client.search, query, user_id=user_id, limit=max_facts)
             if asyncio.iscoroutine(result):
                 result = await result
             memories = result.get("results", result) if isinstance(result, dict) else result
@@ -280,18 +262,18 @@ class Mem0Adapter:
             return ""
 
     async def healthcheck(self) -> bool:
-        return self._get_client() is not None
+        return await asyncio.to_thread(self._get_client) is not None
 
     async def await_idle(self, *, timeout_seconds: float = 60.0) -> bool:
         del timeout_seconds
-        return self._get_client() is not None
+        return await asyncio.to_thread(self._get_client) is not None
 
     async def clear_user(self, *, user_id: str) -> bool:
-        client = self._get_client()
+        client = await asyncio.to_thread(self._get_client)
         if client is None:
             return False
         try:
-            result = client.delete_all(user_id=user_id)
+            result = await asyncio.to_thread(client.delete_all, user_id=user_id)
             if asyncio.iscoroutine(result):
                 await result
             return True
@@ -304,8 +286,10 @@ def _configured_episodic_adapters(enable_graphzep_sidecar: bool = True) -> list[
     raw = os.getenv("MEMORY_EPISODIC_BACKENDS", "").strip()
     names = [name.strip().lower() for name in raw.split(",") if name.strip()]
     adapters: list[EpisodicMemoryAdapter] = []
-    if enable_graphzep_sidecar and "graphzep" in names:
-        adapters.append(GraphZepAdapter())
+    # Legacy argument is accepted for compatibility, but retired services cannot activate.
+    del enable_graphzep_sidecar
+    if "graphzep" in names:
+        logger.warning("Retired memory backend requested; using supported local memory only")
     if "mem0" in names:
         adapters.append(Mem0Adapter())
     return adapters
@@ -623,7 +607,12 @@ class MemoryGateway:
         """Write user-confirmed L1 preferences. Inference must use consolidate_user."""
         if side_effects_disabled():
             return MemoryWriteResult(success=True, description="eval_read_only")
-        self.primary.remember_preference(user_id, preferences)
+        preferences = normalize_explicit_preferences(preferences)
+        if self.event_store is not None and callable(getattr(self.primary, "remember_preference_once", None)):
+            operation = self.event_store.stage_preference_write(user_id=user_id, preferences=preferences)
+            return self._complete_preference_write(operation)
+        if self.primary.remember_preference(user_id, preferences) is not True:
+            raise RuntimeError("memory_write_not_confirmed")
         self._append_preferences(
             user_id=user_id,
             preferences=preferences,
@@ -634,6 +623,33 @@ class MemoryGateway:
         )
         self._invalidate_hot_profile(user_id)
         return MemoryWriteResult(success=True, preference_update=preferences)
+
+    def retry_pending_preference_write(self, *, user_id: str) -> MemoryWriteResult:
+        if side_effects_disabled():
+            return MemoryWriteResult(success=False, error="eval_read_only")
+        operation = self.event_store.pending_preference_write(user_id=user_id) if self.event_store else None
+        if operation is None:
+            return MemoryWriteResult(success=True, description="no_pending_write")
+        return self._complete_preference_write(operation)
+
+    def _complete_preference_write(self, operation: dict[str, Any]) -> MemoryWriteResult:
+        user_id, operation_id = operation["user_id"], operation["operation_id"]
+        preferences = normalize_explicit_preferences(json.loads(operation["payload_json"]))
+        writer = getattr(self.primary, "remember_preference_once", None)
+        if not callable(writer) or writer(user_id, preferences, operation_id) is not True:
+            raise RuntimeError("memory_write_not_confirmed")
+        self._append_preferences(
+            user_id=user_id, preferences=preferences, layer=MemoryLayer.EXPLICIT,
+            source="user_explicit", evidence_id="manual_preference", confidence=1.0,
+            operation_id=operation_id, now_ms=operation["created_at"],
+        )
+        self._invalidate_hot_profile(user_id)
+        self.event_store.finish_preference_write(user_id=user_id, operation_id=operation_id)
+        return MemoryWriteResult(success=True, preference_update=preferences)
+
+    def _require_no_pending_preference_write(self, user_id: str) -> None:
+        if self.event_store and self.event_store.pending_preference_write(user_id=user_id):
+            raise RuntimeError("previous_preference_write_pending")
 
     def remember_conversation_evidence(
         self,
@@ -684,26 +700,27 @@ class MemoryGateway:
         try:
             report = await self.consolidator.consolidate(user_id=user_id)
             projected: list[str] = []
+            unprojected: list[str] = []
             for candidate in report.accepted:
-                record = self._append_inferred_candidate(user_id=user_id, candidate=candidate)
+                record = await asyncio.to_thread(self._append_inferred_candidate, user_id=user_id, candidate=candidate)
                 if record is None:
-                    continue
-                payload = {
-                    **record.payload,
-                    "memory_key": record.memory_key,
-                    "confidence": record.confidence,
-                    "created_at": record.created_at,
-                    "expires_at": record.expires_at,
-                    "ledger_record_id": record.record_id,
-                    "source": record.source,
-                }
-                projector = getattr(self.primary, "remember_inferred_preference", None)
-                if callable(projector) and projector(user_id, payload):
+                    raise RuntimeError("memory_ledger_write_not_confirmed")
+                try:
+                    confirmed = await asyncio.to_thread(self._project_inferred_record, record, recovery=False)
+                except Exception:
+                    confirmed = False
+                    logger.warning("[MemoryV2] projection unconfirmed; ledger retained")
+                if confirmed:
                     projected.append(record.memory_key)
+                else:
+                    unprojected.append(record.record_id)
 
             audit = report.model_dump()
             audit["projected_memory_keys"] = projected
-            self._append_memory_record(
+            audit["unprojected_record_ids"] = unprojected
+            audit["success"] = not unprojected
+            audit["status"] = "projection_pending" if unprojected else "completed"
+            await asyncio.to_thread(self._append_memory_record,
                 user_id=user_id,
                 layer=MemoryLayer.RAW_EVENT,
                 kind="consolidation_audit",
@@ -718,7 +735,54 @@ class MemoryGateway:
             return {**audit, "skipped": False}
         except Exception as exc:
             logger.warning("[MemoryV2] consolidation failed for %s: %s", user_id, exc)
-            return {"user_id": user_id, "skipped": True, "reason": str(exc)}
+            return {"user_id": user_id, "skipped": True, "success": False,
+                    "reason": "memory_consolidation_unavailable"}
+
+    def _project_inferred_record(self, record, *, recovery: bool = True) -> bool:
+        user_id = record.user_id
+        if (not self.event_store.is_effective_record(user_id=user_id, record_id=record.record_id)
+                or self.event_store.has_newer_memory_version(user_id=user_id, record_id=record.record_id)):
+            self.event_store.finish_projection(user_id=user_id, record_id=record.record_id)
+            return True
+        projector = getattr(self.primary, "remember_inferred_preference_once", None)
+        if not callable(projector) and not recovery:
+            projector = getattr(self.primary, "remember_inferred_preference", None)
+        if not callable(projector):
+            return False
+        payload = {
+            **record.payload, "memory_key": record.memory_key, "confidence": record.confidence,
+            "created_at": record.created_at, "expires_at": record.expires_at,
+            "ledger_record_id": record.record_id, "source": record.source,
+            "ledger_seq": self.event_store.projection_sequence(user_id=user_id, record_id=record.record_id),
+        }
+        if projector(user_id, payload) is not True:
+            return False
+        self.event_store.finish_projection(user_id=user_id, record_id=record.record_id)
+        return True
+
+    def retry_pending_projections(self, *, user_id: str, limit: int = 20) -> dict[str, Any]:
+        if side_effects_disabled() or self.event_store is None:
+            return {"success": False, "completed": 0}
+        completed = 0
+        for record_id in self.event_store.pending_projection_ids(user_id=user_id, limit=limit):
+            record = self.event_store.get(user_id=user_id, record_id=record_id)
+            try:
+                if record is not None and self._project_inferred_record(record):
+                    completed += 1
+            except Exception:
+                logger.warning("[MemoryV2] pending projection retained")
+        if completed:
+            self._invalidate_hot_profile(user_id)
+        return {"success": not self.event_store.pending_projection_ids(user_id=user_id, limit=1),
+                "completed": completed}
+
+    def retry_pending_writes(self, *, user_id: str) -> dict[str, Any]:
+        explicit = self.retry_pending_preference_write(user_id=user_id)
+        if not explicit.success:
+            return {"success": False}
+        if self.event_store is None:
+            return {"success": True}
+        return self.retry_pending_projections(user_id=user_id)
 
     async def remember_text(
         self,
@@ -788,11 +852,18 @@ class MemoryGateway:
         scene: str = "",
     ) -> dict[str, Any]:
         started = time.perf_counter()
-        profile = self.get_user_profile(user_id)
+        profile_error = ""
+        try:
+            profile = await asyncio.to_thread(self.get_user_profile, user_id)
+        except Exception:
+            profile = {}
+            profile_error = "memory_profile_unavailable"
+            logger.warning("[MemoryGateway] recommendation continues without unavailable profile")
         backend_results: dict[str, str] = {}
         retrieved_records: list[dict[str, Any]] = []
         relevance_error = ""
         silence_trace: dict[str, Any] = {}
+        ledger_error = ""
         if self.episodic_adapters:
             results = await asyncio.gather(
                 *[
@@ -809,9 +880,15 @@ class MemoryGateway:
                     backend_results[adapter.name] = str(result or "").strip()
         lines: list[str] = []
         if self.mode != "off" and self.event_store is not None:
-            records = self.event_store.effective_records(user_id=user_id, limit=200)
             try:
-                selected = self.relevance_retriever.retrieve(
+                records = await asyncio.to_thread(self.event_store.effective_records, user_id=user_id, limit=200)
+            except Exception:
+                records = []
+                ledger_error = "memory_ledger_unavailable"
+                logger.warning("[MemoryGateway] recommendation continues without unavailable ledger")
+            try:
+                selected = await asyncio.to_thread(
+                    self.relevance_retriever.retrieve,
                     query=query,
                     records=records,
                     max_facts=max_facts,
@@ -863,6 +940,9 @@ class MemoryGateway:
                 "relevance_policy": self.relevance_retriever.describe(),
                 "silence_decision": silence_trace,
                 "relevance_error": relevance_error,
+                "profile_error": profile_error,
+                "ledger_error": ledger_error,
+                "status": "degraded" if profile_error or ledger_error or relevance_error else "ok",
                 "latency_ms": round((time.perf_counter() - started) * 1000, 3),
                 "estimated_context_tokens": max(0, len(episodic_text) // 4),
             },
@@ -923,7 +1003,9 @@ class MemoryGateway:
             return self.primary.get_user_profile(user_id, limit=limit)
         except Exception as exc:
             logger.warning("[MemoryGateway] get_user_profile failed: %s", exc)
-            return {}
+            # Profile/editing APIs must fail rather than display an empty
+            # successful profile. Recommendations explicitly handle degradation.
+            raise RuntimeError("memory_profile_unavailable") from exc
 
     def delete_memory(self, *, user_id: str, title: str = "", artist: str = "", memory_type: str = "") -> bool:
         ok = self.primary.delete_memory(user_id, title=title, artist=artist, memory_type=memory_type)
@@ -956,6 +1038,9 @@ class MemoryGateway:
             "editable_sections": editable_memory_sections(profile),
             "diagnostics": summarize_memory_profile(profile, episodic_backends),
             "records": self.list_memory_records(user_id=user_id),
+            "pending_deletions": self.pending_deletion_count(user_id=user_id),
+            "pending_preference_writes": int(bool(self.event_store and self.event_store.pending_preference_write(user_id=user_id))),
+            "pending_inferred_writes": len(self.event_store.pending_projection_ids(user_id=user_id, limit=100)) if self.event_store else 0,
             "profile_views": self.profile_views(user_id=user_id),
         }
 
@@ -970,6 +1055,10 @@ class MemoryGateway:
         )
 
     def forget_preference_item(self, *, user_id: str, field: str, value: str) -> bool:
+        self._require_no_pending_preference_write(user_id)
+        if self.event_store and self.event_store.pending_projection_ids(user_id=user_id, limit=1):
+            if not self.retry_pending_projections(user_id=user_id, limit=100)["success"]:
+                raise RuntimeError("memory_projection_recovery_pending")
         manager = getattr(self.primary, "manager", None)
         if manager is None:
             return False
@@ -988,14 +1077,37 @@ class MemoryGateway:
         return ok
 
     def clear_learned_preferences(self, *, user_id: str) -> bool:
-        ok = bool(self.primary.clear_learned_preferences(user_id))
-        if ok:
-            if self.event_store is not None:
-                for record in self.event_store.effective_records(user_id=user_id, limit=1000):
-                    if record.layer == MemoryLayer.INFERRED:
-                        self.event_store.tombstone(user_id=user_id, target_record_id=record.record_id)
-            self._invalidate_hot_profile(user_id)
-        return ok
+        if side_effects_disabled():
+            return False
+        if self.event_store is None:
+            return bool(self.primary.clear_learned_preferences(user_id))
+        if self.event_store.pending_projection_ids(user_id=user_id, limit=1):
+            if not self.retry_pending_projections(user_id=user_id, limit=100)["success"]:
+                raise RuntimeError("memory_projection_recovery_pending")
+        snapshotter = getattr(self.primary, "snapshot_learned_preferences", None)
+        deleter = getattr(self.primary, "delete_learned_snapshot", None)
+        if not callable(snapshotter) or not callable(deleter):
+            raise RuntimeError("bulk_deletion_snapshot_unavailable")
+        snapshot = self.event_store.bulk_deletion_snapshot(user_id=user_id)
+        if snapshot is None:
+            watermark = self.event_store.layer_watermark(user_id=user_id, layer=MemoryLayer.INFERRED)
+            targets = snapshotter(user_id)
+            newer = self.event_store.record_ids_after(user_id=user_id, through_seq=watermark)
+            snapshot = self.event_store.stage_bulk_deletion(user_id=user_id, snapshot={
+                "operation_id": str(uuid.uuid4()), "through_seq": watermark,
+                "targets": [target for target in targets if target.get("ledger_record_id") not in newer],
+            })
+        targets = snapshot["targets"]
+        # Chunks are safe to replay: backend updates compare the captured version.
+        for start in range(0, len(targets), 200):
+            if not deleter(user_id, targets[start:start + 200]):
+                raise RuntimeError("bulk_deletion_pending")
+        self.event_store.tombstone_layer(
+            user_id=user_id, layer=MemoryLayer.INFERRED, through_seq=int(snapshot["through_seq"]),
+        )
+        self._invalidate_hot_profile(user_id)
+        self.event_store.finish_bulk_deletion(user_id=user_id, operation_id=snapshot["operation_id"])
+        return True
 
     def list_memory_records(self, *, user_id: str, limit: int = 200) -> list[dict[str, Any]]:
         if self.event_store is None:
@@ -1008,27 +1120,75 @@ class MemoryGateway:
         record = self.event_store.get(user_id=user_id, record_id=record_id)
         if record is None:
             return False
+        if side_effects_disabled():
+            return False
         if record.layer == MemoryLayer.EXPLICIT:
+            self._require_no_pending_preference_write(user_id)
+        if record.layer == MemoryLayer.INFERRED and self.event_store.projection_pending(user_id=user_id, record_id=record_id):
+            if not self._project_inferred_record(record):
+                raise RuntimeError("memory_projection_recovery_pending")
+        if not self.event_store.stage_deletion(user_id=user_id, record_id=record_id):
+            return False
+        if self.event_store.deletion_completed(user_id=user_id, record_id=record_id):
+            return True
+        current_version = not self.event_store.has_newer_memory_version(user_id=user_id, record_id=record_id)
+        if current_version and record.layer == MemoryLayer.EXPLICIT:
             field = str(record.payload.get("field") or "")
             value = str(record.payload.get("value") or "")
             manager = getattr(self.primary, "manager", None)
             if field and value and manager is not None and hasattr(manager, "remove_semantic_preference"):
-                manager.remove_semantic_preference(user_id, field, value)
-        elif record.layer == MemoryLayer.INFERRED:
+                if not manager.remove_semantic_preference(user_id, field, value):
+                    raise RuntimeError("Memory projection deletion pending")
+            else:
+                raise RuntimeError("Memory projection deletion unavailable")
+        elif current_version and record.layer == MemoryLayer.INFERRED:
             manager = getattr(self.primary, "manager", None)
             if manager is not None and hasattr(manager, "delete_inferred_preference"):
-                manager.delete_inferred_preference(
+                if not manager.delete_inferred_preference(
                     user_id,
                     memory_key=record.memory_key,
-                )
-        tombstone = self.event_store.tombstone(user_id=user_id, target_record_id=record_id)
-        if tombstone is not None:
-            if record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
+                    ledger_record_id=record.record_id,
+                ):
+                    raise RuntimeError("Memory projection deletion pending")
+            else:
+                raise RuntimeError("Memory projection deletion unavailable")
+        deleted = self.event_store.tombstone_lineage(user_id=user_id, record_id=record_id)
+        if deleted:
+            if current_version and record.layer in {MemoryLayer.EXPLICIT, MemoryLayer.INFERRED}:
                 self._invalidate_episodes_mentioning(
                     user_id=user_id, value=str(record.payload.get("value") or "")
                 )
             self._invalidate_hot_profile(user_id)
-        return tombstone is not None
+            self.event_store.finish_deletion(user_id=user_id, record_id=record_id)
+        return deleted
+
+    def retry_pending_deletions(self, *, user_id: str, limit: int = 100) -> dict[str, int]:
+        """Owner-scoped recovery; callers must supply an authorized owner."""
+        counts = {"completed": 0, "pending": 0}
+        if self.event_store is None or side_effects_disabled():
+            return counts
+        if self.event_store.bulk_deletion_snapshot(user_id=user_id) is not None:
+            try:
+                ok = self.clear_learned_preferences(user_id=user_id)
+            except Exception:
+                ok = False
+                logger.warning("[MemoryGateway] bulk deletion recovery still pending")
+            counts["completed" if ok else "pending"] += 1
+        for record_id in self.event_store.pending_deletions(user_id=user_id, limit=limit):
+            try:
+                ok = self.delete_memory_record(user_id=user_id, record_id=record_id)
+            except Exception:
+                ok = False
+                logger.warning("[MemoryGateway] deletion recovery still pending")
+            counts["completed" if ok else "pending"] += 1
+        return counts
+
+    def pending_deletion_count(self, *, user_id: str) -> int:
+        if self.event_store is None:
+            return 0
+        return self.event_store.pending_deletion_count(user_id=user_id) + int(
+            self.event_store.bulk_deletion_snapshot(user_id=user_id) is not None
+        )
 
     def _append_preferences(
         self,
@@ -1040,6 +1200,8 @@ class MemoryGateway:
         evidence_id: str,
         confidence: float,
         ttl_days: int | None = None,
+        operation_id: str = "",
+        now_ms: int | None = None,
     ) -> None:
         for preference_field, raw_value in (preferences or {}).items():
             values = raw_value if isinstance(raw_value, list) else [raw_value]
@@ -1047,7 +1209,13 @@ class MemoryGateway:
                 text = str(value or "").strip()
                 if not text:
                     continue
-                self._append_memory_record(
+                retry_args = {}
+                if operation_id:
+                    retry_args = {
+                        "record_id": str(uuid.uuid5(uuid.UUID(operation_id), json.dumps([preference_field, text]))),
+                        "now_ms": now_ms,
+                    }
+                record = self._append_memory_record(
                     user_id=user_id,
                     layer=layer,
                     kind="preference",
@@ -1062,7 +1230,10 @@ class MemoryGateway:
                         if layer == MemoryLayer.EXPLICIT
                         else "Recent inferred preference; expires unless reinforced"
                     ),
+                    **retry_args,
                 )
+                if operation_id and record is None:
+                    raise RuntimeError("memory_ledger_write_not_confirmed")
 
     def _append_memory_record(self, *, ttl_days: int | None = None, **kwargs: Any):
         if self.event_store is None:
@@ -1095,6 +1266,7 @@ class MemoryGateway:
             ttl_days=int(candidate.ttl_days),
             memory_key=MemoryConsolidator.memory_key(candidate.field, candidate.value),
             why_used="LLM-proposed preference passed deterministic evidence validation",
+            enqueue_projection=True,
         )
         if record is not None and links:
             self._apply_memory_links(user_id=user_id, new_record=record, links=links)
@@ -1147,7 +1319,9 @@ class MemoryGateway:
         if not self._consolidation_ready(user_id):
             return False
         try:
-            self._track_background(self.consolidate_user(user_id=user_id, force=True))
+            task = self._track_background(self.consolidate_user(user_id=user_id, force=True))
+            if task is None:
+                return False
             self._consolidation_last_started[user_id] = time.monotonic()
             return True
         except RuntimeError:
@@ -1190,14 +1364,28 @@ class MemoryGateway:
     def _schedule_sidecar_write(self, description: str, *, user_id: str, extra: dict[str, Any] | None = None) -> bool:
         scheduled = False
         for adapter in self.episodic_adapters:
-            self._track_background(
+            task = self._track_background(
                 adapter.remember_text(description, user_id=user_id, extra=extra or {})
             )
-            scheduled = True
+            scheduled = scheduled or task is not None
         return scheduled
 
-    def _track_background(self, awaitable: Awaitable[Any]) -> asyncio.Task[Any]:
-        task = asyncio.get_running_loop().create_task(awaitable)
+    def _track_background(self, awaitable: Awaitable[Any]) -> asyncio.Task[Any] | None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise
+        if len(self._background_tasks) >= 32:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            self._background_failures.append("background_capacity_reached")
+            del self._background_failures[:-50]
+            return None
+        task = loop.create_task(awaitable)
         self._background_tasks.add(task)
         task.add_done_callback(self._on_background_done)
         return task
@@ -1206,9 +1394,15 @@ class MemoryGateway:
         self._background_tasks.discard(task)
         self._background_completed += 1
         try:
-            task.result()
+            result = task.result()
+            if result is False or (isinstance(result, dict) and result.get("success") is False):
+                self._background_failures.append("background_write_rejected")
+        except asyncio.CancelledError:
+            self._background_failures.append("background_task_cancelled")
         except Exception as exc:
             self._background_failures.append(str(exc))
+        finally:
+            del self._background_failures[:-50]
 
     @staticmethod
     def _invalidate_hot_profile(user_id: str) -> None:

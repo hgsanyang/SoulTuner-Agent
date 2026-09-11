@@ -167,7 +167,9 @@ def _schedule_recommended_knowledge_backfill(recommendations: Any, *, context: s
 
 
 def _web_search_enabled() -> bool:
-    return os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1").lower() not in {"0", "false", "no", "off"}
+    from services.recommendation_execution import web_search_allowed
+
+    return web_search_allowed()
 
 
 def _record_timing(state: MusicAgentState, name: str, elapsed_seconds: float) -> Dict[str, float]:
@@ -229,13 +231,18 @@ _llm = None
 
 def get_llm():
     """获取LLM实例（延迟初始化）"""
+    from services.recommendation_execution import request_model
+
+    scoped = request_model("main")
+    if scoped is not None:
+        return scoped
     global _llm
     if _llm is None:
         _llm = get_chat_model(settings.llm_default_provider, settings.llm_default_model)
     return _llm
 
 def set_llm(new_llm):
-    """覆盖全局 LLM 实例（由 server.py 在每次请求时调用，实现动态切换）"""
+    """更新启动／管理默认模型；已经开始的请求使用自己的模型快照。"""
     global _llm
     _llm = new_llm
     logger.info(f"[music_graph] LLM 已切换为: {getattr(new_llm, 'model_name', str(new_llm))}")
@@ -249,6 +256,11 @@ _conversation_llm = None
 def get_conversation_llm():
     """获取通用对话 LLM（绝不复用 SoulTuner Planner LoRA）。"""
 
+    from services.recommendation_execution import request_model
+
+    scoped = request_model("conversation")
+    if scoped is not None:
+        return scoped
     global _conversation_llm
     if _conversation_llm is None:
         _conversation_llm = get_conversation_chat_model()
@@ -274,6 +286,11 @@ _intent_llm = None
 
 def get_intent_llm():
     """获取意图分析专用 LLM 实例（延迟初始化，从 settings 读取配置）"""
+    from services.recommendation_execution import request_model
+
+    scoped = request_model("intent")
+    if scoped is not None:
+        return scoped
     global _intent_llm
     if _intent_llm is None:
         _intent_llm = get_intent_chat_model()
@@ -292,6 +309,11 @@ _explain_llm = None
 
 def get_explain_llm():
     """获取解释生成专用 LLM 实例（延迟初始化，从 settings 读取配置）"""
+    from services.recommendation_execution import request_model
+
+    scoped = request_model("explain")
+    if scoped is not None:
+        return scoped
     global _explain_llm
     if _explain_llm is None:
         _explain_llm = get_explain_chat_model()
@@ -1345,7 +1367,7 @@ class MusicRecommendationGraph:
 
                 if discovery_required:
                     try:
-                        from tools.web_search_aggregator import _federated_search_async
+                        from services.provider_web_search import native_web_search
 
                         discovery_query = build_web_discovery_query(
                             user_input,
@@ -1353,7 +1375,7 @@ class MusicRecommendationGraph:
                             catalog_gap,
                         )
                         logger.info("[web_fallback] 外部候选发现: %s", safe_query(discovery_query))
-                        discovery_docs = await _federated_search_async(discovery_query)
+                        discovery_docs = await native_web_search(discovery_query)
                         candidates = extract_song_candidates(
                             discovery_docs,
                             max_candidates=max(target_count * 2, 8),
@@ -2381,14 +2403,12 @@ class MusicRecommendationGraph:
             user_id = _state_user_id(state)
 
             logger.info("向 Neo4j 查询本地用户图谱记忆...")
-            memory_manager = UserMemoryManager()
-
-            # 真实请求可初始化用户；评测必须保持数据库只读。
-            if not settings.eval_disable_side_effects:
-                memory_manager.ensure_user_exists(user_id, "本地用户")
+            memory_manager = await asyncio.to_thread(UserMemoryManager)
 
             # 读取历史偏好
-            graph_prefs = memory_manager.get_user_preferences(user_id, limit=settings.user_preference_limit)
+            graph_prefs = await asyncio.to_thread(
+                memory_manager.get_user_preferences, user_id, limit=settings.user_preference_limit,
+            )
 
             favorite_artists = graph_prefs.get("favorite_artists", [])
             favorite_genres = graph_prefs.get("favorite_genres", [])
@@ -2399,27 +2419,17 @@ class MusicRecommendationGraph:
             # 为了适配下方的推荐流，将纯字符串简单封装一下
             top_tracks_mock = [{"title": t, "artist": "未知", "genre": "未知"} for t in favorite_songs_titles]
 
-            # 默认偏好只服务首次本地体验，不得污染独立评测用户。
-            if not favorite_artists and not settings.eval_disable_side_effects:
-                favorite_artists = ["周杰伦", "林俊杰"]
-            if not favorite_genres and not settings.eval_disable_side_effects:
-                favorite_genres = ["Pop", "R&B"]
-            if not top_tracks_mock and not settings.eval_disable_side_effects:
-                top_tracks_mock = [
-                    {"title": "七里香", "artist": "周杰伦", "genre": "Pop"},
-                    {"title": "夜曲", "artist": "周杰伦", "genre": "R&B"}
-                ]
-
-            favorite_decades = ["2000s"]
+            # No history means unknown preferences, not demonstration favorites.
+            favorite_decades = graph_prefs.get("favorite_decades", []) or []
 
             preferences: UserPreferences = {
                 "favorite_genres": favorite_genres,
                 "favorite_artists": favorite_artists,
                 "favorite_decades": favorite_decades,
-                "avoid_genres": [],
-                "mood_preferences": [],
-                "activity_contexts": [],
-                "language_preference": "mixed"
+                "avoid_genres": graph_prefs.get("avoid_genres", []) or [],
+                "mood_preferences": graph_prefs.get("add_moods", []) or [],
+                "activity_contexts": graph_prefs.get("activity_contexts", []) or [],
+                "language_preference": graph_prefs.get("language_preference", "") or ""
             }
 
             logger.info("分析完成: 偏好流派=%s, 偏好艺术家=%s",
@@ -2439,7 +2449,7 @@ class MusicRecommendationGraph:
                 "favorite_songs": [],
                 "step_count": state.get("step_count", 0) + 1,
                 "error_log": state.get("error_log", []) + [
-                    {"node": "analyze_user_preferences", "error": str(e)}
+                    {"node": "analyze_user_preferences", "error": "memory_profile_unavailable"}
                 ]
             }
 
@@ -2672,7 +2682,10 @@ class MusicRecommendationGraph:
                 max_facts=8,
                 scene=scene,
             )
-            facts = context.get("episodic") or "暂无用户长期记忆"
+            degraded = (context.get("memory_trace") or {}).get("status") == "degraded"
+            facts = context.get("episodic") or (
+                "长期记忆暂不可用，请勿据此推断用户没有偏好" if degraded else "暂无用户长期记忆"
+            )
             logger.info(
                 "[MemoryGateway] 召回完成: hot_profile=%s, sidecars=%s, chars=%s",
                 bool(context.get("profile")),
@@ -2699,13 +2712,17 @@ class MusicRecommendationGraph:
                 f"降级为空记忆以保证推荐流程不阻塞"
             )
             return {
-                "graphzep_facts": "暂无用户长期记忆",
+                "graphzep_facts": "长期记忆读取超时，请勿据此推断用户没有偏好",
+                "memory_context": {"profile": {}, "episodic": "", "retrieved_records": [],
+                                   "memory_trace": {"status": "degraded", "error": "memory_timeout"}},
                 "timings": _record_timing(state, "graphzep_ms", _elapsed),
             }
         except Exception as e:
             logger.warning(f"[MemoryGateway] 记忆召回失败（降级为空）: {e}")
             return {
-                "graphzep_facts": "暂无用户长期记忆",
+                "graphzep_facts": "长期记忆暂不可用，请勿据此推断用户没有偏好",
+                "memory_context": {"profile": {}, "episodic": "", "retrieved_records": [],
+                                   "memory_trace": {"status": "degraded", "error": "memory_unavailable"}},
                 "timings": _record_timing(state, "graphzep_ms", _time.time() - _t0),
             }
 

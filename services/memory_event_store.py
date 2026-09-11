@@ -45,6 +45,33 @@ CREATE INDEX IF NOT EXISTS idx_memory_user_key
 ON memory_records(user_id, memory_key, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_target
 ON memory_records(user_id, target_record_id);
+CREATE TABLE IF NOT EXISTS memory_deletions (
+    user_id TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(user_id, record_id)
+);
+CREATE TABLE IF NOT EXISTS memory_bulk_deletions (
+    user_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_preference_writes (
+    operation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_pending_write_owner
+ON memory_preference_writes(user_id) WHERE state='pending';
+CREATE TABLE IF NOT EXISTS memory_projection_jobs (
+    record_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending'
+);
+CREATE INDEX IF NOT EXISTS idx_memory_projection_pending_owner ON memory_projection_jobs(user_id,state);
 """
 
 PREFERENCE_CONFLICT_FIELDS = {
@@ -99,6 +126,8 @@ class MemoryEventStore:
         status: MemoryStatus = MemoryStatus.ACTIVE,
         target_record_id: str | None = None,
         now_ms: int | None = None,
+        record_id: str | None = None,
+        enqueue_projection: bool = False,
     ) -> MemoryRecord | None:
         if side_effects_disabled():
             return None
@@ -106,7 +135,8 @@ class MemoryEventStore:
         if not user_id:
             raise ValueError("user_id is required")
         now = int(now_ms if now_ms is not None else self._clock_ms())
-        record_id = str(self._id_factory())
+        retry_record_id = record_id is not None
+        record_id = str(record_id or self._id_factory())
         payload_data = dict(payload or {})
         if layer != MemoryLayer.RAW_EVENT and memory_key and status == MemoryStatus.ACTIVE:
             prior = next(
@@ -139,8 +169,8 @@ class MemoryEventStore:
         )
         data = record.model_dump()
         with closing(self._connect()) as connection:
-            connection.execute(
-                """INSERT INTO memory_records(
+            cursor = connection.execute(
+                f"""INSERT {'OR IGNORE' if retry_record_id else ''} INTO memory_records(
                     record_id,user_id,layer,kind,source,evidence_id,confidence,
                     created_at,valid_from,expires_at,status,memory_key,payload_json,
                     why_used,target_record_id
@@ -154,8 +184,116 @@ class MemoryEventStore:
                     data["why_used"], data["target_record_id"],
                 ),
             )
+            if retry_record_id and cursor.rowcount == 0:
+                existing = self._decode(connection.execute(
+                    "SELECT * FROM memory_records WHERE record_id=?", (record_id,),
+                ).fetchone())
+                def comparable(value):
+                    return {k: v for k, v in value.items() if k != "canonical_memory_id"}
+                if (existing.user_id != user_id or existing.layer != layer or existing.memory_key != memory_key
+                        or comparable(existing.payload) != comparable(payload_data)):
+                    raise RuntimeError("memory_record_identity_conflict")
+                return existing
+            opposite = PREFERENCE_CONFLICT_FIELDS.get(str(payload_data.get("field") or ""))
+            effective_now = int(self._clock_ms())
+            if (layer == MemoryLayer.EXPLICIT and status == MemoryStatus.ACTIVE and opposite
+                    and now <= effective_now and (expires_at is None or expires_at > effective_now)):
+                inverse_key = f"preference:{opposite}:{str(payload_data.get('value') or '').strip().casefold()}"
+                connection.execute("""
+                    INSERT INTO memory_records (
+                        record_id,user_id,layer,kind,source,evidence_id,confidence,
+                        created_at,valid_from,expires_at,status,memory_key,payload_json,why_used,target_record_id
+                    )
+                    SELECT 'correction-' || lower(hex(randomblob(16))),r.user_id,r.layer,
+                        'tombstone','user_correction',?,1.0,?,?,NULL,'deleted',r.memory_key,'{}',
+                        'Explicit preference correction',r.record_id
+                    FROM memory_records r WHERE r.user_id=? AND r.layer='L1'
+                      AND r.memory_key=? AND r.status='active'
+                      AND r.seq<(SELECT seq FROM memory_records WHERE record_id=?)
+                      AND NOT EXISTS (SELECT 1 FROM memory_records d
+                        WHERE d.user_id=r.user_id AND d.target_record_id=r.record_id
+                          AND d.status IN ('deleted','superseded'))
+                """, (record_id, now, now, user_id, inverse_key, record_id))
+            if enqueue_projection:
+                if layer != MemoryLayer.INFERRED or status != MemoryStatus.ACTIVE:
+                    raise ValueError("only_active_inferred_projection")
+                connection.execute(
+                    "INSERT INTO memory_projection_jobs(record_id,user_id) VALUES (?,?)",
+                    (record_id, user_id),
+                )
             connection.commit()
         return record
+
+    def pending_projection_ids(self, *, user_id: str, limit: int = 20) -> list[str]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT j.record_id FROM memory_projection_jobs j JOIN memory_records r ON r.record_id=j.record_id "
+                "WHERE j.user_id=? AND j.state='pending' ORDER BY r.seq LIMIT ?",
+                (user_id, max(0, min(int(limit), 100))),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def projection_sequence(self, *, user_id: str, record_id: str) -> int:
+        with closing(self._connect()) as connection:
+            row = connection.execute("SELECT seq FROM memory_records WHERE user_id=? AND record_id=?",
+                                     (user_id, record_id)).fetchone()
+        if row is None:
+            raise RuntimeError("projection_record_not_found")
+        return int(row[0])
+
+    def projection_pending(self, *, user_id: str, record_id: str) -> bool:
+        with closing(self._connect()) as connection:
+            return connection.execute(
+                "SELECT 1 FROM memory_projection_jobs WHERE user_id=? AND record_id=? AND state='pending'",
+                (user_id, record_id),
+            ).fetchone() is not None
+
+    def finish_projection(self, *, user_id: str, record_id: str) -> None:
+        if side_effects_disabled():
+            return
+        with closing(self._connect()) as connection:
+            connection.execute("UPDATE memory_projection_jobs SET state='completed' WHERE user_id=? AND record_id=?",
+                               (user_id, record_id))
+            connection.commit()
+
+    def stage_preference_write(self, *, user_id: str, preferences: dict[str, Any]) -> dict[str, Any]:
+        if side_effects_disabled():
+            raise RuntimeError("memory_write_disabled")
+        payload = json.dumps(preferences, ensure_ascii=False, sort_keys=True)
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT * FROM memory_preference_writes WHERE user_id=? AND state='pending'", (user_id,),
+            ).fetchone()
+            if existing:
+                if existing["payload_json"] != payload:
+                    raise RuntimeError("previous_preference_write_pending")
+                return dict(existing)
+            operation = {"operation_id": str(uuid.uuid4()), "user_id": user_id,
+                         "payload_json": payload, "created_at": int(self._clock_ms()), "state": "pending"}
+            connection.execute(
+                "INSERT INTO memory_preference_writes(operation_id,user_id,payload_json,created_at) VALUES (?,?,?,?)",
+                (operation["operation_id"], user_id, payload, operation["created_at"]),
+            )
+            connection.commit()
+            return operation
+
+    def pending_preference_write(self, *, user_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM memory_preference_writes WHERE user_id=? AND state='pending'", (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def finish_preference_write(self, *, user_id: str, operation_id: str) -> None:
+        if side_effects_disabled():
+            return
+        with closing(self._connect()) as connection:
+            connection.execute(
+                "UPDATE memory_preference_writes SET state='completed' WHERE user_id=? AND operation_id=?",
+                (user_id, operation_id),
+            )
+            connection.commit()
 
     def tombstone(
         self,
@@ -168,6 +306,12 @@ class MemoryEventStore:
         target = self.get(user_id=user_id, record_id=target_record_id)
         if target is None:
             return None
+        existing = self._rows(
+            "WHERE user_id=? AND target_record_id=? AND status='deleted' ORDER BY seq DESC LIMIT 1",
+            (user_id, target_record_id),
+        )
+        if existing:
+            return existing[0]
         return self.append(
             user_id=user_id,
             layer=target.layer,
@@ -180,6 +324,88 @@ class MemoryEventStore:
             target_record_id=target_record_id,
             why_used="User requested deletion",
         )
+
+    def tombstone_layer(self, *, user_id: str, layer: MemoryLayer, through_seq: int | None = None) -> int:
+        """Atomically invalidate all active records in a layer, without a UI limit."""
+        if side_effects_disabled():
+            return 0
+        now = self._clock_ms()
+        with closing(self._connect()) as connection:
+            cursor = connection.execute("""
+                INSERT INTO memory_records (
+                    record_id,user_id,layer,kind,source,evidence_id,confidence,
+                    created_at,valid_from,expires_at,status,memory_key,payload_json,
+                    why_used,target_record_id
+                )
+                SELECT 'forget-' || lower(hex(randomblob(16))), r.user_id,r.layer,
+                    'tombstone','user_delete','',1.0,?,?,NULL,?,r.memory_key,'{}',
+                    'User requested layer deletion',r.record_id
+                FROM memory_records r
+                WHERE r.user_id=? AND r.layer=? AND r.status=? AND (? IS NULL OR r.seq<=?)
+                AND NOT EXISTS (
+                    SELECT 1 FROM memory_records d WHERE d.user_id=r.user_id
+                    AND d.target_record_id=r.record_id AND d.status IN (?,?)
+                )
+            """, (now, now, MemoryStatus.DELETED.value, user_id, layer.value,
+                  MemoryStatus.ACTIVE.value, through_seq, through_seq,
+                  MemoryStatus.DELETED.value, MemoryStatus.SUPERSEDED.value))
+            connection.commit()
+            return cursor.rowcount
+
+    def bulk_deletion_snapshot(self, *, user_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT payload_json FROM memory_bulk_deletions WHERE user_id=?", (user_id,),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def layer_watermark(self, *, user_id: str, layer: MemoryLayer) -> int:
+        with closing(self._connect()) as connection:
+            return int(connection.execute(
+                "SELECT coalesce(max(seq),0) FROM memory_records WHERE user_id=? AND layer=?",
+                (user_id, layer.value),
+            ).fetchone()[0])
+
+    def is_effective_record(self, *, user_id: str, record_id: str) -> bool:
+        now = int(self._clock_ms())
+        with closing(self._connect()) as connection:
+            return connection.execute("""
+                SELECT 1 FROM memory_records r WHERE r.user_id=? AND r.record_id=?
+                  AND r.status='active' AND r.valid_from<=?
+                  AND (r.expires_at IS NULL OR r.expires_at>?)
+                  AND NOT EXISTS (SELECT 1 FROM memory_records d WHERE d.user_id=r.user_id
+                    AND d.target_record_id=r.record_id AND d.status IN ('deleted','superseded'))
+            """, (user_id, record_id, now, now)).fetchone() is not None
+
+    def record_ids_after(self, *, user_id: str, through_seq: int) -> set[str]:
+        with closing(self._connect()) as connection:
+            return {row[0] for row in connection.execute(
+                "SELECT record_id FROM memory_records WHERE user_id=? AND seq>?", (user_id, through_seq),
+            )}
+
+    def stage_bulk_deletion(self, *, user_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+        if side_effects_disabled():
+            raise RuntimeError("bulk_deletion_disabled")
+        with closing(self._connect()) as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO memory_bulk_deletions(user_id,payload_json) VALUES (?,?)",
+                (user_id, json.dumps(snapshot, ensure_ascii=False)),
+            )
+            connection.commit()
+            row = connection.execute(
+                "SELECT payload_json FROM memory_bulk_deletions WHERE user_id=?", (user_id,),
+            ).fetchone()
+        return json.loads(row[0])
+
+    def finish_bulk_deletion(self, *, user_id: str, operation_id: str) -> None:
+        if side_effects_disabled():
+            return
+        with closing(self._connect()) as connection:
+            connection.execute(
+                "DELETE FROM memory_bulk_deletions WHERE user_id=? AND json_extract(payload_json,'$.operation_id')=?",
+                (user_id, operation_id),
+            )
+            connection.commit()
 
     def supersede(
         self,
@@ -226,6 +452,97 @@ class MemoryEventStore:
         rows = self._rows("WHERE user_id = ? AND record_id = ?", (user_id, record_id))
         return rows[0] if rows else None
 
+    def stage_deletion(self, *, user_id: str, record_id: str) -> bool:
+        """Persist only an owner-verified intent; a crash leaves it retryable."""
+        if side_effects_disabled():
+            return False
+        now = int(self._clock_ms())
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO memory_deletions(user_id,record_id,created_at,updated_at)
+                   SELECT user_id,record_id,?,? FROM memory_records
+                   WHERE user_id=? AND record_id=? AND status='active'""",
+                (now, now, user_id, record_id),
+            )
+            connection.commit()
+            return connection.execute(
+                "SELECT 1 FROM memory_deletions WHERE user_id=? AND record_id=?",
+                (user_id, record_id),
+            ).fetchone() is not None
+
+    def tombstone_lineage(self, *, user_id: str, record_id: str) -> bool:
+        """Retire target and older same-key versions, never later replacements."""
+        if side_effects_disabled():
+            return False
+        now = int(self._clock_ms())
+        with closing(self._connect()) as connection:
+            connection.execute("""
+                INSERT INTO memory_records (
+                    record_id,user_id,layer,kind,source,evidence_id,confidence,
+                    created_at,valid_from,expires_at,status,memory_key,payload_json,
+                    why_used,target_record_id
+                )
+                SELECT 'forget-' || lower(hex(randomblob(16))),r.user_id,r.layer,
+                    'tombstone','user_delete','',1.0,?,?,NULL,'deleted',r.memory_key,'{}',
+                    'User requested recording lineage deletion',r.record_id
+                FROM memory_records r JOIN memory_records target
+                  ON target.user_id=r.user_id AND target.record_id=?
+                WHERE r.user_id=? AND r.status='active' AND r.seq<=target.seq
+                  AND (r.record_id=target.record_id OR
+                       (target.memory_key<>'' AND r.memory_key=target.memory_key AND r.layer=target.layer))
+                  AND NOT EXISTS (
+                    SELECT 1 FROM memory_records d WHERE d.user_id=r.user_id
+                    AND d.target_record_id=r.record_id AND d.status='deleted')
+            """, (now, now, record_id, user_id))
+            connection.commit()
+            return connection.execute(
+                "SELECT 1 FROM memory_records WHERE user_id=? AND target_record_id=? AND status='deleted' LIMIT 1",
+                (user_id, record_id),
+            ).fetchone() is not None
+
+    def has_newer_memory_version(self, *, user_id: str, record_id: str) -> bool:
+        with closing(self._connect()) as connection:
+            return connection.execute("""
+                SELECT 1 FROM memory_records r JOIN memory_records target
+                  ON target.user_id=r.user_id AND target.record_id=?
+                WHERE r.user_id=? AND target.memory_key<>'' AND r.memory_key=target.memory_key
+                  AND r.layer=target.layer AND r.seq>target.seq AND r.status='active'
+                  AND NOT EXISTS (SELECT 1 FROM memory_records d
+                    WHERE d.user_id=r.user_id AND d.target_record_id=r.record_id
+                    AND d.status IN ('deleted','superseded')) LIMIT 1
+            """, (record_id, user_id)).fetchone() is not None
+
+    def finish_deletion(self, *, user_id: str, record_id: str) -> None:
+        if side_effects_disabled():
+            return
+        with closing(self._connect()) as connection:
+            connection.execute(
+                "UPDATE memory_deletions SET state='completed',updated_at=? WHERE user_id=? AND record_id=?",
+                (int(self._clock_ms()), user_id, record_id),
+            )
+            connection.commit()
+
+    def pending_deletions(self, *, user_id: str, limit: int = 100) -> list[str]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT record_id FROM memory_deletions WHERE user_id=? AND state='pending' "
+                "ORDER BY created_at LIMIT ?", (user_id, max(1, min(int(limit), 1000))),
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def deletion_completed(self, *, user_id: str, record_id: str) -> bool:
+        with closing(self._connect()) as connection:
+            return connection.execute(
+                "SELECT 1 FROM memory_deletions WHERE user_id=? AND record_id=? AND state='completed'",
+                (user_id, record_id),
+            ).fetchone() is not None
+
+    def pending_deletion_count(self, *, user_id: str) -> int:
+        with closing(self._connect()) as connection:
+            return int(connection.execute(
+                "SELECT count(*) FROM memory_deletions WHERE user_id=? AND state='pending'", (user_id,),
+            ).fetchone()[0])
+
     def list_records(
         self,
         *,
@@ -243,101 +560,108 @@ class MemoryEventStore:
         params.append(max(1, min(int(limit), 10000)))
         return self._rows(clause, tuple(params))
 
+    def _invalidated_ids(self, user_id: str) -> set[str]:
+        """Deletion applies across layers and read windows, never just recent rows."""
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT target_record_id FROM memory_records "
+                "WHERE user_id = ? AND status IN (?, ?) AND target_record_id IS NOT NULL",
+                (user_id, MemoryStatus.DELETED.value, MemoryStatus.SUPERSEDED.value),
+            ).fetchall()
+        return {row[0] for row in rows}
+
     def effective_records(self, *, user_id: str, now_ms: int | None = None, limit: int = 200) -> list[MemoryRecord]:
         now = int(now_ms if now_ms is not None else self._clock_ms())
-        rows = self.list_records(user_id=user_id, limit=max(limit * 4, 400))
-        invalidated = {
-            row.target_record_id
-            for row in rows
-            if row.status in {MemoryStatus.DELETED, MemoryStatus.SUPERSEDED}
-            and row.target_record_id
-        }
-        active = [
-            row for row in rows
-            if row.status == MemoryStatus.ACTIVE
-            and row.record_id not in invalidated
-            and (row.expires_at is None or row.expires_at > now)
-        ]
-        explicit_keys = {row.memory_key for row in active if row.layer == MemoryLayer.EXPLICIT and row.memory_key}
-        explicit_conflict_keys: set[str] = set()
-        for row in active:
-            if row.layer != MemoryLayer.EXPLICIT:
-                continue
-            field = str(row.payload.get("field") or "")
-            value = str(row.payload.get("value") or "").strip()
-            conflict_field = PREFERENCE_CONFLICT_FIELDS.get(field)
-            if conflict_field and value:
-                explicit_conflict_keys.add(f"preference:{conflict_field}:{value.casefold()}")
-        active = [
-            row for row in active
-            if not (
-                row.layer == MemoryLayer.INFERRED
-                and row.memory_key in (explicit_keys | explicit_conflict_keys)
-            )
-        ]
-        # Repeated consolidation reinforces a memory by appending a newer record.
-        # Keep the ledger immutable while exposing only the newest effective value.
-        newest_by_key: set[tuple[MemoryLayer, str]] = set()
+        limit = max(0, min(int(limit), 10000))
+        if not limit:
+            return []
+        eligible = """WHERE r.user_id = ? AND r.status = 'active'
+            AND r.valid_from <= ? AND (r.expires_at IS NULL OR r.expires_at > ?)
+            AND NOT EXISTS (
+                SELECT 1 FROM memory_records d
+                WHERE d.user_id = r.user_id AND d.target_record_id = r.record_id
+                  AND d.status IN ('deleted', 'superseded'))"""
+        blocked_keys: set[str] = set()
         effective: list[MemoryRecord] = []
-        for row in active:
-            if row.memory_key:
-                identity = (row.layer, row.memory_key)
-                if identity in newest_by_key:
+        # Both passes share a snapshot. Expired rows, tombstones and repeated
+        # versions must not exhaust a raw-row window before usable memories.
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            for raw in connection.execute(
+                "SELECT r.* FROM memory_records r " + eligible + " AND r.layer = 'L1'",
+                (user_id, now, now),
+            ):
+                row = self._decode(raw)
+                if row.memory_key:
+                    blocked_keys.add(row.memory_key)
+                field = str(row.payload.get("field") or "")
+                value = str(row.payload.get("value") or "").strip()
+                conflict_field = PREFERENCE_CONFLICT_FIELDS.get(field)
+                if conflict_field and value:
+                    blocked_keys.add(f"preference:{conflict_field}:{value.casefold()}")
+            newest_by_key: set[tuple[MemoryLayer, str]] = set()
+            # Explicit preferences get candidate admission priority, not an
+            # unconditional prompt injection; relevance scoring still follows.
+            for raw in connection.execute(
+                "SELECT r.* FROM memory_records r " + eligible
+                + " ORDER BY CASE WHEN r.layer = 'L1' THEN 0 ELSE 1 END, r.seq DESC",
+                (user_id, now, now),
+            ):
+                row = self._decode(raw)
+                if row.layer == MemoryLayer.INFERRED and row.memory_key in blocked_keys:
                     continue
-                newest_by_key.add(identity)
-            effective.append(row)
-            if len(effective) >= limit:
-                break
+                if row.memory_key:
+                    identity = (row.layer, row.memory_key)
+                    if identity in newest_by_key:
+                        continue
+                    newest_by_key.add(identity)
+                effective.append(row)
+                if len(effective) >= limit:
+                    break
         return effective
 
     def recent_evidence(self, *, user_id: str, limit: int = 40) -> list[MemoryRecord]:
         """Return bounded user-originated L0 evidence for consolidation."""
-        allowed_sources = {"user_action", "user_statement", "slate_feedback"}
-        records = self.list_records(
-            user_id=user_id,
-            layers=[MemoryLayer.RAW_EVENT],
-            limit=max(20, min(int(limit) * 4, 1000)),
-        )
-        invalidated = {
-            record.target_record_id
-            for record in records
-            if record.status in {MemoryStatus.DELETED, MemoryStatus.SUPERSEDED}
-            and record.target_record_id
-        }
         now = self._clock_ms()
-        return [
-            record
-            for record in records
-            if record.source in allowed_sources
-            and record.status == MemoryStatus.ACTIVE
-            and record.record_id not in invalidated
-            and (record.expires_at is None or record.expires_at > now)
-        ][: max(1, min(int(limit), 200))]
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT r.* FROM memory_records r
+                WHERE r.user_id = ? AND r.layer = 'L0' AND r.status = 'active'
+                  AND r.source IN ('user_action', 'user_statement', 'slate_feedback')
+                  AND r.valid_from <= ? AND (r.expires_at IS NULL OR r.expires_at > ?)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM memory_records d
+                      WHERE d.user_id = r.user_id AND d.target_record_id = r.record_id
+                        AND d.status IN ('deleted', 'superseded'))
+                ORDER BY r.seq DESC LIMIT ?""",
+                (user_id, now, now, max(0, min(int(limit), 200))),
+            ).fetchall()
+        return [self._decode(row) for row in rows]
 
     def pending_evidence_count(self, *, user_id: str, limit: int = 200) -> int:
         """Count evidence newer than the latest consolidation audit marker."""
-        rows = self.list_records(user_id=user_id, limit=max(10, min(int(limit), 1000)))
-        latest_audit = next(
-            (row.created_at for row in rows if row.kind == "consolidation_audit"),
-            -1,
-        )
-        invalidated = {
-            row.target_record_id
-            for row in rows
-            if row.status in {MemoryStatus.DELETED, MemoryStatus.SUPERSEDED}
-            and row.target_record_id
-        }
-        now = self._clock_ms()
-        return sum(
-            1
-            for row in rows
-            if row.layer == MemoryLayer.RAW_EVENT
-            and row.source in {"user_action", "user_statement", "slate_feedback"}
-            and row.created_at > latest_audit
-            and row.status == MemoryStatus.ACTIVE
-            and row.record_id not in invalidated
-            and (row.expires_at is None or row.expires_at > now)
-        )
+        # Find the watermark independently of the output window. Otherwise many
+        # newer bookkeeping rows hide it and already-consolidated events recur.
+        now = int(self._clock_ms())
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT count(*) FROM (
+                    SELECT r.record_id FROM memory_records r
+                    WHERE r.user_id = ? AND r.layer = 'L0' AND r.status = 'active'
+                      AND r.source IN ('user_action','user_statement','slate_feedback')
+                      AND r.valid_from <= ? AND (r.expires_at IS NULL OR r.expires_at > ?)
+                      AND r.created_at > coalesce((
+                          SELECT max(a.created_at) FROM memory_records a
+                          WHERE a.user_id = r.user_id AND a.kind = 'consolidation_audit'
+                            AND a.created_at <= ?), -1)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM memory_records d
+                          WHERE d.user_id = r.user_id AND d.target_record_id = r.record_id
+                            AND d.status IN ('deleted','superseded'))
+                    LIMIT ?
+                )""", (user_id, now, now, now, max(1, min(int(limit), 1000))),
+            ).fetchone()
+        return int(row[0])
 
     def fingerprint(self, *, user_id: str) -> str:
         payload = [record.model_dump() for record in self.list_records(user_id=user_id, limit=1000)]

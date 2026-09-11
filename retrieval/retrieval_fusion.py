@@ -6,6 +6,8 @@ import re
 import unicodedata
 from typing import Any, Dict, Iterable, List, Mapping
 
+from retrieval.candidate_identity import candidate_identity
+
 
 RRF_K = 60
 
@@ -145,7 +147,9 @@ def weighted_rrf(
             song = dict(item.get("song") or {})
             title = song.get("title", "")
             artist = song.get("artist", "")
-            key = item.get("key") or normalize_song_key(title, artist)
+            # A caller's old title key must not collapse distinct recordings.
+            key = (candidate_identity(song)["key"] if song.get("music_id")
+                   else item.get("key") or normalize_song_key(title, artist))
             if not normalize_text(title):
                 continue
 
@@ -220,6 +224,7 @@ def apply_hard_filters(
     hard_constraints: Mapping[str, Any] | None,
     disliked_titles: Iterable[str] = (),
     *,
+    disliked_songs: Iterable[Mapping[str, Any]] = (),
     limit: int | None = None,
     logger: Any | None = None,
 ) -> List[dict]:
@@ -237,11 +242,23 @@ def apply_hard_filters(
     if normalize_text(language) in {"instrumental", "纯音乐", "器乐"}:
         language = None
     disliked = {normalize_text(title) for title in disliked_titles if normalize_text(title)}
+    disliked_ids = set()
+    disliked_pairs = set()
+    for record in disliked_songs:
+        if record.get("music_id"):
+            disliked_ids.add(str(record["music_id"]))
+        elif record.get("title") and record.get("artist"):
+            disliked_pairs.add((normalize_text(record["title"]), normalize_text(record["artist"])))
 
     safety_filtered = []
     for item in candidates:
         song = item.get("song") or {}
-        if normalize_text(song.get("title", "")) not in disliked:
+        blocked = (
+            normalize_text(song.get("title", "")) in disliked
+            or (bool(song.get("music_id")) and str(song["music_id"]) in disliked_ids)
+            or (normalize_text(song.get("title", "")), normalize_text(song.get("artist", ""))) in disliked_pairs
+        )
+        if not blocked:
             safety_filtered.append(item)
 
     entity_filtered = []

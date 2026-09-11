@@ -292,7 +292,6 @@ class GlobalSettings(BaseSettings):
     api_port: int = Field(default=8501, description="后端 API 服务端口")
     frontend_port: int = Field(default=3003, description="前端 dev server 端口")
     netease_api_base: str = Field("http://localhost:3000", validation_alias="NETEASE_API_BASE")
-    searxng_base_url: str = Field("http://localhost:8888", validation_alias="SEARXNG_BASE_URL")
     graphzep_base_url: str = Field("http://localhost:3100", validation_alias="GRAPHZEP_BASE_URL")
     graphzep_request_timeout_seconds: float = Field(
         default=3.5,
@@ -552,8 +551,7 @@ class GlobalSettings(BaseSettings):
     # ================================================================
     # 8. 网络请求超时（秒）
     # ================================================================
-    web_search_timeout: int = Field(default=12, description="联网搜索 HTTP 超时（智谱/Tavily）")
-    searxng_timeout: int = Field(default=8, description="SearxNG 搜索超时")
+    web_search_timeout: int = Field(default=12, description="联网检索阶段超时（秒）")
     netease_api_timeout: int = Field(default=10, description="网易云 API 请求超时")
     audio_download_timeout: int = Field(default=60, description="音频文件下载超时")
 

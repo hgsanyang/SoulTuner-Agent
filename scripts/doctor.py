@@ -263,21 +263,11 @@ def check_services():
     be = _http("http://127.0.0.1:8501/health")
     line(be == 200, "后端 API :8501 /health", f"HTTP {be or '无响应'}",
          "`.\\soultuner.ps1 up cpu`（或 `python scripts/dev/start_backend.py` 本地调试）")
-    memory_backends = ENV.get("MEMORY_EPISODIC_BACKENDS", os.environ.get("MEMORY_EPISODIC_BACKENDS", ""))
-    wants_graphzep = "graphzep" in {x.strip().lower() for x in memory_backends.split(",") if x.strip()}
-    gz3100 = _http("http://127.0.0.1:3100/healthcheck")
-    if wants_graphzep:
-        line(gz3100 == 200, "GraphZep 记忆旁路 :3100（legacy 配置残留）",
-             f"HTTP {gz3100 or '无响应'}",
-             "GraphZep 已停用为默认依赖：建议从 MEMORY_EPISODIC_BACKENDS 移除 graphzep")
-    else:
-        line(True, "记忆：本地结构化账本 + Neo4j 热路径（GraphZep 已停用为默认依赖）")
+    line(True, "记忆：本地结构化账本 + Neo4j 热路径")
     # Frontend
     fe = _tcp("127.0.0.1", 3003)
     line(fe, "前端 :3003", fix="`cd web && npm run dev`（可选，只跑后端/评测时不需要）")
     # 可选
-    line(_tcp("127.0.0.1", 8888), "SearxNG :8888（可选-联网搜索）",
-         fix="可选：`docker compose up -d searxng`；legacy 分步调试配置在 `deploy/legacy/`") or None
     line(_tcp("127.0.0.1", 3000), "NeteaseAPI :3000（可选-联网取歌）",
          fix="可选。⚠️注意 :3000 可能与前端 dev 端口冲突") or None
 

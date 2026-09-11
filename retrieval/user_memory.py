@@ -5,6 +5,42 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
+class MemoryProfileUnavailable(RuntimeError):
+    """A failed profile read is not evidence that the user has no preferences."""
+
+
+def normalize_explicit_preferences(preferences):
+    """Validate manual structured fields before either store is mutated."""
+    if not isinstance(preferences, dict) or not preferences:
+        raise ValueError("explicit preferences must be a nonempty object")
+    allowed = SEMANTIC_LIST_FIELDS | {"mood_tendency", "language_preference"}
+    if set(preferences) - allowed:
+        raise ValueError("unsupported explicit preference field")
+    normalized = {}
+    for field, value in preferences.items():
+        if field in SEMANTIC_LIST_FIELDS:
+            if not isinstance(value, list) or not 1 <= len(value) <= 30:
+                raise ValueError("preference list must contain 1 to 30 values")
+            values, seen = [], set()
+            for item in value:
+                if not isinstance(item, str) or not 1 <= len(item.strip()) <= 160:
+                    raise ValueError("invalid preference value")
+                text = item.strip()
+                if text.casefold() not in seen:
+                    values.append(text)
+                    seen.add(text.casefold())
+            normalized[field] = values
+        else:
+            if not isinstance(value, str) or not 1 <= len(value.strip()) <= 160:
+                raise ValueError("invalid preference value")
+            normalized[field] = value.strip()
+    for field, values in normalized.items():
+        opposite = SEMANTIC_CONFLICT_FIELDS.get(field)
+        if opposite in normalized and {v.casefold() for v in values} & {v.casefold() for v in normalized[opposite]}:
+            raise ValueError("conflicting explicit preferences")
+    return normalized
+
+
 SEMANTIC_LIST_FIELDS = {
     "add_genres",
     "avoid_genres",
@@ -85,6 +121,19 @@ class UserMemoryManager:
         if self.neo4j_client:
             self.neo4j_client.execute_query(query, {"user_id": user_id, "username": username})
             logger.info(f"确保用户存在: {user_id}")
+
+    def ensure_memory_receipt_schema(self) -> None:
+        """Fail closed on incompatible/duplicate existing data; never delete it."""
+        if getattr(self, "_memory_receipt_schema_ready", False):
+            return
+        self.neo4j_client.execute_query(
+            "CREATE CONSTRAINT memory_user_id_unique IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE"
+        )
+        self.neo4j_client.execute_query(
+            "CREATE CONSTRAINT memory_receipt_unique IF NOT EXISTS "
+            "FOR (r:MemoryWriteReceipt) REQUIRE (r.user_id,r.operation_id) IS UNIQUE"
+        )
+        self._memory_receipt_schema_ready = True
     def _find_existing_song(self, song_title: str, artist: str):
         """
         优先匹配已入库的 Song 节点，找不到时不创建裸 Song。
@@ -431,9 +480,10 @@ class UserMemoryManager:
             collect(DISTINCT sc.name) as favorite_scenarios
         """
         if not self.neo4j_client:
-            return {}
+            raise MemoryProfileUnavailable("memory_profile_unavailable")
         try:
-            result = self.neo4j_client.execute_query(query, {"user_id": user_id, "limit": limit})
+            read = getattr(self.neo4j_client, "execute_read_query", self.neo4j_client.execute_query)
+            result = read(query, {"user_id": user_id, "limit": limit})
             prefs = {}
             if result and len(result) > 0:
                 record = result[0]
@@ -472,7 +522,7 @@ class UserMemoryManager:
                    p['preferred_languages'] AS preferred_languages,
                    p['preferences_updated_at'] AS preferences_updated_at
             """
-            semantic_result = self.neo4j_client.execute_query(semantic_query, {"user_id": user_id})
+            semantic_result = read(semantic_query, {"user_id": user_id})
             if semantic_result and len(semantic_result) > 0:
                 sr = semantic_result[0]
                 prefs["avoid_genres"] = sr.get("avoid_genres", []) or []
@@ -545,13 +595,15 @@ class UserMemoryManager:
             return prefs
         except Exception as e:
             logger.error(f"提取用户图谱偏好失败: {e}")
-        return {}
-    def update_semantic_preferences(self, user_id: str, extraction_result: Dict[str, Any]):
+            raise MemoryProfileUnavailable("memory_profile_unavailable") from e
+    def update_semantic_preferences(self, user_id: str, extraction_result: Dict[str, Any], *, operation_id: str = ""):
         """Persist user-confirmed L1 preferences on the User node."""
+        extraction_result = normalize_explicit_preferences(extraction_result)
         if not self.neo4j_client:
-            logger.warning("[SemanticMemory] Neo4j 客户端不可用，跳过偏好持久化")
-            return
+            raise RuntimeError("memory_write_unavailable")
         try:
+            if operation_id:
+                self.ensure_memory_receipt_schema()
             self.ensure_user_exists(user_id)
             # 构建动态 SET 子句：仅更新非空字段，避免覆盖已有数据
             set_clauses = []
@@ -588,17 +640,40 @@ class UserMemoryManager:
             query = f"""
             MATCH (u:User {{id: $user_id}})
             SET {', '.join(set_clauses)}, u.preferences_updated_at = timestamp()
+            RETURN u.id AS user_id
             """
-            self.neo4j_client.execute_query(query, params)
+            if operation_id:
+                params["operation_id"] = operation_id
+                # Acquire the owner's write lock before inspecting the receipt.
+                # Retried committed operations must not reapply old preferences.
+                query = f"""
+                MATCH (u:User {{id: $user_id}})
+                SET u.memory_write_lock = coalesce(u.memory_write_lock,0) + 1
+                WITH u
+                MERGE (receipt:MemoryWriteReceipt {{user_id: $user_id, operation_id: $operation_id}})
+                ON CREATE SET receipt.state = 'pending'
+                FOREACH (_ IN CASE WHEN receipt.state='pending' THEN [1] ELSE [] END |
+                    SET {', '.join(set_clauses)}, u.preferences_updated_at=timestamp(),
+                        receipt.state='completed', receipt.completed_at=timestamp()
+                )
+                RETURN u.id AS user_id, receipt.state AS write_state
+                """
+            rows = self.neo4j_client.execute_query(query, params)
+            if (not rows or rows[0].get("user_id") != user_id
+                    or (operation_id and rows[0].get("write_state") != "completed")):
+                raise RuntimeError("memory_write_not_confirmed")
             logger.info(f"[SemanticMemory] 成功更新用户 {user_id} 的语义偏好: {list(params.keys())}")
+            return True
         except Exception as e:
             logger.error(f"[SemanticMemory] 偏好持久化失败: {e}")
+            raise RuntimeError("memory_write_unavailable") from e
 
     def upsert_inferred_preference(self, user_id: str, record: Dict[str, Any]) -> bool:
         """Project one effective L2 record into Neo4j without losing ledger provenance."""
         if not self.neo4j_client:
             return False
         try:
+            self.ensure_memory_receipt_schema()
             self.ensure_inferred_preference_schema()
             self.ensure_user_exists(user_id)
             params = {
@@ -613,6 +688,7 @@ class UserMemoryManager:
                 "retrieval_cues": list(record.get("retrieval_cues") or []),
                 "decision_summary": str(record.get("decision_summary") or ""),
                 "ledger_record_id": str(record.get("ledger_record_id") or ""),
+                "ledger_seq": int(record.get("ledger_seq") or 0),
                 "source": str(record.get("source") or "memory_consolidator"),
                 "created_at": int(record.get("created_at") or int(time.time() * 1000)),
                 "expires_at": int(record.get("expires_at") or 0),
@@ -621,8 +697,16 @@ class UserMemoryManager:
                 return False
             query = """
             MATCH (u:User {id: $user_id})
+            SET u.memory_write_lock = coalesce(u.memory_write_lock,0) + 1
+            WITH u
             MERGE (p:InferredPreference {user_id: $user_id, memory_key: $memory_key})
-            SET p.field = $field,
+            MERGE (receipt:MemoryWriteReceipt {user_id: $user_id, operation_id: $operation_id})
+            ON CREATE SET receipt.state='pending'
+            FOREACH (_ IN CASE WHEN receipt.state='pending' AND
+                (p.created_at IS NULL OR p.created_at < $created_at OR
+                 (p.created_at = $created_at AND coalesce(p.ledger_seq,0) <= $ledger_seq))
+                THEN [1] ELSE [] END |
+              SET p.field = $field,
                 p.value = $value,
                 p.scope = $scope,
                 p.confidence = $confidence,
@@ -631,15 +715,22 @@ class UserMemoryManager:
                 p.retrieval_cues = $retrieval_cues,
                 p.decision_summary = $decision_summary,
                 p.ledger_record_id = $ledger_record_id,
+                p.ledger_seq = $ledger_seq,
                 p.source = $source,
                 p.created_at = $created_at,
                 p.expires_at = $expires_at,
                 p.status = 'active',
                 p.updated_at = timestamp()
+            )
+            SET receipt.state='completed', receipt.completed_at=timestamp()
             MERGE (u)-[:HAS_INFERRED_PREFERENCE]->(p)
             RETURN p.memory_key AS memory_key
             """
-            return bool(self.neo4j_client.execute_query(query, params))
+            # Legacy direct callers without a ledger identity keep independent writes.
+            import uuid
+            params["operation_id"] = "inferred:" + (params["ledger_record_id"] or str(uuid.uuid4()))
+            rows = self.neo4j_client.execute_query(query, params)
+            return bool(rows and rows[0].get("memory_key") == params["memory_key"])
         except Exception as exc:
             logger.error(f"[MemoryV2] L2 projection failed: {exc}")
             return False
@@ -660,10 +751,10 @@ class UserMemoryManager:
 
     def get_active_inferred_preferences(self, user_id: str, now_ms: int | None = None) -> list[Dict[str, Any]]:
         if not self.neo4j_client:
-            return []
-        self.ensure_inferred_preference_schema()
+            raise MemoryProfileUnavailable("memory_profile_unavailable")
         now = int(now_ms if now_ms is not None else time.time() * 1000)
-        self.expire_inferred_preferences(user_id, now_ms=now)
+        # Reads must not create indexes or expire records. Maintenance is a
+        # separate write operation; the predicate already hides expired L2.
         query = """
         MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
         WHERE p.status = 'active' AND (p.expires_at IS NULL OR p.expires_at = 0 OR p.expires_at > $now)
@@ -676,23 +767,29 @@ class UserMemoryManager:
         ORDER BY p.confidence DESC, p.created_at DESC
         LIMIT 200
         """
-        return self.neo4j_client.execute_query(query, {"user_id": user_id, "now": now}) or []
+        read = getattr(self.neo4j_client, "execute_read_query", self.neo4j_client.execute_query)
+        return read(query, {"user_id": user_id, "now": now}) or []
 
-    def delete_inferred_preference(self, user_id: str, *, field: str = "", value: str = "", memory_key: str = "") -> bool:
+    def delete_inferred_preference(self, user_id: str, *, field: str = "", value: str = "", memory_key: str = "", ledger_record_id: str = "") -> bool:
         if not self.neo4j_client:
             return False
         query = """
         MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
-        WHERE ($memory_key <> '' AND p.memory_key = $memory_key)
-           OR ($memory_key = '' AND p.field = $field AND toLower(toString(p.value)) = toLower($value))
+        WHERE (($memory_key <> '' AND p.memory_key = $memory_key)
+           OR ($memory_key = '' AND p.field = $field AND toLower(toString(p.value)) = toLower($value)))
+          AND ($ledger_record_id = '' OR coalesce(p.ledger_record_id, '') = ''
+               OR p.ledger_record_id = $ledger_record_id)
         SET p.status = 'deleted', p.deleted_at = timestamp()
         RETURN count(p) AS deleted_count
         """
         rows = self.neo4j_client.execute_query(
             query,
-            {"user_id": user_id, "field": field, "value": value, "memory_key": memory_key},
+            {"user_id": user_id, "field": field, "value": value, "memory_key": memory_key,
+             "ledger_record_id": ledger_record_id},
         )
-        return bool(rows and int(rows[0].get("deleted_count") or 0) > 0)
+        # Zero matches is already absent, hence a successful idempotent delete.
+        # The strict client raises on faults; an empty/malformed response isn't success.
+        return bool(rows and "deleted_count" in rows[0])
 
     def clear_inferred_preferences(self, user_id: str) -> bool:
         if not self.neo4j_client:
@@ -704,7 +801,35 @@ class UserMemoryManager:
         RETURN count(p) AS deleted_count
         """
         rows = self.neo4j_client.execute_query(query, {"user_id": user_id})
-        return rows is not None
+        return bool(rows and "deleted_count" in rows[0])
+
+    def snapshot_inferred_preferences(self, user_id: str) -> list[dict]:
+        if not self.neo4j_client:
+            raise MemoryProfileUnavailable("memory_profile_unavailable")
+        read = getattr(self.neo4j_client, "execute_read_query", self.neo4j_client.execute_query)
+        return [dict(row) for row in read("""
+            MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
+            WHERE p.status = 'active'
+            RETURN p.memory_key AS memory_key, coalesce(p.ledger_record_id,'') AS ledger_record_id,
+                   coalesce(p.updated_at,0) AS updated_at
+        """, {"user_id": user_id})]
+
+    def delete_inferred_snapshot(self, user_id: str, targets: list[dict]) -> bool:
+        if not self.neo4j_client:
+            return False
+        # Compare the recorded version, including legacy projections without
+        # ledger IDs. A later update of the same key must survive retries.
+        rows = self.neo4j_client.execute_query("""
+            UNWIND $targets AS target
+            MATCH (:User {id: $user_id})-[:HAS_INFERRED_PREFERENCE]->(p:InferredPreference)
+            WHERE p.memory_key = target.memory_key
+              AND coalesce(p.ledger_record_id,'') = target.ledger_record_id
+              AND coalesce(p.updated_at,0) = target.updated_at
+              AND p.status = 'active'
+            SET p.status = 'deleted', p.deleted_at = timestamp()
+            RETURN count(p) AS deleted_count
+        """, {"user_id": user_id, "targets": targets})
+        return bool(rows and "deleted_count" in rows[0])
 
     def remove_semantic_preference(self, user_id: str, field: str, value: str) -> bool:
         """Remove one learned preference item from an allowed User list field."""

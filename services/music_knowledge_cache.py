@@ -1,6 +1,6 @@
 """Small local knowledge-card cache for optional music RAG enrichment.
 
-This module intentionally has no network dependency.  Fetchers such as Tavily,
+This module intentionally has no network dependency.  API-native search,
 Netease details, or a manual curator can write normalized cards here; online
 recommendation can later read the cache without waiting for web search.
 """

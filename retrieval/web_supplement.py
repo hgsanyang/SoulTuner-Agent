@@ -119,11 +119,12 @@ def supplement_enabled() -> bool:
     and deterministic.
     """
     from services.runtime_mode import side_effects_disabled
+    from services.recommendation_execution import web_search_allowed
 
     if side_effects_disabled():
         return False
     return (
-        os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0"
+        web_search_allowed()
         and os.environ.get("MUSIC_WEB_SUPPLEMENT_ENABLED", "1") != "0"
     )
 

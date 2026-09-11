@@ -17,6 +17,21 @@ def _add_evidence(store, user_id, text, now):
     )
 
 
+def test_evidence_revoked_during_generation_is_not_used(tmp_path):
+    store = MemoryEventStore(tmp_path / 'ledger.db')
+    first = _add_evidence(store, 'alice', 'warm', 1000)
+    second = _add_evidence(store, 'alice', 'warm again', 2000)
+
+    async def generator(user_id, evidence):
+        store.tombstone(user_id='alice', target_record_id=first.record_id)
+        return {'candidates': [{'field': 'add_moods', 'value': 'Warm', 'confidence': 0.95,
+                                'evidence_ids': [first.record_id, second.record_id]}]}
+
+    result = asyncio.run(MemoryConsolidator(store, generator=generator).consolidate(user_id='alice'))
+    assert result.accepted == []
+    assert result.rejected[0].reason == 'unknown_or_cross_user_evidence'
+
+
 def test_consolidator_rejects_unknown_evidence_and_explicit_conflict(tmp_path):
     store = MemoryEventStore(tmp_path / "memory.sqlite3")
     first = _add_evidence(store, "u1", "first signal", 1000)

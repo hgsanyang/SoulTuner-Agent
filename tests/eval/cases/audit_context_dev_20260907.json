@@ -1,0 +1,242 @@
+[
+  {
+    "id": "audit_dev_dream_followup",
+    "category": "multi_turn_context",
+    "query": "梦幻一点的歌曲有没有",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "外面下暴雨，想听安静但不压抑的音乐"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "识别为继续找歌并刷新歌单；保留安静、不压抑的背景",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_scene_work",
+    "category": "multi_turn_context",
+    "query": "到家了，开始工作",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "运动时候来点动感节奏音乐"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "场景替换为工作，不把运动的高能量永久继承",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_scene_sleep",
+    "category": "multi_turn_context",
+    "query": "睡觉了，来轻音乐",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "工作时想保持专注"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "切换睡前场景，记忆不误写成永久喜好",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_less_vocals",
+    "category": "multi_turn_context",
+    "query": "这几首唱得有点满",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "想听有人声的民谣"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "识别减少人声密度的反馈，可澄清而不强制改成无歌词",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_rock_vocals",
+    "category": "multi_turn_context",
+    "query": "有没有人唱的摇滚",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "给我一些器乐"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "当前明确有人声摇滚覆盖上一轮纯器乐约束",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_negative_texture",
+    "category": "multi_turn_context",
+    "query": "不要那么刺耳，鼓还可以再明显一点",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "硬摇滚，喜欢有力的节奏"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "保留鼓点诉求，同时执行负向刺耳约束",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_version_identity",
+    "category": "multi_turn_context",
+    "query": "要录音室版，不要现场的",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "这首歌还有其他版本吗"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "录音版本身份应区分，不能按标题互相覆盖",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_temporary_preference",
+    "category": "multi_turn_context",
+    "query": "只是今晚不想听人声，平时不是",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "喜欢有人声的中文歌"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "本轮约束不提升为永久偏好",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_more_variety",
+    "category": "multi_turn_context",
+    "query": "别都是同一个人的",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "推荐轻松的流行歌"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "刷新并增加艺人多样性，不用纯聊天替代歌曲",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  },
+  {
+    "id": "audit_dev_warm_without_sad",
+    "category": "multi_turn_context",
+    "query": "再温暖一些，但别伤感",
+    "chat_history": [
+      {
+        "role": "user",
+        "content": "雨天听的音乐"
+      },
+      {
+        "role": "assistant",
+        "content": "上一轮已返回歌曲，可以继续调整。"
+      }
+    ],
+    "checks": {
+      "min_results": 1,
+      "min_playable_ratio": 0.5,
+      "not_degraded": true,
+      "manual_review": [
+        "同时保留正向与负向感受约束",
+        "确认解释引用实际候选，而非编造目录外歌名"
+      ]
+    }
+  }
+]

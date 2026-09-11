@@ -38,6 +38,7 @@ class FakePrimary:
 
     def remember_preference(self, user_id, preferences):
         self.preferences.append((user_id, preferences))
+        return True
 
     def remember_inferred_preference(self, user_id, record):
         self.inferred.append((user_id, record))
@@ -51,6 +52,13 @@ class FakePrimary:
 
     def clear_learned_preferences(self, user_id):
         self.cleared_user_id = user_id
+        return True
+
+    def snapshot_learned_preferences(self, user_id):
+        self.cleared_user_id = user_id
+        return []
+
+    def delete_learned_snapshot(self, user_id, targets):
         return True
 
 

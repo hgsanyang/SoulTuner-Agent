@@ -7,6 +7,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+class Neo4jQueryError(RuntimeError):
+    """A query failed; this is not an empty catalog result."""
+
+
 class Neo4jClient:
     """Neo4j 图数据库连接与查询客户端"""
 
@@ -81,8 +85,8 @@ class Neo4jClient:
         with self._lock:
             self._discard_driver()
 
-    def execute_query(self, query: str, parameters: dict[str, Any] | None = None):
-        """Execute Cypher and reconnect once after a transient disconnect.
+    def execute_query(self, query: str, parameters: dict[str, Any] | None = None, *, strict: bool = True, retry: bool = False):
+        """Execute Cypher; failures raise unless legacy compatibility is explicit.
 
         A failed initial application start is recoverable too: the first query
         after Neo4j returns will create a fresh driver instead of keeping the
@@ -95,6 +99,8 @@ class Neo4jClient:
                 if attempt == 0 and reconnect_backoff:
                     time.sleep(reconnect_backoff)
                     continue
+                if strict:
+                    raise Neo4jQueryError("Neo4j connection unavailable")
                 return []
             driver = self.driver
             try:
@@ -102,7 +108,7 @@ class Neo4jClient:
                     result = session.run(query, parameters)
                     return [record.data() for record in result]
             except Exception as exc:
-                if attempt == 0 and self._is_retryable_connection_error(exc):
+                if retry and attempt == 0 and self._is_retryable_connection_error(exc):
                     logger.warning("Neo4j query lost its connection; reconnecting once: %s", exc)
                     with self._lock:
                         if self.driver is driver:
@@ -111,8 +117,22 @@ class Neo4jClient:
                         time.sleep(reconnect_backoff)
                     continue
                 logger.error("Error executing Neo4j query: %s", exc)
+                if self._is_retryable_connection_error(exc):
+                    with self._lock:
+                        if self.driver is driver:
+                            self._discard_driver()
+                if strict:
+                    raise Neo4jQueryError("Neo4j query failed") from exc
                 return []
         return []
+
+    def execute_read_query(self, query: str, parameters: dict[str, Any] | None = None):
+        """Caller declares a read; only these calls opt into connection replay."""
+        return self.execute_query(query, parameters, strict=True, retry=True)
+
+    def execute_write_query(self, query: str, parameters: dict[str, Any] | None = None):
+        """Never blindly replay a write whose commit outcome may be unknown."""
+        return self.execute_query(query, parameters, strict=True, retry=False)
 
 
 def get_neo4j_client() -> Neo4jClient:

@@ -7,6 +7,52 @@ on:
     branches: [main, master]
 
 jobs:
+  music-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-mcp.txt pytest
+      - run: python -m pytest tests/mcp -q
+      - run: pip check
+
+  local-gradio:
+    runs-on: ubuntu-latest
+    env:
+      GRADIO_ANALYTICS_ENABLED: "False"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-local-ui.txt
+      - run: python -m unittest discover -s tests/gradio -v
+      - run: pip check
+
+  neo4j-integration:
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:2026.03.1-community
+        env:
+          NEO4J_AUTH: none
+        ports:
+          - 27687:7687
+        options: >-
+          --health-cmd "cypher-shell 'RETURN 1' || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 30
+    env:
+      SOULTUNER_AUDIT_NEO4J: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-ci.txt
+      - run: python -m pytest tests/integration/test_audit_neo4j.py -v --tb=short
+
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:

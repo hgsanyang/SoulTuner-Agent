@@ -44,6 +44,12 @@ def runtime_context_from_request(
     interaction_mode: str = "",
     session_id: str = "",
 ) -> RuntimeContext:
+    subject = getattr(getattr(raw_request, "state", None), "anonymous_subject", None)
+    if subject:
+        return build_runtime_context(
+            profile_id=subject, profile_type="test", interaction_mode="personal",
+            session_id=(raw_request.headers.get("X-SoulTuner-Session") or session_id),
+        )
     headers = raw_request.headers
     resolved_profile_id = (
         headers.get("X-SoulTuner-Profile")

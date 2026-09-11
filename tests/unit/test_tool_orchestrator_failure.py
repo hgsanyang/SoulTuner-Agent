@@ -7,11 +7,131 @@ Each scenario is exercised deterministically with injected executors.
 """
 
 import asyncio
+import threading
+from contextvars import ContextVar
 
 import pytest
 
 from agent.tool_orchestrator import BoundedToolOrchestrator, ToolRegistry
 from schemas.tool_plan import ToolCall, ToolName, ToolObservation, ToolPlan
+
+
+@pytest.mark.parametrize("payload,status,success", [
+    ({"songs": [], "source": "web"}, "empty", True),
+    ({"songs": [], "error": "offline"}, "error", False),
+    ({"songs": [{"title": "kept"}], "error": "partial failure"}, "error", False),
+    ({"success": False, "error": ""}, "error", False),
+    ({"songs": [{"title": "ok"}], "source": "graph"}, "success", True),
+])
+def test_registry_envelope_status(payload, status, success):
+    registry = ToolRegistry()
+    registry.register(ToolName.RETRIEVE_MEMORY, lambda *_: payload)
+    obs = _run(BoundedToolOrchestrator(registry), _plan(_memory_call("m"))).observations[0]
+    assert (obs.status, obs.success, obs.data) == (status, success, payload)
+    assert BoundedToolOrchestrator._needs_replan([obs]) == (status != "success")
+
+
+def test_sync_timeout_does_not_block_loop_and_propagates_context():
+    release = threading.Event()
+    finished = threading.Event()
+    marker = ContextVar("tool-test", default="missing")
+    seen = []
+
+    def slow(*_):
+        seen.append(marker.get())
+        try:
+            release.wait(2)
+        finally:
+            finished.set()
+
+    async def run():
+        token = marker.set("request")
+        registry = ToolRegistry()
+        registry.register(ToolName.RETRIEVE_MEMORY, slow)
+        try:
+            result = await BoundedToolOrchestrator(registry, timeout_seconds=.1).run(_plan(_memory_call("m")))
+            assert result.observations[0].status == "timeout"
+            assert not finished.is_set()
+            assert seen == ["request"]
+        finally:
+            release.set()
+            marker.reset(token)
+
+    asyncio.run(run())
+    assert finished.wait(2)
+
+
+def test_sync_factory_returning_coroutine_is_awaited():
+    async def answer():
+        return ["ok"]
+    registry = ToolRegistry()
+    registry.register(ToolName.RETRIEVE_MEMORY, lambda *_: answer())
+    assert _run(BoundedToolOrchestrator(registry), _plan(_memory_call("m"))).observations[0].data == ["ok"]
+
+
+def test_failed_dependency_blocks_memory_write_but_not_read_fallback():
+    registry = ToolRegistry()
+    registry.register(ToolName.RETRIEVE_MEMORY, lambda *_: {"success": False, "error": "offline"})
+    def forbidden(*args):
+        raise AssertionError("write must not be invoked")
+    registry.register(ToolName.COMMIT_MEMORY_DELTA, forbidden)
+    plan = _plan(_memory_call("m"), ToolCall(
+        id="write", name=ToolName.COMMIT_MEMORY_DELTA, depends_on=["m"],
+        arguments={"memory_type": "inferred_preference", "evidence_id": "e"},
+    ))
+    result = _run(BoundedToolOrchestrator(registry), plan)
+    assert result.by_call_id["write"].status == "skipped"
+    assert result.by_call_id["write"].error == "write blocked by failed dependency"
+
+
+def test_total_budget_includes_replanner_and_preserves_results():
+    registry = ToolRegistry()
+    registry.register(ToolName.RETRIEVE_MEMORY, lambda *_: [])
+    async def replan(*_):
+        await asyncio.sleep(5)
+    result = _run(BoundedToolOrchestrator(registry, total_timeout_seconds=.1),
+                  _plan(_memory_call("m")), replanner=replan)
+    assert result.observations[0].status == "empty"
+    assert result.replans_used == 0
+
+
+def test_total_budget_marks_unstarted_dependencies_timeout():
+    registry = ToolRegistry()
+    async def slow(*_):
+        await asyncio.sleep(5)
+    registry.register(ToolName.RETRIEVE_MEMORY, slow)
+    result = _run(BoundedToolOrchestrator(registry, total_timeout_seconds=.1),
+                  _plan(_memory_call("a"), _memory_call("b", ["a"])))
+    assert [item.status for item in result.observations] == ["timeout", "timeout"]
+
+
+def test_timeout_keeps_worker_capacity_until_real_completion(monkeypatch):
+    import agent.tool_orchestrator as module
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr(module, "_SYNC_SLOTS", slots)
+    release, finished = threading.Event(), threading.Event()
+
+    def work(*_):
+        try:
+            release.wait(2)
+        finally:
+            finished.set()
+
+    async def run():
+        registry = ToolRegistry()
+        registry.register(ToolName.RETRIEVE_MEMORY, work)
+        orchestrator = BoundedToolOrchestrator(registry, timeout_seconds=.1)
+        try:
+            first = await orchestrator.run(_plan(_memory_call("one")))
+            assert first.observations[0].status == "timeout"
+            second = await orchestrator.run(_plan(_memory_call("two")))
+            assert second.observations[0].status == "error"
+            assert "capacity exhausted" in second.observations[0].error
+        finally:
+            release.set()
+        await asyncio.to_thread(finished.wait, 2)
+
+    asyncio.run(run())
 
 
 def _plan(*calls: ToolCall, max_replans: int = 1, **kwargs) -> ToolPlan:

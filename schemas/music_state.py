@@ -90,7 +90,7 @@ class MusicAgentState(TypedDict, total=False):
     _web_fallback_query: str   # 传给网易云 API 的干净搜索词（歌名 歌手）
     _web_action: str           # fallback / mix_in / blocked / none
     _web_target_count: int     # 本轮联网候选目标数量
-    _web_discovery_required: bool  # True 时先用 Tavily/SearxNG/智谱发现候选，再用网易云解析
+    _web_discovery_required: bool  # True 时先用 API 原生联网发现候选，再用网易云解析
     _catalog_gap: Dict[str, Any]   # Catalog Gap Detector 的可观测诊断
 
 

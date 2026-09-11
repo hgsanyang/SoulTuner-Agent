@@ -11,7 +11,7 @@ FastAPI 后端接口层 — SSE 流式推荐 + 运行时设置 + 用户画像。
 ## 启动方式
 
 ```bash
-# 推荐：一键启动全栈（Backend + Frontend + 可选记忆旁路 + SearxNG）
+# 推荐：一键启动全栈（Backend + Frontend + Neo4j；联网使用 API 原生能力）
 .\soultuner.ps1 up cpu
 
 # 或仅启动后端（开发调试）

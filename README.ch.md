@@ -240,7 +240,6 @@ Planner 支持蒸馏为本地学生模型。公开仓库只提供可复现的训
 | [OpenMuQ/MuQ](https://github.com/OpenMuQ/MuQ) | MuQ-MuLan 文搜音主模型（CC-BY-NC 4.0） |
 | [nttcslab/m2d](https://github.com/nttcslab/m2d) | 资源受限纯 CPU 档的 M2D-CLAP 编码器 |
 | [MTG/omar-rq](https://github.com/MTG/omar-rq) | GPU 档的 OMAR-RQ 声学重排模型 |
-| [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | legacy 记忆适配器（可选、非默认） |
 
 ---
 

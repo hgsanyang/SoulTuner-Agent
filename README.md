@@ -214,6 +214,19 @@ see [data/sft/README.md](data/sft/README.md).
 
 ## ⚙️ Configuration
 
+### Local audit additions (experimental)
+
+The local CLI, music MCP and optional Gradio adapter reuse the main recommendation API:
+
+- [Streaming CLI](docs/LOCAL_RECOMMENDATION_CLI.md)
+- [Local music MCP](docs/MUSIC_MCP_LOCAL.md) — recommendation only, not a general database or memory-write tool
+- [API-backed Gradio](docs/LOCAL_GRADIO_ADAPTER.md) — a local adapter, not a replacement for the deployed Space
+- [Public visitor deployment boundaries](docs/ANONYMOUS_VISITOR_DEPLOYMENT.md)
+- [Release readiness and known limitations](docs/RELEASE_READINESS_2026-09-11.md)
+
+These adapters do not start models or databases. Retired GraphZep and standalone search integrations are no longer distributed; see [retired services](docs/RETIRED_SERVICES.md).
+API-backed validation is not a benchmark of the fine-tuned 35B model, GPU inference, or music playback.
+
 | Variable | Purpose |
 |---|---|
 | `DASHSCOPE_API_KEY` | Key for the default model (use your provider's key if you switch) |
@@ -243,7 +256,6 @@ The initial architecture came from [imagist13/Muisc-Research](https://github.com
 | [OpenMuQ/MuQ](https://github.com/OpenMuQ/MuQ) | MuQ-MuLan, the primary text-to-music model (CC-BY-NC 4.0) |
 | [nttcslab/m2d](https://github.com/nttcslab/m2d) | M2D-CLAP encoder for the constrained CPU profile |
 | [MTG/omar-rq](https://github.com/MTG/omar-rq) | OMAR-RQ acoustic reranking on GPU profiles |
-| [aexy-io/graphzep](https://github.com/aexy-io/graphzep) | legacy memory adapter (optional, non-default) |
 
 ---
 
