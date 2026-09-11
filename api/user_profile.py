@@ -4,6 +4,7 @@
 - POST /api/user-profile  保存偏好 → Neo4j hot path + MemoryGateway sidecars
 """
 import asyncio
+from api.public_errors import public_error
 import json
 from typing import List
 
@@ -111,7 +112,7 @@ async def get_user_profile(raw_request: Request, user_id: str = "local_admin"):
 
     except Exception as e:
         logger.error(f"[UserProfile] 读取偏好失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @router.post("/api/user-profile")
@@ -228,4 +229,4 @@ async def save_user_profile(request: UserProfileRequest, raw_request: Request):
 
     except Exception as e:
         logger.error(f"[UserProfile] 保存偏好失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}

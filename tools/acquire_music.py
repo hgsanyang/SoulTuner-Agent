@@ -13,8 +13,11 @@
 import asyncio
 import aiohttp
 import json
+import hashlib
+import math
 import os
 import sys
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -80,7 +83,17 @@ def _ensure_dirs():
 
 def _safe_filename(text: str) -> str:
     """生成安全的文件名"""
-    return "".join(c for c in text if c not in r'\/:*?"<>|').strip()
+    return "".join(c for c in text if c not in r'\/:*?"<>|' and ord(c) >= 32).strip().strip('.')
+
+
+def _asset_path(directory: str, filename: str) -> str:
+    if not filename or any(c in filename for c in ('/', '\\', ':', '\x00')):
+        raise ValueError("invalid asset filename")
+    root = Path(directory).resolve()
+    target = root / filename
+    if target.resolve().parent != root:
+        raise ValueError("asset path escapes storage directory")
+    return str(target)
 
 
 def _resolve_enrichment_paths(
@@ -156,7 +169,7 @@ def _meta_music_id(song_id: str) -> int | str:
 
 def _write_meta_file(file_basename: str, meta: Dict[str, Any]) -> None:
     _ensure_dirs()
-    meta_path = os.path.join(ONLINE_META_DIR, f"{file_basename}_meta.json")
+    meta_path = _asset_path(ONLINE_META_DIR, f"{file_basename}_meta.json")
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
@@ -173,9 +186,9 @@ def mark_online_audio_retained(
     safe_title = _safe_filename(title)
     safe_artist = _safe_filename(artist)
     expected = f"{safe_title} - {safe_artist}_meta.json"
-    candidates = [os.path.join(ONLINE_META_DIR, expected)]
+    candidates = [_asset_path(ONLINE_META_DIR, expected)]
     candidates.extend(
-        os.path.join(ONLINE_META_DIR, name)
+        _asset_path(ONLINE_META_DIR, name)
         for name in os.listdir(ONLINE_META_DIR)
         if name.endswith("_meta.json")
     )
@@ -267,7 +280,7 @@ class OnlineMusicAcquirer:
         # 1. 搜索（清理特殊字符）
         import re
         clean_query = re.sub(r'[《》\[\]【】]', ' ', query)
-        clean_query = re.sub(r'\s+[xX×]\s+', ' ', clean_query)  # "A x B" → "A B"
+        clean_query = ' '.join(part for part in clean_query.split() if part not in {'x', 'X', '×'})
         clean_query = clean_query.strip()
         search_url = f"{self.api_base}/search?keywords={clean_query}&limit={settings.netease_search_limit}"
         async with session.get(search_url, timeout=settings.netease_api_timeout) as resp:
@@ -318,7 +331,7 @@ class OnlineMusicAcquirer:
         # 防重：如果音频文件已存在则跳过下载
         existing_audio = None
         for ext in ["mp3", "flac", "m4a"]:
-            candidate = os.path.join(ONLINE_AUDIO_DIR, f"{file_basename}.{ext}")
+            candidate = _asset_path(ONLINE_AUDIO_DIR, f"{file_basename}.{ext}")
             if os.path.exists(candidate):
                 existing_audio = candidate
                 break
@@ -326,9 +339,9 @@ class OnlineMusicAcquirer:
         if existing_audio:
             logger.info(f"已存在，跳过下载: {file_basename}")
             ext = os.path.splitext(existing_audio)[1].lstrip(".")
-            has_lyrics = os.path.exists(os.path.join(ONLINE_LYRICS_DIR, f"{file_basename}.lrc"))
+            has_lyrics = os.path.exists(_asset_path(ONLINE_LYRICS_DIR, f"{file_basename}.lrc"))
             is_trial = False
-            existing_meta = os.path.join(ONLINE_META_DIR, f"{file_basename}_meta.json")
+            existing_meta = _asset_path(ONLINE_META_DIR, f"{file_basename}_meta.json")
             if os.path.exists(existing_meta):
                 try:
                     with open(existing_meta, "r", encoding="utf-8") as f:
@@ -417,7 +430,7 @@ class OnlineMusicAcquirer:
         # 4. 保存歌词
         has_lyrics = False
         if lyrics_text:
-            lrc_path = os.path.join(ONLINE_LYRICS_DIR, f"{file_basename}.lrc")
+            lrc_path = _asset_path(ONLINE_LYRICS_DIR, f"{file_basename}.lrc")
             try:
                 with open(lrc_path, "w", encoding="utf-8") as f:
                     f.write(lyrics_text)
@@ -625,20 +638,29 @@ class OnlineMusicAcquirer:
         self, url: str, save_path: str, session: aiohttp.ClientSession
     ) -> bool:
         """下载文件到本地"""
+        temporary = f"{save_path}.{uuid.uuid4().hex}.part"
         try:
             async with session.get(url, timeout=settings.audio_download_timeout) as resp:
                 if resp.status != 200:
                     logger.warning(f"下载失败 status={resp.status}: {url[:80]}")
                     return False
                 content = await resp.read()
-                with open(save_path, "wb") as f:
+                if not content:
+                    return False
+                with open(temporary, "wb") as f:
                     f.write(content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(temporary, save_path)
                 size_mb = len(content) / 1024 / 1024
                 logger.info(f"已下载 {size_mb:.1f}MB -> {os.path.basename(save_path)}")
                 return True
         except Exception as e:
             logger.warning(f"下载异常: {e}")
             return False
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
 
 
 async def _quick_ingest_to_neo4j(songs: List[Dict[str, Any]]):
@@ -849,7 +871,17 @@ def _ingest_embedding_families() -> tuple[str, ...]:
     return ("muq_embedding", "omar_embedding")
 
 
-async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _stage_key(path: str, profile: str) -> str:
+    digest = hashlib.sha256(profile.encode("utf-8"))
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+async def _background_flywheel(
+    songs: List[Dict[str, Any]], *, stage_cache=None, save_stage=None,
+) -> Dict[str, Any]:
     """Enrich queued songs and fail the job when required retrieval vectors are absent."""
     logger.info("[后台飞轮] 开始处理 %s 首歌...", len(songs))
 
@@ -862,6 +894,7 @@ async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
     failures: list[str] = []
     warnings: list[str] = []
     song_results: list[dict[str, Any]] = []
+    stage_cache = stage_cache or {}
 
     for song in songs:
         basename = song["file_basename"]
@@ -882,7 +915,15 @@ async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
             song_result["tagging_status"] = "deferred"
         elif os.path.exists(lrc_path):
             try:
-                tags = await _extract_lyrics_tags(basename, lrc_path)
+                tag_key = await asyncio.to_thread(
+                    _stage_key, lrc_path,
+                    f"tags-v1:{settings.llm_default_provider}:{settings.llm_default_model}",
+                ) if save_stage else ""
+                tags = stage_cache.get(tag_key)
+                if tags is None:
+                    tags = await _extract_lyrics_tags(basename, lrc_path)
+                    if tags and save_stage:
+                        await save_stage(tag_key, tags)
                 if tags:
                     enriched_tags = prepare_tag_enrichment(tags, source="llm_lyrics")
                     tag_query = _SONG_IDENTITY_MATCH + """
@@ -979,7 +1020,23 @@ async def _background_flywheel(songs: List[Dict[str, Any]]) -> Dict[str, Any]:
             song_results.append(song_result)
             continue
 
-        extraction = await _extract_embeddings(audio_path, families=embedding_families)
+        embed_key = await asyncio.to_thread(
+            _stage_key, audio_path,
+            "embeddings-v1:" + os.getenv("INGEST_EMBEDDING_REVISION", "default") + ":" + ",".join(embedding_families),
+        ) if save_stage else ""
+        cached_vectors = (stage_cache.get(embed_key) or {}).get("vectors", {})
+        dimensions = {"muq_embedding": 512, "omar_embedding": 1024, "m2d2_embedding": 768}
+        cached_vectors = {
+            name: vector for name, vector in cached_vectors.items()
+            if name in embedding_families and isinstance(vector, list) and len(vector) == dimensions[name]
+            and all(isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value)
+                    for value in vector)
+        }
+        remaining = tuple(name for name in embedding_families if not cached_vectors.get(name))
+        extraction = await _extract_embeddings(audio_path, families=remaining) if remaining else EmbeddingExtraction()
+        extraction.vectors = {**cached_vectors, **extraction.vectors}
+        if save_stage and extraction.vectors:
+            await save_stage(embed_key, {"vectors": extraction.vectors})
         vectors = extraction.vectors
         embedding_query = _SONG_IDENTITY_MATCH + """
         SET s.m2d2_embedding = CASE WHEN size($m2d2_embedding) > 0

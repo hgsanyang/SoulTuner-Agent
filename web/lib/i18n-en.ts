@@ -7,6 +7,14 @@
  * otherwise that one string quietly falls back to Chinese in English mode.
  */
 export const EN_DICT: Record<string, string> = {
+    '删除未完成，请稍后重试: {v0}': 'Deletion is incomplete. Please retry later: {v0}',
+    '删除重试失败，待处理任务已保留': 'Deletion retry failed. Pending requests have been retained.',
+    '处理中…': 'Processing…',
+    '待处理的记忆删除已完成': 'Pending memory deletions are complete.',
+    '有 {v0} 项记忆删除任务尚未完成，可能包含批量删除。': '{v0} memory deletion tasks are pending, including possible bulk deletions.',
+    '删除未确认完成，请刷新状态后重试': 'Deletion has not been confirmed. Refresh the status before retrying.',
+    '部分删除仍未完成，请稍后重试': 'Some deletions are still pending. Please retry later.',
+    '重试删除': 'Retry deletion',
     '例: 0.65 = 保留 65% 候选歌曲进入精排，其余淘汰': 'e.g. 0.65 keeps 65% of candidates for reranking and drops the rest',
     '完全移除，此操作不可逆！': 'completely. This cannot be undone.',
     '将从图谱、音频、封面、歌词中': 'Removes it from the graph, audio, cover and lyrics',
@@ -690,4 +698,8 @@ export const EN_DICT: Record<string, string> = {
     '共 {v0} 首': '{v0} total',
     '标为「本地没有」的歌，可以在推荐里直接搜歌名让联网通道去取；能取到多少取决于你账号对这首歌的权限，取不到的会如实报「音源获取失败」，不会绕过。': 'For anything marked "Not local", search the title in Recommendations and let the web lane fetch it. How much it can fetch depends on what your account is entitled to; anything it cannot get is reported honestly as unavailable rather than worked around.',
     '今天没有拿到日推。可能是接口变了或者今天还没生成 —— 这是补充源，取不到不影响其他功能。': 'No daily list today. The upstream API may have changed, or it has not been generated yet — this is a supplementary source, so nothing else is affected.',
+    '待处理的偏好写入已完成': 'Pending preference write completed',
+    '偏好写入重试失败，待处理任务已保留': 'Preference recovery failed; the pending task is retained',
+    '有偏好写入尚未完成，请先恢复再修改偏好。': 'A preference write is pending. Recover it before making further changes.',
+    '重试写入': 'Retry write',
 };

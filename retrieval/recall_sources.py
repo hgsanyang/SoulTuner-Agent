@@ -41,6 +41,7 @@ def _record_to_song(record: Mapping[str, Any]) -> dict:
     scenarios = _clean_list(record.get("scenarios"))
     display_parts = genres[:2] + moods[:1] + scenarios[:1]
     return {
+        "music_id": record.get("music_id"),
         "title": record.get("title") or "未知标题",
         "artist": record.get("artist")
         or "、".join(_clean_list(record.get("artists")))
@@ -124,7 +125,7 @@ def graph_candidate_recall(
         nonlocal candidate_eids
         if len(candidate_eids) >= candidate_limit:
             return
-        rows = client.execute_query(cypher, {**params, "candidate_limit": candidate_limit})
+        rows = client.execute_read_query(cypher, {**params, "candidate_limit": candidate_limit})
         candidate_eids = _merge_eids(candidate_eids, rows)
 
     playable = _playable_song_where("s")
@@ -229,7 +230,7 @@ def graph_candidate_recall(
     OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
     OPTIONAL MATCH (s)-[:HAS_THEME]->(t:Theme)
     OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
-    RETURN elementId(s) AS eid, s.title AS title, s.artist AS artist,
+    RETURN elementId(s) AS eid, s.music_id AS music_id, s.title AS title, s.artist AS artist,
            collect(DISTINCT a.name) AS artists, s.album AS album,
            s.audio_url AS audio_url, s.cover_url AS cover_url, s.lrc_url AS lrc_url,
            coalesce(s.language, 'Unknown') AS language,
@@ -253,7 +254,7 @@ def graph_candidate_recall(
            collect(DISTINCT sc.name) AS scenarios,
            coalesce(s.updated_at, 0) AS updated_at
     """
-    rows = client.execute_query(query, {"eids": candidate_eids})
+    rows = client.execute_read_query(query, {"eids": candidate_eids})
 
     def _contains(value: str, options: List[str]) -> bool:
         normalized = normalize_text(value)

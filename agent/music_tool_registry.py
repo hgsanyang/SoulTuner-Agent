@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Mapping
+from typing import Any, Mapping, Callable, Awaitable
 
 from agent.catalog_gap import analyze_catalog_gap
 from agent.tool_orchestrator import ToolRegistry
@@ -27,7 +27,26 @@ def _decode_songs(value: Any) -> list[dict[str, Any]]:
             return []
     if isinstance(value, dict):
         value = value.get("songs") or value.get("data") or []
-    return [dict(item) for item in value if isinstance(item, Mapping)] if isinstance(value, list) else []
+    return [dict(item) for item in value if isinstance(item, Mapping)
+            and not item.get("error") and (item.get("title") or item.get("music_id"))] if isinstance(value, list) else []
+
+
+def _audio_observation(raw: Any) -> dict[str, Any]:
+    """Legacy semantic search returns JSON error records, not raised errors."""
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except (ValueError, TypeError):
+        return {"songs": [], "source": "audio", "success": False, "error": "invalid audio search response"}
+    records = value if isinstance(value, list) else [value]
+    failed = any(isinstance(item, Mapping) and (item.get("error") or item.get("success") is False)
+                 for item in records)
+    if not isinstance(value, (list, dict)):
+        failed = True
+    result = {"songs": _decode_songs(value), "source": "audio", "success": not failed}
+    if failed:
+        # Do not expose database details from the legacy error string.
+        result["error"] = "audio search failed or returned incomplete results"
+    return result
 
 
 def _dependency_songs(dependencies: Mapping[str, ToolObservation]) -> list[dict[str, Any]]:
@@ -57,6 +76,7 @@ def build_music_tool_registry(
     query: str,
     retrieval_plan: Mapping[str, Any] | None = None,
     web_enabled: bool = True,
+    authorized_memory_writer: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
 ) -> ToolRegistry:
     """Build request-scoped executors without exposing identity or credentials."""
 
@@ -65,11 +85,15 @@ def build_music_tool_registry(
 
     async def retrieve_memory(arguments: dict[str, Any], _deps: dict[str, ToolObservation]) -> Any:
         gateway = get_memory_gateway()
-        return await gateway.retrieve_context(
+        result = await gateway.retrieve_context(
             query=str(arguments.get("query") or query),
             user_id=user_id,
             max_facts=int(arguments.get("limit") or 8),
         )
+        if (result.get("memory_trace") or {}).get("status") == "degraded":
+            return {**result, "success": False, "error": "memory retrieval degraded",
+                    "metadata": {"partial": bool(result.get("profile") or result.get("retrieved_records"))}}
+        return result
 
     async def search_graph(arguments: dict[str, Any], _deps: dict[str, ToolObservation]) -> Any:
         hard = {
@@ -113,10 +137,11 @@ def build_music_tool_registry(
         payload = {
             "query": variants[0],
             "query_variants": variants,
+            "negative_targets": list(arguments.get("negative_targets") or []),
             "limit": int(arguments.get("limit") or 30),
         }
         raw = await asyncio.to_thread(semantic_search.invoke, payload)
-        return {"songs": _decode_songs(raw), "source": "audio"}
+        return _audio_observation(raw)
 
     async def inspect_gap(arguments: dict[str, Any], dependencies: dict[str, ToolObservation]) -> Any:
         plan = dict(trusted_plan)
@@ -136,9 +161,13 @@ def build_music_tool_registry(
         return data
 
     async def search_external(arguments: dict[str, Any], _deps: dict[str, ToolObservation]) -> Any:
+        if not web_enabled:
+            return {"songs": [], "source": "external", "success": False,
+                    "error": "web search is disabled for this request"}
         result = await execute_search_online_music(str(arguments.get("requirements") or query))
         return {
-            "songs": list(result.data or []) if result.success else [],
+            "success": result.success,
+            "songs": list(result.data or []),
             "source": "external",
             "error": result.error_message or "",
         }
@@ -155,16 +184,12 @@ def build_music_tool_registry(
         return {"songs": playable[: int(arguments.get("limit") or 10)], "source": "resolver"}
 
     async def commit_memory(arguments: dict[str, Any], _deps: dict[str, ToolObservation]) -> Any:
-        result = get_memory_gateway().remember_preference(
-            user_id=user_id,
-            preferences=dict(arguments.get("values") or {}),
-        )
-        return {
-            "success": result.success,
-            "evidence_id": arguments.get("evidence_id"),
-            "preference_update": result.preference_update,
-            "error": result.error,
-        }
+        # A plan's self-reported evidence/confidence is never authorization.
+        # The application writer must verify ownership/source and dispatch the
+        # declared memory type; absent that integration, fail closed.
+        if authorized_memory_writer is None:
+            return {"success": False, "error": "memory write requires server-side evidence authorization"}
+        return await authorized_memory_writer(user_id, dict(arguments))
 
     async def read_library(arguments: dict[str, Any], _deps: dict[str, ToolObservation]) -> Any:
         """Read a bounded user collection without accepting identity from the plan."""
@@ -183,6 +208,7 @@ def build_music_tool_registry(
         cypher = f"""
         MATCH (u:User {{id: $user_id}})-[r:{relation}]->(s:Song)
         OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        WITH s, r, a
         WHERE $query = ''
            OR toLower(s.title) CONTAINS toLower($query)
            OR toLower(coalesce(a.name, s.artist, '')) CONTAINS toLower($query)
@@ -198,7 +224,7 @@ def build_music_tool_registry(
         """
         client = get_neo4j_client()
         records = await asyncio.to_thread(
-            client.execute_query,
+            getattr(client, "execute_read_query", client.execute_query),
             cypher,
             {
                 "user_id": user_id,

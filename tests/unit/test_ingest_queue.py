@@ -5,6 +5,16 @@ import pytest
 from services import ingest_queue
 
 
+def test_non_object_job_is_visible_and_quarantined(tmp_path, monkeypatch):
+    for name in ("PENDING_DIR", "PROCESSING_DIR", "DONE_DIR", "FAILED_DIR"):
+        monkeypatch.setattr(ingest_queue, name, tmp_path / name)
+    ingest_queue._ensure_dirs()
+    (ingest_queue.PENDING_DIR / "malformed.json").write_text("[]", encoding="utf-8")
+    assert ingest_queue.list_jobs()[0]["valid"] is False
+    assert ingest_queue.claim_next_job() is None
+    assert ingest_queue.list_jobs()[0]["status"] == "failed"
+
+
 def _song(title: str = "Song A", artist: str = "Artist A") -> dict:
     return {
         "title": title,
@@ -12,6 +22,66 @@ def _song(title: str = "Song A", artist: str = "Artist A") -> dict:
         "audio_url": "/static/online_audio/Song A - Artist A.mp3",
         "file_basename": "Song A - Artist A",
     }
+
+
+def test_duplicate_submission_returns_same_active_job(tmp_path, monkeypatch):
+    for name in ("PENDING_DIR", "PROCESSING_DIR", "DONE_DIR", "FAILED_DIR"):
+        monkeypatch.setattr(ingest_queue, name, tmp_path / name)
+    job = ingest_queue.enqueue_songs([_song()])
+    assert ingest_queue.enqueue_songs([_song()]) == job
+    path, _ = ingest_queue.claim_next_job()
+    assert ingest_queue.enqueue_songs([_song()]) == job
+    ingest_queue.complete_job(path)
+    assert ingest_queue.enqueue_songs([_song()]) != job  # Explicit re-enrichment remains possible.
+
+
+def test_lease_recovery_fences_old_worker_and_bounds_retries(tmp_path, monkeypatch):
+    for name in ("PENDING_DIR", "PROCESSING_DIR", "DONE_DIR", "FAILED_DIR"):
+        monkeypatch.setattr(ingest_queue, name, tmp_path / name)
+    now = [1000.]
+    monkeypatch.setattr(ingest_queue.time, "time", lambda: now[0])
+    job_id = ingest_queue.enqueue_songs([_song()])
+    first, payload = ingest_queue.claim_next_job()
+    assert payload["attempt"] == 1
+    ingest_queue.checkpoint_song(first, 0, {"song_count": 1})
+    now[0] += 60
+    assert ingest_queue.heartbeat(first)
+    now[0] += 61
+    assert ingest_queue.recover_expired_jobs() == 0
+    now[0] += 61
+    second, payload = ingest_queue.claim_next_job()
+    assert payload["attempt"] == 2 and second != first
+    assert payload["completed_songs"] == {"0": {"song_count": 1}}
+    with pytest.raises(FileNotFoundError):
+        ingest_queue.checkpoint_song(first, 0, {})
+    assert not ingest_queue.heartbeat(first)
+    with pytest.raises(FileNotFoundError):
+        ingest_queue.complete_job(first)
+    now[0] += 121
+    third, payload = ingest_queue.claim_next_job()
+    assert payload["attempt"] == 3
+    now[0] += 121
+    assert ingest_queue.claim_next_job() is None
+    assert (ingest_queue.FAILED_DIR / f"{job_id}.json").exists()
+
+
+@pytest.mark.parametrize("job_id", ["../outside", "..\\outside", "C:\\outside", "/outside", "x/y", "x:y", "", "a" * 81])
+def test_retry_rejects_unsafe_job_ids(tmp_path, monkeypatch, job_id):
+    for name in ("PENDING_DIR", "PROCESSING_DIR", "DONE_DIR", "FAILED_DIR"):
+        monkeypatch.setattr(ingest_queue, name, tmp_path / name)
+    assert ingest_queue.retry_failed_job(job_id) is False
+
+
+@pytest.mark.parametrize("bad", ["{broken", "[]", "null"])
+def test_bad_job_is_quarantined_and_next_job_claimed(tmp_path, monkeypatch, bad):
+    for name in ("PENDING_DIR", "PROCESSING_DIR", "DONE_DIR", "FAILED_DIR"):
+        monkeypatch.setattr(ingest_queue, name, tmp_path / name)
+    good = ingest_queue.enqueue_songs([_song()])
+    (ingest_queue.PENDING_DIR / "000-bad.json").write_text(bad, encoding="utf-8")
+    path, payload = ingest_queue.claim_next_job()
+    assert payload["job_id"] == good
+    assert path.parent == ingest_queue.PROCESSING_DIR
+    assert (ingest_queue.FAILED_DIR / "000-bad.json").exists()
 
 
 def test_ingest_queue_lifecycle(tmp_path, monkeypatch):

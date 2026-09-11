@@ -11,6 +11,7 @@ import math
 import re
 import time
 from typing import Any, Mapping
+from retrieval.candidate_identity import candidate_identity
 
 
 DAY_MS = 86_400_000
@@ -391,7 +392,7 @@ def acoustic_probe_fit_scores(
 def _metadata_for(item: Mapping[str, Any], metadata_by_title: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any]:
     song = item.get("song") or {}
     title = str(song.get("title") or "")
-    return metadata_by_title.get(title) or {}
+    return metadata_by_title.get(candidate_identity(song)["key"]) or metadata_by_title.get(title) or {}
 
 
 def _base_score(item: Mapping[str, Any], score_field: str) -> float:

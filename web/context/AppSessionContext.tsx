@@ -90,6 +90,12 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
   const [profileError, setProfileError] = useState('');
 
   useEffect(() => {
+    const onExpired = (event: Event) => setProfileError(String((event as CustomEvent).detail));
+    window.addEventListener('soultuner:visitor-expired', onExpired);
+    return () => window.removeEventListener('soultuner:visitor-expired', onExpired);
+  }, []);
+
+  useEffect(() => {
     const cachedProfiles = readCachedProfiles();
     const cachedProfileId = localStorage.getItem(ACTIVE_PROFILE_KEY) || DEFAULT_PROFILE.profile_id;
     const cachedMode = localStorage.getItem(ACTIVE_MODE_KEY);
@@ -117,6 +123,7 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
         const remoteProfiles = normalizeProfiles(await response.json());
         if (remoteProfiles.length === 0) return;
         setProfiles(remoteProfiles);
+        if (remoteProfiles[0].profile_id.startsWith('anon:')) setMode('personal');
         setActiveProfileId(current => (
           remoteProfiles.some(profile => profile.profile_id === current)
             ? current
@@ -157,12 +164,14 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const switchProfile = useCallback((profileId: string) => {
+    if (activeProfileId.startsWith('anon:')) return;
     if (profileId === activeProfileId) return;
     setActiveProfileId(profileId);
     startFreshSession(profileId, interactionMode);
   }, [activeProfileId, interactionMode, startFreshSession]);
 
   const setInteractionMode = useCallback((mode: InteractionMode) => {
+    if (activeProfileId.startsWith('anon:')) return;
     if (mode === interactionMode) return;
     setMode(mode);
     startFreshSession(activeProfileId, mode);

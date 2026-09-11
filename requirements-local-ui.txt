@@ -1,0 +1,3 @@
+# Optional local presentation only; no model dependencies.
+gradio>=5.49,<6
+httpx>=0.27,<1

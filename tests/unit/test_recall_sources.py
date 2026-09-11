@@ -4,7 +4,7 @@ from retrieval import recall_sources
 
 
 class _Client:
-    def execute_query(self, query, _params=None):
+    def execute_read_query(self, query, _params=None):
         if "RETURN DISTINCT elementId(s) AS eid" in query:
             return [{"eid": "1"}, {"eid": "2"}]
         return [
@@ -69,7 +69,7 @@ def test_artist_recall_falls_back_to_denormalized_song_artist(monkeypatch):
     queries = []
 
     class _ArtistFallbackClient:
-        def execute_query(self, query, _params=None):
+        def execute_read_query(self, query, _params=None):
             queries.append(query)
             if "RETURN DISTINCT elementId(s) AS eid" in query:
                 return [{"eid": "jay-1"}]

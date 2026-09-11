@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 import hashlib
 import json
 import logging
@@ -10,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator
 
 from retrieval.user_memory import SEMANTIC_CONFLICT_FIELDS, SEMANTIC_LIST_FIELDS
 from services.memory_event_store import MemoryEventStore
@@ -67,6 +68,7 @@ class InferredPreferenceCandidate(BaseModel):
 
 
 class MemoryConsolidationProposal(BaseModel):
+    _invalid_candidates: list = PrivateAttr(default_factory=list)
     candidates: list[InferredPreferenceCandidate] = Field(default_factory=list, max_length=20)
     abstained: bool = False
     summary: str = Field(default="", max_length=300)
@@ -185,15 +187,16 @@ class MemoryConsolidator:
         )
 
     async def consolidate(self, *, user_id: str) -> MemoryConsolidationReport:
-        evidence = list(reversed(self.event_store.recent_evidence(user_id=user_id, limit=self.max_evidence)))
+        evidence = list(reversed(await asyncio.to_thread(
+            self.event_store.recent_evidence, user_id=user_id, limit=self.max_evidence)))
         report = MemoryConsolidationReport(user_id=user_id, evidence_count=len(evidence))
         if len(evidence) < self.min_evidence:
             report.abstained = True
             report.summary = "Insufficient independent evidence"
             return report
 
-        existing_scene_labels = self._existing_scene_labels(user_id)
-        existing_memories, known_memory_ids = self._existing_memory_summary(user_id)
+        existing_scene_labels = await asyncio.to_thread(self._existing_scene_labels, user_id)
+        existing_memories, _ = await asyncio.to_thread(self._existing_memory_summary, user_id)
         proposal, model_name, usage = await self._generate(
             user_id,
             evidence,
@@ -207,10 +210,11 @@ class MemoryConsolidator:
         report.total_tokens = usage["total_tokens"]
         report.abstained = proposal.abstained or not proposal.candidates
         report.summary = proposal.summary
-        accepted, rejected = self._validate(user_id=user_id, evidence=evidence, proposal=proposal)
+        accepted, rejected = await asyncio.to_thread(self._validate, user_id=user_id, evidence=evidence, proposal=proposal)
+        _, known_memory_ids = await asyncio.to_thread(self._existing_memory_summary, user_id)
         self._attach_validated_links(accepted, known_memory_ids=known_memory_ids)
         report.accepted = accepted
-        report.rejected = rejected
+        report.rejected = [*proposal._invalid_candidates, *rejected]
         return report
 
     def _existing_memory_summary(self, user_id: str) -> tuple[list[dict[str, Any]], set[str]]:
@@ -281,10 +285,13 @@ class MemoryConsolidator:
     ) -> tuple[MemoryConsolidationProposal, str, dict[str, int]]:
         payload = [self._evidence_payload(record) for record in evidence]
         if self.generator is not None:
-            result = self.generator(user_id, payload)
+            if inspect.iscoroutinefunction(self.generator):
+                result = self.generator(user_id, payload)
+            else:
+                result = await asyncio.to_thread(self.generator, user_id, payload)
             if inspect.isawaitable(result):
                 result = await result
-            proposal = result if isinstance(result, MemoryConsolidationProposal) else MemoryConsolidationProposal.model_validate(result)
+            proposal = result if isinstance(result, MemoryConsolidationProposal) else self._parse_proposal(result)
             return proposal, "injected-test-generator", self._empty_usage()
 
         from config.settings import settings
@@ -331,10 +338,29 @@ class MemoryConsolidator:
             raw = result.get("raw") if isinstance(result, dict) else result
             content = getattr(raw, "content", raw)
             payload = self._decode_json_payload(content)
-            proposal = MemoryConsolidationProposal.model_validate(
+            proposal = self._parse_proposal(
                 self._normalize_llm_payload(payload)
             )
         return proposal, f"{provider}:{model_name}", self._extract_usage(result)
+
+    @staticmethod
+    def _parse_proposal(payload: dict) -> MemoryConsolidationProposal:
+        # Validate envelope shape/size first; malformed individual candidates are
+        # rejected independently, not silently repaired into believable memories.
+        if not isinstance(payload, dict):
+            raise ValueError("memory proposal must be an object")
+        candidates = payload.get("candidates", [])
+        if not isinstance(candidates, list) or len(candidates) > 20:
+            raise ValueError("memory proposal requires at most 20 candidates")
+        accepted, rejected = [], []
+        for item in candidates:
+            try:
+                accepted.append(InferredPreferenceCandidate.model_validate(item))
+            except ValidationError:
+                rejected.append(RejectedMemoryCandidate("", "", "invalid_candidate_schema"))
+        proposal = MemoryConsolidationProposal.model_validate({**payload, "candidates": accepted})
+        proposal._invalid_candidates = rejected
+        return proposal
 
     def _validate(
         self,
@@ -343,7 +369,13 @@ class MemoryConsolidator:
         evidence: list[MemoryRecord],
         proposal: MemoryConsolidationProposal,
     ) -> tuple[list[InferredPreferenceCandidate], list[RejectedMemoryCandidate]]:
-        evidence_by_id = {record.record_id: record for record in evidence if record.user_id == user_id}
+        # Generation may take seconds: evidence revoked while it was running
+        # must not authorize a new inferred preference on return.
+        evidence_by_id = {
+            record.record_id: record for record in evidence
+            if record.user_id == user_id and self.event_store.is_effective_record(
+                user_id=user_id, record_id=record.record_id)
+        }
         explicit = self.event_store.effective_records(user_id=user_id, limit=1000)
         explicit_keys = {
             record.memory_key
@@ -400,7 +432,9 @@ class MemoryConsolidator:
             "contextual": self.default_ttl_days,
             "temporary": min(self.default_ttl_days, 14),
         }
-        requested = int(candidate.ttl_days or defaults[candidate.scope])
+        # Free-form scenes describe applicability, not a new durability policy.
+        # Preserve their label and use the contextual lifetime when unspecified.
+        requested = int(candidate.ttl_days or defaults.get(candidate.scope, defaults["contextual"]))
         return max(7, min(requested, 180))
 
     @staticmethod

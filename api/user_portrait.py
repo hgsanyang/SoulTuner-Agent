@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, Request
+from api.public_errors import public_error
 from config.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -50,7 +51,7 @@ async def get_user_portrait(raw_request: Request, user_id: str = "local_admin"):
         }
     except Exception as e:
         logger.error(f"[UserPortrait] 获取画像失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @router.post("/api/user-portrait/refresh")
@@ -81,4 +82,4 @@ async def refresh_user_portrait(raw_request: Request, user_id: str = "local_admi
         }
     except Exception as e:
         logger.error(f"[UserPortrait] 画像刷新失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}

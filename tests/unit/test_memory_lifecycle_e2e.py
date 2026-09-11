@@ -32,6 +32,7 @@ class FakePrimary:
 
     def remember_preference(self, user_id, preferences):
         self.preferences.append((user_id, preferences))
+        return True
 
     def get_user_profile(self, user_id, limit=30):
         return {}

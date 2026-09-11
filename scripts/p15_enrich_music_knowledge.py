@@ -322,15 +322,17 @@ def main() -> None:
         "--no-llm-summary",
         action="store_false",
         dest="use_llm_summary",
-        help="Disable DashScope/Qwen. No card is generated unless --allow-snippet-fallback is also set.",
+        help="Disable DashScope/Qwen; no new web knowledge card is generated.",
     )
     parser.add_argument(
         "--allow-snippet-fallback",
         action="store_true",
-        help="Explicitly allow legacy Tavily/Zhipu/SearxNG snippet fallback when Qwen web_search fails.",
+        help="Retired option; rejected. Only API-native search is supported.",
     )
     parser.add_argument("--sync-qdrant", action="store_true", help="Mirror generated cards into Qdrant.")
     args = parser.parse_args()
+    if args.allow_snippet_fallback:
+        parser.error("--allow-snippet-fallback has been retired; use API-native search")
     print(json.dumps(asyncio.run(run(args)), ensure_ascii=False, indent=2))
 
 

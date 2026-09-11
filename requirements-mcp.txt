@@ -1,0 +1,3 @@
+# Optional local music MCP adapter; isolated from the API/ML environment.
+mcp==2.2.0
+httpx>=0.27,<1

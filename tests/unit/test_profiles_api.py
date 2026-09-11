@@ -90,7 +90,9 @@ def test_playlist_stream_uses_profile_mode_context(monkeypatch):
             "X-SoulTuner-Mode": "developer",
             "X-SoulTuner-Session": "session-a",
         },
-        json={"query": "rainy evening"},
+        json={"query": "rainy evening", "chat_history": [{"role": "user", "content": "dreamier"}],
+              "dialog_state": {"scene": "rain"}, "web_search_enabled": False, "llm_provider": "local",
+              "timezone": "Asia/Shanghai", "scene": "reading", "device": "headphones"},
     )
 
     assert response.status_code == 200
@@ -98,3 +100,14 @@ def test_playlist_stream_uses_profile_mode_context(monkeypatch):
     assert captured["runtime_context"].profile_id == "profile-a"
     assert captured["runtime_context"].training_eligible is False
     assert captured["runtime_context"].session_id == "session-a"
+    assert captured["chat_history"] == [{"role": "user", "content": "dreamier"}]
+    assert captured["dialog_state"] == {"scene": "rain"}
+    assert captured["web_search_enabled"] is False
+    assert captured["llm_provider"] == "local"
+    assert captured["client_context"]["scene"] == "reading"
+
+
+def test_recommendation_defaults_do_not_force_external_provider():
+    from api.server import RecommendationRequest, PlaylistRequest
+    assert RecommendationRequest(query="rain").llm_provider is None
+    assert PlaylistRequest(query="rain").llm_provider is None

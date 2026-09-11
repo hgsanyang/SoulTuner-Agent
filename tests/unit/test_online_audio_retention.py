@@ -5,6 +5,12 @@ import pytest
 from services.online_audio_retention import retain_online_audio
 
 
+@pytest.mark.parametrize("name", ["..", "../outside", "x:y", "x\\y", "x\x00y"])
+def test_retention_rejects_unsafe_names(tmp_path, name):
+    with pytest.raises(ValueError):
+        retain_online_audio(tmp_path, file_basename=name)
+
+
 def test_retain_online_audio_by_basename_marks_saved(tmp_path):
     root = tmp_path / "online_acquired"
     (root / "audio").mkdir(parents=True)

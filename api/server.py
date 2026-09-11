@@ -196,6 +196,11 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Music Recommendation API", version="1.0.0", lifespan=lifespan)
+from api.public_errors import public_error
+from api.anonymous_sessions import AnonymousSessionMiddleware
+app.add_middleware(AnonymousSessionMiddleware)
+from api.visitor_memory import router as visitor_memory_router
+app.include_router(visitor_memory_router)
 app.include_router(user_profile_router)
 app.include_router(profiles_router)
 app.include_router(user_portrait_router)
@@ -340,7 +345,7 @@ class RecommendationRequest(BaseModel):
     user_id: str = "local_admin"
     profile_id: str = ""
     interaction_mode: str = ""
-    llm_provider: str = "dashscope"            # 模型供应商: dashscope / siliconflow / google / ...
+    llm_provider: Optional[str] = None       # Unspecified uses the configured default, including local models.
     web_search_enabled: bool = True           # 是否开启联网搜索
     # 客户端测得的收听上下文（只有客户端知道用户时区/会话/场景），随请求带上，
     # 事后无法回填；服务端不得用自己的时钟顶替。
@@ -359,6 +364,13 @@ class PlaylistRequest(BaseModel):
     profile_id: str = ""
     interaction_mode: str = ""
     session_id: str = ""
+    chat_history: Optional[List[Dict[str, str]]] = None
+    dialog_state: Optional[Dict[str, Any]] = None
+    web_search_enabled: Optional[bool] = None
+    llm_provider: Optional[str] = None
+    timezone: str = ""
+    scene: str = ""
+    device: str = ""
 
 
 class SearchRequest(BaseModel):
@@ -458,13 +470,53 @@ async def stream_recommendations(
     client_context: Optional[Dict[str, Any]] = None,
     is_disconnected=None,
     runtime_context=None,
+    llm_provider: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
+    """Own the request stream and isolate its configuration until cleanup."""
+    from contextlib import aclosing
+
+    from api.recommendation_execution import build_recommendation_execution
+    from services.owned_stream import owned_stream
+
+    try:
+        choices = {"web_search_enabled": web_search_enabled}
+        if llm_provider:
+            choices["provider"] = llm_provider
+        execution = build_recommendation_execution(**choices)
+        source = _stream_recommendations(
+            query=query, genre=genre, mood=mood,
+            user_preferences=user_preferences, chat_history=chat_history,
+            dialog_state=dialog_state, user_id=user_id,
+            web_search_enabled=web_search_enabled, client_context=client_context,
+            runtime_context=runtime_context,
+        )
+        async with aclosing(owned_stream(
+            source, is_disconnected=is_disconnected, execution=execution
+        )) as events:
+            async for event in events:
+                yield event
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Failed to initialize or consume recommendation stream")
+        yield f"data: {json.dumps({'type': 'error', 'message': '推荐服务暂不可用，请检查模型配置或稍后重试'}, ensure_ascii=False)}\n\n"
+
+
+async def _stream_recommendations(
+    query: str,
+    genre: Optional[str] = None,
+    mood: Optional[str] = None,
+    user_preferences: Optional[Dict[str, Any]] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    dialog_state: Optional[Dict[str, Any]] = None,
+    user_id: str = "local_admin",
+    web_search_enabled: bool = True,
+    client_context: Optional[Dict[str, Any]] = None,
+    runtime_context=None,
 ) -> AsyncGenerator[str, None]:
     """
-    流式生成推荐结果 (真流式：推荐解释逐 chunk 推送)
+    流式生成推荐结果；外层 owned_stream 负责断线检测与生命周期管理。
 
-    Args:
-        is_disconnected: 可选的异步回调，检测客户端是否已断开连接。
-                         由 FastAPI 端点通过 request.is_disconnected 注入。
     Yields:
         SSE格式的数据块
     """
@@ -477,48 +529,7 @@ async def stream_recommendations(
     try:
         agent = get_agent()
 
-        # 根据 settings 配置初始化 LLM（provider/model 统一由设置面板管理）
-        try:
-            from llms.multi_llm import (
-                get_chat_model,
-                get_conversation_chat_model,
-                get_explain_chat_model,
-                get_intent_chat_model,
-            )
-            from agent.music_graph import (
-                set_conversation_llm,
-                set_explain_llm,
-                set_intent_llm,
-                set_llm,
-            )
-            from config.settings import settings as _req_settings
-
-            _provider = _req_settings.llm_default_provider or "dashscope"
-            _model = _req_settings.llm_default_model
-
-            new_llm = get_chat_model(provider=_provider, model_name=_model)
-            set_llm(new_llm)
-
-            # 用户可见自然语言使用独立角色模型。Planner LoRA 若被误配到
-            # 这里会由工厂硬拒绝，而不是把结构化 JSON 当作聊天回复。
-            set_conversation_llm(get_conversation_chat_model())
-
-            # 同步切换意图分析 LLM（如果没有独立配置，跟随主模型）
-            if not _req_settings.intent_llm_model:
-                new_intent = get_intent_chat_model()
-                set_intent_llm(new_intent)
-
-            # 同步切换解释生成 LLM（如果没有独立配置，跟随主模型）
-            if not _req_settings.explain_llm_model:
-                new_explain = get_explain_chat_model()
-                set_explain_llm(new_explain)
-
-            logger.info(f"LLM 初始化: {_provider} / {_model}")
-        except Exception as e:
-            logger.warning(f"切换 LLM 失败,使用默认配置: {e}")
-
-        # 通过环境变量传递联网搜索开关
-        os.environ["MUSIC_WEB_SEARCH_ENABLED"] = "1" if web_search_enabled else "0"
+        # The owning producer task already holds immutable model/permission choices.
         logger.info(f"联网搜索: {'ON' if web_search_enabled else 'OFF'}")
 
         logger.info("\n" + "🚀" * 30)
@@ -530,67 +541,40 @@ async def stream_recommendations(
         await asyncio.sleep(0.1)
 
         # 使用流式推荐方法：推荐解释会逐 chunk 实时推送
-        async for event in agent.stream_recommendations(
+        from contextlib import aclosing
+
+        agent_events = agent.stream_recommendations(
             query=query,
             chat_history=chat_history,
             user_preferences=user_preferences,
             dialog_state=dialog_state,
             user_id=user_id,
             client_context=client_context,
-        ):
-            # ★ 检测客户端是否已断开（用户点击了"停止生成"）
-            if is_disconnected:
-                try:
-                    disconnected = await is_disconnected()
-                except Exception:
-                    disconnected = False
-                if disconnected:
-                    logger.info("🛑 [SSE] 检测到客户端断开连接，停止推送并取消后台任务")
-                    # 取消 agent 内部的 graph_task
-                    _internal_task = getattr(agent, '_current_graph_task', None)
-                    if _internal_task and not _internal_task.done():
-                        _internal_task.cancel()
-                        logger.info("🛑 [SSE] 后台 graph_task 已取消")
-                    return
-
-            event_type = event.get("type")
-
-            if event_type == "thinking":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            elif event_type == "response":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                # 流式 chunk 不需要 sleep，尽快推送
-
-            elif event_type == "recommendations_start":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            elif event_type == "song":
-                song = event.get("song", {})
-                if isinstance(song, dict) and song.get("title"):
+        )
+        # aclosing also closes the agent when cancellation happens at an SSE yield.
+        async with aclosing(agent_events):
+            async for event in agent_events:
+                event_type = event.get("type")
+                if event_type == "song":
+                    song = event.get("song", {})
+                    if isinstance(song, dict) and song.get("title"):
+                        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                elif event_type == "error":
+                    # Agent errors may contain provider/driver exception details.
+                    yield f"data: {json.dumps({'type': 'error', 'message': '推荐流程暂未完成，请稍后重试'}, ensure_ascii=False)}\n\n"
+                elif event_type in {
+                    "thinking", "response", "recommendations_start",
+                    "recommendations_complete", "clarification_required",
+                    "complete", "refinement",
+                }:
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.1)
-
-            elif event_type == "recommendations_complete":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            elif event_type == "clarification_required":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            elif event_type == "complete":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            elif event_type == "refinement":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            elif event_type == "error":
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     except asyncio.CancelledError:
         logger.info("🛑 [SSE] 流式推荐被取消")
+        raise
     except Exception as e:
         logger.error(f"流式推荐失败: {str(e)}", exc_info=True)
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'message': public_error(e)}, ensure_ascii=False)}\n\n"
     finally:
         if _runtime_token is not None:
             from services.runtime_context import reset_runtime_context
@@ -605,6 +589,47 @@ async def stream_playlist(
     user_preferences: Optional[Dict[str, Any]] = None,
     user_id: str = "local_admin",
     runtime_context=None,
+    is_disconnected=None,
+    chat_history=None,
+    dialog_state=None,
+    client_context=None,
+    web_search_enabled: Optional[bool] = None,
+    llm_provider: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
+    """Keep legacy playlist execution and cleanup within one request owner."""
+    from contextlib import aclosing
+
+    from api.recommendation_execution import build_recommendation_execution
+    from services.owned_stream import owned_stream
+    from services.recommendation_execution import web_search_allowed
+
+    choices = {"web_search_enabled": web_search_allowed() if web_search_enabled is None else web_search_enabled}
+    if llm_provider:
+        choices["provider"] = llm_provider
+    execution = build_recommendation_execution(**choices)
+    source = _stream_playlist(
+        query=query, target_size=target_size, public=public,
+        user_preferences=user_preferences, user_id=user_id,
+        runtime_context=runtime_context,
+        chat_history=chat_history, dialog_state=dialog_state, client_context=client_context,
+    )
+    async with aclosing(owned_stream(
+        source, execution=execution, is_disconnected=is_disconnected,
+    )) as events:
+        async for event in events:
+            yield event
+
+
+async def _stream_playlist(
+    query: str,
+    target_size: int = 30,
+    public: bool = False,
+    user_preferences: Optional[Dict[str, Any]] = None,
+    user_id: str = "local_admin",
+    runtime_context=None,
+    chat_history=None,
+    dialog_state=None,
+    client_context=None,
 ) -> AsyncGenerator[str, None]:
     """
     流式生成歌单(已降级为基于推荐引擎的本地歌单)
@@ -615,40 +640,49 @@ async def stream_playlist(
             from services.runtime_context import set_runtime_context
 
             _runtime_token = set_runtime_context(runtime_context)
+            user_id = runtime_context.effective_user_id
         agent = get_agent()
 
         yield f"data: {json.dumps({'type': 'start', 'message': '开始生成你的专属歌单...'}, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0.1)
 
         yield f"data: {json.dumps({'type': 'thinking', 'message': '正在通过推荐引擎分析...'}, ensure_ascii=False)}\n\n"
 
-        # 使用推荐引擎生成歌单(替代已废弃的 Spotify 服务)
-        result = await agent.get_recommendations(
+        # Reuse the actual recommendation stream: do not wait for prose before
+        # releasing songs or invent success when the producer failed.
+        from contextlib import aclosing
+        events = agent.stream_recommendations(
             query=query,
+            chat_history=chat_history,
+            dialog_state=dialog_state,
             user_preferences=user_preferences or {},
             user_id=user_id,
             client_context={
+                **(client_context or {}),
                 "session_id": getattr(runtime_context, "session_id", ""),
             },
         )
 
-        if result.get("success") and result.get("recommendations"):
-            raw_songs = result["recommendations"]
-            songs = getattr(raw_songs, "data", raw_songs)
-            if not isinstance(songs, list):
-                songs = []
-            yield f"data: {json.dumps({'type': 'songs_start', 'count': len(songs)}, ensure_ascii=False)}\n\n"
-            for i, song in enumerate(songs):
-                song_data = song.get("song", song) if isinstance(song, dict) else song
-                yield f"data: {json.dumps({'type': 'song', 'song': song_data, 'index': i, 'total': len(songs)}, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0.05)
-            yield f"data: {json.dumps({'type': 'songs_complete'}, ensure_ascii=False)}\n\n"
-
-        yield f"data: {json.dumps({'type': 'complete', 'success': True}, ensure_ascii=False)}\n\n"
+        completed = False
+        async with aclosing(events):
+            async for event in events:
+                event_type = event.get("type")
+                if event_type == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'message': '推荐流程暂未完成，请稍后重试'}, ensure_ascii=False)}\n\n"
+                    return
+                if event_type not in {"recommendations_start", "song", "recommendations_complete",
+                                      "thinking", "response", "clarification_required", "complete", "refinement"}:
+                    continue
+                mapped = {**event, "type": {"recommendations_start": "songs_start",
+                                           "recommendations_complete": "songs_complete"}.get(event_type, event_type)}
+                if event_type == "complete":
+                    completed = True
+                yield f"data: {json.dumps(mapped, ensure_ascii=False)}\n\n"
+        if not completed:
+            yield f"data: {json.dumps({'type': 'error', 'message': '推荐流程尚未完成'}, ensure_ascii=False)}\n\n"
 
     except Exception as e:
         logger.error(f"流式歌单生成失败: {str(e)}", exc_info=True)
-        yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'message': public_error(e)}, ensure_ascii=False)}\n\n"
     finally:
         if _runtime_token is not None:
             from services.runtime_context import reset_runtime_context
@@ -703,6 +737,7 @@ async def get_stream_recommendations(request: RecommendationRequest, raw_request
             web_search_enabled=request.web_search_enabled,
             is_disconnected=raw_request.is_disconnected,
             runtime_context=runtime_context,
+            llm_provider=request.llm_provider,
         ),
         media_type="text/event-stream",
         headers={
@@ -735,6 +770,12 @@ async def stream_playlist_endpoint(request: PlaylistRequest, raw_request: Reques
             user_preferences=request.user_preferences,
             user_id=runtime_context.effective_user_id,
             runtime_context=runtime_context,
+            is_disconnected=raw_request.is_disconnected,
+            chat_history=request.chat_history,
+            dialog_state=request.dialog_state,
+            client_context={"timezone": request.timezone, "scene": request.scene, "device": request.device},
+            web_search_enabled=request.web_search_enabled,
+            llm_provider=request.llm_provider,
         ),
         media_type="text/event-stream",
         headers={
@@ -751,22 +792,14 @@ async def get_recommendations(request: RecommendationRequest, raw_request: Reque
     获取音乐推荐(非流式,兼容旧接口)
     """
     try:
-        # 根据前端传入的 provider 动态切换 LLM
-        try:
-            from llms.multi_llm import get_chat_model
-            from agent.music_graph import set_llm
-            new_llm = get_chat_model(provider=request.llm_provider)
-            set_llm(new_llm)
-            logger.info(f"切换 LLM provider 到 {request.llm_provider}")
-        except Exception as e:
-            logger.warning(f"切换 LLM 失败,使用默认配置: {e}")
-
-        # 通过环境变量传递联网搜索开关
-        os.environ["MUSIC_WEB_SEARCH_ENABLED"] = "1" if request.web_search_enabled else "0"
-
+        from api.recommendation_execution import build_recommendation_execution
         from api.runtime_context import runtime_context_from_request
+        from services.recommendation_execution import execution_scope
         from services.runtime_context import runtime_context_scope
 
+        execution = build_recommendation_execution(
+            web_search_enabled=request.web_search_enabled, provider=request.llm_provider
+        )
         runtime_context = runtime_context_from_request(
             raw_request,
             profile_id=request.profile_id,
@@ -775,7 +808,7 @@ async def get_recommendations(request: RecommendationRequest, raw_request: Reque
             session_id=request.session_id,
         )
         agent = get_agent()
-        with runtime_context_scope(runtime_context):
+        with execution_scope(execution), runtime_context_scope(runtime_context):
             result = await agent.get_recommendations(
                 query=request.query,
                 user_preferences=request.user_preferences,
@@ -792,7 +825,7 @@ async def get_recommendations(request: RecommendationRequest, raw_request: Reque
         return result
     except Exception as e:
         logger.error(f"获取推荐失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=public_error(e))
 
 
 @app.post("/api/playlist")
@@ -801,9 +834,15 @@ async def generate_playlist(request: PlaylistRequest, raw_request: Request):
     生成歌单(使用推荐引擎,替代废弃的 Spotify 服务)
     """
     try:
+        from api.recommendation_execution import build_recommendation_execution
         from api.runtime_context import runtime_context_from_request
+        from services.recommendation_execution import execution_scope, web_search_allowed
         from services.runtime_context import runtime_context_scope
 
+        execution = build_recommendation_execution(
+            web_search_enabled=web_search_allowed() if request.web_search_enabled is None else request.web_search_enabled,
+            provider=request.llm_provider,
+        )
         runtime_context = runtime_context_from_request(
             raw_request,
             profile_id=request.profile_id,
@@ -812,25 +851,28 @@ async def generate_playlist(request: PlaylistRequest, raw_request: Request):
             session_id=request.session_id,
         )
         agent = get_agent()
-        with runtime_context_scope(runtime_context):
+        with execution_scope(execution), runtime_context_scope(runtime_context):
             result = await agent.get_recommendations(
                 query=request.query,
                 user_preferences=request.user_preferences or {},
+                chat_history=request.chat_history,
+                dialog_state=request.dialog_state,
                 user_id=runtime_context.effective_user_id,
-                client_context={"session_id": runtime_context.session_id},
+                client_context={"session_id": runtime_context.session_id, "timezone": request.timezone,
+                                "scene": request.scene, "device": request.device},
             )
         return {"success": result.get("success", False), **result}
     except Exception as e:
         logger.error(f"生成歌单失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=public_error(e))
 
 
 @app.post("/api/search")
 async def search_music(request: SearchRequest):
     """
     搜索歌曲
-    - 优先 TavilyAPI 在线搜索
-    - 无结果时使用本地 JSON 数据库模糊匹配
+    - 调用音乐提供方查询曲目元数据
+    - 此接口不是通用联网搜索入口
     """
     try:
         from tools.music_fetch_tool import execute_search_online_music
@@ -846,7 +888,7 @@ async def search_music(request: SearchRequest):
         }
     except Exception as e:
         logger.error(f"搜索歌曲失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=public_error(e))
 
 
 # ---- 设置管理 API ----
@@ -1286,7 +1328,7 @@ async def capture_user_event(request: UserEventRequest, raw_request: Request):
         raise
     except Exception as e:
         logger.error(f"行为事件记录失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 class SongFeedbackRequest(BaseModel):
@@ -1427,7 +1469,7 @@ async def capture_song_feedback(request: SongFeedbackRequest, raw_request: Reque
         raise
     except Exception as e:
         logger.error(f"逐首反馈记录失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @app.get("/api/song-feedback/history")
@@ -1478,7 +1520,7 @@ async def song_feedback_history(raw_request: Request, limit: int = 100):
         }
     except Exception as e:
         logger.error(f"读取逐首反馈历史失败: {e}")
-        return {"success": False, "error": str(e), "items": [], "rated_music_ids": []}
+        return {"success": False, "error": public_error(e), "items": [], "rated_music_ids": []}
 
 
 @app.post("/api/slate-feedback")
@@ -1598,7 +1640,7 @@ async def capture_slate_feedback(request: SlateFeedbackRequest, raw_request: Req
         raise
     except Exception as e:
         logger.error(f"歌单级反馈记录失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @app.get("/api/ranking-policy/status")
@@ -1685,7 +1727,7 @@ async def memory_profile(raw_request: Request, user_id: str = "local_admin"):
         }
     except Exception as e:
         logger.error(f"[MemoryAPI] 读取记忆画像失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @app.get("/api/memory/profile-views")
@@ -1702,7 +1744,7 @@ async def memory_profile_views(raw_request: Request, user_id: str = "local_admin
         }
     except Exception as e:
         logger.error(f"[MemoryAPI] 读取场景化画像失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @app.post("/api/memory/preference")
@@ -1725,7 +1767,8 @@ async def add_memory_preference(
             interaction_mode=request.interaction_mode,
         )
         with runtime_context_scope(runtime_context):
-            result = get_memory_gateway().remember_preference(
+            result = await asyncio.to_thread(
+                get_memory_gateway().remember_preference,
                 user_id=runtime_context.effective_user_id,
                 preferences=request.preferences,
             )
@@ -1733,9 +1776,36 @@ async def add_memory_preference(
             "success": result.success,
             "preference_update": result.preference_update,
         }
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid explicit preferences") from None
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[MemoryAPI] 写入记忆偏好失败: {e}")
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=503, detail="Memory write not confirmed") from None
+
+
+@app.post("/api/memory/retry-writes")
+async def retry_memory_writes(
+    raw_request: Request, user_id: str = "local_admin",
+    _: None = Depends(require_admin_api_key),
+):
+    reject_shared_safe_action("retry memory writes")
+    from api.runtime_context import runtime_context_from_request
+    from services.memory_gateway import get_memory_gateway
+    from services.runtime_context import runtime_context_scope
+    runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
+    try:
+        with runtime_context_scope(runtime_context):
+            result = await asyncio.to_thread(
+                get_memory_gateway().retry_pending_writes,
+                user_id=runtime_context.effective_user_id,
+            )
+        if not result["success"]:
+            raise RuntimeError("write_not_confirmed")
+    except Exception:
+        raise HTTPException(503, "Memory write recovery unavailable") from None
+    return {"success": True}
 
 
 @app.delete("/api/memory/preference")
@@ -1765,7 +1835,7 @@ async def delete_memory_preference(
         raise
     except Exception as e:
         logger.error(f"[MemoryAPI] 删除记忆偏好失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @app.delete("/api/memory/profile")
@@ -1781,8 +1851,8 @@ async def clear_learned_memory_profile(
         from services.memory_gateway import get_memory_gateway
 
         runtime_context = runtime_context_from_request(raw_request, user_id=user_id)
-        ok = get_memory_gateway().clear_learned_preferences(
-            user_id=runtime_context.effective_user_id
+        ok = await asyncio.to_thread(
+            get_memory_gateway().clear_learned_preferences, user_id=runtime_context.effective_user_id,
         )
         if not ok:
             raise HTTPException(status_code=422, detail="Unable to clear learned preferences")
@@ -1791,7 +1861,7 @@ async def clear_learned_memory_profile(
         raise
     except Exception as e:
         logger.error(f"[MemoryAPI] 清空学习记忆失败: {e}")
-        return {"success": False, "error": str(e)}
+        raise HTTPException(status_code=503, detail="Memory deletion unavailable") from None
 
 
 @app.post("/api/memory/consolidate")
@@ -1819,7 +1889,7 @@ async def consolidate_memory(
         return {"success": not report.get("reason"), "report": report}
     except Exception as e:
         logger.error(f"[MemoryAPI] 记忆归纳失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @app.delete("/api/memory/record/{record_id}")
@@ -1852,7 +1922,7 @@ async def delete_memory_record(
         raise
     except Exception as e:
         logger.error(f"[MemoryAPI] 删除记忆记录失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 @app.post("/api/ranking-policy/replay")
@@ -1962,7 +2032,7 @@ async def catalog_diagnostics(limit: int = 50):
         return {"success": True, **report}
     except Exception as e:
         logger.error(f"曲库诊断失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 # ================================================================
@@ -1988,7 +2058,7 @@ async def get_liked_songs(raw_request: Request, user_id: str = "local_admin", li
         return {"success": True, "songs": songs, "total": len(songs)}
     except Exception as e:
         logger.error(f"查询 liked songs 失败: {e}")
-        return {"success": False, "songs": [], "error": str(e)}
+        return {"success": False, "songs": [], "error": public_error(e)}
 
 
 @app.get("/api/disliked-songs")
@@ -2031,7 +2101,7 @@ async def get_disliked_songs(raw_request: Request, user_id: str = "local_admin",
         return {"success": True, "songs": songs, "total": len(songs)}
     except Exception as e:
         logger.error(f"查询 disliked songs 失败: {e}")
-        return {"success": False, "songs": [], "error": str(e)}
+        return {"success": False, "songs": [], "error": public_error(e)}
 
 
 @app.delete("/api/disliked-songs")
@@ -2068,7 +2138,7 @@ async def remove_dislike(
         return {"success": True}
     except Exception as e:
         logger.error(f"撤销不喜欢失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 # ================================================================
@@ -2217,7 +2287,7 @@ async def delete_song_completely(
         raise
     except Exception as e:
         logger.error(f"歌曲删除失败: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 # ================================================================
@@ -2398,7 +2468,7 @@ async def ingest_pending_songs(
         try:
             job_id = enqueue_songs(songs_to_ingest)
         except IngestQueueValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=public_error(exc)) from exc
 
     logger.info(
         "✅ [pending-ingest] 元数据入库 %s 首，增强模式=%s job=%s",
@@ -2489,10 +2559,10 @@ async def retain_online_audio_endpoint(
     except HTTPException:
         raise
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=public_error(exc)) from exc
     except Exception as exc:
         logger.error("[online-retain] 保存音源失败: %s", exc, exc_info=True)
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": public_error(exc)}
 
 
 @app.delete("/api/pending-songs")
@@ -2555,7 +2625,7 @@ async def get_ingest_jobs(limit: int = 30):
         return {"success": True, "jobs": jobs, "counts": counts}
     except Exception as e:
         logger.error(f"[ingest-jobs] 查询队列失败: {e}")
-        return {"success": False, "jobs": [], "counts": {}, "error": str(e)}
+        return {"success": False, "jobs": [], "counts": {}, "error": public_error(e)}
 
 
 @app.post("/api/ingest-jobs/{job_id}/retry")
@@ -2580,7 +2650,7 @@ async def retry_ingest_job(
         raise
     except Exception as e:
         logger.error(f"[ingest-jobs] 重试任务失败: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 # ================================================================
@@ -2755,7 +2825,7 @@ async def get_library_songs(offset: int = 0, limit: int = 200, tier: str = "libr
         }
     except Exception as e:
         logger.error(f"查询曲库失败: {e}")
-        return {"success": False, "songs": [], "total": 0, "error": str(e)}
+        return {"success": False, "songs": [], "total": 0, "error": public_error(e)}
 
 
 @app.post("/api/netease/login/qr")
@@ -2772,7 +2842,7 @@ async def netease_login_qr(raw_request: Request, _: None = Depends(require_admin
         return await start_qr_login()
     except Exception as exc:
         logger.error("[netease] 扫码登录发起失败: %s", exc, exc_info=True)
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": public_error(exc)}
 
 
 @app.get("/api/netease/login/check")
@@ -2784,7 +2854,7 @@ async def netease_login_check(key: str, _: None = Depends(require_admin_api_key)
         return await check_qr_login(key)
     except Exception as exc:
         logger.error("[netease] 扫码状态查询失败: %s", exc, exc_info=True)
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": public_error(exc)}
 
 
 @app.get("/api/netease/account")
@@ -2796,7 +2866,7 @@ async def netease_account(_: None = Depends(require_admin_api_key)):
         return await account_status()
     except Exception as exc:
         logger.error("[netease] 账号状态查询失败: %s", exc, exc_info=True)
-        return {"logged_in": False, "error": str(exc)}
+        return {"logged_in": False, "error": public_error(exc)}
 
 
 @app.delete("/api/netease/account")
@@ -2808,7 +2878,7 @@ async def netease_logout(raw_request: Request, _: None = Depends(require_admin_a
         return {"success": True, "cleared": clear_cookie()}
     except Exception as exc:
         logger.error("[netease] 退出登录失败: %s", exc, exc_info=True)
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": public_error(exc)}
 
 
 @app.get("/api/netease/daily")
@@ -2833,7 +2903,7 @@ async def netease_daily(limit: int = 30, _: None = Depends(require_admin_api_key
         return {"success": True, "logged_in": True, "songs": songs, **matched}
     except Exception as exc:
         logger.error("[netease] 日推获取失败: %s", exc, exc_info=True)
-        return {"success": False, "error": str(exc), "songs": []}
+        return {"success": False, "error": public_error(exc), "songs": []}
 
 
 @app.post("/api/library-songs/purge-candidates")
@@ -2935,7 +3005,7 @@ async def purge_catalog_candidates(
         }
     except Exception as exc:
         logger.error("清理临时候选失败: %s", exc, exc_info=True)
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": public_error(exc)}
 
 
 @app.patch("/api/library-songs/tags")
@@ -3044,7 +3114,7 @@ async def update_library_song_tags(
         raise
     except Exception as e:
         logger.error(f"[library-tags] 更新标签失败: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": public_error(e)}
 
 
 if __name__ == "__main__":

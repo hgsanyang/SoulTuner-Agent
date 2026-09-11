@@ -11,12 +11,10 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
-import aiohttp
 
 from services.catalog_enrichment import build_artist_knowledge_query, build_song_knowledge_query, clamp_confidence
 from config.settings import settings
 from services.music_knowledge_store import MusicKnowledgeStore
-from tools.web_search_aggregator import fetch_searxng_search, fetch_tavily_search, fetch_zhipu_search
 
 
 STYLE_KEYWORDS = {
@@ -74,24 +72,8 @@ def normalize_snippets(raw_results: list[Mapping[str, Any]]) -> list[WebSnippet]
 
 
 async def fetch_music_knowledge_snippets(query: str) -> list[WebSnippet]:
-    """Run legacy federated web search and return structured snippets.
-
-    This is kept for explicit diagnostics only.  Production knowledge-card
-    enrichment uses DashScope/Qwen web_search as the default source of truth.
-    """
-
-    async with aiohttp.ClientSession() as session:
-        results = await asyncio.gather(
-            fetch_zhipu_search(query, session),
-            fetch_tavily_search(query, session),
-            fetch_searxng_search(query, session),
-            return_exceptions=True,
-        )
-    merged: list[Mapping[str, Any]] = []
-    for result in results:
-        if isinstance(result, list):
-            merged.extend(result)
-    return normalize_snippets(merged)
+    """Retired diagnostic surface; API-native enrichment below remains supported."""
+    raise RuntimeError("Legacy snippet fallback was retired; use API-native knowledge enrichment")
 
 
 def infer_style_tags(text: str, *, limit: int = 6) -> list[str]:

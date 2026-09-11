@@ -2,6 +2,105 @@ from services.memory_event_store import MemoryEventStore
 from services.memory_models import MemoryLayer, MemoryStatus
 
 
+def test_old_explicit_survives_busy_ledger_and_suppresses_new_conflict(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    explicit = store.append(
+        user_id="u", layer=MemoryLayer.EXPLICIT, kind="preference", source="user_explicit",
+        evidence_id="manual", payload={"field": "avoid_moods", "value": "Sad"},
+        memory_key="preference:avoid_moods:sad", now_ms=1,
+    )
+    for i in range(410):
+        store.append(user_id="u", layer=MemoryLayer.RAW_EVENT, kind="play", source="user_action",
+                     evidence_id=str(i), payload={}, now_ms=2)
+    inferred = store.append(
+        user_id="u", layer=MemoryLayer.INFERRED, kind="preference", source="inference",
+        evidence_id="guess", payload={"field": "add_moods", "value": "Sad"},
+        memory_key="preference:add_moods:sad", now_ms=3,
+    )
+    rows = store.effective_records(user_id="u", now_ms=4, limit=2)
+    assert rows[0].record_id == explicit.record_id
+    assert inferred.record_id not in {r.record_id for r in rows}
+    # Deletion removes both admission priority and conflict suppression.
+    store.tombstone(user_id="u", target_record_id=explicit.record_id)
+    assert store.effective_records(user_id="u", now_ms=4, limit=1)[0].record_id == inferred.record_id
+    assert store.effective_records(user_id="u", now_ms=4, limit=0) == []
+
+
+def test_expired_records_do_not_hide_older_live_memory(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    live = store.append(user_id="u", layer=MemoryLayer.INFERRED, kind="preference",
+                        source="inference", evidence_id="live", payload={}, now_ms=1)
+    for i in range(410):
+        store.append(user_id="u", layer=MemoryLayer.INFERRED, kind="preference",
+                     source="inference", evidence_id=str(i), payload={}, now_ms=2, expires_at=3)
+    assert [r.record_id for r in store.effective_records(user_id="u", now_ms=4)] == [live.record_id]
+
+
+def test_evidence_window_counts_only_eligible_user_records(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3", clock_ms=lambda: 10)
+    live = store.append(user_id="u", layer=MemoryLayer.RAW_EVENT, kind="like",
+                        source="user_action", evidence_id="live", payload={}, now_ms=1)
+    for i in range(25):
+        store.append(user_id="u", layer=MemoryLayer.RAW_EVENT, kind="audit",
+                     source="system", evidence_id=str(i), payload={}, now_ms=2)
+    assert [r.record_id for r in store.recent_evidence(user_id="u", limit=1)] == [live.record_id]
+    assert store.recent_evidence(user_id="u", limit=0) == []
+
+
+def test_bulk_forget_has_no_listing_limit_and_preserves_other_users_and_layers(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    for i in range(1005):
+        store.append(user_id="u1", layer=MemoryLayer.INFERRED, kind="preference",
+                     source="inference", evidence_id=str(i), payload={})
+    for user, layer in (("u2", MemoryLayer.INFERRED), ("u1", MemoryLayer.EXPLICIT)):
+        store.append(user_id=user, layer=layer, kind="preference", source="test", evidence_id="keep", payload={})
+    assert store.tombstone_layer(user_id="u1", layer=MemoryLayer.INFERRED) == 1005
+    assert store.tombstone_layer(user_id="u1", layer=MemoryLayer.INFERRED) == 0
+    assert [r.layer for r in store.effective_records(user_id="u1", limit=2000)] == [MemoryLayer.EXPLICIT]
+    assert len(store.effective_records(user_id="u2")) == 1
+
+
+def test_deleted_evidence_cannot_return_through_a_layer_filtered_read(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    record = store.append(user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="like",
+                          source="user_action", evidence_id="e", payload={"title": "A"})
+    assert record is not None
+    store.tombstone(user_id="u1", target_record_id=record.record_id)
+    assert store.recent_evidence(user_id="u1") == []
+    assert store.pending_evidence_count(user_id="u1") == 0
+
+
+def test_future_memory_is_not_effective_yet(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3")
+    store.append(user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="like",
+                 source="user_action", evidence_id="e", payload={}, now_ms=2000)
+    assert store.effective_records(user_id="u1", now_ms=1000) == []
+
+
+def test_pending_count_watermark_survives_listing_window(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3", clock_ms=lambda: 5000)
+    store.append(user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="consolidation_audit",
+                 source="system", evidence_id="", payload={}, now_ms=2000)
+    # Late-imported old events occur after the audit in ledger sequence order.
+    for _ in range(12):
+        store.append(user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="like",
+                     source="user_action", evidence_id="e", payload={}, now_ms=1000)
+    assert store.pending_evidence_count(user_id="u1", limit=10) == 0
+    store.append(user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="like",
+                 source="user_action", evidence_id="new", payload={}, now_ms=3000)
+    assert store.pending_evidence_count(user_id="u1", limit=10) == 1
+
+
+def test_pending_count_ignores_future_events_and_other_owner_audit(tmp_path):
+    store = MemoryEventStore(tmp_path / "memory.sqlite3", clock_ms=lambda: 5000)
+    for timestamp in (1000, 9000):
+        store.append(user_id="u1", layer=MemoryLayer.RAW_EVENT, kind="like",
+                     source="user_action", evidence_id="e", payload={}, now_ms=timestamp)
+    store.append(user_id="u2", layer=MemoryLayer.RAW_EVENT, kind="consolidation_audit",
+                 source="system", evidence_id="", payload={}, now_ms=4000)
+    assert store.pending_evidence_count(user_id="u1") == 1
+
+
 def test_memory_ledger_is_append_only_and_tombstones_deletion(tmp_path):
     store = MemoryEventStore(tmp_path / "memory.sqlite3")
     record = store.append(

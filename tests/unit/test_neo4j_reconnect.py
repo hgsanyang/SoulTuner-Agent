@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from typing import Any
+import pytest
 
 from neo4j.exceptions import ServiceUnavailable
 
-from retrieval.neo4j_client import Neo4jClient
+from retrieval.neo4j_client import Neo4jClient, Neo4jQueryError
 
 
 class _Record:
@@ -53,6 +54,28 @@ def _reset_singleton(monkeypatch) -> None:
     monkeypatch.setenv("NEO4J_RECONNECT_BACKOFF_SECONDS", "0")
 
 
+def test_failed_write_is_not_replayed(monkeypatch):
+    import neo4j
+    _reset_singleton(monkeypatch)
+    calls = []
+    driver = _Driver(_Session(error=ServiceUnavailable("unknown commit outcome")))
+    def create(*args, **kwargs):
+        calls.append(1)
+        return driver
+    monkeypatch.setattr(neo4j.GraphDatabase, "driver", create)
+    with pytest.raises(Neo4jQueryError):
+        Neo4jClient().execute_write_query("CREATE (:Song)")
+    assert len(calls) == 1
+    assert driver.closed
+
+
+def test_real_empty_query_remains_empty(monkeypatch):
+    import neo4j
+    _reset_singleton(monkeypatch)
+    monkeypatch.setattr(neo4j.GraphDatabase, "driver", lambda *a, **k: _Driver(_Session()))
+    assert Neo4jClient().execute_read_query("MATCH (n) RETURN n") == []
+
+
 def test_initial_outage_recovers_on_first_query(monkeypatch) -> None:
     import neo4j
 
@@ -85,7 +108,7 @@ def test_runtime_disconnect_discards_driver_and_retries_once(monkeypatch) -> Non
     monkeypatch.setattr(neo4j.GraphDatabase, "driver", lambda *_args, **_kwargs: next(drivers))
 
     client = Neo4jClient()
-    assert client.execute_query("RETURN 42 AS value") == [{"value": 42}]
+    assert client.execute_read_query("RETURN 42 AS value") == [{"value": 42}]
     assert disconnected.closed is True
     assert client.driver is healthy
 
@@ -105,7 +128,8 @@ def test_non_retryable_query_error_is_not_replayed(monkeypatch) -> None:
     monkeypatch.setattr(neo4j.GraphDatabase, "driver", create_driver)
 
     client = Neo4jClient()
-    assert client.execute_query("INVALID") == []
+    with pytest.raises(Neo4jQueryError):
+        client.execute_query("INVALID")
     assert calls == 1
     assert driver.closed is False
 

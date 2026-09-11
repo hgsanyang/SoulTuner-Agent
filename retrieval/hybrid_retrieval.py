@@ -4,10 +4,12 @@ import re
 import asyncio
 import concurrent.futures
 import time
+from threading import Lock
 from typing import List, Dict, Any
+from retrieval.candidate_identity import candidate_identity, IDENTITY_MATCH
 
 from tools.semantic_search import semantic_search
-from tools.web_search_aggregator import _federated_search_async
+from services.provider_web_search import native_web_search as _federated_search_async
 from retrieval.recall_sources import (
     graph_candidate_recall,
 )
@@ -42,8 +44,12 @@ MERGE (u:User {id: $user_id})
 ON CREATE SET u.created_at = timestamp()
 WITH u, row
 MATCH (s:Song)
-WHERE s.title = row.title
-  AND (row.artist = '' OR coalesce(s.artist, '') = row.artist)
+WHERE (coalesce(row.music_id, '') <> '' AND toString(s.music_id) = row.music_id)
+   OR (coalesce(row.music_id, '') = '' AND row.artist <> ''
+       AND s.title = row.title AND coalesce(s.artist, '') = row.artist)
+WITH u, row, collect(DISTINCT s) AS matches
+WHERE size(matches) = 1
+WITH u, matches[0] AS s
 MERGE (u)-[e:EXPOSED]->(s)
 ON CREATE SET e.ts_alpha = 1.0, e.ts_beta = 1.0, e.count = 0
 SET e.ts_beta = coalesce(e.ts_beta, 1.0) + 0.3,
@@ -242,8 +248,12 @@ def rerank_with_soft_constraints(
         return non_conflicting
     return adjusted
 
-# ---- 用户偏好缓存（启动时加载一次，避免每次请求都查 Neo4j） ----
-_user_pref_cache: dict = {}  # {user_id: structured hot-path preference sets}
+# Bounded process-local acceleration, never a permanent memory authority.
+_user_pref_cache: dict = {}  # {user_id: (expires_monotonic, preference_sets)}
+_user_pref_cache_lock = Lock()
+_user_pref_cache_generation = 0
+_USER_PREF_CACHE_TTL = 30.0
+_USER_PREF_CACHE_CAPACITY = 256
 
 
 def _as_pref_set(values) -> set:
@@ -254,10 +264,14 @@ def _as_pref_set(values) -> set:
 def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
     """
     从 Neo4j 加载用户偏好并缓存。
-    首次调用时查询数据库，后续直接返回缓存。
+    成功读取最多缓存 30 秒；主动失效阻止并发旧读取重新填入缓存。
     """
-    if user_id in _user_pref_cache:
-        return _user_pref_cache[user_id]
+    with _user_pref_cache_lock:
+        generation = _user_pref_cache_generation
+        cached = _user_pref_cache.get(user_id)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+        _user_pref_cache.pop(user_id, None)
 
     empty_prefs = {
         "genres": set(),
@@ -280,7 +294,7 @@ def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
             profile = get_memory_gateway().get_user_profile(user_id)
         except Exception as gateway_error:
             logger.warning("[PrefCache] MemoryGateway 读取失败，偏好降级为空: %s", gateway_error)
-            profile = {}
+            return {**empty_prefs, "unavailable": True}
 
         prefs["genres"] = (
             _as_pref_set(profile.get("preferred_genres"))
@@ -331,7 +345,15 @@ def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
                 expanded_avoid.add(pref)
         prefs["expanded_avoid_genres"] = expanded_avoid
 
-        _user_pref_cache[user_id] = prefs
+        with _user_pref_cache_lock:
+            if generation == _user_pref_cache_generation:
+                now = time.monotonic()
+                for key in list(_user_pref_cache):
+                    if _user_pref_cache[key][0] <= now:
+                        _user_pref_cache.pop(key)
+                if user_id not in _user_pref_cache and len(_user_pref_cache) >= _USER_PREF_CACHE_CAPACITY:
+                    _user_pref_cache.pop(next(iter(_user_pref_cache)))
+                _user_pref_cache[user_id] = (now + _USER_PREF_CACHE_TTL, prefs)
         logger.info(
             f"[PrefCache] 用户偏好已缓存: genre={len(prefs['genres'])}, mood={len(prefs['moods'])}, "
             f"theme={len(prefs['themes'])}, scenario={len(prefs['scenarios'])}, "
@@ -340,13 +362,15 @@ def _load_user_preferences(user_id: str = GRAPH_AFFINITY_USER_ID) -> dict:
         return prefs
     except Exception as e:
         logger.warning(f"[PrefCache] 加载用户偏好失败: {e}")
-        _user_pref_cache[user_id] = empty_prefs
-        return empty_prefs
+        return {**empty_prefs, "unavailable": True}
 
 
 def invalidate_user_pref_cache(user_id: str = GRAPH_AFFINITY_USER_ID):
     """当用户偏好更新时（如 LIKES 新歌），调用此函数清除缓存。"""
-    _user_pref_cache.pop(user_id, None)
+    global _user_pref_cache_generation
+    with _user_pref_cache_lock:
+        _user_pref_cache_generation += 1
+        _user_pref_cache.pop(user_id, None)
     logger.info(f"[PrefCache] 已清除用户 {user_id} 的偏好缓存")
 
 
@@ -360,29 +384,19 @@ class MusicHybridRetrieval:
     def __init__(self, llm_client=None):
         # 保存 llm_client 引用（预留，供未来扩展使用）
         self.llm_client = llm_client
-        self._disliked_cache_by_user: Dict[str, set[str]] = {}
 
-    def _get_disliked_titles(self, user_id: str = GRAPH_AFFINITY_USER_ID) -> set:
-        """查询用户 DISLIKES 的歌曲标题集合（同一实例内缓存）"""
-        if user_id in self._disliked_cache_by_user:
-            return self._disliked_cache_by_user[user_id]
-        try:
-            from retrieval.neo4j_client import get_neo4j_client
-            client = get_neo4j_client()
-            query = """
-            MATCH (u:User {id: $uid})-[:DISLIKES]->(s:Song)
-            RETURN collect(s.title) AS titles
-            """
-            result = client.execute_query(query, {"uid": user_id})
-            titles = set(result[0]["titles"]) if result and result[0].get("titles") else set()
-            self._disliked_cache_by_user[user_id] = titles
-            if titles:
-                logger.info("[DislikeFilter] 用户 %s 加载到 %d 首不喜欢的歌", user_id, len(titles))
-            return titles
-        except Exception as e:
-            logger.warning(f"[DislikeFilter] 查询失败: {e}")
-            self._disliked_cache_by_user[user_id] = set()
-            return self._disliked_cache_by_user[user_id]
+    def _get_disliked_songs(self, user_id: str = GRAPH_AFFINITY_USER_ID) -> list[dict]:
+        """Read current exclusions by recording identity, never cache failures."""
+        from retrieval.neo4j_client import get_neo4j_client
+        client = get_neo4j_client()
+        query = """
+        MATCH (:User {id: $uid})-[:DISLIKES]->(s:Song)
+        OPTIONAL MATCH (s)-[:PERFORMED_BY]->(a:Artist)
+        RETURN DISTINCT s.music_id AS music_id, s.title AS title,
+               coalesce(s.artist, a.name, '') AS artist
+        """
+        read = getattr(client, "execute_read_query", client.execute_query)
+        return [dict(row) for row in read(query, {"uid": user_id})]
 
     async def retrieve(self, query: str, limit: int = 5, precomputed_plan: dict = None) -> ToolOutput:
         """
@@ -572,10 +586,9 @@ class MusicHybridRetrieval:
             recall_weights,
         )
 
-        loop = asyncio.get_running_loop()
-
         async def run_sync_in_executor(func, *args, **kwargs):
-            return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+            # to_thread carries request permissions and provenance into workers.
+            return await asyncio.to_thread(func, *args, **kwargs)
 
         recall_source_timeout = float(os.getenv("RECALL_SOURCE_TIMEOUT_SECONDS", "45"))
 
@@ -750,7 +763,9 @@ class MusicHybridRetrieval:
             if web_playable:
                 logger.info("[WebSupplement] 联网补充 %d 首（证据驱动）", len(web_playable))
         else:
-            if not tool_plan_active and os.environ.get("MUSIC_WEB_SEARCH_ENABLED", "1") != "0":
+            from services.recommendation_execution import web_search_allowed
+
+            if not tool_plan_active and web_search_allowed():
                 graph_empty = source_raw.get("graph") in ("", "[]")
                 if need_web_search:
                     logger.info("⚡ 意图明确要求联网: '%s'", search_keyword)
@@ -850,7 +865,8 @@ class MusicHybridRetrieval:
                 genre = ""
 
             # 标准化 key（消除全角/半角、标点差异）
-            key = MusicHybridRetrieval._normalize_key(title, artist)
+            key = (candidate_identity(item)["key"] if item.get("music_id")
+                   else MusicHybridRetrieval._normalize_key(title, artist))
             if key in seen_keys:
                 logger.info(f"[{engine_name}] 引擎内部去重: '{title}' - '{artist}'")
                 continue
@@ -872,6 +888,7 @@ class MusicHybridRetrieval:
                 "raw_score": raw_score,
                 "engine": engine_name,
                 "song": {
+                    "music_id": item.get("music_id"),
                     "title": title,
                     "artist": artist,
                     "album": item.get("album", "未知"),
@@ -966,7 +983,7 @@ class MusicHybridRetrieval:
             from retrieval.neo4j_client import get_neo4j_client
 
             neo4j = get_neo4j_client()
-            if not neo4j or not neo4j.driver:
+            if not neo4j:
                 logger.warning("[TriAnchor] Neo4j 不可用，跳过三锚精排")
                 return candidates
 
@@ -1000,35 +1017,42 @@ class MusicHybridRetrieval:
                     tri_text_timeout,
                 )
             except Exception as encode_error:
-                if semantic_backend == "muq":
-                    logger.warning("[TriAnchor] MuQ 精排编码失败，尝试 M2D fallback: %s", encode_error)
-                    try:
-                        future = executor.submit(_encode_query, "m2d") if executor else None
-                        query_emb = np.array(future.result(timeout=tri_text_timeout)) if future else None
-                        semantic_backend = "m2d"
-                    except Exception as fallback_error:
-                        logger.warning("[TriAnchor] M2D fallback 也失败，跳过语义锚: %s", fallback_error)
-                else:
-                    logger.warning("[TriAnchor] query text embedding 失败，跳过语义锚: %s", encode_error)
+                logger.warning("[TriAnchor] %s 编码失败，保留已有候选，不切换表示空间: %s", semantic_backend, encode_error)
+                for candidate in candidates:
+                    candidate.setdefault("retrieval_warnings", []).append("semantic_encoder_unavailable")
             finally:
                 if executor is not None:
                     executor.shutdown(wait=False, cancel_futures=True)
 
             # ── 批量获取候选歌曲的 MuQ/M2D + OMAR embedding ──
-            titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
+            identities = [
+                {"key": str(i), "music_id": c.get("song", {}).get("music_id") or "",
+                 "title": c.get("song", {}).get("title") or "",
+                 "artist": c.get("song", {}).get("artist") or ""}
+                for i, c in enumerate(candidates)
+            ]
             emb_cypher = """
-            UNWIND $titles AS t
-            MATCH (s:Song {title: t})
-            RETURN s.title AS title,
+            UNWIND $identities AS identity
+            MATCH (s:Song)
+            WHERE (identity.music_id <> '' AND s.music_id = identity.music_id)
+               OR (identity.music_id = '' AND identity.title <> '' AND identity.artist <> ''
+                   AND s.title = identity.title
+                   AND (s.artist = identity.artist OR EXISTS {
+                       MATCH (s)-[:PERFORMED_BY]->(a:Artist {name: identity.artist})
+                   }))
+            WITH identity, collect(DISTINCT s) AS matches
+            WHERE size(matches) = 1
+            WITH identity, matches[0] AS s
+            RETURN identity.key AS candidate_key,
                    s.muq_embedding AS muq_emb,
                    s.m2d2_embedding AS m2d_emb,
                    s.omar_embedding AS omar_emb
             """
-            emb_rows = neo4j.execute_query(emb_cypher, {"titles": titles})
+            emb_rows = neo4j.execute_query(emb_cypher, {"identities": identities})
 
             muq_map, m2d_map, omar_map = {}, {}, {}
             for row in (emb_rows or []):
-                t = row.get("title", "")
+                t = row.get("candidate_key", "")
                 if row.get("muq_emb"):
                     muq_map[t] = np.array(row["muq_emb"])
                 if row.get("m2d_emb"):
@@ -1037,8 +1061,8 @@ class MusicHybridRetrieval:
                     omar_map[t] = np.array(row["omar_emb"])
 
             logger.info(
-                f"[TriAnchor] embedding 命中: MuQ={len(muq_map)}/{len(titles)}, M2D={len(m2d_map)}/{len(titles)}, "
-                f"OMAR={len(omar_map)}/{len(titles)}"
+                f"[TriAnchor] embedding 命中: MuQ={len(muq_map)}/{len(identities)}, M2D={len(m2d_map)}/{len(identities)}, "
+                f"OMAR={len(omar_map)}/{len(identities)}"
             )
 
             # ── 声学锚：只在有明确相似种子歌时使用种子 OMAR，不再用候选集质心 ──
@@ -1049,6 +1073,9 @@ class MusicHybridRetrieval:
                     """
                     UNWIND $titles AS t
                     MATCH (s:Song {title: t})
+                    WITH t, collect(DISTINCT s) AS matches
+                    WHERE size(matches) = 1
+                    WITH matches[0] AS s
                     WHERE s.omar_embedding IS NOT NULL
                     RETURN s.omar_embedding AS omar_emb
                     """,
@@ -1069,8 +1096,8 @@ class MusicHybridRetrieval:
                 return (score + 1.0) / 2.0
 
             # ── 内容双锚融合评分 ──
-            for c in candidates:
-                title = c.get("song", {}).get("title", "")
+            for candidate_index, c in enumerate(candidates):
+                title = str(candidate_index)
 
                 # 维度 1: 语义分（归一化到 [0,1]）
                 semantic_emb = muq_map.get(title) if semantic_backend == "muq" else m2d_map.get(title)
@@ -1128,24 +1155,18 @@ class MusicHybridRetrieval:
         user_id: str = GRAPH_AFFINITY_USER_ID,
     ) -> Dict[str, dict]:
         """Fetch score-adjustment metadata for already-recalled candidates."""
-        titles = [
-            item.get("song", {}).get("title", "")
-            for item in candidates
-            if item.get("song", {}).get("title")
-        ]
-        if not titles:
+        identities = [candidate_identity(item.get("song", {})) for item in candidates]
+        if not identities:
             return {}
         try:
             from retrieval.neo4j_client import get_neo4j_client
             neo4j = get_neo4j_client()
-            if not neo4j or not neo4j.driver:
+            if not neo4j:
                 return {}
-            query = """
-            UNWIND $titles AS t
-            MATCH (s:Song {title: t})
+            query = IDENTITY_MATCH + """
             OPTIONAL MATCH (u:User {id: $user_id})-[e:EXPOSED]->(s)
-            WITH s, e, properties(s) AS props
-            RETURN s.title AS title,
+            WITH identity, s, e, properties(s) AS props
+            RETURN identity.key AS candidate_key,
                    coalesce(s.updated_at, 0) AS updated_at,
                    coalesce(e.ts_alpha, 1) AS ts_alpha,
                    coalesce(e.ts_beta, 1) AS ts_beta,
@@ -1157,10 +1178,10 @@ class MusicHybridRetrieval:
             """
             rows = neo4j.execute_query(
                 query,
-                {"titles": titles, "user_id": user_id},
+                {"identities": identities, "user_id": user_id},
             ) or []
             return {
-                str(row.get("title") or ""): {
+                str(row.get("candidate_key") or ""): {
                     "updated_at": row.get("updated_at", 0),
                     "ts_alpha": row.get("ts_alpha", 1),
                     "ts_beta": row.get("ts_beta", 1),
@@ -1171,7 +1192,7 @@ class MusicHybridRetrieval:
                     "acoustic_probe_version": row.get("acoustic_probe_version"),
                 }
                 for row in rows
-                if row.get("title")
+                if row.get("candidate_key")
             }
         except Exception as e:
             logger.warning(f"[PostRecallAdjust] 元数据读取失败（降级为中性加权）: {e}")
@@ -1203,7 +1224,7 @@ class MusicHybridRetrieval:
         try:
             from retrieval.neo4j_client import get_neo4j_client
             neo4j = get_neo4j_client()
-            if not neo4j or not neo4j.driver:
+            if not neo4j:
                 logger.warning("[GraphAffinity] Neo4j 不可用，跳过图距离计算")
                 for c in candidates:
                     c["_graph_affinity"] = 0.0
@@ -1214,14 +1235,17 @@ class MusicHybridRetrieval:
                 c["_graph_affinity"] = 0.0
             return candidates, empty_tag_map
 
-        titles = [c["song"]["title"] for c in candidates if c.get("song", {}).get("title")]
-        if not titles:
+        identities = [candidate_identity(c.get("song", {})) for c in candidates]
+        if not identities:
             for c in candidates:
                 c["_graph_affinity"] = 0.0
             return candidates, empty_tag_map
 
         # ── Step A: 用户偏好（从缓存读取，首次自动加载） ──
         user_prefs = _load_user_preferences(user_id)
+        if user_prefs.get("unavailable"):
+            for candidate in candidates:
+                candidate.setdefault("retrieval_warnings", []).append("memory_profile_unavailable")
         user_pref_genres = user_prefs["genres"]
         user_pref_moods = user_prefs["moods"]
         user_pref_themes = user_prefs["themes"]
@@ -1241,11 +1265,8 @@ class MusicHybridRetrieval:
         )
 
         # ── Step B: 合并查询（图距离 + 候选歌曲标签，1 次 Neo4j round-trip） ──
-        combined_query = """
-        MATCH (u:User {id: $user_id})
-        UNWIND $titles AS candidate_title
-        OPTIONAL MATCH (s:Song)
-          WHERE s.title = candidate_title
+        combined_query = IDENTITY_MATCH + """
+        OPTIONAL MATCH (u:User {id: $user_id})
         OPTIONAL MATCH path = shortestPath(
           (u)-[*1..""" + str(max_hops) + """]->(s)
         )
@@ -1253,7 +1274,7 @@ class MusicHybridRetrieval:
         OPTIONAL MATCH (s)-[:HAS_MOOD]->(m:Mood)
         OPTIONAL MATCH (s)-[:HAS_THEME]->(th:Theme)
         OPTIONAL MATCH (s)-[:FITS_SCENARIO]->(sc:Scenario)
-        RETURN candidate_title AS title,
+        RETURN identity.key AS candidate_key,
                CASE WHEN path IS NOT NULL THEN length(path) ELSE -1 END AS distance,
                collect(DISTINCT g.name) AS genres,
                collect(DISTINCT m.name) AS moods,
@@ -1263,11 +1284,11 @@ class MusicHybridRetrieval:
 
         cand_tag_map = {}
         try:
-            results = neo4j.execute_query(combined_query, {"user_id": user_id, "titles": titles})
+            results = neo4j.execute_query(combined_query, {"user_id": user_id, "identities": identities})
 
             distance_map = {}
             for r in results:
-                t = r.get("title", "")
+                t = r.get("candidate_key", "")
                 distance_map[t] = r.get("distance", -1)
                 cand_tag_map[t] = {
                     "genres": {x.strip().lower() for x in (r.get("genres") or []) if x and x.strip()},
@@ -1277,7 +1298,7 @@ class MusicHybridRetrieval:
                 }
 
             for c in candidates:
-                title = c.get("song", {}).get("title", "")
+                title = candidate_identity(c.get("song", {}))["key"]
                 dist = distance_map.get(title, -1)
                 if dist == 1:
                     # 直接交互过的歌（LIKES/LISTENED_TO, 1 hop）
@@ -1330,7 +1351,7 @@ class MusicHybridRetrieval:
                 cand_genre_tags = {t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip()} if genre_str else set()
                 j_genre = _jaccard(expanded_genre_prefs, cand_genre_tags)
 
-                cand_tags = cand_tag_map.get(title, {})
+                cand_tags = cand_tag_map.get(candidate_identity(song)["key"], {})
                 j_mood = _jaccard(user_pref_moods, cand_tags.get("moods", set()))
                 j_theme = _jaccard(user_pref_themes, cand_tags.get("themes", set()))
                 j_scenario = _jaccard(user_pref_scenarios, cand_tags.get("scenarios", set()))
@@ -1426,12 +1447,12 @@ class MusicHybridRetrieval:
         final_list = self._fuse_recall_sources(source_items, recall_weights)
 
         # ---- Step 3: 唯一硬过滤（请求 hard_constraints + DISLIKES）----
-        disliked_titles = self._get_disliked_titles(user_id)
+        disliked_songs = self._get_disliked_songs(user_id)
         before_filter = len(final_list)
         final_list = apply_hard_filters(
             final_list,
             hard_constraints,
-            disliked_titles,
+            disliked_songs=disliked_songs,
             # final_limit 是内部过召回数量（通常 30），兜底只保证最小可用结果，
             # 避免有效过滤结果被过早放宽。
             limit=min(final_limit or 8, 8),
@@ -1458,7 +1479,7 @@ class MusicHybridRetrieval:
                     for item in web_playable
                 ],
                 hard_constraints,
-                disliked_titles,
+                disliked_songs=disliked_songs,
             )
             # 模糊去重：归一化歌名/歌手 + 相似度，防止同一首歌因
             # 括号后缀、feat、大小写、全半角差异重复出现。
@@ -1661,7 +1682,7 @@ class MusicHybridRetrieval:
             for item in final_list:
                 song = item.get("song") or {}
                 title = song.get("title", "")
-                tag_entry = cand_tag_map.get(title) or {}
+                tag_entry = cand_tag_map.get(candidate_identity(song)["key"]) or {}
                 for song_field, tag_key in (
                     ("genres", "genres"),
                     ("moods", "moods"),
@@ -1791,14 +1812,13 @@ class MusicHybridRetrieval:
             合并 genre 字段 + cand_tag_map 中的 mood/theme/scenario。
             """
             song = item.get("song", {})
-            title = song.get("title", "")
             tags = set()
             # genre 字段（如果有）
             genre_str = song.get("genre", "")
             if genre_str:
                 tags.update(t.strip().lower() for t in genre_str.replace(",", "/").split("/") if t.strip())
             # 从 cand_tag_map 获取 mood/theme/scenario
-            ct = tag_map.get(title, {})
+            ct = tag_map.get(candidate_identity(song)["key"], {})
             tags.update(ct.get("moods", set()))
             tags.update(ct.get("themes", set()))
             tags.update(ct.get("scenarios", set()))
@@ -1867,7 +1887,8 @@ class MusicHybridRetrieval:
         deduped_list = []
         for item in final_list:
             s = item.get("song", {})
-            fk = MusicHybridRetrieval._normalize_key(s.get("title", ""), s.get("artist", ""))
+            fk = (candidate_identity(s)["key"] if s.get("music_id") else
+                  MusicHybridRetrieval._normalize_key(s.get("title", ""), s.get("artist", "")))
             if fk not in seen_final:
                 seen_final.add(fk)
                 deduped_list.append(item)
@@ -1944,17 +1965,19 @@ class MusicHybridRetrieval:
                     {
                         "title": title,
                         "artist": str(song.get("artist") or "").strip(),
+                        "music_id": str(song.get("music_id") or ""),
                     }
                 )
         if recommended_songs and not _settings.eval_disable_side_effects:
             try:
-                import asyncio
-                async def _update_ts_exposure(songs):
+                from services.background_writes import background_writes
+
+                def _update_ts_exposure(songs):
                     try:
                         from retrieval.neo4j_client import get_neo4j_client
                         neo4j = get_neo4j_client()
-                        if neo4j and neo4j.driver:
-                            neo4j.execute_query(
+                        if neo4j:
+                            neo4j.execute_write_query(
                                 USER_EXPOSURE_UPDATE_QUERY,
                                 {"songs": songs, "user_id": user_id},
                             )
@@ -1966,17 +1989,9 @@ class MusicHybridRetrieval:
                     except Exception as e:
                         logger.warning(f"[Exposure] 曝光疲劳更新失败（不影响推荐）: {e}")
 
-                # fire-and-forget: 异步更新，不阻塞返回
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_update_ts_exposure(recommended_songs))
-                except RuntimeError:
-                    # 如果没有运行中的事件循环，同步执行
-                    import threading
-                    threading.Thread(
-                        target=lambda: asyncio.run(_update_ts_exposure(recommended_songs)),
-                        daemon=True,
-                    ).start()
+                # Both sync and async callers use a bounded worker pool. A sync
+                # driver inside an async function would still block SSE delivery.
+                background_writes.submit(_update_ts_exposure, recommended_songs)
             except Exception:
                 pass  # TS 更新失败不影响主流程
         elif recommended_songs:

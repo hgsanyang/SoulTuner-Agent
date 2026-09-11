@@ -12,7 +12,7 @@
 | `memory_consolidator.py` / `memory_links.py` / `memory_models.py` | 归并、关联、数据模型 |
 | `profile_synthesizer.py` / `profile_views.py` | 用户画像合成与前端视图 |
 | `policy_memory.py` | 排序策略相关的记忆快照 |
-| `graphzep_client.py` | 可选 GraphZep 旁路（legacy，非默认） |
+| `provider_web_search.py` | API 原生联网搜索与来源校验（无独立搜索引擎兜底） |
 
 ## 反馈与排序
 

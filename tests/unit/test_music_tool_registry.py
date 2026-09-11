@@ -6,6 +6,106 @@ from agent.tool_orchestrator import BoundedToolOrchestrator
 from schemas.tool_plan import ToolPlan
 
 
+def test_audio_tool_forwards_semantic_exclusions(monkeypatch):
+    from schemas.tool_plan import ToolName
+    from types import SimpleNamespace
+    seen = []
+    monkeypatch.setattr(registry_module, "semantic_search", SimpleNamespace(
+        invoke=lambda payload: seen.append(payload) or "[]"))
+    registry = registry_module.build_music_tool_registry(user_id="u", query="梦幻一点")
+    asyncio.run(registry.get(ToolName.SEARCH_AUDIO)({
+        "acoustic_queries": ["梦幻、轻柔"], "negative_targets": ["刺耳的吉他失真"]
+    }, {}))
+    assert seen[0]["negative_targets"] == ["刺耳的吉他失真"]
+
+
+def test_audio_error_records_are_not_songs_and_partial_candidates_survive():
+    result = registry_module._audio_observation(
+        '[{"title":"Valid","music_id":"m1"},{"error":"private database detail"}]')
+    assert result["success"] is False
+    assert result["songs"] == [{"title": "Valid", "music_id": "m1"}]
+    assert "private database" not in str(result)
+    assert registry_module._audio_observation("[]")["success"] is True
+    assert registry_module._audio_observation("not-json")["success"] is False
+    assert registry_module._audio_observation("null")["success"] is False
+
+
+def test_memory_write_without_authorizer_is_denied():
+    from schemas.tool_plan import ToolName
+    registry = registry_module.build_music_tool_registry(user_id="u", query="q")
+    result = asyncio.run(registry.get(ToolName.COMMIT_MEMORY_DELTA)({
+        "memory_type": "inferred_preference", "values": {"genre": "rock"},
+        "confidence": 1., "evidence_id": "claimed-by-model",
+    }, {}))
+    assert result["success"] is False
+
+
+def test_memory_writer_receives_trusted_user_and_all_fields():
+    from schemas.tool_plan import ToolName
+    seen = []
+    async def writer(user, arguments):
+        seen.append((user, arguments))
+        return {"success": True}
+    registry = registry_module.build_music_tool_registry(
+        user_id="trusted", query="q", authorized_memory_writer=writer,
+    )
+    arguments = {"memory_type": "episodic", "values": {}, "confidence": .8, "evidence_id": "e1"}
+    asyncio.run(registry.get(ToolName.COMMIT_MEMORY_DELTA)(arguments, {}))
+    assert seen == [("trusted", arguments)]
+
+
+def test_external_tool_cannot_override_request_web_denial(monkeypatch):
+    from schemas.tool_plan import ToolName
+
+    async def forbidden(*args):
+        raise AssertionError("network must not run")
+
+    monkeypatch.setattr(registry_module, "execute_search_online_music", forbidden)
+    registry = registry_module.build_music_tool_registry(user_id="u", query="rain", web_enabled=False)
+    value = asyncio.run(registry.get(ToolName.SEARCH_EXTERNAL_MUSIC)({}, {}))
+    assert value["success"] is False
+    assert value["songs"] == []
+
+
+def test_external_tool_preserves_failure_without_error_text(monkeypatch):
+    from schemas.tool_plan import ToolName
+    from types import SimpleNamespace
+
+    async def unavailable(*args):
+        return SimpleNamespace(success=False, data=[], error_message="")
+
+    monkeypatch.setattr(registry_module, "execute_search_online_music", unavailable)
+    registry = registry_module.build_music_tool_registry(user_id="u", query="rain")
+    value = asyncio.run(registry.get(ToolName.SEARCH_EXTERNAL_MUSIC)({}, {}))
+    assert value["success"] is False
+
+
+def test_external_partial_candidates_survive_failed_response(monkeypatch):
+    from schemas.tool_plan import ToolName
+    from types import SimpleNamespace
+    async def partial(*args):
+        return SimpleNamespace(success=False, data=[{"music_id": "kept", "title": "Rain"}],
+                               error_message="provider unavailable")
+    monkeypatch.setattr(registry_module, "execute_search_online_music", partial)
+    registry = registry_module.build_music_tool_registry(user_id="u", query="rain")
+    value = asyncio.run(registry.get(ToolName.SEARCH_EXTERNAL_MUSIC)({}, {}))
+    assert value["success"] is False
+    assert value["songs"][0]["music_id"] == "kept"
+
+
+def test_memory_tool_reports_degradation_without_discarding_profile(monkeypatch):
+    from schemas.tool_plan import ToolName
+    from types import SimpleNamespace
+    async def degraded(**kwargs):
+        return {"profile": {"avoid_genres": ["metal"]}, "memory_trace": {"status": "degraded"}}
+    monkeypatch.setattr(registry_module, "get_memory_gateway", lambda: SimpleNamespace(retrieve_context=degraded))
+    registry = registry_module.build_music_tool_registry(user_id="u", query="rain")
+    value = asyncio.run(registry.get(ToolName.RETRIEVE_MEMORY)({}, {}))
+    assert value["success"] is False
+    assert value["metadata"]["partial"] is True
+    assert value["profile"]["avoid_genres"] == ["metal"]
+
+
 @dataclass
 class _Gap:
     needs_online: bool = False

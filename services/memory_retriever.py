@@ -188,7 +188,7 @@ class MemoryRelevanceRetriever:
                 below_threshold += 1
                 continue
             age_days = max(0.0, (now - age_basis) / 86_400_000)
-            recency = math.exp(-age_days / half_life)
+            recency = 2.0 ** (-age_days / half_life)
             score = (
                 0.68 * relevance
                 + 0.17 * max(0.0, min(1.0, record.confidence))

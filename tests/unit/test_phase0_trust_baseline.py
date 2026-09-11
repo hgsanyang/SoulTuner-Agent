@@ -11,8 +11,6 @@ from retrieval.hybrid_retrieval import (
     USER_EXPOSURE_UPDATE_QUERY,
     MusicHybridRetrieval,
 )
-from services.graphzep_client import group_id_for_user
-from services.memory_gateway import GraphZepAdapter
 
 
 def test_state_user_id_prefers_top_level_and_supports_legacy_metadata():
@@ -71,17 +69,19 @@ def test_exposure_query_is_user_scoped_not_song_global():
 
 
 def test_post_recall_metadata_reads_user_exposure(monkeypatch):
+    from retrieval.candidate_identity import candidate_identity
+    key = candidate_identity({"title": "Song A", "artist": "Artist A"})["key"]
     captured = {}
 
     class FakeNeo4j:
-        driver = object()
+        driver = None  # Query must still run to let the client reconnect.
 
         def execute_query(self, query, params):
             captured["query"] = query
             captured["params"] = params
             return [
                 {
-                    "title": "Song A",
+                    "candidate_key": key,
                     "updated_at": 0,
                     "ts_alpha": 1,
                     "ts_beta": 2,
@@ -96,27 +96,27 @@ def test_post_recall_metadata_reads_user_exposure(monkeypatch):
         user_id="user-b",
     )
 
-    assert metadata["Song A"]["ts_beta"] == 2
+    assert metadata[key]["ts_beta"] == 2
     assert captured["params"]["user_id"] == "user-b"
     assert "[e:EXPOSED]" in captured["query"]
     assert "coalesce(s.ts_beta" not in captured["query"]
 
 
-def test_dislike_cache_is_isolated_per_user(monkeypatch):
+def test_dislikes_are_fresh_and_isolated_per_user(monkeypatch):
     calls = []
 
     class FakeNeo4j:
         def execute_query(self, query, params):
             calls.append(params["uid"])
-            return [{"titles": [f"blocked-{params['uid']}"]}]
+            return [{"music_id": f"blocked-{params['uid']}-{len(calls)}"}]
 
     monkeypatch.setattr("retrieval.neo4j_client.get_neo4j_client", lambda: FakeNeo4j())
     retriever = MusicHybridRetrieval()
 
-    assert retriever._get_disliked_titles("alice") == {"blocked-alice"}
-    assert retriever._get_disliked_titles("bob") == {"blocked-bob"}
-    assert retriever._get_disliked_titles("alice") == {"blocked-alice"}
-    assert calls == ["alice", "bob"]
+    assert retriever._get_disliked_songs("alice") == [{"music_id": "blocked-alice-1"}]
+    assert retriever._get_disliked_songs("bob") == [{"music_id": "blocked-bob-2"}]
+    assert retriever._get_disliked_songs("alice") == [{"music_id": "blocked-alice-3"}]
+    assert calls == ["alice", "bob", "alice"]
 
 
 def test_eval_mode_does_not_schedule_knowledge_backfill(monkeypatch):
@@ -157,24 +157,7 @@ def test_create_playlist_does_not_convert_recommendations_into_likes(monkeypatch
     assert result["playlist"]["track_count"] == 1
 
 
-def test_graphzep_adapter_uses_distinct_user_groups(monkeypatch):
-    calls = []
-
-    class FakeClient:
-        async def add_user_event(self, **kwargs):
-            calls.append(("write", kwargs))
-            return True
-
-        async def search_facts(self, **kwargs):
-            calls.append(("read", kwargs))
-            return "fact"
-
-    monkeypatch.setattr("services.graphzep_client.get_graphzep_client", lambda: FakeClient())
-    adapter = GraphZepAdapter()
-
-    assert asyncio.run(adapter.remember_text("hello", user_id="alice")) is True
-    assert asyncio.run(adapter.retrieve_context("music", user_id="bob")) == "fact"
-
-    assert calls[0][1]["group_id"] == group_id_for_user("alice")
-    assert calls[1][1]["group_ids"] == [group_id_for_user("bob")]
-    assert calls[0][1]["group_id"] != calls[1][1]["group_ids"][0]
+def test_retired_graphzep_backend_cannot_activate(monkeypatch):
+    from services.memory_gateway import _configured_episodic_adapters
+    monkeypatch.setenv('MEMORY_EPISODIC_BACKENDS', 'graphzep')
+    assert _configured_episodic_adapters() == []
