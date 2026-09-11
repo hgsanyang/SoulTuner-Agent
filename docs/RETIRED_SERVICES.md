@@ -16,11 +16,8 @@ is ignored with a warning.
 
 The maintainer keeps a private archive outside the repository, containing the
 removed working files and a verified Git bundle at the pre-retirement commit.
-It must not be published: old history can contain sensitive configuration.
+This archive is not part of the distributed project.
 Ignored retired paths prevent accidental re-addition during normal staging.
-
-This retirement removes files from the current tree, not from earlier Git commits.
-Historical secret remediation and any history rewrite are separate decisions.
 
 Native API reference: https://help.aliyun.com/en/model-studio/qwen-api-via-openai-responses
 and https://help.aliyun.com/zh/model-studio/web-search
